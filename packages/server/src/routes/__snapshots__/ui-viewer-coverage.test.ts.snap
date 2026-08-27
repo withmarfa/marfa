@@ -1,5 +1,101 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`every gallery variant renders > renders 'auth/consent/all-scope-kinds' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorize Fieldwork</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card" aria-label="Authorize Fieldwork">
+    
+    <h1 class="title">Allow access</h1>
+    <p class="sub"><b>Fieldwork</b> wants to access your space. You can change this anytime in settings.</p>
+    <div class="callout"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span>Marfa hasn't verified this app. Anyone can use this name, so only allow access if you trust it.</span></div>
+    
+    <form method="POST" action="/auth/authorize/decision" class="consent-form" novalidate>
+      <input type="hidden" name="client_id" value="fieldwork-client">
+      <input type="hidden" name="oauth_query" value="client_id=fieldwork-client&amp;scope=...&amp;sig=signed">
+      <div class="t-soft"><details class="grp">
+      <summary>
+        <span class="gmain">
+          <span class="gtop"><span class="glabel">Read your content</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gdesc">Notes.</span>
+        </span>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Read your content"><span class="tk" aria-hidden="true"></span></label>
+      </summary>
+      <div class="gsub"><div class="subrow"><span>Notes</span><label class="sw"><input type="checkbox" name="scopes" value="core.note:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+    </details><details class="grp">
+      <summary>
+        <span class="gmain">
+          <span class="gtop"><span class="glabel">Write your content</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gdesc">Notes.</span>
+        </span>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Write your content"><span class="tk" aria-hidden="true"></span></label>
+      </summary>
+      <div class="gsub"><div class="subrow"><span>Notes</span><label class="sw"><input type="checkbox" name="scopes" value="core.note:write" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+    </details><details class="grp">
+      <summary>
+        <span class="gmain">
+          <span class="gtop"><span class="glabel">Things with your own custom types</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gdesc">Your custom types, and anything else of that kind.</span>
+        </span>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Things with your own custom types"><span class="tk" aria-hidden="true"></span></label>
+      </summary>
+      <div class="gsub"><div class="subrow"><span>Your custom types</span><label class="sw"><input type="checkbox" name="scopes" value="user.*:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+    </details><details class="grp">
+      <summary>
+        <span class="gmain">
+          <span class="gtop"><span class="glabel">Your profile</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gdesc">Your name.</span>
+        </span>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Your profile"><span class="tk" aria-hidden="true"></span></label>
+      </summary>
+      <div class="gsub"><div class="subrow"><span>Your name and picture</span><label class="sw"><input type="checkbox" name="scopes" value="profile" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+    </details><details class="grp">
+      <summary>
+        <span class="gmain">
+          <span class="gtop"><span class="glabel">Other read access</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gdesc">Authored-by, References and Everything, and anything else of that kind.</span>
+        </span>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Other read access"><span class="tk" aria-hidden="true"></span></label>
+      </summary>
+      <div class="gsub"><div class="subrow"><span>Who created what.</span><label class="sw"><input type="checkbox" name="scopes" value="edge.authored-by:read" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>References between items.</span><label class="sw"><input type="checkbox" name="scopes" value="edge.references:read" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Everything in your space.</span><label class="sw"><input type="checkbox" name="scopes" value="*:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+    </details><details class="grp">
+      <summary>
+        <span class="gmain">
+          <span class="gtop"><span class="glabel">Other write access</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gdesc">Type definitions and Edge types.</span>
+        </span>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Other write access"><span class="tk" aria-hidden="true"></span></label>
+      </summary>
+      <div class="gsub"><div class="subrow"><span>Type definitions</span><label class="sw"><input type="checkbox" name="scopes" value="metadata:write" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Register and update custom relationship types in your space.</span><label class="sw"><input type="checkbox" name="scopes" value="metadata.edge_types:write" checked><span class="tk" aria-hidden="true"></span></label></div></div>
+    </details><details class="grp">
+      <summary>
+        <span class="gmain">
+          <span class="gtop"><span class="glabel">Administrative access</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gdesc">Set up webhooks that send your data elsewhere.</span>
+        </span>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" aria-label="Administrative access"><span class="tk" aria-hidden="true"></span></label>
+      </summary>
+      <div class="gsub"><div class="subrow"><span>Set up webhooks that send your data elsewhere</span><label class="sw"><input type="checkbox" name="scopes" value="capability.webhooks"><span class="tk" aria-hidden="true"></span></label></div></div>
+    </details></div><input type="checkbox" name="scopes" value="openid" checked hidden>
+      <div class="actions">
+        <button type="submit" name="accept" value="true" class="btn btn--primary" data-loading-label="Allow access...">Allow access</button>
+        <button type="submit" name="accept" value="false" class="btn btn--ghost">Deny</button>
+      </div>
+    </form>
+    <script>(function () { document.querySelectorAll('.grp').forEach(function (grp) { var master = grp.querySelector(':scope > summary input[type="checkbox"]'); var members = grp.querySelectorAll('.gsub input[type="checkbox"]'); if (!master || !members.length) return; master.addEventListener('change', function () { members.forEach(function (m) { m.checked = master.checked; }); }); function sync() { var any = false, all = true; members.forEach(function (m) { if (m.checked) any = true; else all = false; }); master.checked = any; master.indeterminate = any && !all; } members.forEach(function (m) { m.addEventListener('change', sync); }); sync(); }); })();</script>
+    <script src="/auth/static/submit-state.js"></script>
+  
+  </main>
+</body>
+</html>"
+`;
+
 exports[`every gallery variant renders > renders 'auth/consent/expired' 1`] = `
 "<!DOCTYPE html>
 <html lang="en">
@@ -208,7 +304,7 @@ exports[`every gallery variant renders > renders 'auth/device/consent' 1`] = `
     <p class="sub"><b>marfa CLI</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
     <div class="codetile">BDRF-7H2K</div>
     <div style="margin-top:10px">
-      <div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your notes</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your tasks</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Confirm your identity</span></div>
+      <div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your notes.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your tasks and to-dos.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Confirm your identity</span></div>
     </div>
     <div class="actions">
       <form method="POST" action="/auth/device/consent" novalidate>
@@ -218,6 +314,43 @@ exports[`every gallery variant renders > renders 'auth/device/consent' 1`] = `
       </form>
       <form method="POST" action="/auth/device/consent" novalidate>
         <input type="hidden" name="user_code" value="BDRF-7H2K">
+        <input type="hidden" name="decision" value="deny">
+        <button type="submit" class="btn btn--ghost">Deny</button>
+      </form>
+    </div>
+    <script src="/auth/static/submit-state.js"></script>
+  
+  </main>
+</body>
+</html>"
+`;
+
+exports[`every gallery variant renders > renders 'auth/device/consent-all-scope-kinds' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approve device sign-in</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card" aria-label="Approve device sign-in">
+    
+    <h1 class="title">Approve sign-in</h1>
+    <p class="sub"><b>Fieldwork</b> is trying to sign in as you. Approve only if this code matches what's on that device.</p>
+    <div class="codetile">QK3M-92XT</div>
+    <div style="margin-top:10px">
+      <div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Confirm your identity</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your name and picture</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your notes.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Who created what.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>References between items.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Register and update custom data types, relationship types, and any others added later.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Register and update custom relationship types in your space.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Everything in your space.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Your custom types, including ones you define later.</span></div><div class="crow"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><span>Set up webhooks that send your data elsewhere</span></div>
+    </div>
+    <div class="actions">
+      <form method="POST" action="/auth/device/consent" novalidate>
+        <input type="hidden" name="user_code" value="QK3M-92XT">
+        <input type="hidden" name="decision" value="approve">
+        <button type="submit" class="btn btn--primary" data-loading-label="Approving...">Approve</button>
+      </form>
+      <form method="POST" action="/auth/device/consent" novalidate>
+        <input type="hidden" name="user_code" value="QK3M-92XT">
         <input type="hidden" name="decision" value="deny">
         <button type="submit" class="btn btn--ghost">Deny</button>
       </form>
