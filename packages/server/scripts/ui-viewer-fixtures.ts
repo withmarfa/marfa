@@ -175,6 +175,24 @@ const scopeSet = (...literals: string[]): ParsedScope[] =>
  * previewed anyway, because the screen already renders one, unticked and under
  * a heading of its own, and a grant nobody has looked at is what this gallery
  * is for.
+ *
+ * **A sample, not the coverage answer.** Whether every requestable scope
+ * reaches a person as words rather than as machine text is asked of the scope
+ * allowlist in `routes/consent-copy-coverage.test.ts`, because the allowlist
+ * publishes around 150 literals and a page each is not a review anybody
+ * performs. What this variant is for is the half a check cannot do: reading
+ * the words. So it stays short enough to scan, and holds one row per branch
+ * the copy actually takes rather than one row per scope.
+ *
+ * The last three are the branches that had no row here until the derived
+ * check named them, and each is currently a failure a person can see. A
+ * namespace wildcard has no curated copy at all, so it renders as its own
+ * literal on the device screen and as a title-cased fragment of it on the
+ * authorize screen; an integration's concrete type falls through to the type
+ * registry, whose sentences are written for somebody reading API docs and run
+ * to several hundred characters. Both are in the derived check's
+ * known-uncovered list, and when copy lands for them these snapshots move,
+ * which is the review that copy should get.
  */
 const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   // OIDC literals: `openid` rides along as a hidden field, `profile` is a row.
@@ -195,6 +213,16 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   "user.*:read",
   // A capability, which no request can carry today. See above.
   "capability.webhooks",
+  // The wildcard over every relationship type, and the widest edge grant a
+  // client can ask for. Nothing has ever described it on either screen.
+  "edge.*:read",
+  // An integration's namespace wildcard, the family that grew past the four
+  // curated entries and was never caught up with.
+  "google.*:read",
+  // An integration's concrete type, which reads as described and is not: the
+  // curated map has no entry, so the row a person approves is the registry's
+  // Sync API rationale. The longest of them, deliberately.
+  "todoist.task:read",
 );
 
 /** The same copy both consent surfaces resolve, from the same call the two
