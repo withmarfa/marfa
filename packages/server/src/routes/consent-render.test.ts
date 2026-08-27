@@ -772,6 +772,70 @@ describe("renderConsentScreen — a scope in two bundles", () => {
     });
     expect(defaultSubmission(html)).toEqual(["core.note:write"]);
   });
+
+  it("ticks a scope an on-by-default bundle's wildcard reaches", () => {
+    // The same agreement one step wider, and the half a literal tie-break
+    // cannot see. `core.*:write` is ticked by default, so the user already
+    // gets `core.task:write` by leaving it alone and the device flow no
+    // longer withholds that literal. Letting the off-by-default bundle claim
+    // it here would untick a scope the other surface grants on one click,
+    // which is exactly the disagreement the tie-break exists to stop.
+    //
+    // It lands in a fallback bucket rather than under either bundle's
+    // heading: no on-by-default bundle named it, and an off-by-default one
+    // may not claim something it cannot withhold.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [{ kind: "type", typePattern: "core.task", operation: "write" }],
+      bundles: [
+        {
+          id: "manage",
+          label: "Manage your space",
+          description: "",
+          scopes: ["core.task:write"],
+          default_on: false,
+        },
+        {
+          id: "write",
+          label: "Write your content",
+          description: "",
+          scopes: ["core.*:write"],
+          default_on: true,
+        },
+      ],
+    });
+    expect(defaultSubmission(html)).toEqual(["core.task:write"]);
+    expect(offeredIn(html, "Manage your space")).toEqual([]);
+  });
+
+  it("still unticks a scope no on-by-default bundle reaches", () => {
+    // The control. The wildcard covers its own subtree and nothing else, so
+    // an off-by-default bundle keeps its scope and keeps it unticked.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [
+        { kind: "type", typePattern: "user.secret", operation: "write" },
+      ],
+      bundles: [
+        {
+          id: "manage",
+          label: "Manage your space",
+          description: "",
+          scopes: ["user.secret:write"],
+          default_on: false,
+        },
+        {
+          id: "write",
+          label: "Write your content",
+          description: "",
+          scopes: ["core.*:write"],
+          default_on: true,
+        },
+      ],
+    });
+    expect(defaultSubmission(html)).toEqual([]);
+    expect(offeredIn(html, "Manage your space")).toEqual(["user.secret:write"]);
+  });
 });
 
 /**

@@ -56,7 +56,10 @@
  */
 
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
-import { HIDDEN_MECHANISM_SCOPES } from "@withmarfa/shared";
+import {
+  HIDDEN_MECHANISM_SCOPES,
+  scopesOfferedOffByDefaultOnly,
+} from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { CAPABILITY_LABELS, capabilityShort } from "./capability-labels.js";
 import { oidcLabel, oidcShort } from "./oidc-labels.js";
@@ -153,14 +156,27 @@ function buildGroups(
   // overlap have to resolve it the same way or the same configuration means
   // different things on different surfaces.
   //
-  // `scopesOfferedOffByDefaultOnly` withholds a scope only when NO
-  // on-by-default bundle offers it, so first-bundle-wins on its own would
+  // `scopesOfferedOffByDefaultOnly` withholds a scope only when no
+  // on-by-default bundle REACHES it, so first-bundle-wins on its own would
   // render a scope in one on- and one off-by-default bundle unticked here,
   // if the off one happened to be listed first, while the device flow reads
   // the same pair as on-by-default and grants it in one click. An ordinary
   // operator config mistake reaches this, so the tie-break is explicit: an
   // on-by-default bundle claims a scope ahead of an off-by-default one, and
   // first-listed breaks the tie within each half.
+  //
+  // The second half of that tie-break asks the withholding function itself
+  // rather than re-deriving its answer. Reaching is not naming: an
+  // on-by-default bundle offering `core.*:write` gives the user
+  // `core.task:write` already, so an off-by-default bundle naming that
+  // literal withholds nothing, and letting it claim the scope here would
+  // untick something the device flow grants. Re-deriving coverage instead
+  // would put a second answer to one question back in the code, which is the
+  // shape of the defect rather than the fix. A literal an off-by-default
+  // bundle cannot withhold therefore stays unclaimed and lands in a fallback
+  // bucket, ticked: no bundle heading on this screen is true of it, and
+  // inventing one would be worse than the plainer label.
+  const withheld = scopesOfferedOffByDefaultOnly(bundles);
   const literalToBundle = new Map<string, PermissionBundle>();
   for (const bundle of bundles) {
     if (!bundle.default_on) continue;
@@ -170,6 +186,7 @@ function buildGroups(
   }
   for (const bundle of bundles) {
     for (const literal of bundle.scopes) {
+      if (!bundle.default_on && !withheld.has(literal)) continue;
       if (!literalToBundle.has(literal)) literalToBundle.set(literal, bundle);
     }
   }

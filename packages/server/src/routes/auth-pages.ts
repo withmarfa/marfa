@@ -15,6 +15,7 @@ import {
   canGrantRole,
   GLOBAL_TYPE_WILDCARD,
   TYPE_REGISTRY,
+  grantCoversScope,
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import type { MarfaRole } from "@withmarfa/shared";
@@ -27,6 +28,10 @@ import {
   hasPlatformAuthority,
 } from "../middleware/auth.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import {
+  bundlePublishedScopes,
+  catchUpClientScopeCeiling,
+} from "../auth/ceiling-catchup.js";
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type {
@@ -2228,16 +2233,34 @@ export function authRoutes(
     // redirect the app may never render and a human is stood in front of
     // it, so narrowing is what lets a stale request still succeed. Here the
     // response goes straight back to the machine that made the request,
-    // which can read it. And nothing stale can reach this point: the
-    // platform allowlist is checked live just above, so what the client
-    // ceiling adds is a security boundary rather than a stale copy. Handing
-    // back a device code for less than was asked for, without saying so,
-    // turns a two-line fix at the client into a token that quietly does not
-    // do what the client was built for.
-    const clientCeiling = client.scopes;
-    const offByDefaultOnly = scopesOfferedOffByDefaultOnly(
-      getPermissionBundles(),
-    );
+    // which can read it. Handing back a device code for less than was asked
+    // for, without saying so, turns a two-line fix at the client into a
+    // token that quietly does not do what the client was built for.
+    //
+    // Refusing is only defensible while the ceiling being compared against
+    // is current, and the stored row is not: it is a registration-time
+    // snapshot of an allowlist that moves whenever the type registry does.
+    // So it gets the same catch-up the authorize surface performs, before
+    // anything is compared against it. Without that, a client registered for
+    // a bundle-published wildcard was refused a scope beneath it, terminally,
+    // for a registration that plainly covered it.
+    //
+    // Making the comparison below coverage-aware instead is the repair that
+    // looks right and is not. It would leave this surface reading a ceiling
+    // one way while every other reader of the same row reads it exactly, and
+    // two surfaces answering one question two different ways is what the
+    // comment in `narrowAuthorizeScopes` exists to prevent. Breadth belongs
+    // in what gets written, not in what gets compared.
+    const bundles = getPermissionBundles();
+    const clientCeiling = await catchUpClientScopeCeiling({
+      storage,
+      clientId,
+      requested: requestedScopes,
+      ceiling: client.scopes,
+      bundleScopes: bundlePublishedScopes(bundles),
+      surface: "device",
+    });
+    const offByDefaultOnly = [...scopesOfferedOffByDefaultOnly(bundles)];
     for (const requested of requestedScopes) {
       if (!allowedScopes.has(requested)) {
         throw new MarfaError(
@@ -2273,10 +2296,27 @@ export function authRoutes(
       // initiation rather than at approval so the stored row never carries
       // the scope, which keeps the screen, the grant, the audit row and the
       // issued token reading the same set.
-      if (offByDefaultOnly.has(requested)) {
+      //
+      // The question is asked backwards from the usual one, and the usual
+      // one is the bug. `grantCoversScope(held, required)` normally answers
+      // "does a held grant reach a scope somebody needs". Here the withheld
+      // set is a set of literals and the request may be a wildcard, so what
+      // matters is whether the requested scope REACHES anything withheld:
+      // membership alone let `core.*:read` sail past a set holding every
+      // literal beneath it, and one click then granted the lot.
+      //
+      // The refusal names what is being protected rather than what was
+      // asked for. A client told its own wildcard was refused learns
+      // nothing; told which withheld scopes it reaches, it can narrow to a
+      // request this flow can honor. All of them, because a client that
+      // avoided one would only meet the next.
+      const reachesWithheld = offByDefaultOnly.filter((withheld) =>
+        grantCoversScope([requested], withheld),
+      );
+      if (reachesWithheld.length > 0) {
         throw new MarfaError(
           ErrorCode.INVALID_SCOPE,
-          `Scope needs an explicit approval this flow cannot offer: ${requested}`,
+          `Scope needs an explicit approval this flow cannot offer: ${reachesWithheld.join(", ")}`,
         );
       }
     }

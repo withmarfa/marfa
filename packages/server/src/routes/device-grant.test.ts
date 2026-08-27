@@ -6,6 +6,7 @@ import {
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { setActivePermissionBundles } from "../config.js";
 
 /**
  * Tests for the Device Authorization Grant (RFC 8628) surface:
@@ -95,6 +96,35 @@ async function createClient(
   return clientId;
 }
 void ORIGIN;
+
+/** Init without the 200 assertion, so refusals can be inspected. */
+async function tryInit(
+  c: TestContext,
+  clientId: string,
+  scope: string,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await c.app.fetch(
+    new Request(`${ORIGIN}/auth/device`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: ORIGIN },
+      body: JSON.stringify({ client_id: clientId, scope }),
+    }),
+  );
+  return {
+    status: res.status,
+    body: (await res.json()) as Record<string, unknown>,
+  };
+}
+
+/** The stored ceiling as the row holds it now, read back through the store
+ *  rather than assumed, because catching a stale ceiling up is a write. */
+async function storedCeiling(
+  c: TestContext,
+  clientId: string,
+): Promise<readonly string[] | null> {
+  const client = await c.storage.oauthProvider?.getClient(clientId);
+  return client?.scopes ?? null;
+}
 
 async function initiate(
   c: TestContext,
@@ -831,35 +861,25 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /auth/device — the client's registered ceiling", () => {
-  /** Init without the 200 assertion, so refusals can be inspected. */
-  async function tryInit(
-    c: TestContext,
-    clientId: string,
-    scope: string,
-  ): Promise<{ status: number; body: Record<string, unknown> }> {
-    const res = await c.app.fetch(
-      new Request(`${ORIGIN}/auth/device`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: ORIGIN },
-        body: JSON.stringify({ client_id: clientId, scope }),
-      }),
-    );
-    return {
-      status: res.status,
-      body: (await res.json()) as Record<string, unknown>,
-    };
-  }
-
   it("refuses a scope the client never registered for", async () => {
     ctx = await createTestContext();
     const clientId = await createClient(ctx, { scopes: ["core.note:read"] });
     // Every scope here is on the platform allowlist, so the pre-existing
     // check passes all of them. What the client asked to be allowed is a
     // different question, and this path had never asked it.
-    const res = await tryInit(ctx, clientId, "core.note:read core.task:write");
+    //
+    // The wildcard is what makes the case a ceiling case rather than a
+    // staleness one. A stored ceiling catches up to what the bundles publish
+    // (see the describe below), so a per-type bundle literal would be
+    // admitted here by that repair instead. A wildcard is requestable and in
+    // no bundle, so the registration is the only thing that can admit it.
+    const res = await tryInit(ctx, clientId, "core.note:read core.*:read");
     expect(res.status).toBe(400);
     expect(res.body.error).toMatchObject({ code: "invalid_scope" });
-    expect(JSON.stringify(res.body)).toContain("core.task:write");
+    expect(JSON.stringify(res.body)).toContain("core.*:read");
+    // And nothing was written on the way to the refusal, which is what makes
+    // the catch-up a catch-up rather than the ceiling ceasing to exist.
+    expect(await storedCeiling(ctx, clientId)).toEqual(["core.note:read"]);
   });
 
   it("allows a scope inside the registered ceiling", async () => {
@@ -928,6 +948,82 @@ describe("POST /auth/device — the client's registered ceiling", () => {
 });
 
 // ---------------------------------------------------------------------------
+// The ceiling this surface compares against is a registration-time snapshot,
+// so it catches up first.
+// ---------------------------------------------------------------------------
+
+describe("POST /auth/device — a stale ceiling catches up", () => {
+  it("admits a bundle scope beneath a wildcard the client registered", async () => {
+    // `core.*:read` is a legitimate registration literal, and `core.note:read`
+    // is one of the scopes every client is told it may ask for. Comparing a
+    // frozen row exactly refused it anyway, terminally, for a registration
+    // that plainly covered it.
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, { scopes: ["core.*:read"] });
+
+    const res = await tryInit(ctx, clientId, "core.note:read");
+    expect(res.status).toBe(200);
+    expect(res.body.device_code).toBeTruthy();
+
+    // And the repair is the row moving, not the comparison loosening. That
+    // distinction is the whole design: every other reader of this row tests
+    // exact membership, so a literal admitted on breadth alone here would be
+    // refused by one of them a moment later.
+    expect(await storedCeiling(ctx, clientId)).toEqual([
+      "core.*:read",
+      "core.note:read",
+    ]);
+  });
+
+  it("records which surface widened the row", async () => {
+    // Two callers write this action now, and the row is what an operator
+    // reads afterwards. Without the surface it says a registration changed
+    // and not where the request that changed it came in.
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, { scopes: ["core.*:read"] });
+
+    expect((await tryInit(ctx, clientId, "core.note:read")).status).toBe(200);
+
+    const audits = await waitForAudit(
+      () =>
+        ctx!.storage.audit.list({
+          action: "auth.client.scopes_widened",
+          limit: 10,
+        }),
+      (result) => result.data.length >= 1,
+    );
+    expect(audits.data.length).toBe(1);
+    const row = audits.data[0];
+    expect(row?.resource_id).toBe(clientId);
+    expect(row?.details.surface).toBe("device");
+    expect(row?.details.added_scopes).toEqual(["core.note:read"]);
+  });
+
+  it("does not fill in an empty ceiling", async () => {
+    // An empty array is a deliberate statement that this client may have
+    // nothing, and the catch-up must not read it as "not configured yet".
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx, { scopes: [] });
+
+    const res = await tryInit(ctx, clientId, "core.note:read");
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+    expect(await storedCeiling(ctx, clientId)).toEqual([]);
+  });
+
+  it("does not write a ceiling onto a client that has none", async () => {
+    // A null ceiling already tracks the live allowlist, so writing one would
+    // replace a set that follows the registry with a snapshot that does not.
+    ctx = await createTestContext();
+    const clientId = await createClient(ctx);
+
+    const res = await tryInit(ctx, clientId, "core.note:read");
+    expect(res.status).toBe(200);
+    expect(await storedCeiling(ctx, clientId)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // A registration must be able to sign in with the credential it was given.
 // ---------------------------------------------------------------------------
 
@@ -990,5 +1086,129 @@ describe("POST /auth/device — a real registration can complete a login", () =>
     );
     // Still a ceiling: naming one type does not admit another.
     expect(scopes).not.toContain("core.task:write");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An off-by-default bundle withholds a scope from a screen that cannot offer
+// it, and a wildcard must not walk around that.
+// ---------------------------------------------------------------------------
+
+describe("POST /auth/device — off-by-default scopes", () => {
+  /**
+   * Every shipped bundle is `default_on: true`, so on a default deployment
+   * nothing is withheld and neither direction of this is reachable. A test
+   * that does not install an off-by-default bundle passes against the broken
+   * code and the fixed code alike, which is the whole trap here.
+   *
+   * Installed before the app is built so the request-time bundle read and
+   * the router's snapshot of the requestable allowlist agree.
+   */
+  const withBundles = async <T>(
+    bundles: Parameters<typeof setActivePermissionBundles>[0],
+    fn: () => Promise<T>,
+  ): Promise<T> => {
+    setActivePermissionBundles(bundles);
+    try {
+      return await fn();
+    } finally {
+      setActivePermissionBundles(null);
+    }
+  };
+
+  const bundle = (
+    id: string,
+    default_on: boolean,
+    scopes: string[],
+  ): {
+    id: string;
+    label: string;
+    description: string;
+    scopes: string[];
+    default_on: boolean;
+  } => ({ id, label: id, description: "", scopes, default_on });
+
+  it("refuses a wildcard that reaches a withheld scope", async () => {
+    // The device approval screen confirms a scope list and has no per-scope
+    // toggle, so an off-by-default scope reaching it is granted on one click.
+    // Matching the withheld set by membership let `core.*:write` past while
+    // covering every literal in it.
+    await withBundles(
+      [
+        bundle("read", true, ["core.note:read"]),
+        bundle("manage", false, ["core.task:write"]),
+      ],
+      async () => {
+        ctx = await createTestContext();
+        const clientId = await createClient(ctx);
+
+        const res = await tryInit(ctx, clientId, "core.*:write");
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+
+        // Naming the wildcard back at the client tells it nothing it did not
+        // already know. Naming what is being protected is what lets it narrow
+        // to a request this flow can honor.
+        const message = (res.body.error as { message?: string }).message ?? "";
+        expect(message).toContain("core.task:write");
+        expect(message).not.toContain("core.*:write");
+      },
+    );
+  });
+
+  it("still refuses the withheld scope named outright", async () => {
+    await withBundles(
+      [
+        bundle("read", true, ["core.note:read"]),
+        bundle("manage", false, ["core.task:write"]),
+      ],
+      async () => {
+        ctx = await createTestContext();
+        const clientId = await createClient(ctx);
+
+        const res = await tryInit(ctx, clientId, "core.task:write");
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+      },
+    );
+  });
+
+  it("admits a scope an on-by-default bundle's wildcard reaches", async () => {
+    // The producer half, end to end. `core.*:write` is ticked by default, so
+    // the user gets `core.task:write` by leaving the consent screen alone.
+    // Withholding that literal here refused a device flow over a scope the
+    // other surface grants without being asked.
+    await withBundles(
+      [
+        bundle("write", true, ["core.*:write"]),
+        bundle("manage", false, ["core.task:write"]),
+      ],
+      async () => {
+        ctx = await createTestContext();
+        const clientId = await createClient(ctx);
+
+        const res = await tryInit(ctx, clientId, "core.task:write");
+        expect(res.status).toBe(200);
+        expect(res.body.device_code).toBeTruthy();
+      },
+    );
+  });
+
+  it("keeps a request clear of the withheld set working", async () => {
+    // The control. Withholding is not "an off-by-default bundle exists", it
+    // is this scope, so a neighbouring scope still initiates.
+    await withBundles(
+      [
+        bundle("read", true, ["core.note:read"]),
+        bundle("manage", false, ["core.task:write"]),
+      ],
+      async () => {
+        ctx = await createTestContext();
+        const clientId = await createClient(ctx);
+
+        const res = await tryInit(ctx, clientId, "core.note:read");
+        expect(res.status).toBe(200);
+      },
+    );
   });
 });
