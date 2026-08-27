@@ -100,43 +100,78 @@ import type {
  * Order is first appearance across standing-then-approved, so the standing
  * entries keep the order the user saw them in.
  *
+ * **The record keeps one entry per key it confers, and the prune is what
+ * makes that true.** The merge names every (axis, key) either side spelled,
+ * so without a second step a key the standing grant already covers still
+ * becomes its own entry, at the standing verb. Standing `*:write` under one
+ * login per concrete type at `:read` grew an entry per type named, each one
+ * already conferred by the wildcard and each written at `:write` though the
+ * client only ever asked `:read`. Forty-five such logins reached forty-six
+ * entries. `/auth/security` pushes the stored array verbatim, so the page
+ * read as the history of how apps had spelled their requests rather than as
+ * what the user granted. After the merge builds its list, every breadth entry
+ * whose key the rest of the record already resolves to the same verb is
+ * dropped, and that shape stays at one entry.
+ *
+ * **The elimination rule, and it is sequential on purpose.** Walk the emitted
+ * entries of one breadth axis in first-appearance order and drop `K:v` if and
+ * only if resolving `K` against the map built from the entries still
+ * surviving, with `K` itself taken out, still yields `v`. Each drop is taken
+ * against the shrinking working set rather than against the original list.
+ *
+ * That is the part a later reader will try to simplify into one pass over the
+ * original. Take `{core.*:read, core.note:read}`. Measured against the whole
+ * list, each entry resolves its own key to `read`, so both look redundant and
+ * a pass that does not take the candidate out first drops both, and the
+ * record then confers nothing on notes at all. Taking the candidate out is
+ * what separates them: `core.note` resolves under `core.*` and goes, while
+ * `core.*` measured against what is left resolves to `none`, because a
+ * concrete key never answers for the pattern above it. Whichever of the two
+ * is tested first, the wildcard stays.
+ *
+ * **Why testing the key is enough, and why no concrete id is enumerated
+ * here.** An entry `K` with subtree root `R` can only be the resolver's
+ * winner for ids inside `subtree(R)` that no longer key matches. If a longer
+ * key strictly inside `subtree(R)` survives, it already outranked `K` for
+ * those ids, so `K` was never their winner. If only keys at or above `R`
+ * survive, they match `K` and those ids identically, so testing `K` tests
+ * every id it governed. The key-level test is therefore equivalent to an
+ * id-level one. The enumeration that shows this belongs in the test, over
+ * concrete ids, and not in a runtime loop over the registries here.
+ *
+ * **The literal family is never pruned.** Capability, OIDC and unparseable
+ * literals have membership as their whole algebra. There is no verb to
+ * resolve, so nothing among them can be redundant, and a deletion rule that
+ * reached them would take away a grant rather than a restatement of one.
+ *
+ * This is a third literal-level operation on a structure that has twice
+ * proved not to be a set, so it is written as a removal that provably changes
+ * nothing: an entry goes only where the rest of the record already resolves
+ * its key to the same verb. Its property test probes concrete ids and never
+ * patterns, because a pattern probe re-asks the fail-open question the
+ * resolver exists to refuse, and passes against a broken prune.
+ *
  * **Idempotent, which is what keeps a repeat login free.** Re-approving the
- * same set resolves every key to the verb it already holds and names no key
- * the record lacks, so the array comes back byte-identical, and no literal is
- * ever appended twice.
+ * same set resolves every key to the verb it already holds, and a key the
+ * request names that the record dropped as redundant is re-derived at the
+ * verb the record already confers and dropped again. So the array comes back
+ * byte-identical and no literal is ever appended twice.
  *
  * **What bounds the record is the platform allowlist, not what the user
- * approved.** The record carries one entry per distinct (axis, key) either
- * side has ever named, so a login naming a key the record lacks adds an entry
- * whether or not the grant already conferred it, and the entry can be
- * redundant. Standing `*:write` under one login per concrete type at `:read`
- * ends up holding the wildcard plus an entry for every type named, each one
- * covered already, and each written at `:write` because that is the verb the
- * merge resolves — the client only ever asked `:read`. So the ceiling is the
- * set of keys `buildAllowedScopes` can name, since initiation refuses a scope
- * outside it. For what that set holds, read that function rather than a
- * restatement here: this passage has carried two different wrong bounds
- * already, each one derived rather than read off the code. Its own docblock
- * states the part both got wrong. A custom type registered at runtime through
- * `POST /types` is NOT picked up as a concrete scope, and a server restart is
- * what re-enumerates from the larger registry. The runtime namespace roots it
- * folds in are installed once at boot and contribute `<root>.*` wildcards,
- * never concrete keys.
+ * approved.** The ceiling is the set of keys `buildAllowedScopes` can name,
+ * since initiation refuses a scope outside it. For what that set holds, read
+ * that function rather than a restatement here: this passage has carried two
+ * different wrong bounds already, each one derived rather than read off the
+ * code. Its own docblock states the part both got wrong. A custom type
+ * registered at runtime through `POST /types` is NOT picked up as a concrete
+ * scope, and a server restart is what re-enumerates from the larger registry.
+ * The runtime namespace roots it folds in are installed once at boot and
+ * contribute `<root>.*` wildcards, never concrete keys.
  *
- * Reaching that ceiling takes a client that spells its request differently on
- * every login, and a real one sends the same string each time, so this is a
- * shape to know about rather than a live problem. It is driven by the
- * spelling and not by the access: two requests conferring exactly the same
- * thing still add two entries if they are written differently.
- *
- * Deliberately NOT pruned, the redundant entries above included. A key made
- * redundant by a broader sibling at the same verb could be dropped, and the
- * prune reads as provably safe, but every defect this function has had came
- * from a literal removed for a reason that looked exactly that sound, and it
- * has now been wrong twice in opposite directions. The record is minimal in
- * the only sense being bought here, one entry per key rather than one per
- * approval, and a shorter array is a bad trade for a deletion rule on this
- * surface.
+ * Reaching that ceiling now takes a client whose varying requests confer
+ * genuinely different things on each login, rather than one that merely
+ * spells the same access differently. Two requests conferring exactly the
+ * same thing leave the same record however they are written.
  */
 
 /** Ordering on the verb lattice the three breadth-carrying axes share. */
@@ -259,9 +294,67 @@ function literalFor(
 }
 
 /**
+ * One entry of the record before it is written back out. A breadth entry
+ * carries the axis and key it occupies so the prune can resolve it without
+ * re-parsing; a literal entry carries the scope string it was named by,
+ * because membership is all it has.
+ */
+type MergedEntry =
+  | { kind: "literal"; scope: string }
+  | {
+      kind: "breadth";
+      axis: BreadthAxis;
+      key: string;
+      verb: "read" | "write";
+    };
+
+function renderEntry(entry: MergedEntry): string {
+  return entry.kind === "literal"
+    ? entry.scope
+    : literalFor(entry.axis, entry.key, entry.verb);
+}
+
+/**
+ * Drops every breadth entry the rest of the record already confers, by
+ * sequential single-entry elimination per axis. See the module docblock for
+ * why this is sequential rather than one pass, and why resolving the key is
+ * equivalent to resolving every concrete id beneath it.
+ *
+ * The remainder is re-projected through `project` on each test rather than
+ * assembled by hand, so what the candidate is measured against is literally
+ * the map the surviving record projects into. A literal entry contributes to
+ * no axis map and is never a candidate.
+ *
+ * One interleaved walk rather than three, and that is the same thing: each
+ * axis projects into its own map and `resolveOn` reads only the candidate's,
+ * so an entry on another axis can neither keep a candidate nor drop it.
+ */
+function pruneRedundantEntries(entries: readonly MergedEntry[]): MergedEntry[] {
+  let surviving = [...entries];
+
+  for (const candidate of entries) {
+    if (candidate.kind !== "breadth") continue;
+
+    // Taking the candidate out BEFORE resolving is the whole rule. Left in,
+    // it resolves its own key to its own verb and every entry reads as
+    // redundant.
+    const without = surviving.filter((entry) => entry !== candidate);
+    const remainder = project(without.map(renderEntry));
+
+    if (
+      resolveOn(candidate.axis, candidate.key, remainder) === candidate.verb
+    ) {
+      surviving = without;
+    }
+  }
+
+  return surviving;
+}
+
+/**
  * Merge a device approval into the grant it is re-approving. See the module
  * docblock: the result confers everything either side conferred and nothing
- * neither side conferred.
+ * neither side conferred, and states it in one entry per key.
  */
 export function mergeDeviceApprovalScopes(
   standing: readonly string[],
@@ -270,7 +363,7 @@ export function mergeDeviceApprovalScopes(
   const standingMaps = project(standing);
   const approvedMaps = project(approved);
 
-  const merged: string[] = [];
+  const merged: MergedEntry[] = [];
   const emitted = new Set<string>();
 
   for (const scope of [...standing, ...approved]) {
@@ -283,7 +376,7 @@ export function mergeDeviceApprovalScopes(
       const id = `literal:${scope}`;
       if (emitted.has(id)) continue;
       emitted.add(id);
-      merged.push(scope);
+      merged.push({ kind: "literal", scope });
       continue;
     }
 
@@ -301,8 +394,13 @@ export function mergeDeviceApprovalScopes(
     // resolves it exactly. Guarded because emitting `<key>:none` would write
     // a literal the grammar refuses.
     if (verb === "none") continue;
-    merged.push(literalFor(breadth.axis, breadth.key, verb));
+    merged.push({
+      kind: "breadth",
+      axis: breadth.axis,
+      key: breadth.key,
+      verb,
+    });
   }
 
-  return merged;
+  return pruneRedundantEntries(merged).map(renderEntry);
 }

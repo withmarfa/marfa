@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { grantCoversScope } from "@withmarfa/shared";
+import { grantCoversScope, parseScope } from "@withmarfa/shared";
 import { mergeDeviceApprovalScopes } from "./device-scope-merge.js";
 
 /**
@@ -30,6 +30,46 @@ describe("mergeDeviceApprovalScopes, the two cases it exists for", () => {
       ["core.note:read"],
     );
     expect(verb(merged, "core.note")).toBe("write");
+    expect(verb(merged, "core.task")).toBe("write");
+  });
+
+  // The traced defect. The merge names `core.note` because the approval
+  // spelled it, and resolves it to `write` because the standing wildcard
+  // confers that, so the record grew an explicit write grant the client
+  // never asked for, saying nothing the entry above it did not already say.
+  it("collapses a key the standing grant already confers to one entry", () => {
+    expect(
+      mergeDeviceApprovalScopes(["core.*:write"], ["core.note:read"]),
+    ).toEqual(["core.*:write"]);
+  });
+
+  // Sequential elimination, in the one shape that separates it from a pass
+  // that resolves each candidate against the whole list. Both entries resolve
+  // their own key to `read` while both are present, so a prune that does not
+  // take the candidate out before resolving drops both and leaves nothing
+  // conferring read on notes. Taking `core.note:read` out first is what
+  // exposes that `core.*` resolves against the remainder to `none`.
+  it("keeps the wildcard when its own redundant child is dropped", () => {
+    const merged = mergeDeviceApprovalScopes(
+      ["core.*:read"],
+      ["core.note:read"],
+    );
+    expect(merged).toEqual(["core.*:read"]);
+    expect(verb(merged, "core.note")).toBe("read");
+    expect(verb(merged, "core.other")).toBe("read");
+  });
+
+  // The pin, which is the entry the prune must never take. `core.note:read`
+  // beneath `core.*:write` is not redundant. It is the only thing holding
+  // notes down to read, and dropping it would escalate exactly the way the
+  // coverage-append merge did.
+  it("keeps a pin: both entries survive where the child holds a type down", () => {
+    const merged = mergeDeviceApprovalScopes(
+      ["core.*:read"],
+      ["core.*:write", "core.note:read"],
+    );
+    expect(merged).toEqual(["core.*:write", "core.note:read"]);
+    expect(verb(merged, "core.note")).toBe("read");
     expect(verb(merged, "core.task")).toBe("write");
   });
 
@@ -65,12 +105,41 @@ describe("mergeDeviceApprovalScopes, record stability", () => {
   it("does not grow the record when the same request repeats against a canonicalized record", () => {
     const approved = ["core.note:read", "openid"];
     let record = mergeDeviceApprovalScopes(["core.*:write"], approved);
-    expect(record).toEqual(["core.*:write", "core.note:write", "openid"]);
+    expect(record).toEqual(["core.*:write", "openid"]);
     const first = [...record];
     for (let i = 0; i < 5; i++) {
       record = mergeDeviceApprovalScopes(record, approved);
       expect(record).toEqual(first);
     }
+  });
+
+  // The measured shape behind the ticket: a standing `*:write` and forty-five
+  // logins each naming one further concrete type at `:read` took the record to
+  // forty-six entries, every added one already conferred by the wildcard and
+  // every one written at `:write` though the client only ever asked `:read`.
+  // Nothing here is a repeat, so record stability cannot come from
+  // de-duplicating a spelling: each login names a key the record has never
+  // held, and the entry is dropped because the record already confers it.
+  it("does not grow the record when a CLI signs in again and again under a wildcard", () => {
+    const types = Array.from(
+      { length: 45 },
+      (_, i) => `user.thing-${String(i)}`,
+    );
+    // Precondition: each of these has to reach the item-type axis. A scope the
+    // grammar refuses would be carried through the literal arm untouched, and
+    // the record would grow for a reason this test is not about.
+    for (const type of types) {
+      expect(parseScope(`${type}:read`)?.kind).toBe("type");
+    }
+
+    let record = ["*:write"];
+    for (const type of types) {
+      record = mergeDeviceApprovalScopes(record, [`${type}:read`]);
+      expect(verb(record, type)).toBe("write");
+    }
+
+    expect(record).toEqual(["*:write"]);
+    expect(record).toHaveLength(1);
   });
 
   it("is idempotent: re-merging an approval already absorbed changes nothing", () => {
@@ -148,15 +217,21 @@ describe("mergeDeviceApprovalScopes, the axes beyond item types", () => {
   // Metadata sub-resources fall through to the namespace wildcard rather than
   // being pinned by it, so a literal union of this axis confers exactly what
   // the effective merge does and no coverage probe can tell the two apart.
-  // What separates them is the record: a union leaves `metadata.types:read`
-  // sitting under a `metadata:write` that already grants writing types, and
-  // `/auth/security` is read as a statement of what the grant confers. So the
-  // emitted literal is the assertion here, deliberately, and it is the only
-  // place in this file where the array rather than its meaning is the point.
+  // What separates them is the record, and `/auth/security` is read as a
+  // statement of what the grant confers. `metadata.types` under a
+  // `metadata:write` that already grants writing types says nothing, at
+  // either verb, so it goes. The emitted literal is the assertion here,
+  // deliberately, and it is the only place in this file where the array
+  // rather than its meaning is the point.
   it("writes the metadata record at the verb it actually confers", () => {
     expect(
       mergeDeviceApprovalScopes(["metadata:write"], ["metadata.types:read"]),
-    ).toEqual(["metadata:write", "metadata.types:write"]);
+    ).toEqual(["metadata:write"]);
+    // The verb still moves where the key is load-bearing: nothing above
+    // `metadata.types` here, so it is emitted rather than dropped.
+    expect(
+      mergeDeviceApprovalScopes(["metadata.types:read"], ["core.note:read"]),
+    ).toEqual(["metadata.types:read", "core.note:read"]);
   });
 
   // Membership is the whole algebra for the two verb-less families. A
@@ -350,5 +425,254 @@ describe("mergeDeviceApprovalScopes, monotonicity over random grants", () => {
 
     expect(sawWidening).toBeGreaterThan(100);
     expect(sawPin).toBeGreaterThan(10);
+  });
+});
+
+/**
+ * The prune, over a fixed enumeration rather than a random corpus.
+ *
+ * Fixed because the shapes that matter here are structural and few: a
+ * wildcard over a pin, a wildcard over a redundant child, two wildcards at
+ * different depths. A random corpus is green whenever it failed to generate
+ * one of them. Every ordered pair of grants drawn from the
+ * vocabulary below, at sizes zero, one and two, is enumerated, so admitting
+ * the fixture is a question about the vocabulary and not about a seed.
+ *
+ * **Probes are concrete ids and never patterns.** Coverage of a pattern is a
+ * statement about every id beneath it, which is the fail-open question the
+ * resolver exists to refuse, and it is satisfied by a record that confers
+ * nothing at all inside the subtree. A pattern probe passes against a prune
+ * that has deleted the entry holding the subtree up. This is the single most
+ * likely way this test gets written wrong.
+ */
+describe("mergeDeviceApprovalScopes, the prune over a fixed enumeration", () => {
+  const VOCAB = [
+    "*:write",
+    "core.*:read",
+    "core.*:write",
+    "core.media.*:read",
+    "core.note:read",
+    "core.note:write",
+    "core.media.book:write",
+    "edge.*:write",
+    "edge.user.*:read",
+    "edge.parent-of:read",
+    "metadata:write",
+    "metadata.types:read",
+    "capability.webhooks",
+    "openid",
+  ];
+
+  /** The scope in the vocabulary this build is meant not to understand. */
+  const UNPARSEABLE = "a-scope-from-a-later-build";
+
+  /**
+   * Concrete points, on all three breadth axes. Each subtree in the
+   * vocabulary needs at least one id inside it that no narrower vocabulary
+   * key reaches: `core.other` under `core.*`, `core.media.photo` under
+   * `core.media.*`, `other.thing` under the global wildcard, `user.blocks`
+   * under `edge.user.*`, `edge.other` under `edge.*`, `metadata.other` under
+   * the metadata wildcard. Without one, dropping the entry that governs that
+   * subtree changes nothing any probe can see, and clause (b) passes on a
+   * record that is not minimal.
+   */
+  const TYPE_POINTS = [
+    "core.note",
+    "core.task",
+    "core.other",
+    "core.media",
+    "core.media.book",
+    "core.media.photo",
+    "user.thing",
+    "other.thing",
+  ];
+  const EDGE_POINTS = ["parent-of", "user", "user.blocks", "other"];
+  const METADATA_POINTS = ["types", "other"];
+
+  const POINTS = [
+    ...TYPE_POINTS,
+    ...EDGE_POINTS.map((e) => `edge.${e}`),
+    ...METADATA_POINTS.map((m) => `metadata.${m}`),
+  ];
+
+  /** The verb-less families, where membership is the whole question. */
+  const MEMBERSHIP = [
+    "openid",
+    "offline_access",
+    "capability.webhooks",
+    "capability.keys",
+    UNPARSEABLE,
+  ];
+
+  const RANK: Record<string, number> = { none: 0, read: 1, write: 2 };
+  const higherVerb = (a: string, b: string): string =>
+    RANK[a]! >= RANK[b]! ? a : b;
+
+  /** Every ordered pair of grants of size 0, 1 and 2. */
+  const GRANTS: string[][] = [[]];
+  const POOL = [...VOCAB, UNPARSEABLE];
+  for (let i = 0; i < POOL.length; i++) {
+    GRANTS.push([POOL[i]!]);
+    for (let j = i + 1; j < POOL.length; j++) {
+      GRANTS.push([POOL[i]!, POOL[j]!]);
+    }
+  }
+
+  /** Resolutions of one grant over every probe, computed once per grant. */
+  interface Reading {
+    verbs: string[];
+    holds: boolean[];
+  }
+  const read = (scopes: readonly string[]): Reading => ({
+    verbs: POINTS.map((p) => verb(scopes, p)),
+    holds: MEMBERSHIP.map((m) => grantCoversScope(scopes, m)),
+  });
+  const READINGS = new Map<string[], Reading>(
+    GRANTS.map((g) => [g, read(g)] as const),
+  );
+
+  // Assert the fixture is the shape the two clauses assume, rather than
+  // trusting it. A vocabulary entry the grammar refuses would be carried
+  // through the literal arm and never reach the prune at all, and a probe
+  // carrying a wildcard would silently turn clause (a) into the pattern
+  // question this test exists to avoid asking.
+  it("is built on scopes and probes of the shape the clauses assume", () => {
+    for (const scope of VOCAB) {
+      expect({ scope, parsed: parseScope(scope) !== null }).toEqual({
+        scope,
+        parsed: true,
+      });
+    }
+    expect(parseScope(UNPARSEABLE)).toBeNull();
+
+    // The literal family has to be genuinely represented, or the mutation
+    // that prunes it has nothing to break.
+    expect(parseScope("capability.webhooks")?.kind).toBe("capability");
+    expect(parseScope("openid")?.kind).toBe("oidc");
+
+    // Concrete, on every axis. A probe with a `*` in it is a pattern.
+    for (const point of POINTS) {
+      expect({ point, wildcard: point.includes("*") }).toEqual({
+        point,
+        wildcard: false,
+      });
+      expect({ point, parses: parseScope(`${point}:read`) !== null }).toEqual({
+        point,
+        parses: true,
+      });
+    }
+
+    expect(GRANTS.length).toBeGreaterThan(100);
+  });
+
+  // (a) The merge's contract is unmoved. What the record confers at every
+  // concrete id is the greater of what the two sides confer there, before the
+  // prune and after it.
+  it("confers exactly what the merge conferred, at every concrete id", () => {
+    let checked = 0;
+    let sawWidening = 0;
+    let sawPin = 0;
+
+    for (const standing of GRANTS) {
+      const s = READINGS.get(standing)!;
+      for (const approved of GRANTS) {
+        const a = READINGS.get(approved)!;
+        const pruned = mergeDeviceApprovalScopes(standing, approved);
+
+        POINTS.forEach((point, i) => {
+          const want = higherVerb(s.verbs[i]!, a.verbs[i]!);
+          const got = verb(pruned, point);
+          checked++;
+          if (got !== want) {
+            // Built only on failure: the loop runs a few hundred thousand
+            // times and the context is what makes a failure readable.
+            expect({ standing, approved, pruned, point, got }).toEqual({
+              standing,
+              approved,
+              pruned,
+              point,
+              got: want,
+            });
+          }
+          if (want !== s.verbs[i]!) sawWidening++;
+        });
+
+        MEMBERSHIP.forEach((literal, i) => {
+          const want = s.holds[i]! || a.holds[i]!;
+          const got = grantCoversScope(pruned, literal);
+          checked++;
+          if (got !== want) {
+            expect({ standing, approved, pruned, literal, got }).toEqual({
+              standing,
+              approved,
+              pruned,
+              literal,
+              got: want,
+            });
+          }
+        });
+
+        // A concrete key surviving beneath a broader wildcard at a lower
+        // verb is the pin the prune must never take.
+        if (
+          pruned.includes("core.note:read") &&
+          pruned.some((e) => e === "core.*:write" || e === "*:write")
+        ) {
+          sawPin++;
+        }
+      }
+    }
+
+    // Not vacuous: the enumeration has to reach the shapes it claims to.
+    expect(checked).toBeGreaterThan(100_000);
+    expect(sawWidening).toBeGreaterThan(1000);
+    expect(sawPin).toBeGreaterThan(10);
+  });
+
+  // (b) Nothing redundant survives. Removing any remaining entry has to
+  // change what the record confers at some concrete id, or at some literal.
+  it("leaves no entry the rest of the record already confers", () => {
+    let entriesChecked = 0;
+    let sawPrune = 0;
+
+    for (const standing of GRANTS) {
+      for (const approved of GRANTS) {
+        const pruned = mergeDeviceApprovalScopes(standing, approved);
+        const before = read(pruned);
+
+        for (let i = 0; i < pruned.length; i++) {
+          const reduced = pruned.filter((_, j) => j !== i);
+          entriesChecked++;
+          const changed =
+            POINTS.some((p, k) => verb(reduced, p) !== before.verbs[k]!) ||
+            MEMBERSHIP.some(
+              (m, k) => grantCoversScope(reduced, m) !== before.holds[k]!,
+            );
+          if (!changed) {
+            expect({
+              standing,
+              approved,
+              pruned,
+              redundant: pruned[i],
+            }).toEqual({
+              standing,
+              approved,
+              pruned,
+              redundant: null,
+            });
+          }
+        }
+
+        // The merge before the prune names one entry per key either side
+        // spelled, so a pair naming a covered key is one the prune acted on.
+        const spelled = new Set(
+          [...standing, ...approved].filter((s) => s !== UNPARSEABLE),
+        );
+        if (spelled.size > pruned.length) sawPrune++;
+      }
+    }
+
+    expect(entriesChecked).toBeGreaterThan(10_000);
+    expect(sawPrune).toBeGreaterThan(100);
   });
 });
