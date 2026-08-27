@@ -23,7 +23,13 @@ import {
   isValidTypeIdentifier,
   isValidTypePattern,
 } from "./validation.js";
-import { isReservedRoot } from "./type-registry.js";
+import {
+  INTEGRATION_TYPE_IDS,
+  SYSTEM_TYPE_IDS,
+  TYPE_REGISTRY,
+  isReservedRoot,
+} from "./type-registry.js";
+import { resolveTypePermission } from "./validation.js";
 
 describe("parseScope", () => {
   it("parses a simple read scope", () => {
@@ -831,6 +837,22 @@ describe("only type scopes reach the item-type axis", () => {
     metadata: "metadata.types:write",
     oidc: "openid",
     capability: "capability.webhooks",
+    content: "content:read",
+  };
+
+  // Which families reach `type_permissions` at all, as a second total record
+  // so the two facts cannot be confused. `type` reaches it through
+  // `isTypeScope`, with its own pattern as the key. `content` reaches it
+  // through an arm of its own, projecting a complement — its pattern never
+  // becomes a key, which is the property the standalone case below pins. The
+  // other four must not reach it by any route.
+  const REACHES_TYPE_AXIS: Record<ParsedScope["kind"], boolean> = {
+    type: true,
+    edge: false,
+    metadata: false,
+    oidc: false,
+    capability: false,
+    content: true,
   };
 
   const kinds = Object.keys(LITERAL_BY_KIND) as ParsedScope["kind"][];
@@ -838,15 +860,16 @@ describe("only type scopes reach the item-type axis", () => {
   for (const kind of kinds) {
     const literal = LITERAL_BY_KIND[kind];
     const isType = kind === "type";
+    const reachesAxis = REACHES_TYPE_AXIS[kind];
 
     it(`parses ${literal} as kind=${kind}`, () => {
       // The fixture has to be honest or the two cases below prove nothing.
       expect(parseScope(literal)?.kind).toBe(kind);
     });
 
-    it(`${isType ? "admits" : "refuses"} ${literal} in type_permissions`, () => {
+    it(`${reachesAxis ? "admits" : "refuses"} ${literal} in type_permissions`, () => {
       const admitted = Object.keys(scopesToTypePermissions([literal]));
-      expect(admitted.length > 0).toBe(isType);
+      expect(admitted.length > 0).toBe(reachesAxis);
     });
 
     it(`${isType ? "lets" : "stops"} ${literal} satisfy an item-type requirement`, () => {
@@ -857,6 +880,12 @@ describe("only type scopes reach the item-type axis", () => {
       expect(scopeCovers([literal], pattern, "read")).toBe(isType);
     });
 
+    // `content` is deliberately outside this pairing and has a case of its
+    // own below: it is the one family where the two projections give
+    // different answers by construction, because it reaches the axis without
+    // being an item-type scope.
+    if (kind === "content") continue;
+
     it(`the two projections agree about ${kind} scopes`, () => {
       // One predicate answers for both, so they cannot drift apart the way
       // two hand-maintained skip lists could.
@@ -866,6 +895,23 @@ describe("only type scopes reach the item-type axis", () => {
       );
     });
   }
+
+  it("lets the content category reach the axis without its pattern becoming a key", () => {
+    // The one family the paired assertion above cannot cover, stated rather
+    // than skipped. `content` is not an item-type scope — `isTypeScope`
+    // refuses it, so `scopeCovers` never matches it — and it still projects,
+    // because the category is a complement over the axis rather than a
+    // pattern on it.
+    //
+    // What must never happen is the pattern itself becoming a map key.
+    // `content` matches no registered type and never will, so an entry under
+    // it would read as a grant on a consent screen and resolve to nothing at
+    // the point of use.
+    const perms = scopesToTypePermissions(["content:read"]);
+    expect(Object.keys(perms)).not.toContain("content");
+    expect(perms["*"]).toBe("read");
+    expect(scopeCovers(["content:read"], "content", "read")).toBe(false);
+  });
 
   it("keeps a wildcard-bearing non-type scope off the registry match", () => {
     // The shape that makes the exclusion list dangerous rather than untidy:
@@ -1335,5 +1381,251 @@ describe("grantCoversScope", () => {
         expect(grantCoversScope([], required), required).toBe(false);
       }
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The content category
+//
+// A parent grant over everything whose stored family is not `system`. These
+// cases pin the four properties the grammar and the projection have to hold
+// on their own, before any screen or bundle offers the literal.
+// ---------------------------------------------------------------------------
+
+describe("the content root is claimed whole", () => {
+  it("parses the two members and nothing else under the root", () => {
+    expect(parseScope("content:read")).toEqual({
+      typePattern: "content",
+      operation: "read",
+      kind: "content",
+    });
+    expect(parseScope("content:write")).toEqual({
+      typePattern: "content",
+      operation: "write",
+      kind: "content",
+    });
+  });
+
+  it("refuses a wildcard under the root, which would otherwise be an item-type grant", () => {
+    // The shape that carries two readings, and the reason the root is
+    // claimed rather than shape-checked. `isValidTypePattern`'s
+    // subtree-wildcard branch checks the prefix grammar and never consults
+    // the reserved roots — which is why `core.*:read` is a scope the server
+    // issues — so the fixture is honest: these patterns are well-formed, and
+    // the root claim is the only thing refusing them. Remove it and they
+    // parse as `kind: "type"`.
+    for (const literal of ["content.*:read", "content.*:write"]) {
+      expect(isValidTypePattern(literal.split(":")[0] ?? ""), literal).toBe(
+        true,
+      );
+      expect(parseScope(literal), literal).toBeNull();
+    }
+  });
+
+  it("refuses a concrete identifier under the root, twice over", () => {
+    // Refused by the identifier grammar as well as by the root claim,
+    // because `content` is in `RESERVED_ROOTS`. Both gates are asserted
+    // rather than only the outcome, so removing either one is visible here.
+    for (const literal of ["content.anything:read", "content.note:write"]) {
+      expect(isValidTypePattern(literal.split(":")[0] ?? ""), literal).toBe(
+        false,
+      );
+      expect(parseScope(literal), literal).toBeNull();
+    }
+  });
+
+  it("refuses the bare root and any verb that is not read or write", () => {
+    for (const literal of ["content", "content:", "content:none", ":read"]) {
+      expect(parseScope(literal), literal).toBeNull();
+    }
+    // And the claim is what admits the two members, rather than merely
+    // disambiguating them: `content` is one segment, and the concrete branch
+    // of `isValidTypePattern` requires two, so the generic path would refuse
+    // `content:read` outright.
+    expect(isValidTypePattern("content")).toBe(false);
+  });
+
+  it("leaves a publisher root that merely starts the same way alone", () => {
+    // The claim tests the head before the colon, so it cannot swallow a
+    // handle that shares a prefix.
+    expect(parseScope("contented.note:read")?.kind).toBe("type");
+  });
+
+  it("refuses a type registered under the content root", () => {
+    // The other half of the claim. Without `content` in `RESERVED_ROOTS` the
+    // identifier grammar admits `content.note`, and a registered type would
+    // then share its first segment with a grant over the whole category.
+    expect(isReservedRoot("content")).toBe(true);
+    expect(isValidTypeIdentifier("content.note")).toBe(false);
+    expect(isValidTypeIdentifier("content.media.book")).toBe(false);
+    // And nobody can claim the word as a publisher handle either, which is
+    // what would let a person's types reach the same first segment.
+    expect(isValidHandle("content")).toBe(false);
+  });
+});
+
+describe("the content category projection", () => {
+  it("does not reach a system type", () => {
+    // The exclusion, over every member of the family-backed set rather than
+    // over a sample of it.
+    const read = scopesToTypePermissions(["content:read"]);
+    const write = scopesToTypePermissions(["content:write"]);
+    expect(SYSTEM_TYPE_IDS.size).toBeGreaterThan(0);
+    for (const id of SYSTEM_TYPE_IDS) {
+      expect(resolveTypePermission(id, read), id).toBe("none");
+      expect(resolveTypePermission(id, write), id).toBe("none");
+    }
+  });
+
+  it("excludes exactly the compiled system set when nothing has seeded a registry", () => {
+    // The registry-dependence contract, named. This package resolves against
+    // the compiled shipped set wherever no server has booted — a browser
+    // bundle, the SDK, this file — and against the seeded set on a server.
+    // Both are the intended behavior; what would not be is the projection
+    // silently holding a set from before a seed.
+    const perms = scopesToTypePermissions(["content:read"]);
+    const excluded = Object.entries(perms)
+      .filter(([, level]) => level === "none")
+      .map(([key]) => key)
+      .sort();
+    expect(excluded).toEqual([...SYSTEM_TYPE_IDS, "system.*"].sort());
+  });
+
+  it("reaches ordinary content, including a type registered later", () => {
+    const read = scopesToTypePermissions(["content:read"]);
+    expect(resolveTypePermission("core.note", read)).toBe("read");
+    expect(resolveTypePermission("readwise.highlight", read)).toBe("read");
+    // The whole point: a type nobody has registered yet is covered, because
+    // the category is a complement and names no rows.
+    expect(resolveTypePermission("acme.not_registered_yet", read)).toBe("read");
+    const write = scopesToTypePermissions(["content:write"]);
+    expect(resolveTypePermission("core.note", write)).toBe("write");
+    expect(resolveTypePermission("acme.not_registered_yet", write)).toBe(
+      "write",
+    );
+  });
+
+  it("never claims a write the reserved-namespace gate refuses", () => {
+    // `marfa.*` types are family `integration`, so they are squarely inside
+    // the category and their reads are unrestricted. Their writes are refused
+    // by the middleware for every credential that is not `is_platform` or a
+    // manifest-granted runtime credential, and an OAuth token is neither. A
+    // parent that claimed the write would put something on a consent screen
+    // that will never work.
+    const marfaTypes = [...TYPE_REGISTRY.keys()].filter((id) =>
+      id.startsWith("marfa."),
+    );
+    expect(marfaTypes.length).toBeGreaterThan(0);
+    const write = scopesToTypePermissions(["content:write"]);
+    const read = scopesToTypePermissions(["content:read"]);
+    for (const id of marfaTypes) {
+      // The fixture has to be honest: these are in the category, not
+      // excluded from it, so the clamp is a level and not an exclusion.
+      expect(INTEGRATION_TYPE_IDS.has(id), id).toBe(true);
+      expect(resolveTypePermission(id, write), id).toBe("read");
+      expect(resolveTypePermission(id, read), id).toBe("read");
+    }
+  });
+
+  it("lets a literal naming a row win over the category's default for it", () => {
+    // Order-independence, and the collision that makes it matter: the shipped
+    // read bundle names `system.connection:read`, which the category
+    // excludes. Whichever ran last would otherwise decide the answer.
+    const forward = scopesToTypePermissions([
+      "content:read",
+      "system.connection:read",
+    ]);
+    const reversed = scopesToTypePermissions([
+      "system.connection:read",
+      "content:read",
+    ]);
+    expect(resolveTypePermission("system.connection", forward)).toBe("read");
+    expect(resolveTypePermission("system.connection", reversed)).toBe("read");
+    // And the rest of the system family is untouched by that one literal.
+    expect(resolveTypePermission("system.credential", forward)).toBe("none");
+  });
+
+  it("resolves the ordered levels, with write covering read", () => {
+    const both = scopesToTypePermissions(["content:read", "content:write"]);
+    expect(resolveTypePermission("core.note", both)).toBe("write");
+    const reversed = scopesToTypePermissions(["content:write", "content:read"]);
+    expect(resolveTypePermission("core.note", reversed)).toBe("write");
+  });
+
+  it("changes nothing for a scope set holding no content literal", () => {
+    expect(
+      scopesToTypePermissions(["core.note:read", "core.task:write"]),
+    ).toEqual({ "core.note": "read", "core.task": "write" });
+    expect(scopesToTypePermissions([])).toEqual({});
+  });
+});
+
+describe("the content category is covered by holding it and by nothing else", () => {
+  // One case, two held sets, one assertion each way — the arm decides from
+  // the difference between a parent grant and a row grant, so both have to be
+  // run through it.
+  const everyRow = [
+    ...[...TYPE_REGISTRY.keys()].map((id) => `${id}:read`),
+    ...[...TYPE_REGISTRY.keys()].map((id) => `${id}:write`),
+  ];
+
+  it("is not reached by a grant naming every row", () => {
+    expect(everyRow.length).toBeGreaterThan(20);
+    expect(grantCoversScope(everyRow, "content:read")).toBe(false);
+    expect(grantCoversScope(everyRow, "content:write")).toBe(false);
+  });
+
+  it("is not reached by any wildcard", () => {
+    for (const held of ["*:write", "*:read", "core.*:write"]) {
+      expect(grantCoversScope([held], "content:read"), held).toBe(false);
+      expect(grantCoversScope([held], "content:write"), held).toBe(false);
+    }
+  });
+
+  it("is reached by holding it, at or above the level asked about", () => {
+    expect(grantCoversScope(["content:read"], "content:read")).toBe(true);
+    expect(grantCoversScope(["content:read"], "content:write")).toBe(false);
+    expect(grantCoversScope(["content:write"], "content:read")).toBe(true);
+    expect(grantCoversScope(["content:write"], "content:write")).toBe(true);
+  });
+
+  it("still lets a row grant grant exactly its rows", () => {
+    expect(grantCoversScope(everyRow, "core.note:write")).toBe(true);
+    expect(grantCoversScope(everyRow, "acme.registered_later:read")).toBe(
+      false,
+    );
+  });
+
+  it("still reaches a capability only by naming it", () => {
+    expect(grantCoversScope(["content:write"], "capability.webhooks")).toBe(
+      false,
+    );
+    expect(
+      grantCoversScope(["capability.webhooks"], "capability.webhooks"),
+    ).toBe(true);
+  });
+
+  it("covers a named type forward, through the type arm and no new code", () => {
+    // The direction with no arm of its own: the category projects to the
+    // global wildcard and `resolveTypePermission` takes it from there.
+    expect(grantCoversScope(["content:read"], "core.note:read")).toBe(true);
+    expect(grantCoversScope(["content:read"], "core.note:write")).toBe(false);
+    expect(grantCoversScope(["content:write"], "core.note:write")).toBe(true);
+    // Including a type registered after the grant was made, which is the
+    // whole reason the category exists.
+    expect(grantCoversScope(["content:read"], "acme.shipped_later:read")).toBe(
+      true,
+    );
+    // And not into the system family.
+    expect(grantCoversScope(["content:write"], "system.credential:read")).toBe(
+      false,
+    );
+    // Nor a `marfa.*` write, matching the clamp.
+    expect(
+      grantCoversScope(["content:write"], "marfa.podcast.show:write"),
+    ).toBe(false);
+    expect(grantCoversScope(["content:write"], "marfa.podcast.show:read")).toBe(
+      true,
+    );
   });
 });

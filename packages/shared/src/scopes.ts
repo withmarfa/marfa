@@ -1,5 +1,6 @@
 import type { MetadataPermission, TypePermission } from "./types.js";
 import { isValidTypePattern, resolveTypePermission } from "./validation.js";
+import { SYSTEM_TYPE_IDS } from "./type-registry.js";
 import {
   GLOBAL_TYPE_WILDCARD,
   subtreeWildcardRoot,
@@ -11,9 +12,11 @@ import {
 // ---------------------------------------------------------------------------
 
 /**
- * Parsed representation of a scope string. Six shapes today:
+ * Parsed representation of a scope string. Seven shapes today:
  *   - item-type scope:  "core.note:read"     → kind="type", typePattern="core.note"
  *                       ("*:read" / "*:write" are the global type wildcard)
+ *   - content category: "content:read" / "content:write"
+ *                       → kind="content", typePattern="content"
  *   - metadata scope:   "metadata:write"     → kind="metadata", subresource undefined
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
@@ -227,6 +230,94 @@ export function hasCapability(
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Content-category scopes
+// ---------------------------------------------------------------------------
+
+/**
+ * The reserved root the content-category scopes live under. Reserved in
+ * `RESERVED_ROOTS`, so `POST /types` refuses to register anything beneath
+ * it and no publisher handle can claim the word.
+ *
+ * Claimed WHOLE, exactly as {@link CAPABILITY_ROOT} is, and for the same
+ * reason rather than for symmetry. The claim does two things and the second
+ * is the one worth writing down.
+ *
+ * It is what makes the two members parse at all. `content` is a single
+ * segment and the concrete branch of `isValidTypePattern` requires two, so
+ * `content:read` clears the scope regex and is then refused by the pattern
+ * check — without the claim it is not a scope, rather than a scope meaning
+ * something else.
+ *
+ * And it is what refuses `content.*:read`, which is the shape that genuinely
+ * carries two readings. The subtree-wildcard branch of `isValidTypePattern`
+ * checks the prefix grammar and never consults the reserved roots, which is
+ * why `core.*:read` is a scope the server issues — so without the claim
+ * `content.*:read` parses as an ordinary item-type grant over a wildcard
+ * sitting under the category root, and reads on a consent screen as the
+ * category grant it is not. Refusing the whole namespace except its two
+ * members is the only reading with no second interpretation.
+ */
+export const CONTENT_ROOT = "content";
+
+/**
+ * A grant over the whole content category: every type a person would call
+ * theirs, including whatever is registered after the grant was made.
+ *
+ * **Why a kind of its own rather than a namespace wildcard.** The vendored
+ * OAuth provider re-validates what the consent hook hands back with
+ * `new Set(client.scopes).has(scope)` — exact, with no pattern matching — so
+ * a concrete literal admitted on the grounds that a wildcard covers it is
+ * refused a moment later as `invalid_scope` on the WHOLE request, riding a
+ * redirect the application may never render. Breadth belongs in what gets
+ * written, not in what gets compared: this is a literal the provider matches
+ * exactly, and the breadth lives in what {@link scopesToTypePermissions}
+ * projects it into.
+ *
+ * **Why not `*:read`.** The global wildcard also reaches stored credentials,
+ * devices, webhooks and other applications' private state. The category is
+ * defined as everything whose stored family is not `system`, which is
+ * exactly the set a person would call theirs.
+ *
+ * **Ordered levels, not independent flags.** `content:write` covers
+ * `content:read`; neither is reached by any wildcard, and holding every
+ * concrete type literal in the space does not add up to either.
+ */
+export type ContentScope = "content:read" | "content:write";
+
+/** Both content-category literals, weakest first. */
+export const CONTENT_SCOPES: readonly ContentScope[] = [
+  "content:read",
+  "content:write",
+];
+
+/** Returns true if the literal is one of the two content-category scopes. */
+export function isContentScope(scope: string): scope is ContentScope {
+  return scope === "content:read" || scope === "content:write";
+}
+
+/**
+ * The level a scope set holds on the content category, or undefined for a
+ * set holding neither literal.
+ *
+ * The levels are ordered, so a set naming both resolves to `write`. Nothing
+ * else in the set contributes: a wildcard does not reach the category and
+ * neither does naming every type in it, which is what makes an existing
+ * grant a row grant rather than a silently promoted parent one.
+ */
+function heldContentLevel(
+  scopes: readonly string[],
+): "read" | "write" | undefined {
+  let level: "read" | "write" | undefined;
+  for (const scope of scopes) {
+    const parsed = parseScope(scope);
+    if (parsed?.kind !== "content") continue;
+    if (parsed.operation === "write") return "write";
+    if (parsed.operation === "read") level = "read";
+  }
+  return level;
+}
+
 export interface ParsedScope {
   typePattern: string;
   /** "read" / "write" for type / edge / metadata scopes; "none" for
@@ -244,7 +335,7 @@ export interface ParsedScope {
    * whatever nobody has thought of yet, and on the item-type axis being
    * admitted means having a pattern matched against the live type registry.
    */
-  kind: "type" | "edge" | "metadata" | "oidc" | "capability";
+  kind: "type" | "edge" | "metadata" | "oidc" | "capability" | "content";
   /** Present when kind === "edge"; the edge type id or "*". */
   edgeType?: string;
   /** Present when kind === "metadata" and the scope names a sub-resource (e.g. "types"). */
@@ -276,6 +367,16 @@ export function isTypeScope(parsed: ParsedScope): boolean {
   switch (parsed.kind) {
     case "type":
       return true;
+    case "content":
+      // No, despite the content category being a statement about item types.
+      // This predicate answers a narrower question than its name suggests:
+      // whether a scope belongs in `type_permissions` UNDER ITS OWN PATTERN
+      // as the key. A content scope's pattern is `content`, which is not a
+      // type pattern and never matches a registered type, so admitting one
+      // here would mint an entry that resolves nothing while reading as a
+      // grant. {@link scopesToTypePermissions} projects the category through
+      // an arm of its own, ahead of the loop this gate stands in.
+      return false;
     case "edge":
     case "metadata":
     case "oidc":
@@ -346,6 +447,29 @@ export function parseScope(scope: string): ParsedScope | null {
       operation: "none",
       kind: "capability",
       capability: scope,
+    };
+  }
+  // The content root is claimed whole, on the same reasoning as the
+  // capability root above: `content.*:read` clears `isValidTypePattern` for
+  // exactly the reason `capability.*:read` does, and would otherwise parse
+  // as an item-type grant that reads like the category grant and is neither.
+  // The claim is also what admits the two members, since `content` is one
+  // segment and the concrete-identifier branch requires two.
+  //
+  // The head is taken before the colon so one test covers `content:read`,
+  // the bare root and everything under `content.`, and so a root merely
+  // starting with the same letters is not swallowed —
+  // `contented.note:read` is an ordinary publisher type and falls through.
+  const contentHead = scope.split(":", 1)[0] ?? "";
+  if (
+    contentHead === CONTENT_ROOT ||
+    contentHead.startsWith(`${CONTENT_ROOT}.`)
+  ) {
+    if (!isContentScope(scope)) return null;
+    return {
+      typePattern: CONTENT_ROOT,
+      operation: scope === "content:write" ? "write" : "read",
+      kind: "content",
     };
   }
   if (scope === "metadata:read" || scope === "metadata:write") {
@@ -449,16 +573,91 @@ export function expandWildcardScopes(
 // ---------------------------------------------------------------------------
 
 /**
+ * The content category as a permission map: everything whose stored family
+ * is not `system`, expressed as a complement rather than an enumeration.
+ *
+ * **Nothing here is enumerated, and that is the answer to the first question
+ * a reviewer asks.** The category is "everything except the system family",
+ * so the map names the global wildcard and then subtracts. There is no list
+ * of a space's types to build, therefore nothing that could carry one
+ * space's vocabulary into another's grant. Which types the wildcard actually
+ * reaches is decided per request by {@link resolveTypePermission} against
+ * the caller's own space, exactly as it is for `*:read` today.
+ *
+ * Four deliberate entries:
+ *
+ * - **`SYSTEM_TYPE_IDS` is the authority for the exclusion, and it is
+ *   family-backed.** Boot reads the stored `family` column off every
+ *   `origin = 'platform'` row and refills the set from it, pinning a row
+ *   this build cannot read to `system`. So it answers correctly for a type
+ *   the build has retired and after a rollback, neither of which a name test
+ *   can do.
+ * - **`system.*` is a BELT, not the authority.** It catches nothing today:
+ *   registration under a reserved root is refused for every credential, so a
+ *   `system.` type that is not in `SYSTEM_TYPE_IDS` cannot exist. It costs
+ *   one entry and it is here for the build that somehow ships one. Deleting
+ *   `SYSTEM_TYPE_IDS` and keeping this string is the change to refuse: every
+ *   system type ships under `system.` today, so the swap looks equivalent
+ *   and stops being so the moment a system-family type is named anything
+ *   else.
+ * - **`marfa.*` reads but does not write.** Those types are family
+ *   `integration`, so they are squarely in the category and their reads are
+ *   unrestricted. But the middleware refuses every `marfa.*` write from a
+ *   credential that is not `is_platform` or a manifest-granted runtime
+ *   credential, and an OAuth token is neither. **A parent must never claim
+ *   what a hard gate will refuse**: a grant that reads as covering a write
+ *   nothing will ever permit is a consent screen telling a person something
+ *   untrue, and a permission model that misdescribes itself where it could
+ *   instead have refused out loud.
+ * - **The global entry carries the level itself**, so `resolveTypePermission`
+ *   does the rest unchanged: exact beats the longest subtree wildcard beats
+ *   the global one.
+ */
+function contentCategoryPermissions(
+  level: "read" | "write",
+): Record<string, TypePermission> {
+  const perms: Record<string, TypePermission> = {
+    [GLOBAL_TYPE_WILDCARD]: level,
+  };
+  for (const id of SYSTEM_TYPE_IDS) perms[id] = "none";
+  perms[`system.${GLOBAL_TYPE_WILDCARD}`] = "none";
+  if (level === "write") {
+    perms[`marfa.${GLOBAL_TYPE_WILDCARD}`] = "read";
+  }
+  return perms;
+}
+
+/**
  * Converts a list of granted scopes into the type_permissions map format
  * used by the existing auth middleware. Write implies read.
  *
- * Only scopes `isTypeScope` positively identifies get in. Anything else,
- * including a family this build has never heard of, contributes nothing.
+ * Only scopes `isTypeScope` positively identifies get in, plus the content
+ * category, which has an arm of its own because its pattern is not a type
+ * pattern. Anything else, including a family this build has never heard of,
+ * contributes nothing.
+ *
+ * **This function is registry-dependent, which it was not before.** It reads
+ * `SYSTEM_TYPE_IDS`, and that set is data an instance holds rather than a
+ * fact about the build: a server seeds it from `custom_types` at boot, and
+ * every caller of this function runs after seeding. In a browser bundle or
+ * in the SDK there is no boot, so it resolves against the compiled shipped
+ * set — the same contract {@link typeMatchesPattern} already has against
+ * `TYPE_REGISTRY`, and the same one every other registry-reading helper in
+ * this package carries. A scope list holding no content literal touches none
+ * of this and projects exactly as it did.
  */
 export function scopesToTypePermissions(
   scopes: readonly string[],
 ): Record<string, TypePermission> {
   const perms: Record<string, TypePermission> = {};
+
+  // The category first, the named literals over the top, so the result does
+  // not depend on the order the scopes arrived in. Both directions of that
+  // collision are real: the shipped read bundle names `system.connection:read`,
+  // which this projection excludes, and whichever of the two ran last would
+  // otherwise decide the answer.
+  const content = heldContentLevel(scopes);
+  if (content) Object.assign(perms, contentCategoryPermissions(content));
 
   for (const scope of scopes) {
     const parsed = parseScope(scope);
@@ -466,7 +665,18 @@ export function scopesToTypePermissions(
     if (!isTypeScope(parsed)) continue;
 
     const current = perms[parsed.typePattern];
-    if (parsed.operation === "write" || current === undefined) {
+    // The stronger of the two wins, which is the rule this loop already
+    // applied — `current === "none"` is the only clause added, and it can
+    // only be reached by an entry the category put there. A scope literal is
+    // never `"none"`: the grammar has no way to spell one, so lowering a row
+    // below its parent is not expressible here and this cannot narrow. A set
+    // holding no content literal never sees a `"none"` and projects exactly
+    // as it did before.
+    if (
+      parsed.operation === "write" ||
+      current === undefined ||
+      current === "none"
+    ) {
       perms[parsed.typePattern] = parsed.operation;
     }
   }
@@ -779,6 +989,28 @@ export function grantCoversScope(
   // built by hand or arriving from a stale build cannot reach a matcher with
   // no operation to match on.
   if (need.operation === "none") return false;
+
+  // The content category, before the axis logic, because it is a membership
+  // question wearing a verb. Held `content:read` covers `content:read`; held
+  // `content:write` covers both; nothing else covers either.
+  //
+  // **A grant naming every type in the space does not cover the parent, and
+  // that is the point rather than a limitation.** A row grant is a statement
+  // about named things and a parent grant is a statement about the category,
+  // so promoting the first to the second would hand an application types
+  // nobody approved. Every existing grant is therefore filed as new at the
+  // next consent and the person is asked once — the migration cost the
+  // design rules for, not a regression.
+  //
+  // Only this direction is special. Held `content:read`, asked about
+  // `core.note:read`, is answered by the `type` arm below through the
+  // projection, with no code of its own: the category resolves to the global
+  // wildcard and `resolveTypePermission` takes it from there.
+  if (need.kind === "content") {
+    const level = heldContentLevel(held);
+    if (level === "write") return true;
+    return level === "read" && need.operation === "read";
+  }
 
   // Note what is deliberately NOT here: a `held.includes(required)`
   // short-circuit ahead of the axis logic. It was, and it was unsound on
