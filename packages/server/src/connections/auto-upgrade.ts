@@ -366,9 +366,10 @@ export class ConnectionUpgrader {
  *  lines a person reads before deciding. */
 export interface PendingConsent {
   connection_id: string;
-  /** The connection's own label, so a decision names something a person
-   *  recognizes rather than an identifier. */
-  label: string | null;
+  /** The manifest's name, which is what the approval surface shows. A
+   *  connection carries no name of its own: `system.connection` declares no
+   *  such field, so an entry here once offered a `label` that nothing had
+   *  ever written and every caller read as null. */
   manifest_name: string;
   from_version: string;
   to_version: string;
@@ -396,9 +397,10 @@ export interface PendingConsent {
  * stays so that a reordering which made it reachable finds a guard rather
  * than an assumption.
  *
- * A connection that cannot be read for its label is dropped with a log
- * line rather than failing the list. The survey walked it a moment ago,
- * so this fires when it is trashed or deleted in between, and one
+ * The connection is still read although every field on the entry now comes
+ * from the survey. The read is the check rather than a fetch, and what it
+ * checks is written where it happens. A read that throws drops that one
+ * entry with a log line rather than failing the list, because one
  * connection hiding every other pending decision is the failure the survey
  * itself already refuses.
  */
@@ -422,10 +424,8 @@ export async function listPendingConsent(
       // entry is right either way, and keeps the fence doubled rather than
       // computed and thrown away.
       if (connection === null) continue;
-      const label = (connection.properties as { label?: unknown }).label;
       pending.push({
         connection_id: drift.connection_id,
-        label: typeof label === "string" ? label : null,
         manifest_name: preview.current.manifest_name,
         from_version: preview.current.manifest_version,
         to_version: preview.candidate.manifest_version,

@@ -346,7 +346,6 @@ const PendingConsentSchema = z.object({
   pending: z.array(
     z.object({
       connection_id: z.string(),
-      label: z.string().nullable(),
       manifest_name: z.string(),
       from_version: z.string(),
       to_version: z.string(),
