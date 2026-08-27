@@ -1466,7 +1466,7 @@ async function resolvePriorScopes(
  * User-facing copy for the consent surfaces, keyed by the `typePattern` a
  * scope parses to: a type id, a wildcard pattern, an `edge.<type>` pattern,
  * or a metadata sub-resource path. Intentionally separate from the type
- * registry's `description` field — those are written for developers
+ * registry's `description` field. Those are written for developers
  * (reference notes, schema rationale, internal dev notes, etc.) and read
  * fine in API docs but land poorly on a consent screen. Keep these short,
  * plain, second-person, and one line each.
@@ -1521,7 +1521,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.file.video": "Videos.",
 
   // Media
-  "core.media": "Media — books, films, music, podcasts.",
+  "core.media": "Media: books, films, music, podcasts.",
   "core.media.album": "Music albums.",
   "core.media.article": "Articles.",
   "core.media.book": "Books.",
@@ -1540,13 +1540,13 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "system.integration": "Available integrations.",
   "system.webhook": "Webhook subscriptions.",
 
-  // Edge types — relationships between items.
+  // Edge types: relationships between items.
   "edge.about": "Links between items and what they're about.",
   "edge.parent-of": "Parent and child relationships.",
   "edge.in-thread": "Items grouped into threads.",
   "edge.attached-to": "File attachments on items.",
   "edge.references": "References between items.",
-  "edge.authored-by": "Authorship — who created what.",
+  "edge.authored-by": "Who created what.",
   "edge.derived-from": "Items derived from other items.",
   "edge.supersedes": "Updates and replacements between items.",
 
