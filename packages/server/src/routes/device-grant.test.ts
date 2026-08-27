@@ -7,6 +7,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { setActivePermissionBundles } from "../config.js";
+import { grantCoversScope } from "@withmarfa/shared";
 
 /**
  * Tests for the Device Authorization Grant (RFC 8628) surface:
@@ -753,6 +754,481 @@ describe("POST /auth/device/consent — approve / deny", () => {
     const poll = await pollToken(ctx, initResult.device_code, clientId);
     expect(poll.status).toBe(400);
     expect(poll.body.error).toBe("access_denied");
+  });
+});
+
+/**
+ * The device screen confirms a scope list rather than offering one to edit,
+ * so an approval may widen a standing grant and must never shrink one. These
+ * pin both directions, plus the consequence at the token step: the record can
+ * now hold more than this device asked for, and what it is handed must still
+ * be what it asked for.
+ *
+ * The standing grant is established by an earlier device approval rather than
+ * a browser consent because the record is the same row either way, and this
+ * file already owns the machinery for one.
+ */
+describe("POST /auth/device/consent, approving merges into a standing grant", () => {
+  /** Initiate for `scope`, approve at the consent screen, and hand back the
+   *  initiation so a caller can also poll for the token it issues. */
+  async function approveDeviceFlow(
+    c: TestContext,
+    clientId: string,
+    cookie: string,
+    scope: string,
+  ): Promise<Awaited<ReturnType<typeof initiate>>> {
+    const init = await initiate(c, clientId, scope);
+    const res = await c.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: new URLSearchParams({
+          user_code: init.user_code,
+          decision: "approve",
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    return init;
+  }
+
+  /** The one projected grant, whatever its `properties.status` says. Item
+   *  state stays "active" across a revoke — only the property flips — so this
+   *  finds the row either way. Asserting the count keeps a merge that
+   *  accidentally forked the projection from reading as one that worked. */
+  async function standingGrant(c: TestContext) {
+    const items = await c.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    return items.data[0]!;
+  }
+
+  /** The scope literals the one projected grant holds. */
+  async function standingGrantScopes(c: TestContext): Promise<string[]> {
+    return (await standingGrant(c)).properties.scopes as string[];
+  }
+
+  /** Revoke the standing grant the way the user does: the form post behind
+   *  the Disconnect button on `/auth/security`. Driven through the route
+   *  rather than by writing `status` onto the row, because the cascade
+   *  through the plugin's token tables and the consent lock are both part of
+   *  what a revoke IS, and a hand-written property would test a fiction of
+   *  one. */
+  async function revokeStandingGrant(
+    c: TestContext,
+    cookie: string,
+  ): Promise<void> {
+    const grant = await standingGrant(c);
+    const res = await c.app.fetch(
+      new Request(`${ORIGIN}/auth/grants/${grant.id}/revoke`, {
+        method: "POST",
+        headers: { origin: ORIGIN, cookie },
+      }),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location") ?? "").toContain("notice=grant_revoked");
+    // The revoke has to have landed for anything after it to mean
+    // something. Without this the test still passes when the route quietly
+    // does nothing, on the strength of a merge that had nothing to restore.
+    const after = await standingGrant(c);
+    expect(after.properties.status).toBe("revoked");
+    expect(after.properties.revoked_at).toBeTruthy();
+  }
+
+  it("keeps a scope the standing grant holds and this device did not name", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-narrower@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(scopes).toContain("core.task:write");
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(true);
+    expect(grantCoversScope(scopes, "core.note:read")).toBe(true);
+  });
+
+  // REGRESSION: `findGrantItemId` has no status predicate and
+  // `revokeProjectedGrant` leaves `scopes` verbatim on the row it flips, so a
+  // revoked grant came back through the merge as a standing one. A device
+  // login asking for less than the user had revoked reactivated the record
+  // holding the scope they withdrew, on a consent screen that never showed
+  // it. A device approval never narrows a STANDING grant; a revoked grant is
+  // not standing.
+  it("does not restore a scope the user revoked", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-revoked@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    await revokeStandingGrant(ctx, cookie);
+
+    // The device logs in again, asking for less than the revoked record
+    // holds and never showing `core.task:write` on its consent screen.
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    // Reactivating the row on re-consent is the intended behavior and has to
+    // survive the fix — the failure being pinned is what it reactivates AT.
+    const grant = await standingGrant(ctx);
+    expect(grant.properties.status).toBe("active");
+    expect(grant.properties.revoked_at).toBeUndefined();
+
+    const scopes = grant.properties.scopes as string[];
+    expect(scopes).toEqual(["core.note:read"]);
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(false);
+  });
+
+  // The clause above must not turn every re-approval into an overwrite: an
+  // approval against a grant that is still active merges as it always did.
+  // The two live side by side because the fix is one predicate away from
+  // taking the merge out altogether, and only this direction notices.
+  it("still merges into a grant that was never revoked", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-not-revoked@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    const grant = await standingGrant(ctx);
+    expect(grant.properties.status).toBe("active");
+    expect(
+      grantCoversScope(grant.properties.scopes as string[], "core.task:write"),
+    ).toBe(true);
+  });
+
+  // A grant is hidden from both read surfaces on TWO axes, and the merge read
+  // one. `softDeleteState` puts a `system.*` item in `revoked` rather than
+  // `trashed`, and the soft delete leaves `properties.status` alone, so this
+  // row reads "active" on the axis the merge checked and "revoked" on the axis
+  // it did not. `items.get` hides only trashed rows, so it comes back.
+  //
+  // Driven through `DELETE /items/{id}` with the platform credential rather
+  // than written onto the row, because the shape being pinned is one the API
+  // actually produces, and a hand-stamped `state` would prove only that the
+  // predicate reads the field.
+  it("does not merge into a grant whose lifecycle state is not active", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-state-revoked@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    const grantId = (await standingGrant(ctx)).id;
+
+    const deleted = await request(ctx.app, "DELETE", `/items/${grantId}`, {
+      key: ctx.adminKey,
+    });
+    expect(deleted.status).toBe(200);
+    // The fixture only means something if it is admitted by the predicate the
+    // clause was added to. `status` still reads "active", so the merge would
+    // take these scopes as standing were the `state` clause removed.
+    const hidden = await ctx.storage.items.get(grantId);
+    expect(hidden?.state).toBe("revoked");
+    expect(hidden?.properties.status).toBe("active");
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    // Observed on the row the approval reached, before anything else can move
+    // it: resurrected scopes are visible here and nowhere the user can look,
+    // since neither read surface lists a row in this state.
+    const after = await ctx.storage.items.get(grantId);
+    expect(after?.properties.granted_at).not.toBe(
+      hidden?.properties.granted_at,
+    );
+    const scopes = after?.properties.scopes as string[];
+    expect(scopes).toEqual(["core.note:read"]);
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(false);
+  });
+
+  it("adds a scope the standing grant does not reach", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-wider@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(scopes).toContain("core.task:write");
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(true);
+  });
+
+  // The merge happens on effective permissions because a literal one can
+  // narrow. Scope resolution gives an exact type id precedence over a wildcard
+  // spanning it, so parking `core.note:read` beside a standing `core.*:write`
+  // pins `core.note` to read and takes away a write nobody unticked. The unit
+  // coverage is in `device-scope-merge.test.ts`; this pins that the route
+  // actually routes through it.
+  it("does not park a covered literal beside the wildcard that covers it", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-covered@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.*:write");
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(scopes).not.toContain("core.note:read");
+    expect(grantCoversScope(scopes, "core.note:write")).toBe(true);
+  });
+
+  // The other direction, which the coverage-append merge got wrong: skipping a
+  // pin the standing wildcard already covers leaves the record conferring a
+  // write neither side conferred.
+  it("does not confer a write neither the standing grant nor the request did", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-escalation@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.*:read");
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.*:write core.note:read",
+    );
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(grantCoversScope(scopes, "core.note:write")).toBe(false);
+    // Not vacuous: the request genuinely widened the rest of the namespace, so
+    // a merge that refused to widen anything would also pass the line above.
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(true);
+  });
+
+  // Coverage is not reflexive on a pinned set, so a literal merge failed the
+  // stored `core.*:write` against its own record and re-appended it on every
+  // login. Five repeats took the array from two entries to seven.
+  //
+  // The CLI keeps sending the request it was built with while the record has
+  // been canonicalized upward, so `core.note` is spelled differently on the
+  // two sides from the second login onward. Repeating a request the record
+  // already spells identically would not exercise that.
+  it("does not grow the record when a CLI signs in again and again", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-repeat@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.*:write");
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+    const first = await standingGrantScopes(ctx);
+    for (let i = 0; i < 4; i++) {
+      await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+      expect(await standingGrantScopes(ctx)).toEqual(first);
+    }
+  });
+
+  // An approval merges, so the request no longer describes what the record
+  // ends up holding. Logging only the request made a grant look like it
+  // acquired scopes from nowhere.
+  it("audits the approved scopes and the record the merge produced", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-audit@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.task:write");
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    // The audit write is fire-and-forget, so poll until the re-consent row
+    // lands rather than racing it.
+    const ctxRef = ctx;
+    const rows = await waitForAudit(
+      () => ctxRef.storage.audit.list({ action: "auth.grant.created" }),
+      (r) => r.data.some((row) => row.details.created === false),
+    );
+    const reconsent = rows.data.find((r) => r.details.created === false);
+    expect(reconsent).toBeDefined();
+    // The request, unchanged: this is what the device asked for and what its
+    // screen showed.
+    expect(reconsent?.details.scopes).toEqual(["core.note:read"]);
+    // The record after the merge, which is the half the request cannot supply.
+    // Neither literal reaches the other, so the merge is the plain pair and
+    // can be asserted exactly.
+    expect(reconsent?.details.resulting_scopes).toEqual([
+      "core.task:write",
+      "core.note:read",
+    ]);
+  });
+
+  it("issues the device a token for what it asked for, not for the merged grant", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-token-scope@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    const narrow = await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read",
+    );
+
+    const poll = await pollToken(ctx, narrow.device_code, clientId);
+    expect(poll.status).toBe(200);
+    expect(poll.body.scope).toBe("core.note:read");
+
+    // The response field is a claim; the minted row is the authority, and the
+    // two are set from different expressions. Spending the token is what tells
+    // them apart, so this asks the data plane rather than re-reading the JSON.
+    const write = await ctx.app.fetch(
+      new Request(`${ORIGIN}/items`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: ORIGIN,
+          authorization: `Bearer ${poll.body.access_token as string}`,
+        },
+        body: JSON.stringify({
+          type: "core.task",
+          properties: { title: "from a device that never asked" },
+        }),
+      }),
+    );
+    expect(write.status).toBe(403);
+  });
+
+  it("withholds a refresh token from a device that did not ask to stay signed in", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-token-offline@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "offline_access core.note:read",
+    );
+    const narrow = await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read",
+    );
+
+    const poll = await pollToken(ctx, narrow.device_code, clientId);
+    expect(poll.status).toBe(200);
+    expect(poll.body.access_token).toMatch(/^marfa_at_/);
+    expect(poll.body.refresh_token).toBeUndefined();
+  });
+
+  // The other half of the same rule. A device code outlives its approval by up
+  // to the rest of its TTL, so a narrowing on the consent screen can land in
+  // between, and that narrowing has already revoked the live tokens. The poll
+  // that follows must not hand back what was just taken away.
+  it("does not reissue access the standing grant no longer reaches", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-token-narrowed@example.com",
+      "correct horse",
+    );
+
+    const wide = await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+
+    // Stands in for the consent screen narrowing the grant, which rewrites
+    // exactly this record. Written directly because the point under test is
+    // what the token step reads, not how the record came to say it.
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    const grant = items.data[0]!;
+    await ctx.storage.items.update(
+      grant.id,
+      { properties: { scopes: ["core.note:read"] } },
+      grant.space_id ?? undefined,
+    );
+
+    const poll = await pollToken(ctx, wide.device_code, clientId);
+    expect(poll.status).toBe(200);
+    expect(poll.body.scope).toBe("core.note:read");
   });
 });
 

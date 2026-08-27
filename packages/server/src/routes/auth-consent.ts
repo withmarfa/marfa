@@ -1295,6 +1295,20 @@ async function projectGrantOnConsent(
     // destructive rather than annoying: a widening misread as a narrowing
     // revokes every live access token the client holds. `core.note:read`
     // is not lost when the new grant says `core.*:read`.
+    //
+    // That a narrowing can happen here at all is what separates this
+    // surface from the device one, and the pair is worth stating in both
+    // places. This screen offers per-scope toggles: a set arriving smaller
+    // than the standing grant is the user having unticked something, so it
+    // is honored, and honoring it means the tokens carrying the removed
+    // scopes have to stop working. The device screen has no toggles. It
+    // confirms a list, so the same shrink there carries no such decision,
+    // and `createUserAppGrant` in `routes/auth-pages.ts` merges into the
+    // standing grant instead of replacing it, and merges against nothing
+    // when that grant has been revoked, so a re-approval cannot put back a
+    // scope the user withdrew. Neither surface narrows without the user
+    // having asked, and neither leaves a record claiming access the user
+    // withdrew.
     if (priorScopes.some((s) => !grantCoversScope(opts.scopes, s))) {
       const provider = storage.oauthProvider;
       if (typeof provider?.revokeAccessTokensForGrant !== "function") {

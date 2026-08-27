@@ -27,6 +27,7 @@ import {
   stampOAuthGrantLastUsed,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
+import { mergeDeviceApprovalScopes } from "./device-scope-merge.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import {
   bundlePublishedScopes,
@@ -247,13 +248,28 @@ function selfServeEdgePermissions(
  * re-consent so the row gets full ItemStore treatment: `space_id`
  * stamping, search indexing, metadata-row insertion, versions snapshot on
  * re-consent, the `created`/`updated` event emission, and `source` /
- * `origin` stamping. Returns the connection-item id + whether the call
- * created vs updated the projection.
+ * `origin` stamping. Returns the connection-item id, whether the call
+ * created vs updated the projection, and the scope list the record now
+ * holds, which on re-consent is the merge rather than the request, so the
+ * caller's audit row can report both without recomputing it.
  *
  * Uses `findGrantItemId` to detect the re-consent case and routes through
  * `items.update` (same shape as the code-flow consent's
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
- * cleared on re-consent to avoid stale-revoked projections.
+ * cleared on re-consent to avoid stale-revoked projections. The scopes it
+ * writes there are the merge described in `device-scope-merge.ts`, not the
+ * request. This surface confirms a list rather than offering one to edit, so
+ * it may widen a standing grant and never shrinks one — and a revoked grant
+ * is not a standing one, so it merges against nothing and the record comes
+ * back at the request alone.
+ *
+ * **`source` is the device literal and not the wider union it used to
+ * declare.** There is one caller. The merge rule inside is specific to a
+ * screen with no per-scope toggles, and the authorize surface has the
+ * deliberate opposite contract: a narrowing there is a decision the user
+ * made and revokes the tokens carrying what was dropped. Advertising this
+ * function as serving both would let a future authorize caller pick it up
+ * and silently disable that revoke.
  *
  * `spaceId` resolves from the consenting Better Auth user's marfa `users`
  * row in hosted mode; in single-space mode (no `users` store) the grant
@@ -266,8 +282,8 @@ async function createUserAppGrant(
   consentingUser: MarfaAuthSessionUser,
   clientId: string,
   scopes: string[],
-  source: "marfa/oauth/authorize" | "marfa/oauth/device",
-): Promise<{ id: string; created: boolean }> {
+  source: "marfa/oauth/device",
+): Promise<{ id: string; created: boolean; scopes: string[] }> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
   let spaceId: string | undefined;
@@ -303,11 +319,55 @@ async function createUserAppGrant(
       // Race — findGrantItemId saw a row but a concurrent delete
       // raced. Fall through to insert.
     } else {
+      // Merge rather than overwrite. `device-scope-merge.ts` carries the
+      // reasoning; the short version is that this screen confirms a scope
+      // list instead of offering one to edit, so a narrower request is the
+      // client's doing and not the user's, and writing it straight in would
+      // shrink what the browser already granted while leaving the tokens
+      // carrying the removed scopes alive.
+      //
+      // **A revoked grant contributes nothing to that merge, because the
+      // rule is about a STANDING grant and a revoked one is not standing.**
+      // `findGrantItemId` matches on (space, client, user) and has no status
+      // predicate, so it hands back a revoked row as readily as a live one,
+      // and `revokeProjectedGrant` above leaves `scopes` verbatim on the row
+      // it flips. Merging against that set folds a scope the user explicitly
+      // withdrew back into the record and flips the record active holding
+      // it — access restored by a login whose consent screen never showed
+      // it. Re-establishing at the request is the whole of the fix: the
+      // re-consent still reactivates the row, and it comes back at exactly
+      // what this approval asked for.
+      //
+      // **Both axes, because both read surfaces filter on both.**
+      // `GET /grants` and the security page each list with `state: "active"`
+      // and then skip a row whose `properties.status` is not "active". The
+      // merge read only the second, while `findGrantItemId` carries no
+      // `state` predicate and `items.get` hides `trashed` alone, so a row
+      // sitting at `state: "revoked"` with `status: "active"` was found,
+      // admitted, and merged against. That writes scopes back onto a row
+      // neither surface will list, which puts it beyond the Disconnect
+      // button while the token step below still mints against it.
+      // `connections/revoked-connection.ts` carries why the two axes cannot
+      // legitimately disagree, and exists because they drifted once already
+      // on the integration side.
+      //
+      // Tested FOR "active" on both rather than against "revoked", which
+      // decides the absent and unrecognized cases the safe way round: a
+      // state or status this code cannot read is not evidence the user
+      // granted anything, so the approval re-establishes at its own request
+      // instead of resurrecting scopes nobody can account for.
+      const standingScopes =
+        existing.state === "active" &&
+        existing.properties.status === "active" &&
+        Array.isArray(existing.properties.scopes)
+          ? (existing.properties.scopes as string[])
+          : [];
+      const mergedScopes = mergeDeviceApprovalScopes(standingScopes, scopes);
       const updated = await storage.items.update(
         existingItemId,
         {
           properties: {
-            scopes,
+            scopes: mergedScopes,
             status: "active",
             granted_at: now,
             revoked_at: undefined,
@@ -323,7 +383,7 @@ async function createUserAppGrant(
           metadata,
           spaceId,
         });
-        return { id: updated.id, created: false };
+        return { id: updated.id, created: false, scopes: mergedScopes };
       }
     }
   }
@@ -352,7 +412,7 @@ async function createUserAppGrant(
   );
   const metadata = await storage.metadata.get(item.id);
   await publish({ type: "created", item, metadata, spaceId });
-  return { id: item.id, created: true };
+  return { id: item.id, created: true, scopes };
 }
 
 /**
@@ -2640,7 +2700,16 @@ export function authRoutes(
       details: {
         client_id: row.client_id,
         user_id: sessionResult.session.user.id,
+        // Both halves, because on a re-approval they differ and neither
+        // alone answers the question an operator brings to this row. An
+        // approval merges into the standing grant rather than replacing it,
+        // so `scopes`, what this device asked for and what its screen
+        // showed, no longer describes what the record ends up holding, and
+        // logging only that made a grant look like it acquired scopes from
+        // nowhere. `resulting_scopes` is the record after the merge. On a
+        // first-time approval the two are the same list.
         scopes: row.scopes,
+        resulting_scopes: grant.scopes,
         grant_item_id: grant.id,
         source: "device",
         // `created: false` means re-consent (item already existed) —
@@ -2785,6 +2854,38 @@ export function authRoutes(
       throw new Error("oauthProvider store not wired");
     }
 
+    // What this device asked for, and never the whole standing grant.
+    //
+    // The two used to be the same set: an approval overwrote the record
+    // with the device request, so reading the record back was reading the
+    // request. Now that an approval merges into a standing grant instead of
+    // replacing it, the record can hold scopes this device never asked for
+    // and its screen never showed: the browser's own consent, for the same
+    // client and user. Minting from the record would hand a CLI the web
+    // app's access on the strength of a login, and hand it a refresh token
+    // whenever the browser had once asked to stay signed in.
+    //
+    // Filtered against the grant rather than taken raw, because the record
+    // is still the authority and a device code outlives its approval by up
+    // to the rest of its TTL. A narrowing on the consent screen inside that
+    // window rewrites the scope list, and the poll that follows reads the
+    // rewritten one, so it cannot hand back a scope that was dropped. The
+    // intersection is the only reading that holds both ends: never more
+    // than was asked for, never more than the scope list reaches.
+    //
+    // **What it does NOT cover: revocation.** This handler reads the
+    // grant's scopes and nothing else, not `status` and not `revoked_at`, so
+    // a connection revoked between approval and poll still mints a working
+    // token pair for the rest of the device code's TTL, with the scope list
+    // the revoked record still carries. That is a hole and it is not this
+    // filter's to close; it is recorded here so the next reader does not
+    // take the paragraph above as saying the poll is already fenced against
+    // a revoke. Closing it means reading the grant's status here, and
+    // deciding what an approved-then-revoked device code should answer.
+    const issuedScopes = row.scopes.filter((scope) =>
+      grantCoversScope(grantScopes, scope),
+    );
+
     // `offline_access` is what buys a refresh token, here as everywhere else.
     //
     // The library issues one only for a grant carrying the scope, and its
@@ -2800,7 +2901,7 @@ export function authRoutes(
     // rather than by reimplementing rotation, and it makes the two paths
     // agree: a client that wants to stay signed in asks for the scope, and
     // the consent screen already renders it as a line the user approves.
-    const staysSignedIn = grantScopes.includes("offline_access");
+    const staysSignedIn = issuedScopes.includes("offline_access");
     const refreshRaw = staysSignedIn
       ? generateToken(REFRESH_TOKEN_PREFIX)
       : undefined;
@@ -2815,7 +2916,7 @@ export function authRoutes(
       clientId: grantClientId,
       authUserId: grantUserId,
       referenceId: deviceGrant.space_id ?? null,
-      scopes: grantScopes,
+      scopes: issuedScopes,
       accessTtlMs: ACCESS_TOKEN_TTL_MS,
     });
 
@@ -2831,7 +2932,7 @@ export function authRoutes(
       ...(refreshRaw !== undefined && { refresh_token: refreshRaw }),
       token_type: "bearer",
       expires_in: ACCESS_TOKEN_TTL_MS / 1000,
-      scope: grantScopes.join(" "),
+      scope: issuedScopes.join(" "),
     });
   });
 
