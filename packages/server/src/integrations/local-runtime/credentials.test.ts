@@ -663,6 +663,34 @@ describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
     );
     expect(String(failure)).toMatch(/cannot mint runtime credential/);
   });
+
+  it("refuses a connection that is not there at all, by its own code", async () => {
+    // The mint has two refusals and only one of them was ever asserted
+    // here. `state !== "active"` is covered above; a row that is gone —
+    // or is not a connection — takes the other branch and a different
+    // error code, and nothing called the mint directly to check it.
+    //
+    // It matters now because the supervisor gained a gate that returns
+    // before this for the same two cases. A gate and a backstop testing
+    // the same conditions are exactly the pair that drifts, and the way
+    // that drift stays invisible is one of them having no test of its
+    // own. This is the backstop's.
+    const missingId = "01a02f00-0000-7000-8000-0000000009f1";
+
+    let failure: unknown = null;
+    try {
+      await mintLocalRuntimeCredential(
+        ctx.storage,
+        TEST_API_KEY_SALT,
+        missingId,
+        "hosted",
+      );
+    } catch (err) {
+      failure = err;
+    }
+    expect(failure).not.toBeNull();
+    expect((failure as { code?: string }).code).toBe("connection_not_found");
+  });
 });
 
 describe("runtime credential TTL vs the dispatch bound", () => {
