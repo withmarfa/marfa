@@ -9,7 +9,10 @@
  *     rewritten, so a failure leaves the record saying "active" — which
  *     is the truth, because the tokens are still live. The inverse order
  *     produces the one state worse than the failure: a security page
- *     showing revoked access that still works.
+ *     showing revoked access that still works. The device-code sweep sits
+ *     inside that cascade after the tokens, where `revokeTokensForGrant`
+ *     puts its own sibling sweep of the authorization codes, so a fault on
+ *     `oauth_device_codes` cannot stop the tokens from being dropped.
  *   - **The device-consent approval serializes with it.** Approving on a
  *     device is a fourth writer of the same standing grant, and left
  *     outside the consent lock its read-modify-write can straddle a whole
@@ -580,15 +583,32 @@ describe("revocation reaches outstanding device codes", () => {
     // makes the refusal below mean anything: this fixture shape is one the
     // endpoint admits, so the later 400 is about the revoke rather than
     // about a device code that was never good.
-    const first = await initiateDeviceFlow(c, clientId, "core.note:read");
+    //
+    // **`offline_access` is in the scope on purpose, and both flows carry
+    // it.** The refresh token is the whole severity argument — the access
+    // token expires in an hour, the refresh token rotates indefinitely —
+    // but a poll only ever mints one when the issued scopes name
+    // `offline_access`. On a `core.note:read` fixture a successful poll
+    // returns no refresh token either, so asserting its absence after the
+    // revoke would pass identically on both sides of the defect. The mint
+    // here is what proves it: this shape does hand one back, so its absence
+    // below is the guard's doing.
+    const first = await initiateDeviceFlow(
+      c,
+      clientId,
+      "core.note:read offline_access",
+    );
     expect((await approveDeviceFlow(c, first.user_code, cookie)).status).toBe(
       200,
     );
     const minted = await pollDeviceToken(c, first.device_code, clientId);
     expect(minted.status).toBe(200);
-    expect(
-      ((await minted.json()) as { access_token?: string }).access_token,
-    ).toBeTruthy();
+    const mintedBody = (await minted.json()) as {
+      access_token?: string;
+      refresh_token?: string;
+    };
+    expect(mintedBody.access_token).toBeTruthy();
+    expect(mintedBody.refresh_token).toBeTruthy();
 
     const grant = await onlyGrant(c);
 
@@ -598,7 +618,11 @@ describe("revocation reaches outstanding device codes", () => {
     // write runs under the consent lock and `approveDeviceCode` runs after
     // the lock is released, so a revoke can land its whole cascade in
     // between and pass over a code that is not bound to the grant yet.
-    const second = await initiateDeviceFlow(c, clientId, "core.note:read");
+    const second = await initiateDeviceFlow(
+      c,
+      clientId,
+      "core.note:read offline_access",
+    );
     const flipDeviceCode = c.storage.oauth.approveDeviceCode.bind(
       c.storage.oauth,
     );
@@ -638,7 +662,9 @@ describe("revocation reaches outstanding device codes", () => {
     // The code the poll is about to present: bound to the revoked grant,
     // still approved, and provably unexpired. The expiry check sits ABOVE
     // the lifecycle guard and answers 400 as well, so without this the
-    // status code alone could not tell an expiry from a revoke.
+    // status code alone could not tell an expiry from a revoke. The
+    // `expires_at` assertion is the one doing that work — the error code
+    // below cannot, because both refusals are 400.
     const row = await c.storage.oauth.findDeviceCodeByHash(
       deviceCodeHash(second.device_code),
     );
@@ -654,9 +680,10 @@ describe("revocation reaches outstanding device codes", () => {
       refresh_token?: string;
     };
     expect(body.error).toBe("invalid_grant");
-    expect(body.error).not.toBe("expired_token");
     // The refresh token is the half that outlives the window, so its
     // absence is asserted beside the access token's rather than implied.
+    // It observes only because the fixture asked for `offline_access`: the
+    // successful poll above proves this shape mints one.
     expect(body.access_token).toBeUndefined();
     expect(body.refresh_token).toBeUndefined();
   });
@@ -761,6 +788,178 @@ describe("revocation reaches outstanding device codes", () => {
     expect(
       ((await mintedForB.json()) as { access_token?: string }).access_token,
     ).toBeTruthy();
+  });
+
+  it("REGRESSION: a device-code sweep that throws still leaves the tokens revoked", async () => {
+    // The sweep's position in the cascade, which nothing else pins.
+    //
+    // It runs AFTER `revokeTokensForGrant` and before the record is
+    // rewritten, matching where that function puts its own sibling sweep of
+    // the authorization codes. The cascade has no try/catch on purpose, so
+    // whichever step throws first is the last step that runs — and swept
+    // first, a persistent fault on `oauth_device_codes` would abort before
+    // any token was touched, leaving the grant active, every bearer and
+    // refresh token live, and Disconnect permanently non-functional while
+    // the app kept full access. Swept last, the same fault still kills every
+    // token, and the record still honestly reads active because the user's
+    // revoke did not entirely land.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "device-sweep-throws@example.com");
+
+    const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
+    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
+      200,
+    );
+    const grant = await onlyGrant(c);
+    const tokenHash = await seedAccessToken(
+      c,
+      clientId,
+      grant.properties.user_id as string,
+      ["core.note:read"],
+    );
+    // Live before the revoke, so the assertion after it is about the cascade
+    // rather than about a token that was never resolvable.
+    expect(
+      await c.storage.oauthProvider?.validateAccessToken(tokenHash),
+    ).not.toBeNull();
+
+    // The device-code table is unreachable. Lock contention, a permissions
+    // change, a corrupt index — the cause does not matter, only that it
+    // persists.
+    c.storage.oauth.deleteDeviceCodesForGrant = () =>
+      Promise.reject(new Error("device code table unavailable"));
+
+    const res = await request(
+      c.app,
+      "POST",
+      `/auth/grants/${grant.id}/revoke`,
+      { headers: { origin: ORIGIN, cookie } },
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location") ?? "").toContain(
+      "notice=grant_revoke_failed",
+    );
+
+    // The property the ordering buys: the token cascade had already run, so
+    // the access the user asked to withdraw is gone even though the sweep
+    // behind it failed. Swept first, this token is still live.
+    expect(
+      await c.storage.oauthProvider?.validateAccessToken(tokenHash),
+    ).toBeNull();
+
+    // Abort-on-throw is unchanged, and so is what it leaves on the record:
+    // the revoke did not complete, and the record does not claim it did.
+    const after = await c.storage.items.get(grant.id);
+    expect(after?.properties.status).toBe("active");
+    expect(after?.properties.revoked_at).toBeUndefined();
+  });
+
+  it("REGRESSION: a poll refuses a grant soft-deleted out of the active state", async () => {
+    // The item's own lifecycle axis, which the guard reads separately from
+    // `properties.status`. A `system.*` soft delete lands on `revoked`
+    // rather than `trashed` and touches nothing inside `properties`, so this
+    // is a grant every read surface hides — and so nobody can revoke through
+    // the interface built for revoking it — while its `status` still says
+    // `active`. The status half of the guard passes on this row; only the
+    // state half refuses it.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "device-grant-soft-deleted@example.com");
+
+    const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
+    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
+      200,
+    );
+    const grant = await onlyGrant(c);
+
+    // The same code mints while the grant is live, so the refusal below is
+    // about the state axis and nothing else about the fixture.
+    expect((await pollDeviceToken(c, flow.device_code, clientId)).status).toBe(
+      200,
+    );
+
+    await c.storage.items.delete(grant.id, grant.space_id ?? undefined);
+
+    // Exactly the disagreement described: one axis moved, the other did not.
+    const soft = await c.storage.items.getIncludingTrashed(
+      grant.id,
+      grant.space_id ?? undefined,
+    );
+    expect(soft?.state).toBe("revoked");
+    expect(soft?.properties.status).toBe("active");
+
+    // Nothing swept the code — a store-level soft delete does not run
+    // `revokeProjectedGrant` — so it is still approved, still bound, and
+    // still unexpired. The expiry check answers 400 too, so the assertion
+    // rather than the status code is what rules that reading out.
+    const row = await c.storage.oauth.findDeviceCodeByHash(
+      deviceCodeHash(flow.device_code),
+    );
+    expect(row?.status).toBe("approved");
+    expect(row?.connection_item_id).toBe(grant.id);
+    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+
+    const res = await pollDeviceToken(c, flow.device_code, clientId);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error?: string;
+      access_token?: string;
+    };
+    expect(body.error).toBe("invalid_grant");
+    expect(body.access_token).toBeUndefined();
+  });
+
+  it("REGRESSION: a poll refuses an approved code whose grant item was purged", async () => {
+    // `connection_item_id` is a foreign key with `ON DELETE SET NULL` in
+    // both dialects, so a hard purge of the grant item leaves an approved
+    // code pointing at nothing. That is a reachable state rather than a
+    // broken invariant, and it describes a grant that no longer exists, so
+    // it earns the same refusal a revoked one gets rather than a 500.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "device-grant-purged@example.com");
+
+    const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
+    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
+      200,
+    );
+    const grant = await onlyGrant(c);
+
+    // Admitted before the purge, so the refusal below is about the missing
+    // grant rather than about the fixture.
+    expect((await pollDeviceToken(c, flow.device_code, clientId)).status).toBe(
+      200,
+    );
+
+    // The purge route's own two steps: soft delete first, because purge
+    // refuses an item that has not been soft-deleted.
+    const spaceId = grant.space_id ?? undefined;
+    await c.storage.items.delete(grant.id, spaceId);
+    await c.storage.items.purge(grant.id, spaceId);
+    expect(
+      await c.storage.items.getIncludingTrashed(grant.id, spaceId),
+    ).toBeNull();
+
+    // The foreign key did the rest: the row survived, its grant did not.
+    const row = await c.storage.oauth.findDeviceCodeByHash(
+      deviceCodeHash(flow.device_code),
+    );
+    expect(row?.status).toBe("approved");
+    expect(row?.connection_item_id).toBeNull();
+    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+
+    const res = await pollDeviceToken(c, flow.device_code, clientId);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error?: string;
+      access_token?: string;
+    };
+    expect(body.error).toBe("invalid_grant");
+    expect(body.access_token).toBeUndefined();
   });
 });
 
