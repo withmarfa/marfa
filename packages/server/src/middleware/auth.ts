@@ -740,6 +740,26 @@ export function computeTypeFilter(
   // and POST /admin/spaces/{id}/keys, and the only one of the four
   // permission maps that offers it. Callers mint such keys.
   //
+  // **And a `"none"` entry stopped being something only a caller mints.**
+  // The content category projects as a complement — the global wildcard at
+  // the granted level, then every system type at `"none"` beneath it — so a
+  // grant carrying `content:read` or `content:write` arrives here holding
+  // both a global wildcard and a set of exclusions. That is precisely the
+  // shape the early return above cannot take, so an ordinary OAuth grant
+  // now routes down the enumeration, where before it took the cheap
+  // `["*"]` path and only a hand-minted key reached the enumeration at all.
+  //
+  // Two consequences follow, and both are the enumeration's own rather than
+  // new failures. The list read walks `listTypes` and resolves each id per
+  // request, instead of returning one pattern. And the second divergence
+  // named below — rows orphaned by `DELETE /types/{id}?force=true` dropping
+  // out of every listing while the point check still serves them by id —
+  // stops being reachable only through a minted key and becomes reachable
+  // through a category grant. It is the ordinary shape of that grant, not an
+  // edge of it. Fail-closed in both directions, and written down here
+  // because a consequence a layer below the one being changed is the kind
+  // nobody goes looking for.
+  //
   // The early return also leaves alone the standing behavior of a bare
   // `{"*": "read"}` grant, which does list `system.*` rows. Whether the
   // global wildcard ought to reach the system family is a separate

@@ -394,6 +394,15 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
  * bundles publish, and `buildAllowedScopes` folds every grammatically valid
  * bundle scope into the live allowlist by construction.
  *
+ * **A literal this build withholds is the one class that argument does not
+ * reach**, because it is grammatical and the fold takes it in on grammar
+ * alone. Each function drops it on a separate explicit rule instead, and two
+ * rules can disagree where one construction cannot: `bundlePublishedScopes`
+ * keeping what `buildAllowedScopes` drops would write a scope into a
+ * client's stored ceiling that no request is ever validated against. So that
+ * class is seeded below rather than reasoned about, on the same standard the
+ * malformed one is held to.
+ *
  * That is an invariant two functions hold between them and neither states, so
  * nothing fails when it stops holding. This is what fails.
  *
@@ -413,6 +422,12 @@ describe("the bundle-published set stays inside the live allowlist", () => {
    *  An operator's bundle override parses arbitrary JSON, so this is a
    *  literal a real configuration can carry. */
   const MALFORMED = "core.note:redd";
+  /** Grammatical and deliberately unpublished. The second exclusion class,
+   *  and the one the grammar filter above does NOT catch: `isValidScope`
+   *  admits it, so each function drops it on a rule of its own. Seeded here
+   *  for the same reason the malformed literal is — the containment is only
+   *  asserted over classes the fixture actually carries. */
+  const WITHHELD = "content:read";
   /** Valid, and in no shipped bundle, so its presence proves the constructed
    *  list reached both functions rather than being ignored. */
   const WELL_FORMED = "core.note:write";
@@ -421,8 +436,10 @@ describe("the bundle-published set stays inside the live allowlist", () => {
     {
       id: "constructed",
       label: "Constructed",
-      description: "A bundle list carrying a literal the grammar refuses.",
-      scopes: [WELL_FORMED, MALFORMED],
+      description:
+        "A bundle list carrying a literal the grammar refuses and one this " +
+        "build withholds.",
+      scopes: [WELL_FORMED, MALFORMED, WITHHELD],
       default_on: false,
     },
   ];
@@ -444,6 +461,42 @@ describe("the bundle-published set stays inside the live allowlist", () => {
     // request is validated against, where it would be a grant nothing refuses.
     expect(published.has(MALFORMED)).toBe(false);
     expect(live.has(MALFORMED)).toBe(false);
+  });
+
+  it("excludes a withheld bundle literal from both sets", () => {
+    // The exception the header above names, seeded rather than described.
+    // The containment argument runs through `isValidScope`: everything a
+    // bundle publishes is grammatical, and `buildAllowedScopes` folds every
+    // grammatical bundle scope in, so published is inside live by
+    // construction. A withheld literal is the one class that argument does
+    // not reach — it IS grammatical, and both functions drop it anyway, each
+    // on its own explicit rule. Two independent rules can disagree, and the
+    // one that would matter is `bundlePublishedScopes` keeping a literal
+    // `buildAllowedScopes` drops: that writes a scope into a client's stored
+    // ceiling that no request can then be validated against.
+    expect(
+      isValidScope(WITHHELD),
+      "the withheld literal no longer parses, so this seeds the malformed " +
+        "class over again and says nothing about the withheld one",
+    ).toBe(true);
+
+    const published = bundlePublishedScopes(constructed);
+    const live = new Set(buildAllowedScopes(constructed, []));
+
+    expect(published.has(WELL_FORMED)).toBe(true);
+    expect(live.has(WELL_FORMED)).toBe(true);
+
+    expect(
+      published.has(WITHHELD),
+      `${WITHHELD} would be written into a client's stored scope ceiling by ` +
+        `a catch-up, where every reader is an exact membership test.`,
+    ).toBe(false);
+    expect(
+      live.has(WITHHELD),
+      `${WITHHELD} is requestable through a configured bundle. If the ` +
+        `consent copy has landed and the literals are published, this ` +
+        `assertion is what to delete.`,
+    ).toBe(false);
   });
 
   it("holds over the shipped bundle configuration", () => {

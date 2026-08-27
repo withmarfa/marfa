@@ -8,6 +8,7 @@ import {
   parseScope,
   isTypeScope,
   isValidScope,
+  isContentScope,
   scopesToTypePermissions,
   scopesToEdgePermissions,
   isValidHandle,
@@ -178,18 +179,26 @@ function sha256(input: string): string {
 }
 
 /**
- * The widest verb the console form's content picker was ticked for, or null
- * when it was ticked for nothing.
+ * The widest verb among the `<type>:<verb>` scopes the console form was
+ * ticked for, or null when it was ticked for none of them.
  *
- * Content types only, and asked of the parser. What a person picks on that
+ * Type scopes only, and asked of the parser. What a person picks on that
  * form is which of their content an app may read or change, and the key's
- * reach across the space is mirrored from it. A permission that is not about
- * content has no opinion on that question however its literal happens to
+ * reach across the space is mirrored from it. A permission that is not a
+ * type scope has no opinion on that question however its literal happens to
  * end: `metadata.types:write` registers a type, `edge.parent-of:write` names
  * one relation, and reading either as "the owner asked for write" hands the
  * key authority nobody chose.
+ *
+ * **The name says type scope rather than content on purpose.** A
+ * `content:read` literal is a grant over the content category and this
+ * answers null for it, because `isTypeScope` is false for the kind by
+ * design. That is the right answer only because the mint drops a content
+ * literal at the form boundary before this ever sees one; read as "the level
+ * of reach over content" it would be a silent lie, which is exactly what the
+ * key minted from an admitted literal used to tell its owner.
  */
-function contentScopeLevel(scopes: string[]): "read" | "write" | null {
+function pickedTypeScopeLevel(scopes: string[]): "read" | "write" | null {
   let level: "read" | "write" | null = null;
   for (const scope of scopes) {
     const parsed = parseScope(scope);
@@ -1423,10 +1432,24 @@ export function authRoutes(
 
     // The permissions the owner ticked, in the `<type>:<verb>` scope grammar.
     // Only valid scopes survive; the key is scoped to exactly these.
+    //
+    // A content-category literal is dropped rather than admitted, and the
+    // drop is explicit because the grammar check above stopped answering for
+    // it: `content:write` did not parse until this build, so a submission
+    // naming one used to be refused by that filter alone. The picker on this
+    // form emits `<type>:<verb>` and nothing else, so reaching here takes a
+    // hand-crafted post — and what such a post would mint is a key that
+    // misdescribes itself rather than one that reaches too far. The category
+    // projects the global wildcard, so the key writes every non-system type
+    // in the space, while `pickedTypeScopeLevel` below sees no type scope at
+    // all: the owner is told the key can reach none of their content and it
+    // is minted with no edge permissions. A credential whose own summary is
+    // wrong is worse than one that was never minted, and the same reach is
+    // already askable honestly through full access.
     const scopes = formData
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string")
-      .filter((s) => isValidScope(s));
+      .filter((s) => isValidScope(s) && !isContentScope(s));
     // Full access carries its own grant and needs no ticked scopes, so it is
     // resolved before the "pick at least one" guard rather than after it.
     const wantsFullAccess = formData.get("full_access") === "on";
@@ -1456,7 +1479,7 @@ export function authRoutes(
     // content level outright rather than being read back off the ticked set.
     const contentLevel: "read" | "write" | null = fullAccess
       ? "write"
-      : contentScopeLevel(scopes);
+      : pickedTypeScopeLevel(scopes);
 
     const typePermissions = fullAccess
       ? { [GLOBAL_TYPE_WILDCARD]: "write" as const }

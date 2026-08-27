@@ -112,11 +112,31 @@ function distinctPatterns(
   return [...seen.values()];
 }
 
-/** The kinds whose row is resolved through the description map. OIDC and
- *  capability literals are not among them: both renderers answer those from
- *  their own label maps and return before the description map is read, so
- *  they are held to those maps instead, further down. */
-const DESCRIBED_KINDS = ["type", "edge", "metadata"] as const;
+/**
+ * The kinds whose row is resolved through the description map. OIDC and
+ * capability literals are not among them: both renderers answer those from
+ * their own label maps and return before the description map is read, so
+ * they are held to those maps instead, further down.
+ *
+ * **`content` is listed and reaches nothing today, deliberately.** The set
+ * this guard checks is derived from the allowlist, and the content category's
+ * two literals are withheld from it until copy exists that distinguishes
+ * their levels — so `distinctPatterns` finds no content pattern and every
+ * assertion below passes over an empty arm. Listing it anyway is what arms
+ * the guard for the commit that publishes them: it reddens on that commit
+ * rather than on some later one where a reviewer has to notice the omission,
+ * which is how the category reached a screen undescribed the first time.
+ *
+ * That makes this line a latch, not the reminder. The reminder is
+ * `../auth/content-scope-not-yet-requestable.test.ts`, which fails if the
+ * literals become requestable while nothing describes them.
+ *
+ * A `never` guard here would be the stronger shape and does not fit: the
+ * list is deliberately a subset of `ParsedScope["kind"]`, so exhaustiveness
+ * is the wrong property. What holds the subset honest is that every kind
+ * excluded from it is held to its own map further down in this file.
+ */
+const DESCRIBED_KINDS = ["type", "edge", "metadata", "content"] as const;
 
 /** What a person would see if nothing curated named this pattern. Rebuilt
  *  rather than imported because `scopeLiteralFor` is private to the
