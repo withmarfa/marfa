@@ -100,18 +100,38 @@ import type {
  * Order is first appearance across standing-then-approved, so the standing
  * entries keep the order the user saw them in.
  *
- * **Idempotent, which is what bounds the record.** Re-approving the same set
- * resolves every key to the verb it already holds and names no key the record
- * lacks, so the array comes back byte-identical. Growth across differing
- * approvals is bounded by the number of distinct patterns the user has
- * actually approved, and no redundant literal is ever appended twice.
+ * **Idempotent, which is what keeps a repeat login free.** Re-approving the
+ * same set resolves every key to the verb it already holds and names no key
+ * the record lacks, so the array comes back byte-identical, and no literal is
+ * ever appended twice.
  *
- * Deliberately NOT pruned. A key made redundant by a broader sibling at the
- * same verb could be dropped, and the prune is provably safe, but every
- * defect this function has had was a literal removed for a reason that looked
- * sound. The record is minimal in the only sense that matters, one entry per
- * pattern the user has approved, and buying a shorter array with a deletion
- * rule is a bad trade on this surface.
+ * **What bounds the record is the platform allowlist, not what the user
+ * approved.** The record carries one entry per distinct (axis, key) either
+ * side has ever named, so a login naming a key the record lacks adds an entry
+ * whether or not the grant already conferred it, and the entry can be
+ * redundant. Standing `*:write` under one login per concrete type at `:read`
+ * ends up holding the wildcard plus an entry for every type named, each one
+ * covered already, and each written at `:write` because that is the verb the
+ * merge resolves — the client only ever asked `:read`. So the ceiling is the
+ * set of keys `buildAllowedScopes` can name, since initiation refuses a scope
+ * outside it, and that set is NOT static: it is assembled from the type and
+ * edge registries and the runtime namespace roots read at boot, so a client
+ * holding `metadata.types:write` raises its own ceiling by registering types.
+ *
+ * Reaching that ceiling takes a client that spells its request differently on
+ * every login, and a real one sends the same string each time, so this is a
+ * shape to know about rather than a live problem. It is driven by the
+ * spelling and not by the access: two requests conferring exactly the same
+ * thing still add two entries if they are written differently.
+ *
+ * Deliberately NOT pruned, the redundant entries above included. A key made
+ * redundant by a broader sibling at the same verb could be dropped, and the
+ * prune reads as provably safe, but every defect this function has had came
+ * from a literal removed for a reason that looked exactly that sound, and it
+ * has now been wrong twice in opposite directions. The record is minimal in
+ * the only sense being bought here, one entry per key rather than one per
+ * approval, and a shorter array is a bad trade for a deletion rule on this
+ * surface.
  */
 
 /** Ordering on the verb lattice the three breadth-carrying axes share. */
