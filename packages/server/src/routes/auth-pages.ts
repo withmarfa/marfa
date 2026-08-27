@@ -15,6 +15,7 @@ import {
   canGrantRole,
   GLOBAL_TYPE_WILDCARD,
   TYPE_REGISTRY,
+  grantCoversScope,
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import type { MarfaRole } from "@withmarfa/shared";
@@ -27,6 +28,10 @@ import {
   hasPlatformAuthority,
 } from "../middleware/auth.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import {
+  bundlePublishedScopes,
+  catchUpClientScopeCeiling,
+} from "../auth/ceiling-catchup.js";
 import { getPermissionBundles } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type {
@@ -2205,10 +2210,6 @@ export function authRoutes(
         "This client is not registered for the device grant",
       );
     }
-    // Validate every requested literal against the allowlist. The stored
-    // grant is the literal set and consent approves it verbatim, so a
-    // scope that slipped through here would be granted unseen — any
-    // disallowed scope refuses the whole request.
     const requestedScopes = scope.split(" ").filter(Boolean);
     if (requestedScopes.length === 0) {
       throw new MarfaError(
@@ -2216,28 +2217,19 @@ export function authRoutes(
         "No valid scopes requested",
       );
     }
-    // Two ceilings, both of which must hold: what the platform offers at
-    // all, and what this client registered for. The plugin resolves the
-    // second as `client.scopes ?? opts.scopes` on the authorization-code
-    // path; this path never read it, so a client registered for one scope
-    // could open a device flow asking for every scope on the platform, with
-    // only a person reading the consent screen carefully in the way.
+    // The first ceiling, on a pass of its own: what the platform offers at
+    // all. The stored grant is the literal set and consent approves it
+    // verbatim, so a scope that slipped through here would be granted
+    // unseen — any disallowed scope refuses the whole request.
     //
-    // It refuses rather than narrowing, which is the opposite of what the
-    // authorize surface does and deliberately so. There, the error rides a
-    // redirect the app may never render and a human is stood in front of
-    // it, so narrowing is what lets a stale request still succeed. Here the
-    // response goes straight back to the machine that made the request,
-    // which can read it. And nothing stale can reach this point: the
-    // platform allowlist is checked live just above, so what the client
-    // ceiling adds is a security boundary rather than a stale copy. Handing
-    // back a device code for less than was asked for, without saying so,
-    // turns a two-line fix at the client into a token that quietly does not
-    // do what the client was built for.
-    const clientCeiling = client.scopes;
-    const offByDefaultOnly = scopesOfferedOffByDefaultOnly(
-      getPermissionBundles(),
-    );
+    // Nothing that writes may run above this loop. Initiation is
+    // unauthenticated, and the catch-up below is a persistent write to a
+    // stored registration row. Interleaving the two lets a caller who has
+    // proved nothing move stored state with input this server has not
+    // accepted: the request still refuses, and the row it was refused
+    // against keeps the widening. That row is also what this client is
+    // given when it omits `scope` entirely, so the next consent screen
+    // would open pre-ticked with what the refused request named.
     for (const requested of requestedScopes) {
       if (!allowedScopes.has(requested)) {
         throw new MarfaError(
@@ -2245,6 +2237,48 @@ export function authRoutes(
           `Scope not available: ${requested}`,
         );
       }
+    }
+    // The second ceiling: what this client registered for. The plugin
+    // resolves it as `client.scopes ?? opts.scopes` on the
+    // authorization-code path; this path never read it, so a client
+    // registered for one scope could open a device flow asking for every
+    // scope on the platform, with only a person reading the consent screen
+    // carefully in the way.
+    //
+    // It refuses rather than narrowing, which is the opposite of what the
+    // authorize surface does and deliberately so. There, the error rides a
+    // redirect the app may never render and a human is stood in front of
+    // it, so narrowing is what lets a stale request still succeed. Here the
+    // response goes straight back to the machine that made the request,
+    // which can read it. Handing back a device code for less than was asked
+    // for, without saying so, turns a two-line fix at the client into a
+    // token that quietly does not do what the client was built for.
+    //
+    // Refusing is only defensible while the ceiling being compared against
+    // is current, and the stored row is not: it is a registration-time
+    // snapshot of an allowlist that moves whenever the type registry does.
+    // So it gets the same catch-up the authorize surface performs, before
+    // the loop below compares against it. Without that, a client registered
+    // for a bundle-published wildcard was refused a scope beneath it,
+    // terminally, for a registration that plainly covered it.
+    //
+    // Making the comparison below coverage-aware instead is the repair that
+    // looks right and is not. It would leave this surface reading a ceiling
+    // one way while every other reader of the same row reads it exactly, and
+    // two surfaces answering one question two different ways is what the
+    // comment in `narrowAuthorizeScopes` exists to prevent. Breadth belongs
+    // in what gets written, not in what gets compared.
+    const bundles = getPermissionBundles();
+    const clientCeiling = await catchUpClientScopeCeiling({
+      storage,
+      clientId,
+      requested: requestedScopes,
+      ceiling: client.scopes,
+      bundleScopes: bundlePublishedScopes(bundles),
+      surface: "device",
+    });
+    const offByDefaultOnly = [...scopesOfferedOffByDefaultOnly(bundles)];
+    for (const requested of requestedScopes) {
       if (clientCeiling !== null && !clientCeiling.includes(requested)) {
         throw new MarfaError(
           ErrorCode.INVALID_SCOPE,
@@ -2273,10 +2307,35 @@ export function authRoutes(
       // initiation rather than at approval so the stored row never carries
       // the scope, which keeps the screen, the grant, the audit row and the
       // issued token reading the same set.
-      if (offByDefaultOnly.has(requested)) {
+      //
+      // The question is asked backwards from the usual one, and the usual
+      // one is the bug. `grantCoversScope(held, required)` normally answers
+      // "does a held grant reach a scope somebody needs". Here the withheld
+      // set is a set of literals and the request may be a wildcard, so what
+      // matters is whether the requested scope REACHES anything withheld:
+      // membership alone let `core.*:read` sail past a set holding every
+      // literal beneath it, and one click then granted the lot.
+      //
+      // The refusal names what is being protected rather than what was
+      // asked for. A client told its own wildcard was refused learns
+      // nothing; told a withheld scope that wildcard reaches, it can narrow
+      // to a request this flow can honor.
+      //
+      // One of them, not all of them. Which scopes an operator withheld is
+      // not otherwise public — discovery advertises `scopes_supported` and
+      // says nothing about `default_on` — and this handler answers an
+      // unauthenticated caller, so joining every reached scope hands the
+      // whole withheld partition back for a single `*:read`. Naming one
+      // leaves the response actionable while keeping enumeration at one
+      // request per scope, which is already what the two refusals above
+      // cost: each names only the scope it stopped on.
+      const reachesWithheld = offByDefaultOnly.find((withheld) =>
+        grantCoversScope([requested], withheld),
+      );
+      if (reachesWithheld !== undefined) {
         throw new MarfaError(
           ErrorCode.INVALID_SCOPE,
-          `Scope needs an explicit approval this flow cannot offer: ${requested}`,
+          `Scope needs an explicit approval this flow cannot offer: ${reachesWithheld}`,
         );
       }
     }

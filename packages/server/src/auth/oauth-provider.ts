@@ -41,6 +41,10 @@ import {
   SESSION_CRITICAL_SCOPES,
 } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
+import {
+  bundlePublishedScopes,
+  catchUpClientScopeCeiling,
+} from "./ceiling-catchup.js";
 import { serverAddedResponseParam } from "./redirect-params.js";
 
 /**
@@ -547,36 +551,12 @@ export function buildOauthProjectionPlugin(opts: {
   const liveScopes = new Set(buildAllowedScopes());
   // What discovery advertises to every client, as opposed to everything a
   // client may request. `liveScopes` is the wider set (wildcards, every
-  // registered type); this is the curated bundle union the metadata
-  // document publishes. The distinction is what lets a stored ceiling stop
-  // freezing without becoming no ceiling at all — see `narrowAuthorizeScopes`.
-  //
-  // Filtered by the grammar, deliberately not by `default_on`, and the two
-  // halves are easy to mistake for each other.
-  //
-  // The grammar filter is here because this is the same raw configuration a
-  // second reader already checks, and this set is what a stale client ceiling
-  // is widened by. An unchecked literal would be written into a registration
-  // row and audit-logged as a scope, which is a false record rather than a
-  // live grant, and the cheaper of the two to prevent.
-  //
-  // Off-by-default bundles are included on purpose. The widening runs before
-  // the plugin resolves a session, so one unauthenticated authorize request
-  // can add an off-by-default bundle's scopes to a stored registration — and
-  // that is the point, because letting an already-registered client reach a
-  // scope it was never registered for, without re-registering, is the case an
-  // off-by-default bundle exists to serve. Narrowing here would defeat it.
-  //
-  // What keeps that safe is not this line. A ceiling is permission to ask, and
-  // both surfaces that answer refuse on their own: the consent screen renders
-  // the bundle unticked, and device-flow initiation refuses the scope
-  // outright. Do not delete either on the grounds that the ceiling looks
-  // narrow, because it is not.
-  const bundleScopes = new Set(
-    getPermissionBundles()
-      .flatMap((bundle) => bundle.scopes)
-      .filter((scope) => isValidScope(scope)),
-  );
+  // registered type); this is the curated bundle union the metadata document
+  // publishes, and the distinction is what lets a stored ceiling stop
+  // freezing without becoming no ceiling at all. Device initiation builds the
+  // same set from the same helper, because a ceiling widened by two
+  // differently-filtered sets is two ceilings.
+  const bundleScopes = bundlePublishedScopes(getPermissionBundles());
   const acceptedResources = baseURL
     ? new Set(
         [
@@ -908,90 +888,17 @@ async function narrowAuthorizeScopes(
   }
 
   // Catch the ceiling up to what this request asks for, before anything is
-  // narrowed against it.
-  //
-  // `auth_oauth_client.scopes` is written once, at registration, and never
-  // again, so it is a snapshot of an allowlist that moves whenever the type
-  // registry does. A client ages out of the platform silently: a type
-  // registered after the client was is uncoverable by it forever, the
-  // consent screen still offers the scope, the authorize request still asks
-  // for it, and the grant comes back without it and without a word. Six
-  // scopes went missing from one client that way, and no grant on either
-  // environment held any of them.
-  //
-  // It has to be a write rather than a wider view here, because the plugin
-  // validates the request against `client.scopes` itself. Narrowing less
-  // aggressively without moving the stored row just hands the plugin a
-  // literal it will refuse outright, which is the dead end this hook exists
-  // to prevent.
-  //
-  // Two things bound it, and both matter.
-  //
-  // Only what this request actually asks for, rather than the whole bundle
-  // union. The ceiling is also what a client gets when it omits `scope`, so
-  // widening it wholesale would silently turn every no-scope authorize into
-  // a request for everything. Growing it one requested literal at a time
-  // means the row ends up recording what this client has genuinely asked
-  // for, which is the honest version of the same repair.
-  //
-  // And only scopes the bundles publish. The bundles are what the metadata
-  // document advertises to every client, re-derived from the live registry
-  // at every boot precisely so custom types stay coverable, so a client
-  // asking for one is asking for something this server tells every client
-  // it may ask for — and the user still consents to it on the screen that
-  // follows. Everything outside them still needs the client registered for
-  // it: the wildcards, and the per-type scopes the curated set leaves out.
-  //
-  // Widen only, never shrink. The snapshot is stale in both directions, and
-  // a scope for a type that no longer exists is already dropped below
-  // against the live allowlist, where it costs nothing and needs no write.
-  //
-  // A null ceiling already tracks the live set, and an empty one is a
-  // deliberate, real ceiling this must not quietly fill in.
-  if (ceiling !== null && ceiling.length > 0) {
-    const held = ceiling;
-    const missing = requested.filter(
-      (scope) => bundleScopes.has(scope) && !held.includes(scope),
-    );
-    if (missing.length > 0) {
-      const widened = [...held, ...missing];
-      try {
-        if (await oauth.widenClientScopes(clientId, held, widened)) {
-          log("info", "oauth authorize: caught a stale client ceiling up", {
-            client_id: clientId,
-            added_scopes: missing,
-          });
-          ceiling = widened;
-          // Audited here rather than only logged, and audited separately
-          // from the narrowing below, because this one is the registration
-          // row changing. It also happens before the plugin resolves a
-          // session, so it is the one event on this path that no signed-in
-          // identity is attached to — which makes it the one most worth a
-          // record rather than the one least worth it.
-          void storage.audit.log({
-            space_id: null,
-            action: "auth.client.scopes_widened",
-            resource_type: "oauth_client",
-            resource_id: clientId,
-            client_ip: null,
-            details: {
-              client_id: clientId,
-              added_scopes: missing,
-              ceiling_size: widened.length,
-            },
-          });
-        }
-      } catch (err) {
-        // A failed catch-up is not a failed authorize. The narrowing below
-        // still runs against the ceiling as it stands, which is the ordinary
-        // path when there is nothing to catch up.
-        log("warn", "oauth authorize: could not widen a stale ceiling", {
-          client_id: clientId,
-          error: err,
-        });
-      }
-    }
-  }
+  // narrowed against it. Device initiation performs the same catch-up before
+  // its own comparison; the helper carries the three bounds and why each one
+  // is there.
+  ceiling = await catchUpClientScopeCeiling({
+    storage,
+    clientId,
+    requested,
+    ceiling,
+    bundleScopes,
+    surface: "authorize",
+  });
 
   // Both tests below are exact membership, and both stay that way even
   // though the consent comparisons one file over now understand breadth.
@@ -1012,9 +919,10 @@ async function narrowAuthorizeScopes(
   // written, not in what gets compared.
   //
   // `mint-ceiling.ts` records the same conclusion from the other direction,
-  // about admitting the session scopes at the point of reading a ceiling.
-  // Two attempts, one rule: both readers of a ceiling stay a plain
-  // membership test against what the row says.
+  // about admitting the session scopes at the point of reading a ceiling,
+  // and device initiation compares the row the same exact way. Three
+  // attempts, one rule: every reader of a ceiling stays a plain membership
+  // test against what the row says, and the catch-up is what moves the row.
   const granted: string[] = [];
   const unknownToServer: string[] = [];
   const outsideClientCeiling: string[] = [];
