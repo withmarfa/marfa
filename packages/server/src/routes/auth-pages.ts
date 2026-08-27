@@ -2307,16 +2307,24 @@ export function authRoutes(
       //
       // The refusal names what is being protected rather than what was
       // asked for. A client told its own wildcard was refused learns
-      // nothing; told which withheld scopes it reaches, it can narrow to a
-      // request this flow can honor. All of them, because a client that
-      // avoided one would only meet the next.
-      const reachesWithheld = offByDefaultOnly.filter((withheld) =>
+      // nothing; told a withheld scope that wildcard reaches, it can narrow
+      // to a request this flow can honor.
+      //
+      // One of them, not all of them. Which scopes an operator withheld is
+      // not otherwise public — discovery advertises `scopes_supported` and
+      // says nothing about `default_on` — and this handler answers an
+      // unauthenticated caller, so joining every reached scope hands the
+      // whole withheld partition back for a single `*:read`. Naming one
+      // leaves the response actionable while keeping enumeration at one
+      // request per scope, which is already what the two refusals above
+      // cost: each names only the scope it stopped on.
+      const reachesWithheld = offByDefaultOnly.find((withheld) =>
         grantCoversScope([requested], withheld),
       );
-      if (reachesWithheld.length > 0) {
+      if (reachesWithheld !== undefined) {
         throw new MarfaError(
           ErrorCode.INVALID_SCOPE,
-          `Scope needs an explicit approval this flow cannot offer: ${reachesWithheld.join(", ")}`,
+          `Scope needs an explicit approval this flow cannot offer: ${reachesWithheld}`,
         );
       }
     }

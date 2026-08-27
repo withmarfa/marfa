@@ -1194,9 +1194,36 @@ describe("POST /auth/device — off-by-default scopes", () => {
     );
   });
 
+  it("names one withheld scope rather than the operator's whole set", async () => {
+    // The refusal answers an unauthenticated caller, and which scopes an
+    // operator withheld is not otherwise public: discovery advertises
+    // `scopes_supported` and carries no `default_on`. Joining every reached
+    // scope would hand the partition back in one response, so a wildcard
+    // reaching two withheld scopes must still name only one — enumeration
+    // stays at a request per scope, as it is for the refusals beside it.
+    await withBundles(
+      [
+        bundle("read", true, ["core.note:read"]),
+        bundle("manage", false, ["core.task:write", "core.note:write"]),
+      ],
+      async () => {
+        ctx = await createTestContext();
+        const clientId = await createClient(ctx);
+
+        const res = await tryInit(ctx, clientId, "core.*:write");
+        expect(res.status).toBe(400);
+        const message = (res.body.error as { message?: string }).message ?? "";
+        const named = ["core.task:write", "core.note:write"].filter((s) =>
+          message.includes(s),
+        );
+        expect(named).toHaveLength(1);
+      },
+    );
+  });
+
   it("keeps a request clear of the withheld set working", async () => {
     // The control. Withholding is not "an off-by-default bundle exists", it
-    // is this scope, so a neighbouring scope still initiates.
+    // is this scope, so a neighboring scope still initiates.
     await withBundles(
       [
         bundle("read", true, ["core.note:read"]),
