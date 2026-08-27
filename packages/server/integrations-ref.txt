@@ -10,4 +10,4 @@
 # The image build checks the repository out into integrations-src/ at this
 # commit, with a read-only deploy key on the checkout step so nothing
 # reaches a Docker layer. See packages/server/Dockerfile.
-ed58a43fae501d5eafa76ded9a18190ca1ef2034
+ca80b9ee91b64dfb43e39a4e201a685ed9368bba
