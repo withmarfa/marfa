@@ -28,6 +28,7 @@ export type {
   CreateWithAttachmentsAttachment,
   CreateWithAttachmentsResult,
   SpaceApiKeySummary,
+  DriftedPlatformType,
   SecureStorage,
   Occurrence,
   OccurrenceSeriesError,

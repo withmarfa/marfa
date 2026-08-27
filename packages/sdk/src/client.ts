@@ -254,6 +254,30 @@ export interface SpaceApiKeySummary {
   last_used_at: string | null;
 }
 
+/**
+ * One shipped type an instance still carries that its running build no
+ * longer names, as returned by the platform-admin drift listing.
+ *
+ * The seed is an upsert with no prune, so deleting a type's JSON removes
+ * it from a fresh instance and from no existing one. `/health` publishes
+ * only the count of these, because it is unauthenticated; the identifiers
+ * live here, behind a platform-admin read.
+ */
+export interface DriftedPlatformType {
+  id: string;
+  /** Items carrying this identifier, across every space. Read live on
+   *  each request rather than cached at boot, because it is the part of
+   *  the report that changes without a restart. */
+  item_count: number;
+  /** Types declaring this one as their parent. A parent supplies their
+   *  fields, so a removal is declined while any exist. */
+  child_types: string[];
+  /** Whether a removal would be accepted: no items carry it and nothing
+   *  inherits from it. Advisory — the server re-derives both guards
+   *  inside the request and is the authority. */
+  removable: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Bulk operations
 // ---------------------------------------------------------------------------
@@ -2086,6 +2110,47 @@ export class MarfaClient {
           purged_count: number;
           run_at: string;
         }>("POST", "/admin/account-deletion/purge-now");
+      },
+    },
+
+    platformTypes: {
+      /**
+       * Shipped type rows this instance still carries that the running
+       * build no longer names, each with a live item count and the types
+       * that inherit from it.
+       *
+       * A report rather than a prune: the shipped set is a committed
+       * generated array, so a build cannot ship a partial one, and the
+       * realistic population of a boot-time delete is a rollback, where
+       * the older build simply does not know about rows the newer one
+       * wrote. Removing is a separate, deliberate act.
+       *
+       * The route returns no cursor, so this returns a bare array and
+       * callers wanting the listing envelope build it themselves.
+       */
+      drift: async (): Promise<DriftedPlatformType[]> => {
+        const res = await this.transport.request<{
+          types: DriftedPlatformType[];
+        }>("GET", "/admin/platform-types/drift");
+        return res.types;
+      },
+
+      /**
+       * Remove exactly one platform type row this build no longer ships.
+       * Irreversible and instance-wide: the row is deleted across every
+       * space, and a build that no longer ships the type cannot re-seed
+       * it. The type keeps resolving until the next restart, because the
+       * in-memory registry is filled from the rows at boot.
+       *
+       * Refused with `409` when the build still ships the identifier,
+       * when items still carry it, or when another type declares it as
+       * its parent; `404` when no platform row holds it.
+       */
+      remove: async (id: string): Promise<{ removed: true; id: string }> => {
+        return this.transport.request<{ removed: true; id: string }>(
+          "POST",
+          `/admin/platform-types/${encodeURIComponent(id)}/remove`,
+        );
       },
     },
   };
