@@ -1,4 +1,5 @@
 import { safeJsonParse } from "../json-utils.js";
+import { isTier } from "@withmarfa/shared";
 import type { Item, ItemState, Metadata, Version } from "@withmarfa/shared";
 import type { items, metadata, versions } from "./schema.js";
 
@@ -15,8 +16,13 @@ type MetadataRow = typeof metadata.$inferSelect;
 type VersionRow = typeof versions.$inferSelect;
 
 export function rowToItem(row: ItemRow): Item {
-  const tier =
-    row.tier === "library" || row.tier === "feed" ? row.tier : undefined;
+  // Recognized against `TIERS` rather than compared to two hardcoded
+  // literals, which is what this was. Absent stays absent: `system.*` items
+  // have no tier because the dimension does not apply to them, and the
+  // field is optional on the wire to model that — so `undefined` here is a
+  // real answer rather than a fallback, and the boot scan excuses null on
+  // this column for the same reason.
+  const tier = isTier(row.tier) ? row.tier : undefined;
   return {
     id: row.id,
     type: row.type,

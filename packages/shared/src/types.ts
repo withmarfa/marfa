@@ -22,6 +22,24 @@ export type Tier = "library" | "feed";
 export const TIERS: readonly Tier[] = ["library", "feed"] as const;
 
 /**
+ * Whether a value is a tier this build recognizes.
+ *
+ * Exists for the same reason `isMarfaRole` does, and is keyed off `TIERS`
+ * rather than repeating the union literal so adding a tier cannot leave
+ * this behind. Both dialects' item projections compared the column against
+ * two hardcoded literals instead, which is the same defect wearing
+ * different syntax: a tier added here would have been dropped to
+ * `undefined` by two comparisons nobody would think to update.
+ *
+ * Kept free of any logging concern because this ships to npm.
+ */
+export function isTier(value: unknown): value is Tier {
+  return (
+    typeof value === "string" && (TIERS as readonly string[]).includes(value)
+  );
+}
+
+/**
  * Principal roles.
  *
  * Applies to both API-key principals and OAuth-bearer principals. The role
@@ -1081,6 +1099,26 @@ export function isSpaceStatus(value: unknown): value is SpaceStatus {
     (SPACE_STATUSES as readonly string[]).includes(value)
   );
 }
+
+/**
+ * Valid account deletion states, and the source the union is derived from.
+ *
+ * Declared as a tuple with `DeletionState` derived from it for the reason
+ * `SPACE_STATUSES` gives one block up: so a state added to one cannot go
+ * missing from the other. It was previously a bare type alias written out
+ * twice, once in each dialect's account-lifecycle store, which is the
+ * shape that drift starts from — two declarations of one union with
+ * nothing making them agree, and nothing at all to check a stored value
+ * against.
+ *
+ * `pending_deletion` is the state the sign-in guard intercepts on, so a
+ * value outside this union is not cosmetic: it matches neither branch, and
+ * an account the operator believes is scheduled for deletion is simply
+ * not.
+ */
+export const DELETION_STATES = ["active", "pending_deletion"] as const;
+
+export type DeletionState = (typeof DELETION_STATES)[number];
 
 /**
  * Per-space metrics snapshot. Returned by `GET /admin/spaces/:id/metrics`
