@@ -6,6 +6,8 @@ import {
   ErrorCode,
   classifyNamespace,
   resolveTypePermission,
+  listTypes,
+  GLOBAL_TYPE_WILDCARD,
   scopesToTypePermissions,
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
@@ -703,12 +705,93 @@ export function computeTypeFilter(
   if (roleBypassesPermissionMaps(apiKey)) return undefined;
 
   const patterns: string[] = [];
+  let hasExclusion = false;
   for (const [pattern, permission] of Object.entries(apiKey.type_permissions)) {
     if (permission === "read" || permission === "write") {
       patterns.push(pattern);
+    } else {
+      // Anything that is not a grant counts as an exclusion. An `else`
+      // rather than a third `=== "none"` comparison, which the compiler
+      // believes is always true and the linter therefore rejects — but that
+      // belief is a compile-time fiction here. The stored map arrives
+      // through an unchecked cast (`safeJsonParse<Record<string,
+      // TypePermission>>` in both key stores); the `z.enum` on POST /keys
+      // guards the write and nothing checks membership on the read. So a
+      // junk stored value reaches this arm, and reaching it means the map is
+      // not read as granting that pattern. The cost is that such a value
+      // routes an otherwise-exclusion-free map down the enumeration below,
+      // which narrows the result rather than widening it — the conservative
+      // direction to be wrong in.
+      hasExclusion = true;
     }
   }
-  return patterns; // empty means "no items visible", not "all items"
+
+  // An explicit `"none"` entry subtracts, and a filter assembled only from
+  // the granted patterns has no way to express a subtraction. Left alone,
+  // `{"*": "read", "system.credential": "none"}` collapses to `["*"]` and the
+  // list read hands back the very rows the entry exists to withhold, while
+  // `checkTypeAccess` refuses the same row by id. A list filter and a point
+  // check that disagree is the one failure this whole area exists to prevent,
+  // so an exclusion has to survive into the filter.
+  //
+  // A map carrying no `"none"` entry returns exactly what it returned
+  // before, so only a map that opts in can observe any of this. `"none"` is
+  // not a hypothetical: it is the third arm of the `z.enum` on POST /keys
+  // and POST /admin/spaces/{id}/keys, and the only one of the four
+  // permission maps that offers it. Callers mint such keys.
+  //
+  // The early return also leaves alone the standing behavior of a bare
+  // `{"*": "read"}` grant, which does list `system.*` rows. Whether the
+  // global wildcard ought to reach the system family is a separate
+  // question, and answering it here would silently re-scope every
+  // credential that holds one.
+  if (!hasExclusion) {
+    return patterns; // empty means "no items visible", not "all items"
+  }
+  if (!patterns.includes(GLOBAL_TYPE_WILDCARD)) {
+    return patterns;
+  }
+
+  // The filter this returns cannot express an exclusion. `allowed_types` is
+  // the only `ItemFilters` field the permission map feeds, and
+  // `allowedTypesCondition` compiles it to a disjunction of positive
+  // patterns, so nothing in the shape can say "every type except these".
+  // (`exclude_system_types` is a negative term, but a fixed one over a
+  // single family, owned by the route layer and not by this map.)
+  // Enumerating the wildcard into the concrete ids it stands for and
+  // dropping the excluded ones therefore approximates that sentence rather
+  // than stating it, and it is worth being precise about what the
+  // approximation loses.
+  //
+  // `listTypes` is the space-scoped enumeration the registry already
+  // maintains — the global core/system set plus this space's own custom
+  // types, never another space's. Resolving each id through
+  // `resolveTypePermission` is what ties the result to the point check:
+  // both answer from the same function over the same map, so neither can
+  // drift into admitting what the other refuses.
+  //
+  // Two shapes keep the very divergence this repairs. Both are known,
+  // neither is fixed here:
+  //
+  //   - A subtree grant with a nested exclusion, `{"user.*": "read",
+  //     "user.secret": "none"}`. It carries no global wildcard, so it takes
+  //     the early return above and still lists `user.secret` while the point
+  //     check refuses it by id. POST /keys accepts arbitrary pattern keys,
+  //     so this is mintable today: a live hole, not a latent one.
+  //   - Rows orphaned by `DELETE /types/{id}?force=true`, which drops the
+  //     registration and deliberately keeps the items. The registry no
+  //     longer names the type, so this enumeration drops those rows from
+  //     every listing for an exclusion-carrying key while the point check
+  //     still hands them over by id. The same disagreement, mirrored.
+  //
+  // Closing either means a negative term on the filter — a new `ItemFilters`
+  // field, both dialect builders, and every call site — which is its own
+  // change with its own blast radius, and is tracked separately.
+  return listTypes(apiKey.space_id)
+    .map((schema) => schema.id)
+    .filter(
+      (id) => resolveTypePermission(id, apiKey.type_permissions) !== "none",
+    );
 }
 
 // ---------------------------------------------------------------------------
