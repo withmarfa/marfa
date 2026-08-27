@@ -1515,7 +1515,18 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.message": "Messages and conversations.",
 
   // Entities
-  "core.entity": "Organizations and other entities.",
+  //
+  // `core.entity` names the same grant here that its toggle label names on
+  // the authorize screen, and "and other entities" was the half that did
+  // not. It reached wider than the label without saying how much wider, so
+  // one grant read two ways depending on which screen a person was looking
+  // at, and the narrower reading was the one above the toggles. The registry
+  // lists a company, a band, a team, a charity, a brand and a school. Three
+  // are named below and the rest sit under "organizations", a brand
+  // excepted, so the sentence lands where the label does instead of past it.
+  // The reasoning for keeping "Organizations" as that label and for
+  // accepting the brand as residue is at `SCOPE_LABELS`.
+  "core.entity": "Companies, teams, schools, and other organizations.",
   "core.entity.person": "People in your contacts.",
   "core.entity.place": "Places and venues.",
 
@@ -1585,6 +1596,17 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // reason. The global wildcard is the one entry that carries it without
   // saying "later", because there is nothing outside "everything" for the
   // set to grow into.
+  //
+  // **That is an argument about this sentence, not about the pattern.** `*`
+  // is open-ended like any other, and its authorize-screen row carries the
+  // standalone line, because nothing in that row's label has said it. The
+  // exemption buys one thing: a sentence that cannot be falsified by a new
+  // type, which is all the device screen needs, since that screen has no
+  // second line to state it on. Reading the exemption as "`*` is special"
+  // and suppressing the row's line would leave the widest grant on the
+  // screen as the only one that never says it reaches what does not exist
+  // yet. The pin on this entry is the sentence itself rather than its
+  // shape, for the reason recorded at the test.
   "*": "Everything in your space.",
   "core.*": "All standard content types, including ones added later.",
   "user.*": "Your custom types, including ones you define later.",

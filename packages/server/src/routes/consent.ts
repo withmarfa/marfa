@@ -271,14 +271,19 @@ function buildGroups(
  * an app that wanted very little, and a trusting one learns the copy does not
  * track the request.
  *
- * A wildcard is the one case where "and more" is honest, because the grant
- * really does extend to types that do not exist yet.
+ * An open-ended scope is the one case where "and more" is honest, because the
+ * grant really does extend to types that do not exist yet. Which scopes those
+ * are is {@link isOpenEnded}'s answer rather than a second one read off the
+ * spelling. This asked whether the pattern held a `*`, and bare `metadata`
+ * holds none while reaching every metadata sub-resource, so the two
+ * derivations disagreed on the one heading that most needed the clause and
+ * it was the only open-ended group that never got it.
  */
 function summarize(group: ScopeGroup): string {
   const names: string[] = [];
   let openEnded = false;
   for (const scope of group.scopes) {
-    if (scope.typePattern.includes("*")) openEnded = true;
+    if (isOpenEnded(scope)) openEnded = true;
     // Same chain the toggle list uses, humanized floor included. Stopping at
     // the curated map left an uncurated scope out of this sentence while the
     // list below still showed it, so the summary undercounted exactly the
@@ -352,6 +357,18 @@ function summarize(group: ScopeGroup): string {
  * charity, a brand and a school, so "Organizations" is what the grant
  * reaches. That half is asked of `grantCoversScope` rather than curated: a
  * label naming a descendant its own pattern does not cover fails the suite.
+ *
+ * **A brand is the one member of that list "Organizations" does not name,
+ * and it stays as stated residue rather than being fixed.** Three things
+ * decide it. The type's own fields are organization-shaped: an officially
+ * registered legal name, a founding date, a logo. The grant reaches exactly
+ * one type, so unlike "People and places" nothing separately requestable
+ * goes unnamed by it, and the rule this docstring states is about reach.
+ * And no conjunction-free word covers a brand as well as a school, while
+ * "Organizations and brands" is precisely the shape the paragraph below
+ * refuses, so buying that member back costs the list-join rule. What is not
+ * acceptable is the label and the description disagreeing about it, which is
+ * why the description now stops where the label does.
  *
  * **Open-endedness is the one thing a label here cannot carry**, and the
  * constraint is the sentence rather than the space above a switch.
@@ -469,6 +486,33 @@ function isOpenEnded(scope: ParsedScope): boolean {
   return projected["*"] !== undefined;
 }
 
+/** The row's own sentence for an open ending, used where nothing already on
+ *  the row has said it. */
+const OPEN_ENDED_LINE = "Covers what exists today plus anything added later";
+
+/**
+ * Whether a piece of row copy already tells the reader that the grant reaches
+ * things which do not exist yet.
+ *
+ * Three strings on one row can say it: the label, the expansion line's tail,
+ * and {@link OPEN_ENDED_LINE}. A row that says it twice reads as two separate
+ * facts about one grant, so the row is assembled by asking this of what it is
+ * already showing rather than by naming the patterns that need suppressing.
+ * The naming approach is what failed: the pair that needed it were a pair only
+ * until a third arrived, and the third arrived one commit later, when a
+ * description gained the clause the device screen needed without anybody
+ * noticing that the same string is this screen's row label.
+ *
+ * A check on the copy rather than on the grammar. Every futurity clause here
+ * turns on the same word, and one phrased in other words would slip past and
+ * be stated twice. What keeps that convention from rotting is the row test,
+ * which holds every open-ended row to saying it exactly once rather than at
+ * least once.
+ */
+function statesOpenEndedness(text: string): boolean {
+  return /\blater\b/i.test(text);
+}
+
 /** Human toggle label for a scope. */
 function labelFor(
   scope: ParsedScope,
@@ -525,35 +569,41 @@ export function renderConsentScreen(params: ConsentParams): string {
    *  pattern matches today, since the grant itself names no types. */
   const subRow = (scope: ParsedScope, defaultOn: boolean): string => {
     const literal = escapeHtml(scopeLiteralFor(scope));
-    const label = escapeHtml(labelFor(scope, params.descriptions));
+    const rawLabel = labelFor(scope, params.descriptions);
+    const label = escapeHtml(rawLabel);
     const matched =
       scope.kind !== "oidc"
         ? params.wildcardExpansions?.[scope.typePattern]
         : undefined;
-    // The row's second line is where open-endedness is stated, and it is
-    // stated for every open-ended pattern rather than only for the ones a
-    // space can name members of today.
+    // Open-endedness is stated for every open-ended pattern rather than only
+    // for the ones a space can name members of today, and stated once.
     //
-    // It cannot live in the label. `SCOPE_LABELS` entries are also joined
-    // into the group summary sentence, and open-endedness needs a
+    // It cannot live in a curated label. `SCOPE_LABELS` entries are also
+    // joined into the group summary sentence, and open-endedness needs a
     // conjunction to say, so a label that says it breaks the list it is
-    // joined into. It cannot live in the description either, because a
-    // curated label suppresses that. So the two known offenders were not a
-    // pair of bad strings: they were the only place left for the fact to go
-    // being one that could not hold it. Both said less than the device
-    // screen, which has no toggle labels and so reads the description out
-    // whole, and the narrower of the two answers was the one on the screen
-    // where somebody is ticking boxes.
+    // joined into. So the offenders were never a set of bad strings: they
+    // were the only place left for the fact to go being one that could not
+    // hold it.
     //
-    // The expansion line wins where there is one: it already ends "plus any
-    // you add later", so it says this and names today's members too.
-    const openEndedLine = isOpenEnded(scope)
-      ? "Covers what exists today plus anything added later"
-      : "";
+    // But a label is not always curated. `labelFor` falls through to the
+    // scope's description, and an open-ended description carries a futurity
+    // clause of its own because the device screen has no rows and reads it
+    // out whole. Such a row therefore arrives with the fact already stated,
+    // and adding the line beneath said it twice. Which patterns those are is
+    // not something to enumerate here: {@link statesOpenEndedness} asks the
+    // copy the row is already showing, so a description that gains a clause
+    // tomorrow is handled the day it does.
+    //
+    // The expansion line wins where there is one, since it names today's
+    // members as well. Its own tail is what steps aside when the label has
+    // already said it.
+    const labelStatesIt = statesOpenEndedness(rawLabel);
     const detailText =
       matched && matched.length > 0
-        ? `Today this covers ${matched.join(", ")}, plus any you add later`
-        : openEndedLine;
+        ? `Today this covers ${matched.join(", ")}${labelStatesIt ? "" : ", plus any you add later"}`
+        : isOpenEnded(scope) && !labelStatesIt
+          ? OPEN_ENDED_LINE
+          : "";
     const detail = detailText
       ? `<span class="rmeta" style="display:block">${escapeHtml(detailText)}</span>`
       : "";

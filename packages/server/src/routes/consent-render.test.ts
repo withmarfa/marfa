@@ -511,6 +511,18 @@ describe("group summaries describe the request", () => {
 
     const wildcard = summariesOf(render([scope("user.*", "read")])).join(" ");
     expect(wildcard).toContain("anything else");
+
+    // And the open-ended shape that carries no wildcard character. This
+    // heading is the one that needed the clause most and was the only one
+    // never to get it, because the summary decided open-endedness by looking
+    // for a `*` while the row beside it asked the grammar. Two derivations
+    // of one property is the defect this file keeps finding, so the case is
+    // written against the shape they disagreed about rather than against the
+    // shape they already agreed on.
+    const metadata = parseScope("metadata:read");
+    if (!metadata) throw new Error("unparseable");
+    const bare = summariesOf(render([metadata])).join(" ");
+    expect(bare).toContain("anything else");
   });
 });
 
@@ -594,9 +606,20 @@ describe("a grant that reaches things not yet created says so", () => {
     for (const literal of openEndedLiterals()) {
       const row = rowFor(render(literal), literal);
       expect(row, `no toggle row rendered for ${literal}`).not.toBe("");
-      expect(row, `${literal} renders as though it were a fixed set`).toMatch(
-        /\blater\b/,
-      );
+      // Once, not merely at least once, and the difference is what this
+      // case failed to see. `labelFor` falls through to the description
+      // where nothing curated claims the pattern, and an open-ended
+      // description carries a futurity clause for the device screen's sake,
+      // so a whole-row `toMatch` was already satisfied by the label alone
+      // for `core.*` and `app.*`: their second lines were verified by
+      // nothing, and both were rendering the fact twice while this passed.
+      // Counting holds the row to both halves at once, a fixed set on one
+      // side and a doubled sentence on the other.
+      const said = row.match(/\blater\b/g) ?? [];
+      expect(
+        said,
+        `${literal} states its open ending ${String(said.length)} times, not once`,
+      ).toHaveLength(1);
     }
   });
 
@@ -610,21 +633,48 @@ describe("a grant that reaches things not yet created says so", () => {
   });
 
   it("does not repeat itself where the row already lists what it matches", () => {
-    // The expansion line ends "plus any you add later", so it satisfies the
-    // rule already. A second line saying the same thing would be the cost of
-    // stating the rule twice rather than once.
-    const parsed = parseScope("user.*:read");
-    if (!parsed) throw new Error("unparseable");
-    const html = renderConsentScreen({
-      clientName: "Test App",
-      clientId: "test-app",
-      oauthQuery: "sig=x",
-      scopes: [parsed],
-      wildcardExpansions: { "user.*": ["Recipes", "Training log"] },
-    });
-    const row = rowFor(html, "user.*:read");
-    expect(row).toContain("Today this covers Recipes, Training log");
-    expect(row.match(/\blater\b/g)).toHaveLength(1);
+    // Two things can have said it by the time the row's second line is
+    // built: an expansion line, which ends "plus any you add later", and the
+    // label, which for a pattern outside the curated map is the description
+    // and carries the clause the device screen needs. This case pinned one
+    // pattern with an expansion, which is the half that was already right,
+    // and the half that broke was the label: `core.*` doubled the sentence
+    // the commit that added this was written in, and `app.*` doubled it one
+    // commit later. So it runs over every open-ended pattern, and the
+    // no-expansion arm is the case above.
+    //
+    // The expansion map is keyed by type pattern and supplied for every
+    // pattern here, including ones the resolver does not enumerate today.
+    // The row's contract is not conditioned on which roots that resolver
+    // fills, and narrowing the fixture to today's two would put this case
+    // back where it started: pinning the arrangement that happens to work.
+    const literals = openEndedLiterals();
+    expect(literals.length).toBeGreaterThan(3);
+    for (const literal of literals) {
+      const parsed = parseScope(literal);
+      if (!parsed) throw new Error(`unparseable: ${literal}`);
+      const html = renderConsentScreen({
+        clientName: "Test App",
+        clientId: "test-app",
+        oauthQuery: "sig=x",
+        scopes: [parsed],
+        descriptions: buildScopeDescriptions([parsed]),
+        wildcardExpansions: {
+          [parsed.typePattern]: ["Recipes", "Training log"],
+        },
+      });
+      const row = rowFor(html, literal);
+      expect(row, `no toggle row rendered for ${literal}`).not.toBe("");
+      expect(
+        row,
+        `${literal} stopped naming the members it can name`,
+      ).toContain("Today this covers Recipes, Training log");
+      const said = row.match(/\blater\b/g) ?? [];
+      expect(
+        said,
+        `${literal} states its open ending ${String(said.length)} times, not once`,
+      ).toHaveLength(1);
+    }
   });
 
   /** The descriptions the two screens are handed, for the open-ended scopes
@@ -659,7 +709,29 @@ describe("a grant that reaches things not yet created says so", () => {
     // skipped. "Everything in your space." names no growth because there is
     // nothing outside it to grow into, and a regex loose enough to admit
     // that sentence would admit most closed ones as well.
-    expect(described[GLOBAL_TYPE_WILDCARD]).toMatch(/^Everything\b/);
+    //
+    // Pinned as itself, not as a shape. `/^Everything\b/` admitted
+    // "Everything you have already created.", which is narrow, past tense,
+    // carries no futurity, and is printed alone on the screen that has no
+    // second line to repair it. It held the first word of the exemption
+    // rather than the property the exemption was granted for, and that
+    // property, a sentence that cannot be falsified by a type registered
+    // tomorrow, is not something a pattern can check. So the one sentence
+    // the exemption covers is the pin: changing the copy means coming here
+    // and making the argument again, which is the whole point of exempting
+    // it by hand.
+    //
+    // The exemption is the description's alone. `*` is open-ended, and its
+    // authorize-screen row states so on the line the cases above hold every
+    // other open-ended pattern to.
+    //
+    // This sentence is pinned twice on purpose, and the other pin is not a
+    // duplicate of this one. "does not let one kind read another kind's copy
+    // off the flat map" pins it to prove the wildcard key is not being read
+    // by an edge type of the same name; this pins it because it is the one
+    // description exempted from the futurity rule. Deleting either leaves a
+    // property unheld.
+    expect(described[GLOBAL_TYPE_WILDCARD]).toBe("Everything in your space.");
 
     const patterns = Object.keys(described).filter(
       (pattern) => pattern !== GLOBAL_TYPE_WILDCARD,
@@ -714,11 +786,115 @@ describe("a grant that reaches things not yet created says so", () => {
     // entry here is the name of a thing, and a name joined by a conjunction
     // is two names: "Notes, People and places and Files" is what this one
     // rendered.
+    // The separators are the ones a joined sentence breaks on, not the one
+    // that broke first. Two were guarded because two were what `summarize`
+    // literally writes, and that is the wrong question: the reader is
+    // parsing a list, so anything that reads as an item boundary splits the
+    // label whether or not this file produced it. "Files & folders" passed,
+    // and would have rendered as "Bookmarks, Files & folders and
+    // Organizations", which is the exact sentence this case exists to stop.
+    // Lowercased, so a capitalized "And" is caught too.
+    const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
     for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
-      expect(label, `${pattern} carries a comma`).not.toContain(",");
-      expect(label, `${pattern} carries a conjunction`).not.toContain(" and ");
+      for (const separator of SEPARATORS) {
+        expect(
+          label.toLowerCase(),
+          `${pattern} carries ${JSON.stringify(separator)}, which reads as an item boundary once the summary joins it into a list`,
+        ).not.toContain(separator);
+      }
     }
   });
+
+  /**
+   * A crude singular form, applied to both sides so the comparison is
+   * consistent rather than linguistically correct. "Individuals" and "an
+   * individual" have to meet somewhere, and a real stemmer is more machinery
+   * than a label check earns. It maps "series" to "sery", which is wrong and
+   * harmless: both sides go through it.
+   */
+  const singular = (word: string): string => {
+    const w = word.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (w.length > 4 && w.endsWith("ies")) return `${w.slice(0, -3)}y`;
+    if (w.length > 4 && /(?:s|x|z|ch|sh)es$/.test(w)) return w.slice(0, -2);
+    if (w.length > 3 && w.endsWith("s") && !w.endsWith("ss"))
+      return w.slice(0, -1);
+    return w;
+  };
+
+  /** Function words, which name nothing and would match on any label
+   *  unlucky enough to contain one. */
+  const NOT_A_NAME = new Set([
+    "the",
+    "and",
+    "for",
+    "its",
+    "this",
+    "that",
+    "any",
+    "all",
+    "one",
+    "some",
+    "your",
+    "you",
+    "from",
+    "with",
+    "other",
+    "own",
+    "can",
+    "never",
+    "part",
+  ]);
+
+  const normalizeWords = (text: string): string[] =>
+    text
+      .split(/[^A-Za-z0-9]+/)
+      .filter(Boolean)
+      .map(singular)
+      .filter((w) => w.length > 2 && !NOT_A_NAME.has(w));
+
+  const containsSequence = (haystack: string[], needle: string[]): boolean => {
+    if (needle.length === 0) return false;
+    return haystack.some((_, i) =>
+      needle.every((word, j) => haystack[i + j] === word),
+    );
+  };
+
+  /**
+   * The mechanical forms of a child type's name, as normalized word
+   * sequences.
+   *
+   * Four sources, each a place the product itself says what that child is:
+   * its curated toggle label, the humanized form of its type id, the
+   * registry's label, and the content words of the two sentences written
+   * about it. The registry's description is cut at its first sentence,
+   * because the convention there is one defining sentence followed by
+   * inheritance boilerplate, and "Inherits all core.file fields." names
+   * nothing.
+   *
+   * Words matching a segment of the parent's own type id are dropped. A
+   * child's copy routinely contains its parent's name, and "Audio files"
+   * under `core.file` is ordinary qualification rather than the parent
+   * claiming the child. The filter reads the parent's **type id**, never its
+   * label, or a bad label would be the thing that excused itself.
+   */
+  const namesOf = (child: string, parent: string): string[][] => {
+    const ownSegments = new Set(parent.split(".").map(singular));
+    const registry = TYPE_REGISTRY.get(child);
+    const firstSentence = (registry?.description ?? "").split(/(?<=\.)\s/)[0];
+    const phrases = [
+      SCOPE_LABELS[child],
+      humanizeType(child),
+      registry?.label,
+    ].filter((p): p is string => p !== undefined);
+    const words = [
+      ...normalizeWords(CONSENT_SCOPE_DESCRIPTIONS[child] ?? ""),
+      ...normalizeWords(firstSentence ?? ""),
+    ].filter((w) => !ownSegments.has(w));
+    return [
+      ...phrases.map(normalizeWords).filter((p) => p.length > 0),
+      ...words.map((w) => [w]),
+    ];
+  };
 
   it("never names a type its own scope does not reach", () => {
     // The other half of the rule the labels run on, and the half a curated
@@ -734,6 +910,26 @@ describe("a grant that reaches things not yet created says so", () => {
     // ancestor's label naming a descendant rather than the reverse. The
     // reverse is ordinary qualification: "Audio files" sits under `Files`
     // and does not claim to be it.
+    //
+    // **What this can see, and what it cannot.** It compared the parent's
+    // label against the child's label verbatim, which is a much narrower
+    // question than the one it is asking: "Photos" over `core.file` names
+    // `core.file.image` and passed, "Individuals" over `core.entity` names
+    // `core.entity.person` and passed, and the real defect it did catch,
+    // "People and places", was caught on the "Places" half alone, because
+    // "Places" happened to be a child's label letter for letter. The "People"
+    // half, which named `core.entity.person`, was never seen. `namesOf` now
+    // gathers every mechanical form of a child's name, and that is still all
+    // it can do: the forms are the words the product itself uses for that
+    // child, plural-folded and matched as whole words.
+    //
+    // **A synonym nobody wrote down is invisible to it and always will be.**
+    // "Pictures" over `core.file` is a real violation this returns green on,
+    // because no copy anywhere in the repository calls an image a picture.
+    // The set of words meaning the same thing as a type is unbounded, so this
+    // narrows the gap rather than closing it, and a label that reads as if it
+    // covers a child still wants a human to look at it. Do not read a pass
+    // here as the question having been answered.
     const entries = Object.entries(SCOPE_LABELS);
     const pairs: { parent: string; child: string }[] = [];
     for (const [parent] of entries) {
@@ -754,17 +950,59 @@ describe("a grant that reaches things not yet created says so", () => {
     });
 
     for (const { parent, child } of pairs) {
-      const childLabel = SCOPE_LABELS[child];
-      if (childLabel === undefined) continue;
-      const word = new RegExp(
-        `\\b${childLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`,
-        "i",
-      );
+      const parentWords = normalizeWords(SCOPE_LABELS[parent] ?? "");
+      const names = namesOf(child, parent);
+      // Every assertion below is two loops deep, so a child that yields no
+      // forms at all is checked against nothing and passes. That is reachable
+      // without anybody touching this file: the own-segment filter drops any
+      // word matching the parent's type id, and a child described only in its
+      // parent's words would empty out.
       expect(
-        SCOPE_LABELS[parent],
-        `${parent} names ${child}, which it does not reach`,
-      ).not.toMatch(word);
+        names.length,
+        `no mechanical form of ${child}'s name, so nothing is checked for it`,
+      ).toBeGreaterThan(0);
+      for (const name of names) {
+        expect(
+          containsSequence(parentWords, name),
+          `${parent} is labeled "${SCOPE_LABELS[parent] ?? ""}", which names ${child} as "${name.join(" ")}": a type this grant does not reach`,
+        ).toBe(false);
+      }
     }
+  });
+
+  it("says one thing about an entity grant, on both screens", () => {
+    // A label wins over a description on this screen and the device screen
+    // has no labels, so the two strings are what the two screens say about
+    // one grant and they have to agree. `core.entity` was labeled
+    // "Organizations" and described as "Organizations and other entities.",
+    // which is the branch's own defect surviving at reduced size: the
+    // description reached past the label without saying how far, and the
+    // narrower of the two answers was the one above the toggles. Both
+    // literals are in the default bundle, so the row is on every consent
+    // screen that renders at all.
+    //
+    // Pinned as the pair rather than derived, because what was decided here
+    // is a copy question rather than a property. The registry lists a brand
+    // among the things this type holds and no conjunction-free word covers a
+    // brand as well as a school, while a conjunction is what the summary's
+    // list-join forbids; so the label stops at "Organizations", the
+    // description stops in the same place, and the residue is stated at
+    // `SCOPE_LABELS` instead of being papered over. Moving either string
+    // means making that argument again.
+    expect(SCOPE_LABELS["core.entity"]).toBe("Organizations");
+    expect(CONSENT_SCOPE_DESCRIPTIONS["core.entity"]).toBe(
+      "Companies, teams, schools, and other organizations.",
+    );
+
+    // The general form of this is checkable and is deliberately not on. The
+    // child-naming rule above, run against descriptions rather than labels,
+    // holds everywhere except `core.media`, whose "Media: books, films,
+    // music, podcasts." names four types a bare `core.media` grant does not
+    // reach. That is the same defect on the other surface, it wants its own
+    // copy decision, and turning the check on before that decision is made
+    // would only invite an exemption for the one case it catches. Not
+    // asserted either way here: pinning that sentence would make fixing it
+    // fail this test.
   });
 });
 
