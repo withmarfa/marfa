@@ -106,8 +106,30 @@ describe("the copy does not over-state what a scope grants", () => {
  * OIDC literals were five maps that disagreed about what `profile` hands
  * over; the scope descriptions were three that disagreed about whether a
  * metadata scope or a wildcard gets described at all. Same mistake, same
- * check, so a family is a row in the table below and a fifth map of either
- * kind trips the same walk. A third family costs a row.
+ * check, so a family is a row in the table below and a third family costs a
+ * row.
+ *
+ * **What the walk catches is a shape, not a name**, and the shape is three
+ * keyings of the same copy: the curated key (`edge.parent-of`), the bare
+ * registry id the edge entries used to carry (`parent-of`), and the scope
+ * literal the wire carries (`core.note:read`). The middle one is not
+ * hypothetical. The edge entries were keyed that way until this branch
+ * moved them, and moving them silently narrowed this guard until the keys
+ * below followed.
+ *
+ * **What it does not catch**, in falling order of how likely it is to
+ * matter:
+ *
+ * - A map keyed on `metadata` or `*` alone. Neither names this copy: a
+ *   `{ metadata: "..." }` field is ordinary in code that has never heard of
+ *   a consent screen, so those two keys stay out of the search.
+ * - A map keyed on the three edge ids that are also ordinary words:
+ *   `about`, `references`, `supersedes`. A `roundabout: "..."` would trip
+ *   the walk on a word with nothing to do with this copy, and a second
+ *   statement of the edge copy would have to hold none of the other six to
+ *   escape on that alone.
+ * - One key on its own. That is deliberate and load-bearing: a branch on a
+ *   single literal, a claims-shaping object and a scope list all name one.
  */
 const COPY_FAMILIES = [
   {
@@ -125,12 +147,11 @@ const COPY_FAMILIES = [
   {
     family: "the type, edge, metadata and wildcard scope descriptions",
     home: "auth-consent.ts",
-    // Dotted keys only. The map also holds `metadata` and `*`, and neither
-    // names this copy on its own: `{ metadata: "..." }` is an ordinary field
-    // in code that has never heard of a consent screen.
-    keys: Object.keys(CONSENT_SCOPE_DESCRIPTIONS).filter((k) =>
-      k.includes("."),
-    ),
+    // Dotted keys, plus the bare edge type ids that cannot be mistaken for
+    // ordinary identifiers. The map also holds `metadata` and `*`, and
+    // neither names this copy on its own: `{ metadata: "..." }` is an
+    // ordinary field in code that has never heard of a consent screen.
+    keys: scopeDescriptionKeys(),
     // `SCOPE_LABELS` keys many of the same patterns and is not a second
     // statement of this copy. It holds the short toggle name, a different
     // field on the same key that `labelFor` falls back *from* to a
@@ -139,6 +160,36 @@ const COPY_FAMILIES = [
     excise: ["export const SCOPE_LABELS: Record<string, string> = {"],
   },
 ];
+
+/**
+ * The operations the scope grammar spells, as an alternation.
+ *
+ * Used twice below and for opposite reasons: a key may carry one as a
+ * suffix (`core.note:read`, the form the wire carries), and a *value* that
+ * is one means the object is a permission map rather than copy.
+ */
+const OPERATIONS = "read|write|destroy";
+
+/**
+ * The search keys for the scope-description family: every dotted key in the
+ * map, plus the bare registry id behind each hyphenated `edge.<id>` entry.
+ *
+ * The bare form is the shape the edge copy carried until this branch moved
+ * it, and the shape `EDGE_TYPE_REGISTRY` still uses, so it is the keying a
+ * second map would most naturally arrive in. Only the hyphenated ids:
+ * `about`, `references` and `supersedes` are ordinary identifiers and would
+ * put this walk on words that have nothing to do with this copy.
+ */
+function scopeDescriptionKeys(): string[] {
+  const dotted = Object.keys(CONSENT_SCOPE_DESCRIPTIONS).filter((k) =>
+    k.includes("."),
+  );
+  const bareEdgeIds = dotted
+    .filter((k) => k.startsWith("edge."))
+    .map((k) => k.slice("edge.".length))
+    .filter((id) => id.includes("-"));
+  return [...dotted, ...bareEdgeIds];
+}
 
 /** Every non-test module under `src`, as `[path relative to src, source]`. */
 async function readSourceModules(): Promise<[string, string][]> {
@@ -181,11 +232,18 @@ function modulesNaming(
   const out: string[] = [];
   for (const [file, raw] of sources) {
     const src = excise.reduce(withoutDeclaration, raw);
-    const named = keys.filter((k) =>
-      new RegExp(
-        `["']?${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']?:\\s*["'\`]`,
-      ).test(src),
-    );
+    const named = keys.filter((k) => {
+      const key = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // Three keyings, one search: `<key>: "..."`, `"<key>": "..."` and
+      // `"<key>:read": "..."`. The lookahead drops a value that is itself a
+      // permission verb, which is what tells `{ "parent-of": "write" }` in a
+      // manifest apart from `{ "parent-of": "Parent and child..." }` in a
+      // second copy of this map.
+      return new RegExp(
+        `["']?${key}(?::(?:${OPERATIONS}))?["']?:\\s*` +
+          `(?!["'\`](?:${OPERATIONS})["'\`])["'\`]`,
+      ).test(src);
+    });
     if (named.length >= 2)
       out.push(`${file} (${named.slice(0, 4).join(", ")})`);
   }
