@@ -45,6 +45,7 @@ import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
 } from "./ceiling-catchup.js";
+import { matchesRegisteredRedirectUri } from "./redirect-uri-match.js";
 import { serverAddedResponseParam } from "./redirect-params.js";
 
 /**
@@ -825,6 +826,11 @@ function findAuthorizeRequest(
  *
  * A read failure fails open (log, return) so a transient database blip
  * degrades to the pre-existing behavior rather than breaking sign-in.
+ *
+ * **Order is a security property here, not a style choice.** Everything
+ * above the stale-ceiling catch-up is a pure read, and the catch-up is the
+ * only thing on this path that persists anything. The gates that keep it
+ * that way carry their own note at the call site.
  */
 async function narrowAuthorizeScopes(
   ctx: HookCtxLite,
@@ -840,6 +846,7 @@ async function narrowAuthorizeScopes(
   if (!oauth) return;
 
   let ceiling: readonly string[] | null;
+  let registeredRedirectUris: readonly string[];
   try {
     const client = await oauth.getClient(clientId);
     if (!client) return;
@@ -847,6 +854,9 @@ async function narrowAuthorizeScopes(
     // tracks the live set, and an empty array is a real, empty ceiling that
     // narrows everything away — which case 2 below then declines to act on.
     ceiling = client.scopes;
+    // Read off the same row, so the redirect-URI gate below costs no extra
+    // query.
+    registeredRedirectUris = client.redirectUris;
   } catch (err) {
     log("warn", "oauth authorize scope-narrowing precheck failed", {
       client_id: clientId,
@@ -886,6 +896,135 @@ async function narrowAuthorizeScopes(
     });
     return;
   }
+
+  // ---------------------------------------------------------------------
+  // What the caller has to already know, before anything writes.
+  //
+  // Everything above this point is a pure read; the catch-up below is a
+  // persistent `UPDATE` on `auth_oauth_client.scopes`. This hook is a
+  // `hooks.before` matcher, so it runs ahead of the endpoint handler body:
+  // ahead of the plugin resolving a session, and ahead of the plugin
+  // validating `redirect_uri`. Without these gates, an unauthenticated caller
+  // who knows a public `client_id` could name the whole bundle union and move
+  // that client's stored row — and the row is what the client is given when
+  // it omits `scope`, so the next genuine sign-in would meet a consent screen
+  // pre-ticked with the union rather than the narrow set the client
+  // registered for. Phishing-shaped against the user.
+  //
+  // **Call this what it is: a second thing the caller has to know, not proof
+  // that it controls the client.** Nothing here demonstrates control. A
+  // request naming a registered callback still drives the widening, and it
+  // still does so unauthenticated. What changes is the precondition: one
+  // public identifier becomes two, and the second is not one this server
+  // will hand out. There is no endpoint that discloses a client's registered
+  // redirect URIs, so an attacker has to have observed one — from a browser
+  // client's address bar during a sign-in, most easily — rather than looked
+  // one up. That is why the bar rises at all, and it is the whole of what
+  // rises. An attacker who has watched one sign-in has both halves.
+  //
+  // The gates below reproduce four of the plugin's own refusals, in its
+  // order, and stop there. **They do not establish that the plugin will
+  // accept the request**, and an earlier version of this comment claimed
+  // they did. The plugin runs a whole query schema between them — a
+  // malformed `max_age` is `invalid_request` and nothing here notices —
+  // so what this can honestly say is narrower: it declines to write on the
+  // request shapes it can recognize cheaply and unambiguously as refused,
+  // and a shape it cannot recognize still reaches the catch-up. Reproducing
+  // the schema is not worth it; that is a whole validator to keep in step
+  // with a pinned dependency, and every shape it would add is one the caller
+  // already needed the registered redirect URI to reach.
+  //
+  // `initDeviceFlow` states the neighboring rule on the device surface:
+  // nothing that writes may run above the checks that clear the request.
+  //
+  // The plugin's `disabled` and `clientAllowsGrant` gates sit BELOW the
+  // redirect-URI check in its order and are deliberately not reproduced.
+  // Both refuse a caller who has already cleared the bar this hook sets, so
+  // what they would additionally stop is somebody widening the ceiling of a
+  // client they can already reach. The four gates below are different: every
+  // one of them sits ABOVE the redirect-URI check, so leaving them out let a
+  // request through that the plugin was certain to refuse.
+  //
+  // **What this closes and what it does not.** It stops an attacker who
+  // knows only a public `client_id` from widening a THIRD-PARTY client's
+  // ceiling, which is the phishing-shaped harm: the victim is a user who
+  // trusts an app that registered narrowly. It does not stop an attacker who
+  // has also observed that client's callback. And it does not stop somebody
+  // self-registering a client through public dynamic registration and
+  // widening their own — but a ceiling on a client only they control grants
+  // nothing, because a ceiling is permission to ask and a person still
+  // approves the screen. Both distinctions matter, because "unauthenticated
+  // callers cannot write here" is what this will be mistaken for, and it is
+  // not true.
+
+  // The plugin refuses a JAR request object outright, and refuses a
+  // `request_uri` because `requestUriResolver` is unconfigured. Matched on
+  // `typeof === "string"` rather than truthiness because that is how the
+  // plugin reads them: an empty string is present, and a non-string is not.
+  //
+  // These two also bound what the rest of this function may assume. The
+  // parameters are read off the wire, which is the only place they are; a
+  // request that carried them indirectly would be one whose real parameters
+  // a before-hook cannot see.
+  if (typeof params.request === "string") return;
+  if (typeof params.request_uri === "string") return;
+
+  // `prompt=select_account` is `unsupported_prompt_select_account` unless the
+  // provider is configured with a `selectAccount.page`, and this deployment
+  // configures none. Reproduces `parsePrompt`, which splits on spaces and
+  // trims, so `prompt=login select_account` is caught too. If a select-account
+  // page is ever configured this gate becomes stricter than the plugin, which
+  // costs a stale client one more sign-in before it self-heals — the safe
+  // direction for a divergence to fall in.
+  const rawPrompt = params.prompt;
+  if (
+    typeof rawPrompt === "string" &&
+    rawPrompt.split(" ").some((prompt) => prompt.trim() === "select_account")
+  ) {
+    return;
+  }
+
+  // Anything other than `code` is `unsupported_response_type`, and there is
+  // no grant in it to catch a ceiling up for.
+  if (params.response_type !== "code") return;
+
+  // The request has to name a callback the client registered. This is the
+  // gate the ordering exists for: it is the one parameter an attacker
+  // working from a public `client_id` alone cannot supply, because no
+  // endpoint discloses it. Matched the way the plugin matches it — exact, or
+  // a loopback-IP relaxation on port, because a native or CLI client binds an
+  // ephemeral port and those are exactly the clients the catch-up repairs.
+  const requestedRedirectUri = params.redirect_uri;
+  if (
+    typeof requestedRedirectUri !== "string" ||
+    !matchesRegisteredRedirectUri(registeredRedirectUris, requestedRedirectUri)
+  ) {
+    return;
+  }
+
+  // **There is deliberately no live-allowlist pass here, and that is the one
+  // place this ordering does not copy the device surface.** `initDeviceFlow`
+  // clears the whole request against the allowlist before its catch-up runs,
+  // because it refuses a request it cannot fully satisfy and so must not move
+  // a row on the way out. This surface narrows instead: a scope for a type
+  // this server has since deleted is dropped from the request below and the
+  // authorization still succeeds, which is the entire reason the hook exists.
+  // Refusing to act on a request naming one would hand it back untouched, and
+  // the plugin — which validates against the client's stored ceiling rather
+  // than the live allowlist — would then offer the user consent to a type
+  // that does not exist, or dead-end a client whose other scopes were fine.
+  //
+  // Nothing is lost by its absence, because the write is already bounded by
+  // something strictly narrower. `catchUpClientScopeCeiling` widens only by
+  // scopes the bundles publish, and `buildAllowedScopes` folds every
+  // grammatically valid bundle scope into the live allowlist by construction,
+  // so the bundle set is a subset of it and a literal this server cannot
+  // grant can never reach the row.
+  // `authorize-ceiling-catch-up-client-control.test.ts` pins that
+  // containment, because it is an invariant two functions hold between them
+  // rather than one either states, so nothing fails when it stops holding.
+
+  // ---------------------------------------------------------------------
 
   // Catch the ceiling up to what this request asks for, before anything is
   // narrowed against it. Device initiation performs the same catch-up before
