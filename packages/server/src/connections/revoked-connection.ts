@@ -21,6 +21,23 @@
  * "there is nothing left to be healthy" will always be reporting the health
  * of something that no longer runs.
  *
+ * **The rule is about an integration connection, and the boundary is
+ * whether the relationship can come back.** An uninstall is terminal: the
+ * runtime is gone, and `SYSTEM_TYPE_TRANSITIONS` gives `revoked` an empty
+ * successor list, so moving `state` is a one-way door taken deliberately.
+ * An app grant is the opposite kind of thing — a person disconnects an app
+ * and later approves it again — so its revoke deliberately leaves
+ * `state: "active"` and moves `properties.status` alone, precisely so a
+ * re-consent has a row to reactivate. Read literally, that pairing is the
+ * disagreement this module forbids, which is why the scope matters: the
+ * axes must agree about whether the record is REACHABLE, and a revoked app
+ * grant is still listed for the user on the axis that decides that. What
+ * cannot happen is the inverse, `state: "revoked"` beside
+ * `status: "active"`, which is reachable by no surface and was the actual
+ * defect. Do not reach for this writer on the app-grant path: it would
+ * take the one-way door and leave every future re-approval to insert a
+ * fresh row beside a tombstone the user can neither see nor remove.
+ *
  * **Stamped, never cleared.** A property cannot be removed through the
  * update path: the merge is shallow and an explicit null on an optional
  * field means "leave unset", so deleting `runtime_status` here would

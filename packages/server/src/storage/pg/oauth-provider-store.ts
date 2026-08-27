@@ -417,6 +417,31 @@ export class PgOauthProviderStore implements OauthProviderStore {
    * Resolve the projected `system.connection { kind: "app" }` item id for
    * (spaceId, clientId, authUserId). Single-row lookup via jsonb `->>`
    * predicates on properties. Returns null if no projection row exists.
+   *
+   * **`state = 'active'` is part of the identity, not a filter.** Every
+   * caller either re-establishes the grant, stamps it, or names it in an
+   * audit row, and each of those describes a record a person is supposed to
+   * be able to find and disconnect. The two surfaces that offer that button
+   * — `GET /grants` and the security page — list a row only when its `state`
+   * is active AND its `properties.status` is active, so a row failing
+   * either axis is beyond every revoke interface the product has.
+   *
+   * Without this predicate the lookup handed such a row back and the
+   * re-consent branch flipped `properties.status` to active while leaving
+   * `state` alone, which is how a grant reached `state: revoked` beside
+   * `status: active`: listed by neither surface, and still good enough for
+   * the device token step to mint against. `DELETE /items/{id}` produces
+   * that shape on its own, because `softDeleteState` resolves `revoked`
+   * rather than `trashed` for a `system.*` type and a soft delete does not
+   * touch properties. `items.get` hides only `trashed`, so nothing else
+   * downstream was going to notice.
+   *
+   * Refusing the row here rather than in the route is what makes the two
+   * re-consent paths agree: the device flow and the code flow both resolve
+   * through this method, so a fix in one route would have left the other
+   * holding the same defect. It also leaves the tombstone alone — a lookup
+   * that cannot see it is a lookup that cannot resurrect it, and the fresh
+   * insert every caller falls through to is the only remaining branch.
    */
   async findGrantItemId(opts: {
     spaceId: string | null;
@@ -433,6 +458,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       .where(
         and(
           eq(items.type, "system.connection"),
+          eq(items.state, "active"),
           spacePredicate,
           sql`${items.properties}->>'kind' = 'app'`,
           sql`${items.properties}->>'client_id' = ${opts.clientId}`,

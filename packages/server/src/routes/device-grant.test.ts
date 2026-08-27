@@ -983,6 +983,11 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // row reads "active" on the axis the merge checked and "revoked" on the axis
   // it did not. `items.get` hides only trashed rows, so it comes back.
   //
+  // The lookup refuses it before the merge is reached now, so what this pins
+  // is that the approval re-establishes on a row the user can see rather than
+  // on the tombstone. The merge's own both-axes read is the second fence and
+  // is covered directly in `auth-grant-visibility.test.ts`.
+  //
   // Driven through `DELETE /items/{id}` with the platform credential rather
   // than written onto the row, because the shape being pinned is one the API
   // actually produces, and a hand-stamped `state` would prove only that the
@@ -1017,14 +1022,27 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
 
     await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
 
-    // Observed on the row the approval reached, before anything else can move
-    // it: resurrected scopes are visible here and nowhere the user can look,
-    // since neither read surface lists a row in this state.
+    // The approval never reaches that row now: `findGrantItemId` carries its
+    // own `state = 'active'` predicate, so the re-consent branch is not
+    // entered and the fresh insert below is the only remaining path. An
+    // unchanged `granted_at` is what separates "was not reached" from "was
+    // reached and written the same values back".
     const after = await ctx.storage.items.get(grantId);
-    expect(after?.properties.granted_at).not.toBe(
-      hidden?.properties.granted_at,
-    );
-    const scopes = after?.properties.scopes as string[];
+    expect(after?.state).toBe("revoked");
+    expect(after?.properties.granted_at).toBe(hidden?.properties.granted_at);
+    expect(after?.properties.scopes).toEqual([
+      "core.note:read",
+      "core.task:write",
+    ]);
+
+    // The scopes the user can actually see are the ones this approval asked
+    // for, on a row both read surfaces list. `standingGrant` filters on
+    // `state: "active"`, so it finds the new row and its count assertion
+    // pins that the tombstone did not fork the projection into two live
+    // grants.
+    const standing = await standingGrant(ctx);
+    expect(standing.id).not.toBe(grantId);
+    const scopes = standing.properties.scopes as string[];
     expect(scopes).toEqual(["core.note:read"]);
     expect(grantCoversScope(scopes, "core.task:write")).toBe(false);
   });

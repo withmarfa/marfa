@@ -998,6 +998,25 @@ export class PgItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.INVALID_TRANSITION, "Item is not trashed");
     }
 
+    // A restore is a transition, so it goes through the same gate `delete()`
+    // above and `transition()` below already use. Writing `active`
+    // unconditionally made this the one of four write paths that skipped the
+    // graph, and a gate three paths apply and the fourth does not survives
+    // review indefinitely because each path reads correctly on its own.
+    //
+    // What it stops is specific: `trashed` is not in the `system.*`
+    // lifecycle, so a `system.connection` that somehow holds it must not be
+    // able to walk out into `active` having passed no transition the graph
+    // admits. The check lives here rather than in the route because keeping
+    // the three siblings side by side is what stops them drifting again.
+    // Its companion — refusing to create such a row in the first place —
+    // deliberately sits at the route layer instead; see `POST /items` in
+    // `routes/items.ts` for why `create` must stay permissive.
+    const error = validateTransition(row.type, row.state, "active");
+    if (error) {
+      throw new MarfaError(ErrorCode.INVALID_TRANSITION, error);
+    }
+
     const now = new Date().toISOString();
     await this.db
       .update(items)

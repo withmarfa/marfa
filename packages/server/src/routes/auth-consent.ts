@@ -1330,6 +1330,14 @@ async function projectGrantOnConsent(
     // re-consented row keeps status="revoked" — /security hides the grant
     // while the plugin issues tokens against it. Setting revoked_at:
     // undefined makes JSON.stringify drop the key from stored properties.
+    //
+    // This writes one of the two lifecycle axes and never the other, which
+    // is safe only because `findGrantItemId` refuses a row whose `state` is
+    // not active: the row reaching here is already listed by both read
+    // surfaces on that axis, so flipping `status` back makes it coherent
+    // rather than reactivating something nobody can see. A soft-deleted
+    // grant does not resolve at all and the branch below inserts a fresh
+    // row instead.
     const updated = await storage.items.update(
       grantItemId,
       {
