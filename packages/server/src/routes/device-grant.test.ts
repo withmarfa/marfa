@@ -7,6 +7,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { setActivePermissionBundles } from "../config.js";
+import { grantCoversScope } from "@withmarfa/shared";
 
 /**
  * Tests for the Device Authorization Grant (RFC 8628) surface:
@@ -753,6 +754,239 @@ describe("POST /auth/device/consent — approve / deny", () => {
     const poll = await pollToken(ctx, initResult.device_code, clientId);
     expect(poll.status).toBe(400);
     expect(poll.body.error).toBe("access_denied");
+  });
+});
+
+/**
+ * The device screen confirms a scope list rather than offering one to edit,
+ * so an approval may widen a standing grant and must never shrink one. These
+ * pin both directions, plus the consequence at the token step: the record can
+ * now hold more than this device asked for, and what it is handed must still
+ * be what it asked for.
+ *
+ * The standing grant is established by an earlier device approval rather than
+ * a browser consent because the record is the same row either way, and this
+ * file already owns the machinery for one.
+ */
+describe("POST /auth/device/consent, approving merges into a standing grant", () => {
+  /** Initiate for `scope`, approve at the consent screen, and hand back the
+   *  initiation so a caller can also poll for the token it issues. */
+  async function approveDeviceFlow(
+    c: TestContext,
+    clientId: string,
+    cookie: string,
+    scope: string,
+  ): Promise<Awaited<ReturnType<typeof initiate>>> {
+    const init = await initiate(c, clientId, scope);
+    const res = await c.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: new URLSearchParams({
+          user_code: init.user_code,
+          decision: "approve",
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(200);
+    return init;
+  }
+
+  /** The scope literals the one projected grant holds. Asserting the row count
+   *  here keeps a merge that accidentally forked the projection from reading
+   *  as a merge that worked. */
+  async function standingGrantScopes(c: TestContext): Promise<string[]> {
+    const items = await c.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    return items.data[0]!.properties.scopes as string[];
+  }
+
+  it("keeps a scope the standing grant holds and this device did not name", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-narrower@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(scopes).toContain("core.task:write");
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(true);
+    expect(grantCoversScope(scopes, "core.note:read")).toBe(true);
+  });
+
+  it("adds a scope the standing grant does not reach", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-wider@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(scopes).toContain("core.task:write");
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(true);
+  });
+
+  // The merge is coverage-aware because a literal one can narrow. Scope
+  // resolution gives an exact type id precedence over a wildcard spanning it,
+  // so parking `core.note:read` beside a standing `core.*:write` pins
+  // `core.note` to read and takes away a write nobody unticked. Appending only
+  // what the standing set does not already reach cannot do that.
+  it("does not park a covered literal beside the wildcard that covers it", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-covered@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.*:write");
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    const scopes = await standingGrantScopes(ctx);
+    expect(scopes).not.toContain("core.note:read");
+    expect(grantCoversScope(scopes, "core.note:write")).toBe(true);
+  });
+
+  it("issues the device a token for what it asked for, not for the merged grant", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-token-scope@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    const narrow = await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read",
+    );
+
+    const poll = await pollToken(ctx, narrow.device_code, clientId);
+    expect(poll.status).toBe(200);
+    expect(poll.body.scope).toBe("core.note:read");
+
+    // The response field is a claim; the minted row is the authority, and the
+    // two are set from different expressions. Spending the token is what tells
+    // them apart, so this asks the data plane rather than re-reading the JSON.
+    const write = await ctx.app.fetch(
+      new Request(`${ORIGIN}/items`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: ORIGIN,
+          authorization: `Bearer ${poll.body.access_token as string}`,
+        },
+        body: JSON.stringify({
+          type: "core.task",
+          properties: { title: "from a device that never asked" },
+        }),
+      }),
+    );
+    expect(write.status).toBe(403);
+  });
+
+  it("withholds a refresh token from a device that did not ask to stay signed in", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-token-offline@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "offline_access core.note:read",
+    );
+    const narrow = await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read",
+    );
+
+    const poll = await pollToken(ctx, narrow.device_code, clientId);
+    expect(poll.status).toBe(200);
+    expect(poll.body.access_token).toMatch(/^marfa_at_/);
+    expect(poll.body.refresh_token).toBeUndefined();
+  });
+
+  // The other half of the same rule. A device code outlives its approval by up
+  // to the rest of its TTL, so a narrowing on the consent screen can land in
+  // between, and that narrowing has already revoked the live tokens. The poll
+  // that follows must not hand back what was just taken away.
+  it("does not reissue access the standing grant no longer reaches", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-token-narrowed@example.com",
+      "correct horse",
+    );
+
+    const wide = await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+
+    // Stands in for the consent screen narrowing the grant, which rewrites
+    // exactly this record. Written directly because the point under test is
+    // what the token step reads, not how the record came to say it.
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    const grant = items.data[0]!;
+    await ctx.storage.items.update(
+      grant.id,
+      { properties: { scopes: ["core.note:read"] } },
+      grant.space_id ?? undefined,
+    );
+
+    const poll = await pollToken(ctx, wide.device_code, clientId);
+    expect(poll.status).toBe(200);
+    expect(poll.body.scope).toBe("core.note:read");
   });
 });
 
