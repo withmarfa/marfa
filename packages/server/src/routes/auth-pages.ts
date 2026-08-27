@@ -27,6 +27,7 @@ import {
   stampOAuthGrantLastUsed,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
+import { mergeDeviceApprovalScopes } from "./device-scope-merge.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import {
   bundlePublishedScopes,
@@ -242,71 +243,31 @@ function selfServeEdgePermissions(
 }
 
 /**
- * The scope set a device approval leaves on a grant it is re-approving.
- *
- * A device approval never narrows a standing grant; it merges into it.
- * The device screen CONFIRMS a scope list. It has no per-scope toggles, and
- * its own copy says the rows are confirmed rather than editable, so a device
- * request narrower than what the user already granted is an artifact
- * of what that client asked for, not the user electing to give something
- * up. Signing in on a CLI must not silently shrink what the same app
- * already reaches from the browser, and it must not leave `/auth/security`
- * under-reporting access that still works. Requiring full re-consent
- * instead was the other candidate and is worse: it revokes the user's live
- * tokens as an unshown side effect of a CLI login.
- *
- * Coverage-aware, and this is the half that is easy to get backwards.
- * `preserveBroaderGrant` in `routes/auth-consent.ts` compares literals
- * deliberately, because what it restores is the record of what the user
- * ticked, verbatim, and a coverage test there would decline to restore a
- * scope the user had picked. This asks a different question, whether the
- * standing grant already REACHES what the device named, and the literal
- * answer to that is not merely noisy: it narrows. Scope resolution gives an
- * exact type id precedence over a wildcard spanning it, so appending
- * `core.note:read` beside a standing `core.*:write` pins `core.note` to
- * read and takes away a write nobody touched. A plain set union is
- * therefore the one merge that can still shrink a grant. Adding only what
- * the set does not already cover cannot: an entry is appended only when the
- * grant's effective level for that key sits below what was asked, so
- * appending can only raise it.
- *
- * Each candidate is measured against the set as it stands, not against the
- * standing scopes alone, so a request naming both `core.note:read` and
- * `core.*:write` cannot append the narrower literal on the strength of a
- * wildcard that arrives a moment later in the same list.
- *
- * The standing literals come first and are never rewritten. The record is
- * what the user approved; a device flow may add to it, but has no business
- * restating it in its own words.
- */
-function mergeDeviceApprovalScopes(
-  standing: readonly string[],
-  approved: readonly string[],
-): string[] {
-  const merged = [...standing];
-  for (const scope of approved) {
-    if (grantCoversScope(merged, scope)) continue;
-    merged.push(scope);
-  }
-  return merged;
-}
-
-/**
  * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
  * through `ItemStore.create` on first consent and `ItemStore.update` on
  * re-consent so the row gets full ItemStore treatment: `space_id`
  * stamping, search indexing, metadata-row insertion, versions snapshot on
  * re-consent, the `created`/`updated` event emission, and `source` /
- * `origin` stamping. Returns the connection-item id + whether the call
- * created vs updated the projection.
+ * `origin` stamping. Returns the connection-item id, whether the call
+ * created vs updated the projection, and the scope list the record now
+ * holds, which on re-consent is the merge rather than the request, so the
+ * caller's audit row can report both without recomputing it.
  *
  * Uses `findGrantItemId` to detect the re-consent case and routes through
  * `items.update` (same shape as the code-flow consent's
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
- * writes there are the merge described on `mergeDeviceApprovalScopes`, not
- * the request. This surface confirms a list rather than offering one to
- * edit, so it may widen a standing grant and never shrinks one.
+ * writes there are the merge described in `device-scope-merge.ts`, not the
+ * request. This surface confirms a list rather than offering one to edit, so
+ * it may widen a standing grant and never shrinks one.
+ *
+ * **`source` is the device literal and not the wider union it used to
+ * declare.** There is one caller. The merge rule inside is specific to a
+ * screen with no per-scope toggles, and the authorize surface has the
+ * deliberate opposite contract: a narrowing there is a decision the user
+ * made and revokes the tokens carrying what was dropped. Advertising this
+ * function as serving both would let a future authorize caller pick it up
+ * and silently disable that revoke.
  *
  * `spaceId` resolves from the consenting Better Auth user's marfa `users`
  * row in hosted mode; in single-space mode (no `users` store) the grant
@@ -319,8 +280,8 @@ async function createUserAppGrant(
   consentingUser: MarfaAuthSessionUser,
   clientId: string,
   scopes: string[],
-  source: "marfa/oauth/authorize" | "marfa/oauth/device",
-): Promise<{ id: string; created: boolean }> {
+  source: "marfa/oauth/device",
+): Promise<{ id: string; created: boolean; scopes: string[] }> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
   let spaceId: string | undefined;
@@ -356,20 +317,21 @@ async function createUserAppGrant(
       // Race — findGrantItemId saw a row but a concurrent delete
       // raced. Fall through to insert.
     } else {
-      // Merge rather than overwrite. `mergeDeviceApprovalScopes` carries
-      // the reasoning; the short version is that this screen confirms a
-      // scope list instead of offering one to edit, so a narrower request
-      // is the client's doing and not the user's, and writing it straight
-      // in would shrink what the browser already granted while leaving the
-      // tokens carrying the removed scopes alive.
+      // Merge rather than overwrite. `device-scope-merge.ts` carries the
+      // reasoning; the short version is that this screen confirms a scope
+      // list instead of offering one to edit, so a narrower request is the
+      // client's doing and not the user's, and writing it straight in would
+      // shrink what the browser already granted while leaving the tokens
+      // carrying the removed scopes alive.
       const standingScopes = Array.isArray(existing.properties.scopes)
         ? (existing.properties.scopes as string[])
         : [];
+      const mergedScopes = mergeDeviceApprovalScopes(standingScopes, scopes);
       const updated = await storage.items.update(
         existingItemId,
         {
           properties: {
-            scopes: mergeDeviceApprovalScopes(standingScopes, scopes),
+            scopes: mergedScopes,
             status: "active",
             granted_at: now,
             revoked_at: undefined,
@@ -385,7 +347,7 @@ async function createUserAppGrant(
           metadata,
           spaceId,
         });
-        return { id: updated.id, created: false };
+        return { id: updated.id, created: false, scopes: mergedScopes };
       }
     }
   }
@@ -414,7 +376,7 @@ async function createUserAppGrant(
   );
   const metadata = await storage.metadata.get(item.id);
   await publish({ type: "created", item, metadata, spaceId });
-  return { id: item.id, created: true };
+  return { id: item.id, created: true, scopes };
 }
 
 /**
@@ -2702,7 +2664,16 @@ export function authRoutes(
       details: {
         client_id: row.client_id,
         user_id: sessionResult.session.user.id,
+        // Both halves, because on a re-approval they differ and neither
+        // alone answers the question an operator brings to this row. An
+        // approval merges into the standing grant rather than replacing it,
+        // so `scopes`, what this device asked for and what its screen
+        // showed, no longer describes what the record ends up holding, and
+        // logging only that made a grant look like it acquired scopes from
+        // nowhere. `resulting_scopes` is the record after the merge. On a
+        // first-time approval the two are the same list.
         scopes: row.scopes,
+        resulting_scopes: grant.scopes,
         grant_item_id: grant.id,
         source: "device",
         // `created: false` means re-consent (item already existed) —
@@ -2861,10 +2832,20 @@ export function authRoutes(
     // Filtered against the grant rather than taken raw, because the record
     // is still the authority and a device code outlives its approval by up
     // to the rest of its TTL. A narrowing on the consent screen inside that
-    // window has already revoked the live tokens, and the poll that follows
-    // must not reissue what it took away. The intersection is the only
-    // reading that holds both ends: never more than was asked for, never
-    // more than is granted.
+    // window rewrites the scope list, and the poll that follows reads the
+    // rewritten one, so it cannot hand back a scope that was dropped. The
+    // intersection is the only reading that holds both ends: never more
+    // than was asked for, never more than the scope list reaches.
+    //
+    // **What it does NOT cover: revocation.** This handler reads the
+    // grant's scopes and nothing else, not `status` and not `revoked_at`, so
+    // a connection revoked between approval and poll still mints a working
+    // token pair for the rest of the device code's TTL, with the scope list
+    // the revoked record still carries. That is a hole and it is not this
+    // filter's to close; it is recorded here so the next reader does not
+    // take the paragraph above as saying the poll is already fenced against
+    // a revoke. Closing it means reading the grant's status here, and
+    // deciding what an approved-then-revoked device code should answer.
     const issuedScopes = row.scopes.filter((scope) =>
       grantCoversScope(grantScopes, scope),
     );
