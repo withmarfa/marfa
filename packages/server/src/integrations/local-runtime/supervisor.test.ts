@@ -32,6 +32,7 @@ import {
   familyOnlyMappingResolver,
 } from "@withmarfa/runtime-sdk";
 import { initEventLog, __resetCycleDetectionForTests } from "../../pubsub.js";
+import type { Item } from "@withmarfa/shared";
 import { createSupervisor, QUEUE_NAME } from "./supervisor.js";
 import type { PgBoss } from "pg-boss";
 import type {
@@ -911,19 +912,24 @@ describe("local-runtime supervisor", () => {
     }
   });
 
-  it("rejects dispatch for a revoked Connection at the credential mint", async () => {
-    const integrationId = await createIntegrationItem();
-    const connectionId = await createActiveConnection(integrationId);
-
-    // Revoke the Connection so the credential mint refuses; a revoked
-    // Connection cannot mint a runtime credential and therefore cannot run.
-    await ctx.storage.items.transition(connectionId, "revoked", undefined);
-
-    const registration = buildRegistration(() =>
-      Promise.resolve({ ok: true, done: true }),
-    );
-
-    const runtime = createSupervisor(ctx.storage, {
+  /**
+   * These replace a test that asserted the opposite: that a revoked
+   * Connection's dispatch throws at the credential mint. It did throw, and
+   * that was the defect. The throw left the job lock, left `dispatchOne`
+   * and reached pg-boss as a rejected handler, so the job burned its whole
+   * retry ladder and dead-lettered over a settled state nobody can act on,
+   * degrading `/health` while it sat there.
+   *
+   * The mint's own refusal is untouched and is still asserted, in
+   * `credentials.test.ts` and `runtime-credential-lifecycle.test.ts`. It is
+   * the fail-closed backstop for every other caller, and a test that only
+   * calls the mint would pass with the gate below deleted — which is why
+   * every fixture here is a real dispatch.
+   */
+  function supervisorFor(
+    registration: LocalIntegrationRegistration,
+  ): LocalRuntime {
+    return createSupervisor(ctx.storage, {
       apiUrl: "http://test.local",
       apiKeySalt: TEST_API_KEY_SALT,
       authMode: "keys" as const,
@@ -934,25 +940,183 @@ describe("local-runtime supervisor", () => {
       },
       boss: null,
     });
+  }
 
-    // The dispatch raises inside `withJobLock`; the supervisor surfaces
-    // it back through the promise. We assert by catching directly.
-    let threw: unknown = null;
-    try {
-      await runtime.dispatchForTest({
+  /** Activity rows this dispatch wrote against one connection. */
+  async function activityFor(connectionId: string): Promise<Item[]> {
+    const rows = await ctx.storage.items.list({ type: "system.activity" });
+    return rows.data.filter(
+      (item) =>
+        (item.properties as { connection_id?: string }).connection_id ===
+        connectionId,
+    );
+  }
+
+  it("acks a schedule tick for a revoked Connection rather than throwing at the mint", async () => {
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    await ctx.storage.items.transition(connectionId, "revoked", undefined);
+
+    let handlerRan = false;
+    const runtime = supervisorFor(
+      buildRegistration(() => {
+        handlerRan = true;
+        return Promise.resolve({ ok: true, done: true });
+      }),
+    );
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule",
         integration_name: TEMPLATE_MANIFEST.name,
-        message: {
-          kind: "schedule",
-          integration_name: TEMPLATE_MANIFEST.name,
-          connection_id: connectionId,
-          scheduled_for_ms: Date.now(),
-        },
-      });
-    } catch (err) {
-      threw = err;
-    }
-    expect(threw).not.toBeNull();
-    expect(String(threw)).toMatch(/revoked|cannot mint/i);
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(handlerRan).toBe(false);
+
+    // Acking silently would trade an unactionable dead letter for no
+    // record at all, so the drop says so somewhere a person reads.
+    const rows = await activityFor(connectionId);
+    expect(rows).toHaveLength(1);
+    const props = rows[0]!.properties as {
+      severity?: string;
+      summary?: string;
+      detail?: { connection_state?: string; message_kind?: string };
+    };
+    expect(props.severity).toBe("warning");
+    expect(props.detail?.connection_state).toBe("revoked");
+    expect(props.detail?.message_kind).toBe("schedule");
+  });
+
+  it("acks a webhook for a revoked Connection, where a paused one retries", async () => {
+    // The one place this parts company with the pause gate, and the reason
+    // it is a separate verdict rather than the same one. A paused webhook
+    // retries so it can reach the dead-letter surface, because a resume
+    // makes a replay work. Revoked is terminal: the retry cannot succeed
+    // and the row it would leave can never be replayed, which is the exact
+    // row this gate exists to stop writing.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    await ctx.storage.items.transition(connectionId, "revoked", undefined);
+
+    let handlerRan = false;
+    const runtime = supervisorFor(
+      buildRegistration(() => {
+        handlerRan = true;
+        return Promise.resolve({ ok: true, done: true });
+      }),
+    );
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "webhook",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        delivery_id: "queued-before-revocation",
+        headers: {},
+        body_base64: Buffer.from("{}").toString("base64"),
+        verified_at_ms: Date.now(),
+      },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(handlerRan).toBe(false);
+  });
+
+  it("lets the terminal verdict win over a stale paused mark", async () => {
+    // The two gates read different properties, and this pins which one
+    // answers when both are set. It is defensive rather than reachable
+    // today: the single writer that revokes a connection overwrites
+    // `runtime_status` in the same transaction, so the pair cannot
+    // legitimately disagree. It could once — a compensation path moved
+    // `state` alone and left the properties reading healthy — and that is
+    // the shape this orders against.
+    //
+    // Ordering it the other way is not a cosmetic difference. The pause
+    // gate retries a webhook, so a connection wearing both marks would
+    // retry a delivery it can never dispatch, straight into the
+    // unreplayable dead letter this whole change exists to stop writing.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId, {
+      runtime_status: "paused",
+    });
+    await ctx.storage.items.transition(connectionId, "revoked", undefined);
+
+    let handlerRan = false;
+    const runtime = supervisorFor(
+      buildRegistration(() => {
+        handlerRan = true;
+        return Promise.resolve({ ok: true, done: true });
+      }),
+    );
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "webhook",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        delivery_id: "paused-then-revoked",
+        headers: {},
+        body_base64: Buffer.from("{}").toString("base64"),
+        verified_at_ms: Date.now(),
+      },
+    });
+
+    // The pause gate's answer would be `{ ok: false, retry: true }`.
+    expect(result).toEqual({ ok: true });
+    expect(handlerRan).toBe(false);
+    const rows = await activityFor(connectionId);
+    expect(rows).toHaveLength(1);
+  });
+
+  it("acks a dispatch whose Connection row is gone entirely", async () => {
+    // The same ladder by a different route, and the reason the gate reads
+    // `type` before `state`: a purged row is not a connection at all, so a
+    // state test alone would not see it. Before the gate it fell past the
+    // pause check to the mint, which threw `CONNECTION_NOT_FOUND` and
+    // dead-lettered identically to the revoked case.
+    //
+    // Purged rather than deleted, deliberately. `items.delete` is a soft
+    // delete and a `system.connection`'s soft-delete state is `revoked`,
+    // not `trashed` — so deleting a connection produces the case above,
+    // and only a purge reaches this one.
+    const integrationId = await createIntegrationItem();
+    const connectionId = await createActiveConnection(integrationId);
+    await ctx.storage.items.delete(connectionId, undefined);
+    await ctx.storage.items.purge(connectionId, undefined);
+
+    let handlerRan = false;
+    const runtime = supervisorFor(
+      buildRegistration(() => {
+        handlerRan = true;
+        return Promise.resolve({ ok: true, done: true });
+      }),
+    );
+
+    const result = await runtime.dispatchForTest({
+      integration_name: TEMPLATE_MANIFEST.name,
+      message: {
+        kind: "schedule",
+        integration_name: TEMPLATE_MANIFEST.name,
+        connection_id: connectionId,
+        scheduled_for_ms: Date.now(),
+      },
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(handlerRan).toBe(false);
+    const rows = await activityFor(connectionId);
+    expect(rows).toHaveLength(1);
+    expect(
+      (rows[0]!.properties as { detail?: { connection_state?: string } }).detail
+        ?.connection_state,
+    ).toBe("missing");
   });
 
   it("acks a queued schedule message for a paused Connection without dispatching", async () => {
