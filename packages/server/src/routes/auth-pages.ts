@@ -338,14 +338,26 @@ async function createUserAppGrant(
       // re-consent still reactivates the row, and it comes back at exactly
       // what this approval asked for.
       //
-      // Tested FOR "active" rather than against "revoked", matching
-      // `GET /grants` and the security page below. That makes the standing
-      // set exactly what `/auth/security` would have shown the user, and it
+      // **Both axes, because both read surfaces filter on both.**
+      // `GET /grants` and the security page each list with `state: "active"`
+      // and then skip a row whose `properties.status` is not "active". The
+      // merge read only the second, while `findGrantItemId` carries no
+      // `state` predicate and `items.get` hides `trashed` alone, so a row
+      // sitting at `state: "revoked"` with `status: "active"` was found,
+      // admitted, and merged against. That writes scopes back onto a row
+      // neither surface will list, which puts it beyond the Disconnect
+      // button while the token step below still mints against it.
+      // `connections/revoked-connection.ts` carries why the two axes cannot
+      // legitimately disagree, and exists because they drifted once already
+      // on the integration side.
+      //
+      // Tested FOR "active" on both rather than against "revoked", which
       // decides the absent and unrecognized cases the safe way round: a
-      // status this code cannot read is not evidence the user granted
-      // anything, so the approval re-establishes at its own request instead
-      // of resurrecting scopes nobody can account for.
+      // state or status this code cannot read is not evidence the user
+      // granted anything, so the approval re-establishes at its own request
+      // instead of resurrecting scopes nobody can account for.
       const standingScopes =
+        existing.state === "active" &&
         existing.properties.status === "active" &&
         Array.isArray(existing.properties.scopes)
           ? (existing.properties.scopes as string[])

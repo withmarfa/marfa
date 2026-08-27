@@ -931,6 +931,58 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
     ).toBe(true);
   });
 
+  // A grant is hidden from both read surfaces on TWO axes, and the merge read
+  // one. `softDeleteState` puts a `system.*` item in `revoked` rather than
+  // `trashed`, and the soft delete leaves `properties.status` alone, so this
+  // row reads "active" on the axis the merge checked and "revoked" on the axis
+  // it did not. `items.get` hides only trashed rows, so it comes back.
+  //
+  // Driven through `DELETE /items/{id}` with the platform credential rather
+  // than written onto the row, because the shape being pinned is one the API
+  // actually produces, and a hand-stamped `state` would prove only that the
+  // predicate reads the field.
+  it("does not merge into a grant whose lifecycle state is not active", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "merge-state-revoked@example.com",
+      "correct horse",
+    );
+
+    await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read core.task:write",
+    );
+    const grantId = (await standingGrant(ctx)).id;
+
+    const deleted = await request(ctx.app, "DELETE", `/items/${grantId}`, {
+      key: ctx.adminKey,
+    });
+    expect(deleted.status).toBe(200);
+    // The fixture only means something if it is admitted by the predicate the
+    // clause was added to. `status` still reads "active", so the merge would
+    // take these scopes as standing were the `state` clause removed.
+    const hidden = await ctx.storage.items.get(grantId);
+    expect(hidden?.state).toBe("revoked");
+    expect(hidden?.properties.status).toBe("active");
+
+    await approveDeviceFlow(ctx, clientId, cookie, "core.note:read");
+
+    // Observed on the row the approval reached, before anything else can move
+    // it: resurrected scopes are visible here and nowhere the user can look,
+    // since neither read surface lists a row in this state.
+    const after = await ctx.storage.items.get(grantId);
+    expect(after?.properties.granted_at).not.toBe(
+      hidden?.properties.granted_at,
+    );
+    const scopes = after?.properties.scopes as string[];
+    expect(scopes).toEqual(["core.note:read"]);
+    expect(grantCoversScope(scopes, "core.task:write")).toBe(false);
+  });
+
   it("adds a scope the standing grant does not reach", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);
