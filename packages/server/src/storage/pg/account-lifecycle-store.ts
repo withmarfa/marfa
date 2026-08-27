@@ -10,11 +10,10 @@
  * credential path.
  */
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import type { DeletionState } from "@withmarfa/shared";
 import type { AccountLifecycleStore } from "../interface.js";
 import { apiKeys, auth_session, auth_user, users } from "./schema.js";
 import type { PgDb } from "./connection.js";
-
-type DeletionState = "active" | "pending_deletion";
 
 export class PgAccountLifecycleStore implements AccountLifecycleStore {
   constructor(private db: PgDb) {}
