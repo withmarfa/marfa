@@ -964,11 +964,39 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     }
   });
 
-  it("resolves a capability through the labels the other screens read", () => {
+  it("leaves a capability out, because both screens name one without it", () => {
+    // `labelFor` here and `describeCapabilities` on the device screen both
+    // resolve a capability through `capability-labels.ts` and return before
+    // they reach this map, so an entry would be computed and discarded on
+    // every render. That is the whole reason the map has nothing for one.
+    //
+    // Held by rendering with no map at all rather than by asserting what the
+    // map holds. The absence is only safe while both screens still name a
+    // capability unaided, and asserting the absence alone would pass equally
+    // well on a screen that had started needing an entry and lost the words.
     expect(CAPABILITY_SCOPES.length).toBeGreaterThan(0);
-    const out = describeAll(...CAPABILITY_SCOPES);
+    const scopes = CAPABILITY_SCOPES.map(parse);
+    expect(buildScopeDescriptions(scopes)).toEqual({});
+
+    const authorize = renderConsentScreen({
+      clientName: "Test CLI",
+      clientId: "client-abc",
+      oauthQuery: SIGNED_OAUTH_QUERY,
+      scopes,
+    });
+    const device = renderDeviceConsentScreen({
+      clientName: "Test CLI",
+      scopes,
+      userCode: "ABCD-EFGH",
+    });
+
     for (const literal of CAPABILITY_SCOPES) {
-      expect(out[literal], literal).toBe(CAPABILITY_LABELS[literal]);
+      expect(authorize, literal).toContain(CAPABILITY_LABELS[literal]);
+      expect(device, literal).toContain(CAPABILITY_LABELS[literal]);
+      // The device screen's floor when nothing names a scope. Reached by the
+      // same arm, so a capability arriving here as its own literal is the
+      // shape a lost label takes rather than a second failure.
+      expect(device, literal).not.toContain(`<span>${literal}</span>`);
     }
   });
 

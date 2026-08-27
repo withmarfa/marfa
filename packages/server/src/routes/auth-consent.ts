@@ -101,7 +101,6 @@ import {
   resolveRuntimeCustomNamespaces,
 } from "../auth/default-bundles.js";
 import { renderConsentScreen } from "./consent.js";
-import { capabilityLabel } from "./capability-labels.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import type { AuthorizeFailure } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
@@ -1670,12 +1669,20 @@ function describeScope(scope: ParsedScope): string | undefined {
       // third register existed to fill it and is gone with it.
       return undefined;
     case "capability":
-      // Named where the security page's revoke line names them, rather than
-      // a second time here. The toggle label and not the inline-list form:
-      // `CAPABILITY_SHORT` is written lowercase to be joined into somebody
-      // else's sentence, and a description occupies a row of its own, where
-      // it would read as half a sentence.
-      return capabilityLabel(scope.capability ?? scope.typePattern);
+      // Deliberately absent, for the reason above. `labelFor` in
+      // `consent.ts` and `describeCapabilities` in `device-pages.ts` both
+      // resolve a capability literal through `capability-labels.ts` and
+      // return before they look at this map, so anything written here for
+      // one was computed and discarded. The branch that filled it is gone
+      // with it.
+      //
+      // Absent here is not a gap waiting on capability scopes reaching a
+      // consent screen. They are already described when they get there, on
+      // both surfaces, by `CAPABILITY_LABELS` and `CAPABILITY_SHORT`.
+      // Whoever comes to put one in front of a person should extend those
+      // maps rather than this one: an entry here is a third name for the
+      // same grant, in the one place neither renderer reads.
+      return undefined;
     case "edge": {
       // `edgeType` is optional on ParsedScope but always present when
       // kind === "edge"; guard for the type-checker.
