@@ -5,11 +5,10 @@
  * revocation + session drop are atomic on the libsql side.
  */
 import { and, eq, isNull, lt, sql } from "drizzle-orm";
+import type { DeletionState } from "@withmarfa/shared";
 import type { AccountLifecycleStore } from "../interface.js";
 import { apiKeys, auth_session, auth_user, users } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
-
-type DeletionState = "active" | "pending_deletion";
 
 export class SqliteAccountLifecycleStore implements AccountLifecycleStore {
   constructor(private db: DrizzleDb) {}
