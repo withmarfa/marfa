@@ -259,7 +259,9 @@ function selfServeEdgePermissions(
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
  * writes there are the merge described in `device-scope-merge.ts`, not the
  * request. This surface confirms a list rather than offering one to edit, so
- * it may widen a standing grant and never shrinks one.
+ * it may widen a standing grant and never shrinks one — and a revoked grant
+ * is not a standing one, so it merges against nothing and the record comes
+ * back at the request alone.
  *
  * **`source` is the device literal and not the wider union it used to
  * declare.** There is one caller. The merge rule inside is specific to a
@@ -323,9 +325,31 @@ async function createUserAppGrant(
       // client's doing and not the user's, and writing it straight in would
       // shrink what the browser already granted while leaving the tokens
       // carrying the removed scopes alive.
-      const standingScopes = Array.isArray(existing.properties.scopes)
-        ? (existing.properties.scopes as string[])
-        : [];
+      //
+      // **A revoked grant contributes nothing to that merge, because the
+      // rule is about a STANDING grant and a revoked one is not standing.**
+      // `findGrantItemId` matches on (space, client, user) and has no status
+      // predicate, so it hands back a revoked row as readily as a live one,
+      // and `revokeProjectedGrant` above leaves `scopes` verbatim on the row
+      // it flips. Merging against that set folds a scope the user explicitly
+      // withdrew back into the record and flips the record active holding
+      // it — access restored by a login whose consent screen never showed
+      // it. Re-establishing at the request is the whole of the fix: the
+      // re-consent still reactivates the row, and it comes back at exactly
+      // what this approval asked for.
+      //
+      // Tested FOR "active" rather than against "revoked", matching
+      // `GET /grants` and the security page below. That makes the standing
+      // set exactly what `/auth/security` would have shown the user, and it
+      // decides the absent and unrecognized cases the safe way round: a
+      // status this code cannot read is not evidence the user granted
+      // anything, so the approval re-establishes at its own request instead
+      // of resurrecting scopes nobody can account for.
+      const standingScopes =
+        existing.properties.status === "active" &&
+        Array.isArray(existing.properties.scopes)
+          ? (existing.properties.scopes as string[])
+          : [];
       const mergedScopes = mergeDeviceApprovalScopes(standingScopes, scopes);
       const updated = await storage.items.update(
         existingItemId,

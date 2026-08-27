@@ -1304,9 +1304,11 @@ async function projectGrantOnConsent(
     // scopes have to stop working. The device screen has no toggles. It
     // confirms a list, so the same shrink there carries no such decision,
     // and `createUserAppGrant` in `routes/auth-pages.ts` merges into the
-    // standing grant instead of replacing it. Neither surface narrows
-    // without the user having asked, and neither leaves a record claiming
-    // access it did not withdraw.
+    // standing grant instead of replacing it, and merges against nothing
+    // when that grant has been revoked, so a re-approval cannot put back a
+    // scope the user withdrew. Neither surface narrows without the user
+    // having asked, and neither leaves a record claiming access the user
+    // withdrew.
     if (priorScopes.some((s) => !grantCoversScope(opts.scopes, s))) {
       const provider = storage.oauthProvider;
       if (typeof provider?.revokeAccessTokensForGrant !== "function") {
