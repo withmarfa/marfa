@@ -1472,9 +1472,15 @@ async function resolvePriorScopes(
  *
  * Missing entries fall back to a registry `description` where a registry has
  * one, which is correct behavior for the types and edge types registered at
- * runtime via `POST /types`, where the operator controls the copy. For core
- * + system types every entry is curated below so the registry copy never
- * reaches the screen.
+ * runtime via `POST /types`, where the operator controls the copy. For the
+ * core and system types, and for every edge type this build ships, an entry
+ * is curated below so the registry copy never reaches the screen.
+ *
+ * Both halves of that sentence are held against `TYPE_REGISTRY` and
+ * `EDGE_TYPE_REGISTRY` rather than against a list kept beside them, because
+ * the edge half was false while the sentence already claimed it.
+ * `in-collection` shipped with no entry here, and the paragraph of schema
+ * rationale it fell through to reached a device approval screen as a row.
  *
  * **Keyed uniformly on `typePattern`, which is what makes one flat map
  * across four kinds sound.** `typePattern` carries a different namespace per
@@ -1543,6 +1549,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "edge.about": "Links between items and what they're about.",
   "edge.parent-of": "Parent and child relationships.",
   "edge.in-thread": "Items grouped into threads.",
+  "edge.in-collection": "Items grouped into collections.",
   "edge.attached-to": "File attachments on items.",
   "edge.references": "References between items.",
   "edge.authored-by": "Who created what.",
@@ -1551,11 +1558,17 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
 
   // Metadata layer: sub-resources rather than item types, so no registry
   // holds a description to fall back to and this is the only source.
+  //
+  // Phrased as things rather than as acts, because one entry serves both
+  // operations. `typePattern` carries no verb, so `metadata.types:read` and
+  // `metadata.types:write` read the same line, and a line saying "register
+  // and update" told somebody approving a read that they were granting a
+  // write. The read/write split is already carried by the screen's own
+  // grouping and by the toggle the row sits on.
   metadata:
-    "Register and update custom data types, relationship types, and any others added later.",
-  "metadata.types": "Register and update custom data types in your space.",
-  "metadata.edge_types":
-    "Register and update custom relationship types in your space.",
+    "Custom data types, relationship types, and any others added later.",
+  "metadata.types": "Custom data types in your space.",
+  "metadata.edge_types": "Custom relationship types in your space.",
 
   // Wildcards: the one family where curated copy is not merely better than
   // the registry's but is the only thing that can exist. A wildcard matches

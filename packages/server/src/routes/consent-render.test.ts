@@ -9,7 +9,11 @@ import {
   CAPABILITY_SHORT,
   capabilityLabel,
 } from "./capability-labels.js";
-import { CAPABILITY_SCOPES, TYPE_REGISTRY } from "@withmarfa/shared";
+import {
+  CAPABILITY_SCOPES,
+  EDGE_TYPE_REGISTRY,
+  TYPE_REGISTRY,
+} from "@withmarfa/shared";
 import {
   buildScopeDescriptions,
   CONSENT_SCOPE_DESCRIPTIONS,
@@ -918,9 +922,37 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // them. Whoever requests them is not who reads the screen.
     const out = describeAll("metadata:read", "metadata.types:write");
     expect(out.metadata).toMatch(/\S/);
-    expect(out["metadata.types"]).toBe(
-      "Register and update custom data types in your space.",
+    expect(out["metadata.types"]).toBe("Custom data types in your space.");
+  });
+
+  it("names what a metadata scope reaches rather than what it permits", () => {
+    // One entry serves both operations, because `typePattern` carries no
+    // verb: `metadata.types:read` and `metadata.types:write` read the same
+    // line. All three lines opened "Register and update", so a person
+    // approving a read was shown a sentence about writing, which is the
+    // direction that matters on the screen where they decide whether to
+    // trust an app.
+    //
+    // Asked of the allowlist for the same reason the test below is: the
+    // fourth sub-resource has to arrive here rather than on a screen.
+    //
+    // Scoped to the metadata entries deliberately. Across the rest of the
+    // map the same regex would fire on "References between items." and
+    // "Updates and replacements between items.", where the first word is a
+    // noun that happens to spell a verb. Every metadata line is a plain
+    // noun phrase, so here the leading word settles it.
+    const metadata = buildAllowedScopes()
+      .map(parse)
+      .filter((s) => s.kind === "metadata");
+    const out = buildScopeDescriptions(metadata);
+    expect(Object.keys(out)).toHaveLength(
+      new Set(metadata.map((s) => s.typePattern)).size,
     );
+    for (const [pattern, copy] of Object.entries(out)) {
+      expect(copy, `${pattern} opens with an act`).not.toMatch(
+        /^(?:register|update|create|add|change|edit|delete|remove|manage|set|read|write)\b/i,
+      );
+    }
   });
 
   it("describes every metadata scope a client can actually request", () => {
@@ -936,6 +968,61 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     const out = buildScopeDescriptions(metadata);
     for (const scope of metadata) {
       expect(out[scope.typePattern], scope.typePattern).toMatch(/\S/);
+    }
+  });
+
+  it("describes every edge type a client can actually request", () => {
+    // The axis that actually had the gap. `in-collection` is a shipping core
+    // edge, `buildAllowedScopes` publishes `edge.in-collection:read|write`,
+    // and nothing curated described it, so the builder fell through to the
+    // registry and roughly 700 characters of schema rationale rendered as a
+    // row on the device approval screen.
+    //
+    // Derived from `EDGE_TYPE_REGISTRY` rather than from a list beside it,
+    // so a tenth edge type fails here rather than shipping a paragraph. And
+    // held to being the curated line rather than to being non-empty: the
+    // fallback is non-empty too, which is the whole defect, so a presence
+    // check would have admitted the very thing it was meant to catch.
+    const edges = [...EDGE_TYPE_REGISTRY.keys()];
+    expect(edges.length).toBeGreaterThan(4);
+    const out = buildScopeDescriptions(
+      edges.map((edgeType) => parse(`edge.${edgeType}:read`)),
+    );
+    for (const edgeType of edges) {
+      const registry = EDGE_TYPE_REGISTRY.get(edgeType)?.description;
+      expect(
+        registry,
+        `fixture assumes the registry describes ${edgeType}`,
+      ).toMatch(/\S/);
+      expect(out[`edge.${edgeType}`], edgeType).toMatch(/\S/);
+      expect(out[`edge.${edgeType}`], edgeType).not.toBe(registry);
+    }
+  });
+
+  it("describes every core and system type without reaching the registry", () => {
+    // The other half of the claim the map's docstring makes, asked of
+    // `TYPE_REGISTRY` rather than read off the map. One sentence covered
+    // both axes and was false on the edge one, so this half is pinned rather
+    // than trusted.
+    //
+    // Integration namespaces are deliberately outside it: `google.*` and its
+    // neighbours fall back to the registry by design, and the fallback has
+    // its own test below.
+    const shipped = [...TYPE_REGISTRY.keys()].filter(
+      (id) => id.startsWith("core.") || id.startsWith("system."),
+    );
+    expect(shipped.length).toBeGreaterThan(20);
+    const out = buildScopeDescriptions(
+      shipped.map((id) => parse(`${id}:read`)),
+    );
+    for (const typeId of shipped) {
+      const registry = TYPE_REGISTRY.get(typeId)?.description;
+      expect(
+        registry,
+        `fixture assumes the registry describes ${typeId}`,
+      ).toMatch(/\S/);
+      expect(out[typeId], typeId).toMatch(/\S/);
+      expect(out[typeId], typeId).not.toBe(registry);
     }
   });
 
@@ -1038,8 +1125,57 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     expect(out["*"]).toBe("Everything in your space.");
     expect(out["edge.*"]).toBeUndefined();
     expect(out["edge.metadata"]).toBeUndefined();
-    // The curated edge copy still resolves, keyed on the pattern.
-    expect(describeAll("edge.parent-of:write")["edge.parent-of"]).toMatch(/\S/);
+    // The curated edge copy still resolves, keyed on the pattern. Held
+    // against the registry's line rather than against emptiness: revert the
+    // `edge.` prefix on these keys and the lookup falls through to
+    // `EDGE_TYPE_REGISTRY`, whose description is also non-empty, so a
+    // `toMatch(/\S/)` here admitted the broken keying it was written to
+    // pin.
+    const registry = EDGE_TYPE_REGISTRY.get("parent-of")?.description;
+    expect(
+      registry,
+      "fixture assumes the registry describes parent-of",
+    ).toMatch(/\S/);
+    const curated = describeAll("edge.parent-of:write")["edge.parent-of"];
+    expect(curated).toMatch(/\S/);
+    expect(curated).not.toBe(registry);
+  });
+
+  it("keeps an edge type's schema rationale off both screens", () => {
+    // `in-collection` is the instance the derived test above generalizes,
+    // and this is what it looked like where a person met it: a paragraph
+    // about containment models, cardinality and cascade behavior, rendered
+    // as one row of a consent decision.
+    //
+    // Asserted on a leading fragment rather than on the whole registry
+    // string, because both renderers escape what they print and the
+    // description carries an apostrophe. Matching the raw string would pass
+    // on a screen that was showing the paragraph in full, which is the
+    // failure this is here to see.
+    const registry = EDGE_TYPE_REGISTRY.get("in-collection")?.description ?? "";
+    const fragment = registry.split(/["'&<>]/)[0] ?? "";
+    expect(
+      fragment.length,
+      "fixture assumes a long unescaped run of registry copy",
+    ).toBeGreaterThan(40);
+
+    const scopes = [parse("edge.in-collection:read")];
+    const descriptions = buildScopeDescriptions(scopes);
+    const curated = descriptions["edge.in-collection"];
+    expect(curated).toMatch(/\S/);
+    expect(curated).not.toBe(registry);
+
+    const authorize = renderConsentScreen({ ...PARAMS, scopes, descriptions });
+    const device = renderDeviceConsentScreen({
+      clientName: "Test CLI",
+      scopes,
+      userCode: "ABCD-EFGH",
+      descriptions,
+    });
+    for (const html of [authorize, device]) {
+      expect(html).toContain(curated);
+      expect(html).not.toContain(fragment);
+    }
   });
 });
 
