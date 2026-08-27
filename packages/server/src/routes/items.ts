@@ -11,6 +11,8 @@ import {
   getEdgeTypeSchema,
   validateProperties,
   ITEM_STATES,
+  SYSTEM_DEFAULT_STATE,
+  validateTransition,
   SYSTEM_TYPE_IDS,
   resolveEnforcement,
   isTypeInStrictMode,
@@ -998,12 +1000,38 @@ export function itemRoutes(storage: Storage) {
     if (body.timestamp && !isValidTimestamp(body.timestamp)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid timestamp");
     }
-    if (body.state) {
-      if (!(ITEM_STATES as readonly string[]).includes(body.state)) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Invalid state: ${body.state}`,
-        );
+    // A create is not a transition, so it reached none of the graph, and a
+    // membership test against the universal state list is a weaker question
+    // than the one that matters: `trashed` is a valid state and is not in
+    // the `system.*` lifecycle at all. A platform credential could therefore
+    // create a `system.connection` directly in `trashed` — a state no
+    // transition can produce and none can leave — and then restore it into
+    // `active` having passed nothing the graph admits.
+    //
+    // Asking `validateTransition` what the default start state can reach
+    // gives each type its own answer with no second table to keep in step:
+    // a non-system type gets `active | archived | trashed`, a `system.*`
+    // type gets `active | revoked`. It also still rejects a state that is
+    // not a state, so the universal check it replaces is subsumed rather
+    // than dropped.
+    //
+    // **In the route, not in `storage.items.create`**, and the asymmetry
+    // with `items.restore()` is deliberate. The store's `create` is also
+    // the archive restore's writer (`POST /admin/restore-archive` calls it
+    // directly with the archived `state`), and an archive is a faithful
+    // record of rows written before this rule existed. Tightening the store
+    // would make those archives unrestorable, which is a worse failure than
+    // the inconsistency being closed here. The lifecycle gate that DOES
+    // belong in the store is the one on `restore()`, because a restore is a
+    // transition and its two siblings live there.
+    if (body.state && body.state !== SYSTEM_DEFAULT_STATE) {
+      const error = validateTransition(
+        type,
+        SYSTEM_DEFAULT_STATE,
+        body.state as ItemState,
+      );
+      if (error) {
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, error);
       }
     }
 
