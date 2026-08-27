@@ -84,6 +84,8 @@ import {
   isValidScope,
   isReservedRoot,
   grantCoversScope,
+  subtreeWildcardRoot,
+  GLOBAL_TYPE_WILDCARD,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
 } from "@withmarfa/shared";
@@ -503,10 +505,8 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       );
     }
 
-    // Build the type-pattern → plain-English description map.
-    // F11: covers item types (TYPE_REGISTRY), edge types (EDGE_TYPE_REGISTRY),
-    // and the standard OIDC literals (built-in copy). Metadata scopes are
-    // skipped — they're operator-tooling scopes that don't need UI copy.
+    // The plain-English line per scope row, from the one source the device
+    // approval screen reads too.
     const descriptions = buildScopeDescriptions(parsed);
     const wildcardExpansions = await resolveWildcardExpansions(
       deps.storage,
@@ -1462,20 +1462,50 @@ async function resolvePriorScopes(
 }
 
 /**
- * User-facing copy for the consent screen, keyed by type id (core
- * types, system types) or edge type id. Intentionally separate from
- * the type registry's `description` field — those are written for
- * developers (reference notes, schema rationale, internal dev notes,
- * etc.) and read fine in API docs but land poorly on a consent screen. Keep these short, plain, second-person, and
- * one line each.
+ * User-facing copy for the consent surfaces, keyed by the `typePattern` a
+ * scope parses to: a type id, a wildcard pattern, an `edge.<type>` pattern,
+ * or a metadata sub-resource path. Intentionally separate from the type
+ * registry's `description` field. Those are written for developers
+ * (reference notes, schema rationale, internal dev notes, etc.) and read
+ * fine in API docs but land poorly on a consent screen. Keep these short,
+ * plain, second-person, and one line each.
  *
- * Missing entries fall back to the type registry's `description` —
- * which is correct behavior for custom types registered at runtime
- * via `POST /types`, where the operator controls the copy. For core
- * + system types every entry is curated below so the registry copy
- * never reaches the screen.
+ * Missing entries fall back to a registry `description` where a registry has
+ * one, which is correct behavior for the types and edge types registered at
+ * runtime via `POST /types`, where the operator controls the copy. For the
+ * core and system types, and for every edge type this build ships, an entry
+ * is curated below so the registry copy never reaches the screen.
+ *
+ * Both halves of that sentence are held against `TYPE_REGISTRY` and
+ * `EDGE_TYPE_REGISTRY` rather than against a list kept beside them, because
+ * the edge half was false while the sentence already claimed it.
+ * `in-collection` shipped with no entry here, and the paragraph of schema
+ * rationale it fell through to reached a device approval screen as a row.
+ *
+ * **Keyed uniformly on `typePattern`, which is what makes one flat map
+ * across four kinds sound.** `typePattern` carries a different namespace per
+ * kind, so a single map is only safe if no two kinds can produce the same
+ * string, and none can: `parseScope` claims `metadata`, `edge.` and
+ * `capability.` ahead of the item-type matcher, `capability` is a reserved
+ * root whose non-members it refuses outright, and the four OIDC literals are
+ * bare single words that `isValidTypePattern` rejects, a type identifier
+ * needing two segments.
+ *
+ * The uniformity is load-bearing rather than tidy. The edge entries were
+ * keyed on the bare edge type id while every other entry was keyed on the
+ * pattern, and a bare edge type id shares its namespace with everything: an
+ * edge type may be named `metadata`, and `edge.*` is a literal the scope
+ * allowlist publishes as requestable. Both would have read another kind's
+ * copy off this map the moment the wildcard and metadata entries landed in
+ * it, and a consent screen telling someone that one relation is "Everything
+ * in your space" is a worse failure than the blank row it replaced.
+ *
+ * Exported for the guard that walks `src` looking for a second statement of
+ * this copy. The guard derives its search keys from the map itself rather
+ * than from a list beside it, because a hand-kept list of the same strings is
+ * the exact failure it exists to catch.
  */
-const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
+export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // Core content
   "core.note": "Your notes.",
   "core.task": "Your tasks and to-dos.",
@@ -1496,7 +1526,7 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   "core.file.video": "Videos.",
 
   // Media
-  "core.media": "Media — books, films, music, podcasts.",
+  "core.media": "Media: books, films, music, podcasts.",
   "core.media.album": "Music albums.",
   "core.media.article": "Articles.",
   "core.media.book": "Books.",
@@ -1515,15 +1545,40 @@ const CONSENT_TYPE_DESCRIPTIONS: Record<string, string> = {
   "system.integration": "Available integrations.",
   "system.webhook": "Webhook subscriptions.",
 
-  // Edge types — relationships between items.
-  about: "Links between items and what they're about.",
-  "parent-of": "Parent and child relationships.",
-  "in-thread": "Items grouped into threads.",
-  "attached-to": "File attachments on items.",
-  references: "References between items.",
-  "authored-by": "Authorship — who created what.",
-  "derived-from": "Items derived from other items.",
-  supersedes: "Updates and replacements between items.",
+  // Edge types: relationships between items.
+  "edge.about": "Links between items and what they're about.",
+  "edge.parent-of": "Parent and child relationships.",
+  "edge.in-thread": "Items grouped into threads.",
+  "edge.in-collection": "Items grouped into collections.",
+  "edge.attached-to": "File attachments on items.",
+  "edge.references": "References between items.",
+  "edge.authored-by": "Who created what.",
+  "edge.derived-from": "Items derived from other items.",
+  "edge.supersedes": "Updates and replacements between items.",
+
+  // Metadata layer: sub-resources rather than item types, so no registry
+  // holds a description to fall back to and this is the only source.
+  //
+  // Phrased as things rather than as acts, because one entry serves both
+  // operations. `typePattern` carries no verb, so `metadata.types:read` and
+  // `metadata.types:write` read the same line, and a line saying "register
+  // and update" told somebody approving a read that they were granting a
+  // write. The read/write split is already carried by the screen's own
+  // grouping and by the toggle the row sits on.
+  metadata:
+    "Custom data types, relationship types, and any others added later.",
+  "metadata.types": "Custom data types in your space.",
+  "metadata.edge_types": "Custom relationship types in your space.",
+
+  // Wildcards: the one family where curated copy is not merely better than
+  // the registry's but is the only thing that can exist. A wildcard matches
+  // types at check time and the grant reaches types nobody has registered
+  // yet, so what the copy has to say is precisely what no registry entry
+  // knows.
+  "*": "Everything in your space.",
+  "core.*": "All standard content types, including ones added later.",
+  "user.*": "Your custom types, including ones you define later.",
+  "app.*": "Types this app defines for itself.",
 };
 
 /**
@@ -1606,59 +1661,117 @@ export async function resolveWildcardExpansions(
 }
 
 /**
- * Build the `{ typePattern: description }` map the renderer uses for
- * the plain-English hint per scope row. Sources by kind:
+ * The plain-English line one scope row gets, or undefined where the row
+ * carries only its label.
  *
- *  - **Type** scopes → `TYPE_REGISTRY.get(typeId)?.description`
- *  - **Edge** scopes → `EDGE_TYPE_REGISTRY.get(edgeType)?.description`
- *  - **OIDC** scopes → skipped. `labelFor` resolves them from
- *    `oidc-labels.ts` and never reads this map for one.
- *  - **Metadata** scopes → skipped (operator-tooling scopes; the literal
- *    `metadata:read` etc. is self-explanatory to the audience that
- *    requests them)
+ * Written as an exhaustive switch on `kind` rather than a run of early
+ * returns, and the `never` binding is the reason: a new scope family stops
+ * this package compiling until somebody has decided what a person reads when
+ * one appears on a consent screen. The families that reached this function
+ * without a branch of their own did not render a neutral fallback. They
+ * rendered nothing, on the one screen whose entire job is saying how large a
+ * grant is.
+ */
+function describeScope(scope: ParsedScope): string | undefined {
+  switch (scope.kind) {
+    case "oidc":
+      // Deliberately absent. `labelFor` in `consent.ts` and
+      // `describeCapabilities` in `device-pages.ts` both resolve an OIDC
+      // literal through `oidc-labels.ts` and return before they look at this
+      // map, so anything written here for one was computed and discarded. A
+      // third register existed to fill it and is gone with it.
+      return undefined;
+    case "capability":
+      // Deliberately absent, for the reason above. `labelFor` in
+      // `consent.ts` and `describeCapabilities` in `device-pages.ts` both
+      // resolve a capability literal through `capability-labels.ts` and
+      // return before they look at this map, so anything written here for
+      // one was computed and discarded. The branch that filled it is gone
+      // with it.
+      //
+      // Absent here is not a gap waiting on capability scopes reaching a
+      // consent screen. They are already described when they get there, on
+      // both surfaces, by `CAPABILITY_LABELS` and `CAPABILITY_SHORT`.
+      // Whoever comes to put one in front of a person should extend those
+      // maps rather than this one: an entry here is a third name for the
+      // same grant, in the one place neither renderer reads.
+      return undefined;
+    case "edge": {
+      // `edgeType` is optional on ParsedScope but always present when
+      // kind === "edge"; guard for the type-checker.
+      const edgeType = scope.edgeType;
+      if (!edgeType) return undefined;
+      // Curated user-facing copy wins. Falls back to the registry's
+      // engineering description for any edge type without a curated entry
+      // (custom edge types registered at runtime).
+      return (
+        CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern] ??
+        EDGE_TYPE_REGISTRY.get(edgeType)?.description
+      );
+    }
+    case "metadata":
+      // No registry fallback, because a metadata sub-resource is not a
+      // registered type and nothing else holds copy for one.
+      return CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
+    case "type": {
+      const curated = CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
+      if (curated) return curated;
+      // A wildcard returns here rather than falling to the registry, and the
+      // distinction is not academic. `TYPE_REGISTRY.get("core.*")` is
+      // undefined today because the registry is keyed on exact ids, so the
+      // lookup happens to miss. A registry that ever answered a pattern would
+      // answer this one with a single type's copy standing in for a grant
+      // over a whole namespace. Curated copy is the only source a wildcard
+      // can have; missing it, the row is better left to its label.
+      if (
+        scope.typePattern === GLOBAL_TYPE_WILDCARD ||
+        subtreeWildcardRoot(scope.typePattern) !== null
+      ) {
+        return undefined;
+      }
+      return TYPE_REGISTRY.get(scope.typePattern)?.description;
+    }
+    default: {
+      // Compile-time exhaustiveness check, the same one `isTypeScope` uses.
+      // The runtime arm refuses too, so a value built by hand or arriving
+      // from a stale build is not admitted either.
+      const _exhaustive: never = scope.kind;
+      void _exhaustive;
+      return undefined;
+    }
+  }
+}
+
+/**
+ * Build the `{ typePattern: description }` map both consent surfaces read for
+ * the plain-English line per scope row: `/auth/authorize` and the device
+ * approval screen, which used to hold a second vocabulary of its own.
  *
- * Missing entries fall through — the renderer shows just the literal.
+ * Missing entries fall through; the renderer shows the row's label, or the
+ * literal where it has no label either.
+ *
+ * **Metadata scopes and wildcards are described rather than skipped, which
+ * reverses what this function used to do.** The skip rested on a claim that
+ * `metadata:read` and its siblings are self-explanatory to the audience that
+ * requests them. That audience is the wrong one: whoever wrote the
+ * integration is not who reads this screen, and the person deciding owns a
+ * space rather than operates the server. The device screen had been showing
+ * "Register and update custom data types in your space" against
+ * `metadata.types` for exactly that reason, and between working copy on one
+ * surface and a skip on the other, the copy is what should survive.
+ *
+ * Wildcards were never a judgment call, only an omission: nothing described
+ * them here while the device screen did, and the registry cannot describe
+ * one at all. See `CONSENT_SCOPE_DESCRIPTIONS` for why the pattern is what
+ * both facts hang off.
  */
 export function buildScopeDescriptions(
   scopes: ParsedScope[],
 ): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const s of scopes) {
-    // OIDC literals are deliberately absent. `labelFor` in `consent.ts`
-    // resolves them through `oidc-labels.ts` and returns before it looks at
-    // this map, so anything written here for one was computed and discarded.
-    // A third register existed to fill it and is gone with it.
-    if (s.kind === "oidc") continue;
-    if (s.kind === "edge") {
-      // `edgeType` is optional on ParsedScope but always present when
-      // kind === "edge"; guard for the type-checker.
-      const edgeType = s.edgeType;
-      if (edgeType) {
-        // Curated user-facing copy wins. Falls back to the registry's
-        // engineering description for any edge type without a curated
-        // entry (custom edge types registered at runtime).
-        const curated = CONSENT_TYPE_DESCRIPTIONS[edgeType];
-        if (curated) {
-          out[s.typePattern] = curated;
-        } else {
-          const edgeSchema = EDGE_TYPE_REGISTRY.get(edgeType);
-          if (edgeSchema?.description) {
-            out[s.typePattern] = edgeSchema.description;
-          }
-        }
-      }
-      continue;
-    }
-    if (s.kind === "metadata") continue;
-    const curated = CONSENT_TYPE_DESCRIPTIONS[s.typePattern];
-    if (curated) {
-      out[s.typePattern] = curated;
-      continue;
-    }
-    const schema = TYPE_REGISTRY.get(s.typePattern);
-    if (schema?.description) {
-      out[s.typePattern] = schema.description;
-    }
+  for (const scope of scopes) {
+    const description = describeScope(scope);
+    if (description) out[scope.typePattern] = description;
   }
   return out;
 }

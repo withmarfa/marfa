@@ -14,6 +14,7 @@
  * shape, so `resolveVariant` works uniformly across them.
  */
 
+import { parseScope } from "@withmarfa/shared";
 import type { ParsedScope } from "@withmarfa/shared";
 import { renderSignInPage } from "../src/routes/sign-in-page.js";
 import { renderSignUpPage } from "../src/routes/sign-up-page.js";
@@ -21,6 +22,7 @@ import { renderVerifyEmailPage } from "../src/routes/verify-email-page.js";
 import { renderForgotPasswordPage } from "../src/routes/forgot-password-page.js";
 import { renderResetPasswordPage } from "../src/routes/reset-password-page.js";
 import { renderConsentScreen } from "../src/routes/consent.js";
+import { buildScopeDescriptions } from "../src/routes/auth-consent.js";
 import { renderAuthorizeExpiredPage } from "../src/routes/authorize-expired-page.js";
 import {
   renderSignInLinkFailedPage,
@@ -131,6 +133,74 @@ const DEVICE_SCOPES: ParsedScope[] = [
     oidcScope: "openid",
   },
 ];
+
+/**
+ * Parses fixture scope literals, throwing rather than filtering. A typo would
+ * otherwise leave a shorter list that still renders, so the variant would
+ * preview fewer rows than it says it does and nothing would report it.
+ *
+ * Through the parser rather than as object literals because the fixture is the
+ * only caller of these renderers that is not the app, which makes it the one
+ * place a wrong scope shape hides. A capability carries a second field the
+ * consent screen reads, and a hand-written literal that omits it renders a row
+ * the real flow never would.
+ */
+const scopeSet = (...literals: string[]): ParsedScope[] =>
+  literals.map((literal) => {
+    const parsed = parseScope(literal);
+    if (!parsed) throw new Error(`unparseable fixture scope: ${literal}`);
+    return parsed;
+  });
+
+/**
+ * One row of every kind the scope copy branches on, so each kind's words are
+ * on a page somebody can read.
+ *
+ * Deliberately not a plausible single request: `*:read` subsumes `user.*:read`
+ * and `metadata:write` subsumes `metadata.edge_types:write`, so no real client
+ * asks for these together. The redundancy is the point. Every other variant in
+ * this gallery is a state; this one is the copy, and the failure it guards
+ * against is only visible with the kinds side by side. The consent screen shipped
+ * for months naming content an app had never asked for, and what made that
+ * survivable was that nobody could see all of the copy at once.
+ *
+ * The two content scopes carry a curated short label, so a person meets them as
+ * "Notes" and never reads their description. Every other scope here has no
+ * label, which is exactly what makes this the only place their copy renders:
+ * the description is the row.
+ *
+ * `capability.webhooks` cannot arrive here through a real request. Nothing in
+ * the scope allowlist emits a capability literal, so the only way one reaches a
+ * consent screen today is an operator naming it in a permission bundle. It is
+ * previewed anyway, because the screen already renders one, unticked and under
+ * a heading of its own, and a grant nobody has looked at is what this gallery
+ * is for.
+ */
+const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
+  // OIDC literals: `openid` rides along as a hidden field, `profile` is a row.
+  "openid",
+  "profile",
+  // Item types, the only kind with a curated toggle label.
+  "core.note:read",
+  "core.note:write",
+  // Edges.
+  "edge.authored-by:read",
+  "edge.references:read",
+  // Metadata, both the top-level grant and a sub-resource, which is where a
+  // drift between the two would show.
+  "metadata:write",
+  "metadata.edge_types:write",
+  // Wildcards, the widest line on the screen and the custom-namespace one.
+  "*:read",
+  "user.*:read",
+  // A capability, which no request can carry today. See above.
+  "capability.webhooks",
+);
+
+/** The same copy both consent surfaces resolve, from the same call the two
+ *  routes make. A fixture holding its own strings previews words that do not
+ *  ship, and is the second vocabulary this map exists to have removed. */
+const ALL_SCOPE_KIND_DESCRIPTIONS = buildScopeDescriptions(ALL_SCOPE_KINDS);
 
 const AUTH_SCREENS: GalleryScreen[] = [
   {
@@ -369,6 +439,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
             scopes: CONSENT_SCOPES,
             clientId: "raycast-client",
             oauthQuery: "client_id=raycast-client&scope=...&sig=signed",
+            descriptions: buildScopeDescriptions(CONSENT_SCOPES),
           }),
       },
       {
@@ -380,12 +451,34 @@ const AUTH_SCREENS: GalleryScreen[] = [
             scopes: CONSENT_SCOPES,
             clientId: "raycast-client",
             oauthQuery: "client_id=raycast-client&scope=...&sig=signed",
+            descriptions: buildScopeDescriptions(CONSENT_SCOPES),
             // Previously granted read-only; now also requesting write + profile.
             priorScopes: [
               "core.note:read",
               "core.task:read",
               "core.event:read",
             ],
+          }),
+      },
+      {
+        // Every kind of scope the copy branches on, on one page.
+        //
+        // The four variants beside this one all request content types, and
+        // every content type carries a short toggle label, so the description
+        // map this screen reads never reaches any of them. A metadata row, a
+        // wildcard, an edge and a capability have no label at all: the
+        // description is the row, and until this variant existed none of that
+        // copy had ever rendered anywhere a person looks.
+        id: "all-scope-kinds",
+        label: "Every kind of scope",
+        render: () =>
+          renderConsentScreen({
+            clientName: "Fieldwork",
+            unverified: true,
+            scopes: ALL_SCOPE_KINDS,
+            clientId: "fieldwork-client",
+            oauthQuery: "client_id=fieldwork-client&scope=...&sig=signed",
+            descriptions: ALL_SCOPE_KIND_DESCRIPTIONS,
           }),
       },
       {
@@ -483,6 +576,11 @@ const AUTH_SCREENS: GalleryScreen[] = [
           renderDevicePage({ prefilled: "WXYZ-1234", error: "invalid_code" }),
       },
       {
+        // Descriptions from the same call the device route makes, rather than
+        // written out here. Two strings stood in this fixture and neither was
+        // the copy that ships: they had drifted by a full stop, which is
+        // exactly the size of difference a preview exists to show and a
+        // hand-written one cannot.
         id: "consent",
         label: "Approve",
         render: () =>
@@ -490,10 +588,24 @@ const AUTH_SCREENS: GalleryScreen[] = [
             clientName: "marfa CLI",
             scopes: DEVICE_SCOPES,
             userCode: "BDRF-7H2K",
-            descriptions: {
-              "core.note": "Your notes",
-              "core.task": "Your tasks",
-            },
+            descriptions: buildScopeDescriptions(DEVICE_SCOPES),
+          }),
+      },
+      {
+        // The same scope set the authorize screen's "Every kind of scope"
+        // variant renders, so the two can be read against each other. One map
+        // now feeds both screens, and a page each is the only way to see that
+        // they agree: the defect it replaced was never a screen being wrong on
+        // its own, it was two screens each internally consistent and saying
+        // different things about the same grant.
+        id: "consent-all-scope-kinds",
+        label: "Approve, every kind of scope",
+        render: () =>
+          renderDeviceConsentScreen({
+            clientName: "Fieldwork",
+            scopes: ALL_SCOPE_KINDS,
+            userCode: "QK3M-92XT",
+            descriptions: ALL_SCOPE_KIND_DESCRIPTIONS,
           }),
       },
       {
