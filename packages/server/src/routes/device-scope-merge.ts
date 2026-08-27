@@ -114,9 +114,14 @@ import type {
  * covered already, and each written at `:write` because that is the verb the
  * merge resolves — the client only ever asked `:read`. So the ceiling is the
  * set of keys `buildAllowedScopes` can name, since initiation refuses a scope
- * outside it, and that set is NOT static: it is assembled from the type and
- * edge registries and the runtime namespace roots read at boot, so a client
- * holding `metadata.types:write` raises its own ceiling by registering types.
+ * outside it. For what that set holds, read that function rather than a
+ * restatement here: this passage has carried two different wrong bounds
+ * already, each one derived rather than read off the code. Its own docblock
+ * states the part both got wrong. A custom type registered at runtime through
+ * `POST /types` is NOT picked up as a concrete scope, and a server restart is
+ * what re-enumerates from the larger registry. The runtime namespace roots it
+ * folds in are installed once at boot and contribute `<root>.*` wildcards,
+ * never concrete keys.
  *
  * Reaching that ceiling takes a client that spells its request differently on
  * every login, and a real one sends the same string each time, so this is a
