@@ -242,6 +242,56 @@ function selfServeEdgePermissions(
 }
 
 /**
+ * The scope set a device approval leaves on a grant it is re-approving.
+ *
+ * A device approval never narrows a standing grant; it merges into it.
+ * The device screen CONFIRMS a scope list. It has no per-scope toggles, and
+ * its own copy says the rows are confirmed rather than editable, so a device
+ * request narrower than what the user already granted is an artifact
+ * of what that client asked for, not the user electing to give something
+ * up. Signing in on a CLI must not silently shrink what the same app
+ * already reaches from the browser, and it must not leave `/auth/security`
+ * under-reporting access that still works. Requiring full re-consent
+ * instead was the other candidate and is worse: it revokes the user's live
+ * tokens as an unshown side effect of a CLI login.
+ *
+ * Coverage-aware, and this is the half that is easy to get backwards.
+ * `preserveBroaderGrant` in `routes/auth-consent.ts` compares literals
+ * deliberately, because what it restores is the record of what the user
+ * ticked, verbatim, and a coverage test there would decline to restore a
+ * scope the user had picked. This asks a different question, whether the
+ * standing grant already REACHES what the device named, and the literal
+ * answer to that is not merely noisy: it narrows. Scope resolution gives an
+ * exact type id precedence over a wildcard spanning it, so appending
+ * `core.note:read` beside a standing `core.*:write` pins `core.note` to
+ * read and takes away a write nobody touched. A plain set union is
+ * therefore the one merge that can still shrink a grant. Adding only what
+ * the set does not already cover cannot: an entry is appended only when the
+ * grant's effective level for that key sits below what was asked, so
+ * appending can only raise it.
+ *
+ * Each candidate is measured against the set as it stands, not against the
+ * standing scopes alone, so a request naming both `core.note:read` and
+ * `core.*:write` cannot append the narrower literal on the strength of a
+ * wildcard that arrives a moment later in the same list.
+ *
+ * The standing literals come first and are never rewritten. The record is
+ * what the user approved; a device flow may add to it, but has no business
+ * restating it in its own words.
+ */
+function mergeDeviceApprovalScopes(
+  standing: readonly string[],
+  approved: readonly string[],
+): string[] {
+  const merged = [...standing];
+  for (const scope of approved) {
+    if (grantCoversScope(merged, scope)) continue;
+    merged.push(scope);
+  }
+  return merged;
+}
+
+/**
  * Persist (or refresh) a `kind: app` connection through `ItemStore`. Routes
  * through `ItemStore.create` on first consent and `ItemStore.update` on
  * re-consent so the row gets full ItemStore treatment: `space_id`
@@ -253,7 +303,10 @@ function selfServeEdgePermissions(
  * Uses `findGrantItemId` to detect the re-consent case and routes through
  * `items.update` (same shape as the code-flow consent's
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
- * cleared on re-consent to avoid stale-revoked projections.
+ * cleared on re-consent to avoid stale-revoked projections. The scopes it
+ * writes there are the merge described on `mergeDeviceApprovalScopes`, not
+ * the request. This surface confirms a list rather than offering one to
+ * edit, so it may widen a standing grant and never shrinks one.
  *
  * `spaceId` resolves from the consenting Better Auth user's marfa `users`
  * row in hosted mode; in single-space mode (no `users` store) the grant
@@ -303,11 +356,20 @@ async function createUserAppGrant(
       // Race — findGrantItemId saw a row but a concurrent delete
       // raced. Fall through to insert.
     } else {
+      // Merge rather than overwrite. `mergeDeviceApprovalScopes` carries
+      // the reasoning; the short version is that this screen confirms a
+      // scope list instead of offering one to edit, so a narrower request
+      // is the client's doing and not the user's, and writing it straight
+      // in would shrink what the browser already granted while leaving the
+      // tokens carrying the removed scopes alive.
+      const standingScopes = Array.isArray(existing.properties.scopes)
+        ? (existing.properties.scopes as string[])
+        : [];
       const updated = await storage.items.update(
         existingItemId,
         {
           properties: {
-            scopes,
+            scopes: mergeDeviceApprovalScopes(standingScopes, scopes),
             status: "active",
             granted_at: now,
             revoked_at: undefined,
@@ -2785,6 +2847,28 @@ export function authRoutes(
       throw new Error("oauthProvider store not wired");
     }
 
+    // What this device asked for, and never the whole standing grant.
+    //
+    // The two used to be the same set: an approval overwrote the record
+    // with the device request, so reading the record back was reading the
+    // request. Now that an approval merges into a standing grant instead of
+    // replacing it, the record can hold scopes this device never asked for
+    // and its screen never showed: the browser's own consent, for the same
+    // client and user. Minting from the record would hand a CLI the web
+    // app's access on the strength of a login, and hand it a refresh token
+    // whenever the browser had once asked to stay signed in.
+    //
+    // Filtered against the grant rather than taken raw, because the record
+    // is still the authority and a device code outlives its approval by up
+    // to the rest of its TTL. A narrowing on the consent screen inside that
+    // window has already revoked the live tokens, and the poll that follows
+    // must not reissue what it took away. The intersection is the only
+    // reading that holds both ends: never more than was asked for, never
+    // more than is granted.
+    const issuedScopes = row.scopes.filter((scope) =>
+      grantCoversScope(grantScopes, scope),
+    );
+
     // `offline_access` is what buys a refresh token, here as everywhere else.
     //
     // The library issues one only for a grant carrying the scope, and its
@@ -2800,7 +2884,7 @@ export function authRoutes(
     // rather than by reimplementing rotation, and it makes the two paths
     // agree: a client that wants to stay signed in asks for the scope, and
     // the consent screen already renders it as a line the user approves.
-    const staysSignedIn = grantScopes.includes("offline_access");
+    const staysSignedIn = issuedScopes.includes("offline_access");
     const refreshRaw = staysSignedIn
       ? generateToken(REFRESH_TOKEN_PREFIX)
       : undefined;
@@ -2815,7 +2899,7 @@ export function authRoutes(
       clientId: grantClientId,
       authUserId: grantUserId,
       referenceId: deviceGrant.space_id ?? null,
-      scopes: grantScopes,
+      scopes: issuedScopes,
       accessTtlMs: ACCESS_TOKEN_TTL_MS,
     });
 
@@ -2831,7 +2915,7 @@ export function authRoutes(
       ...(refreshRaw !== undefined && { refresh_token: refreshRaw }),
       token_type: "bearer",
       expires_in: ACCESS_TOKEN_TTL_MS / 1000,
-      scope: grantScopes.join(" "),
+      scope: issuedScopes.join(" "),
     });
   });
 
