@@ -175,8 +175,22 @@ import type {
  * concrete ids, and not in a runtime loop over the registries here.
  *
  * That argument has a precondition, and one axis does not meet it: the keys
- * have to form a prefix tree over concrete ids. See {@link keyIsWellFormed},
+ * have to form a prefix tree over concrete ids. See {@link keyIsResolvable},
  * which is what keeps the prune inside the set where the argument holds.
+ *
+ * **That filter reaches the prune and nothing else on this side.** The two
+ * projections the merge resolves against are built from the raw lists, where
+ * {@link intersectDeviceScopes} deliberately projects both sides through
+ * `resolvableScopes` first, and the asymmetry is worth stating rather than
+ * inferring from the two call sites. What follows from it is that a key the
+ * prune may not reason about still answers for other keys here: `edge.*.*`
+ * string-matches `edge.*` while reaching no ordinary edge type, and at a
+ * nested root it is the longest match, so it outranks `edge.*` at
+ * `edge.user.*` too. Both directions occur — a key raised above what either
+ * input conferred, and a key pinned below — and neither is introduced by the
+ * intersection or changed by it. Whether the merge should take the same
+ * filter is open, and the stakes differ: what this writes is the record
+ * `/auth/security` reports, not the list a token is minted from.
  *
  * **The unioned families are never pruned**, and there are four of them, not
  * three. Capability, OIDC and unparseable literals have membership as their
@@ -227,6 +241,10 @@ const VERB_RANK: Record<TypePermission, number> = {
 
 function higherVerb(a: TypePermission, b: TypePermission): TypePermission {
   return VERB_RANK[a] >= VERB_RANK[b] ? a : b;
+}
+
+function lowerVerb(a: TypePermission, b: TypePermission): TypePermission {
+  return VERB_RANK[a] <= VERB_RANK[b] ? a : b;
 }
 
 /**
@@ -396,33 +414,39 @@ function renderEntry(entry: MergedEntry): string {
 }
 
 /**
- * Whether the prune may reason about a key: whether it carries no asterisk
- * outside a subtree-root position. That admits the global wildcard, a key
- * with no asterisk at all, and a subtree wildcard whose root is
- * asterisk-free.
+ * Whether the resolvers may reason about a key: whether its subtree root, if
+ * it has one, is a literal identifier rather than a second pattern. That
+ * admits the global wildcard, every key with no subtree root at all, and a
+ * subtree wildcard whose root ends in no further wildcard.
  *
  * **Not a grammar check, and it does not claim to be one.** `a..b`, `a.` and
- * `u_1..x` all pass it and none is a well-formed identifier. Admitting them
- * changes nothing, because they are inert on both sides of the test: they
- * match no concrete id, and no other key resolves through them. What has to
- * be excluded is the one shape that is not inert, a key whose ROOT
- * string-matches another key while matching no concrete id.
+ * `u_1..x` all pass it and none is a well-formed identifier. So does
+ * `a-b*c`, which `routes/edge-types.ts` registers as a real edge type
+ * because it skips the identifier check for any id holding a hyphen.
+ * Admitting them changes nothing, because a key with no subtree root is
+ * reached by exact match alone: it answers for itself and for nothing else,
+ * so it can neither raise another key nor be raised by one. `*` is the lone
+ * exception and needs no clause of its own: `subtreeWildcardRoot("*")` is
+ * null, so it takes that branch while matching everything, and all three
+ * resolvers reach it as the root of the prefix tree rather than by exact
+ * match.
  *
- * The sufficiency argument in the module docblock assumes the keys form a
- * prefix tree over concrete ids, and the grammar does not guarantee that
- * everywhere. `isValidTypePattern` puts a type wildcard's root through a
- * charset holding no asterisk, so `core.*.*:write` is refused outright. The
- * edge axis has no pattern validator, so `edge.*.*:write` parses, and
- * `subtreeWildcardRoot("*.*")` is `"*"`, a root that string-matches the
- * global KEY while matching no concrete edge type. Such an entry therefore
- * answers for `edge.*` at the key level and confers nothing at any id, which
+ * **What has to be excluded is the shape whose key-level answer differs from
+ * its answer at every concrete id.** The sufficiency argument in the module
+ * docblock assumes the keys form a prefix tree over concrete ids, and a key
+ * whose subtree root is ITSELF a pattern breaks that. `isValidTypePattern`
+ * puts a type wildcard's root through a charset holding no asterisk, so
+ * `core.*.*:write` is refused outright. The edge axis has no pattern
+ * validator, so `edge.*.*:write` parses, and `subtreeWildcardRoot("*.*")` is
+ * `"*"`, a root that string-matches the global KEY while matching no ordinary
+ * edge type. Such an entry answers for `edge.*` at the key level and reaches
+ * nothing but the ids that carry a whole-segment asterisk themselves, which
  * is precisely the divergence the argument rules out.
  *
  * **This is not only about the global root, and a check written against that
  * one instance is not enough.** The same collision happens at every level of
  * the key tree: `subtreeWildcardRoot("user.*.*")` is `"user.*"`, which
- * matches the key `user.*` exactly as `"*"` matches `*`. Those two shapes are
- * the whole of what a malformed key can answer for, and they are the bug. So
+ * matches the key `user.*` exactly as `"*"` matches `*`. So
  * `edge.user.*:write` merged with `edge.user.*.*:write` loses the wildcard
  * too, and that victim is not contrived: `resolveEdgePermission` says in its
  * own docblock that `edge.user.*` is the only expression reaching a space's
@@ -437,23 +461,61 @@ function renderEntry(entry: MergedEntry): string {
  * A key like that can neither be shown redundant nor stand as the reason
  * another entry is. Both halves are needed and the second is the one that
  * fixes the case above: the victim there is `edge.*`, whose own key is
- * well-formed, so refusing only malformed CANDIDATES leaves it dropped. It is
- * carried through untouched and kept out of the map a candidate is measured
- * against.
+ * resolvable, so refusing only unresolvable CANDIDATES leaves it dropped. It
+ * is carried through untouched and kept out of the map a candidate is
+ * measured against.
  *
- * **One legitimate shape is refused, and that is the accepted cost.**
- * `routes/edge-types.ts` skips the identifier check entirely for any id
- * holding a hyphen, so a concrete edge id can carry an asterisk and this
- * declines to reason about it. The result is an entry that stays in the
- * record forever rather than access lost, it needs a perverse type name, and
- * the thing worth closing is the registration hole. Closing that, and the
- * missing edge pattern validator, is tracked on its own. This only stops the
- * prune acting where its own argument does not hold, and deliberately does
- * not touch the merge, which resolves such a key before the prune ever runs.
+ * **Refusing every key that carries an asterisk anywhere was itself an
+ * escalation, and that is why this is drawn at the subtree root.** Two
+ * further shapes carry one without colliding with anything, and neither is
+ * inert: a concrete key holding an asterisk (`a-b*c`), and a subtree wildcard
+ * whose root holds one without being a pattern (`a-b*.*`). Both PIN.
+ * {@link intersectDeviceScopes} projects both sides' maps without the keys it
+ * may not resolve through, so dropping a pin removed a restriction, and the
+ * wildcard above it then answered for that id at a wider verb than either
+ * side conferred: `["edge.*:write", "edge.a-b*c:read"]` on both sides was
+ * issued `edge.*:write` alone, which reaches write on `a-b*c` where the pin
+ * says read. The mirror cost as much in the other direction, dropping a pin
+ * only one side named and taking away the read the other side reached that id
+ * at. The shape refused here loses far less, but not nothing, which is what
+ * the next passage is about.
+ *
+ * **A residue is accepted rather than unnoticed, and it runs in both
+ * directions.** A refused key is `R.*` for an `R` that itself ends in `.*`,
+ * and the ids it reaches are `R` and `R.<anything>`. Every one of them
+ * carries a whole-segment asterisk somewhere, not necessarily first: `*.*`
+ * reaches `*.a-b`, and `user.*.*` reaches `user.*.q-x`. So the residue is a
+ * statement about that whole family rather than about the global root,
+ * exactly as the collision above is.
+ *
+ * At such an id the refused key is a pin like any other, and dropping it
+ * costs what dropping a pin always costs. Where a broader key survives, the
+ * id is answered at the broader verb, above what either side conferred:
+ * `["edge.*:write", "edge.*.*:read"]` on both sides is issued
+ * `edge.*:write`, which reaches write on `*.a-b` where both sides say read.
+ * Where no broader key survives, the id loses the access both sides
+ * conferred: `["edge.*.*:read"]` on both sides is issued nothing at all.
+ * Narrowing is far the commoner of the two, because a side naming the
+ * refused key alone leaves nothing to fall back to.
+ *
+ * Neither direction is hypothetical. `routes/edge-types.ts` registers
+ * `*.a-b` and `user.*.q-x`, because it skips the identifier check for any id
+ * holding a hyphen, and `bundlePublishedScopes` admits `edge.*.*:read` into
+ * an operator-configured bundle on `isValidScope` alone.
+ *
+ * It is taken as a trade rather than defended as correct. What the refusal
+ * removes is a token over every ordinary edge type on the instance; what it
+ * costs is confined to ids that themselves carry a whole-segment asterisk,
+ * which exist only through the registration hole. Closing that hole, and
+ * adding the edge pattern validator whose absence lets the key parse at all,
+ * removes both halves. Until then the residue is pinned by its own named
+ * test beside the ones for the collision, rather than left to be
+ * rediscovered.
  */
-function keyIsWellFormed(key: string): boolean {
-  if (key === GLOBAL_TYPE_WILDCARD) return true;
-  return !(subtreeWildcardRoot(key) ?? key).includes(GLOBAL_TYPE_WILDCARD);
+function keyIsResolvable(key: string): boolean {
+  const root = subtreeWildcardRoot(key);
+  if (root === null) return true;
+  return root !== GLOBAL_TYPE_WILDCARD && subtreeWildcardRoot(root) === null;
 }
 
 /**
@@ -476,18 +538,18 @@ function pruneRedundantEntries(entries: readonly MergedEntry[]): MergedEntry[] {
 
   for (const candidate of entries) {
     if (candidate.kind !== "breadth") continue;
-    if (!keyIsWellFormed(candidate.key)) continue;
+    if (!keyIsResolvable(candidate.key)) continue;
 
     // Taking the candidate out BEFORE resolving is the whole rule. Left in,
     // it resolves its own key to its own verb and every entry reads as
     // redundant.
     const without = surviving.filter((entry) => entry !== candidate);
-    // A malformed key stays in `surviving` and out of the remainder: it is
-    // emitted, and it never justifies a drop.
+    // A key the resolvers may not reason about stays in `surviving` and out
+    // of the remainder: it is emitted, and it never justifies a drop.
     const remainder = project(
       without
         .filter(
-          (entry) => entry.kind === "literal" || keyIsWellFormed(entry.key),
+          (entry) => entry.kind === "literal" || keyIsResolvable(entry.key),
         )
         .map(renderEntry),
     );
@@ -554,4 +616,166 @@ export function mergeDeviceApprovalScopes(
   }
 
   return pruneRedundantEntries(merged).map(renderEntry);
+}
+
+/**
+ * The scopes a device is issued a token for: what it asked for, bounded by
+ * what the grant it is polling against still confers.
+ *
+ * **The sibling of the merge, taking the minimum where that takes the
+ * maximum**, and it exists for the same reason: the literals are a precedence
+ * structure rather than a set, so neither end of this can be computed on
+ * them. A device request is no longer the same thing as the grant record.
+ * An approval merges into a standing grant rather than replacing it, so the
+ * record can hold the browser's own consent for the same client and user,
+ * and minting from the record would hand a CLI the web app's access, with a
+ * refresh token wherever the browser had once asked to stay signed in.
+ *
+ * **What the literal-level filter got wrong.** Testing each requested scope
+ * with `grantCoversScope(record, scope)` reads as an intersection and is not
+ * one, because coverage is not reflexive on a pinned set: an exact type id
+ * outranks a wildcard spanning it, so `["core.*:write", "core.note:read"]`
+ * does not cover `core.*:write`, a literal it contains. A device asking for
+ * a wildcard alongside a narrower pin was issued the pin alone. The user
+ * approved both, the grant reached both, and the client was handed a
+ * narrower `scope` string rather than an error.
+ *
+ * **So this walks the union of both sides' keys and takes the lower verb.**
+ * Every (axis, key) either side names is resolved against BOTH whole maps
+ * with the resolver the request path uses, and the result is written out at
+ * the lesser of the two answers. Resolving each key against the whole
+ * opposing map is what makes a wildcard on one side answer for a key pinned
+ * on the other.
+ *
+ * **Walking the union rather than the request alone is the whole correctness
+ * argument.** A request-only walk loses the grant's pins. Request `*:write`
+ * against a grant of `core.note:read` visits only the key `*`, where the
+ * grant resolves to `none`, so the key drops and the device is issued
+ * nothing, though the grant plainly reaches read on notes and the device
+ * plainly asked for it. The union walk visits `core.note` as well, resolves
+ * it to `write` through the request's own wildcard and to `read` on the
+ * grant, and issues `core.note:read`, which is the true intersection.
+ *
+ * **Dropping a key at `none` cannot escalate anything beneath it.** An id
+ * whose highest-precedence key drops falls through to a broader surviving
+ * key, and a broader key can only resolve non-`none` on a side that has some
+ * key matching it, and matching is transitive along the prefix tree, so that
+ * is a key matching the id too. So the side that answered `none` at the
+ * narrow key answers `none` at every key above it as well, and the broader
+ * entry drops with it. Unlike the merge, `none` is reached here on ordinary
+ * input rather than being unreachable, which is exactly how a request the
+ * grant does not reach comes back empty.
+ *
+ * **The verb-less families intersect by plain membership.** A capability, an
+ * OIDC literal and a literal this build cannot parse are each granted by
+ * being named and by nothing else, so each appears in the result only if
+ * both sides named it. `offline_access` is the load-bearing one: the route
+ * reads it back off this list to decide whether a refresh token is minted at
+ * all, so a browser's `offline_access` must not reach a CLI that never asked
+ * for it, and a CLI's must not survive a grant that no longer carries it.
+ *
+ * **A key the prune may not reason about is not one this may resolve
+ * through either.** {@link keyIsResolvable} describes the shape: a key whose
+ * subtree root is itself a pattern, so it string-matches a broader key while
+ * reaching no ordinary id, which the edge axis admits for want of a pattern
+ * validator. Both sides' maps are projected without it and it is never
+ * emitted. Leaving it in would let a grant holding only `edge.*.*:read`,
+ * which reaches no ordinary edge type, answer for the key `edge.*` and issue
+ * a token reaching every edge type on the instance.
+ *
+ * **The boundary is drawn at the subtree root because a key carrying an
+ * asterisk anywhere else is a pin, and dropping a pin here is an escalation
+ * rather than a simplification.** This list is what the token is minted
+ * from, so a pin dropped from it is a restriction dropped, and the wildcard
+ * above answers in its place at a wider verb than either side conferred.
+ * Such a key is resolved and emitted like any other.
+ *
+ * **The refused shape does have ids beneath it, and the cost of removing it
+ * falls there, in both directions.** Those are the ids carrying a
+ * whole-segment asterisk of their own — `*.a-b` beneath `*.*`, `user.*.q-x`
+ * beneath `user.*.*` — and at each of them this issues above both sides
+ * where a broader key survives and below both sides where none does. So the
+ * removal is a trade rather than a free move, and {@link keyIsResolvable}
+ * carries the cases, the reachability, and why the trade is taken.
+ *
+ * **The issued list is canonical rather than verbatim, and that is visible
+ * to the client.** It is written at the verb each key resolves to and pruned
+ * to one entry per key it confers, so it can name a pin the device never
+ * spelled (`core.note:read` in the walk above), and it can spell a request
+ * the record already canonicalized upward differently from how the client
+ * sent it. RFC 6749 §5.1 provides for exactly this, and the route returns
+ * the result as its `scope`, so a narrowing stays visible rather than
+ * silent. A client comparing the returned string to its request for equality
+ * rather than reading it will see a difference.
+ */
+export function intersectDeviceScopes(
+  requested: readonly string[],
+  granted: readonly string[],
+): string[] {
+  const requestedMaps = project(resolvableScopes(requested));
+  const grantedMaps = project(resolvableScopes(granted));
+  const requestedLiterals = new Set(membershipScopes(requested));
+  const grantedLiterals = new Set(membershipScopes(granted));
+
+  const issued: MergedEntry[] = [];
+  const emitted = new Set<string>();
+
+  for (const scope of [...requested, ...granted]) {
+    const parsed = parseScope(scope);
+    const breadth = parsed ? breadthKey(parsed) : null;
+
+    if (!breadth) {
+      // Membership is the whole algebra here, so the intersection is plain
+      // set intersection. Both sides are tested rather than only the grant,
+      // so a literal the grant holds and this device never asked for is not
+      // issued on the strength of appearing in the walk.
+      if (!requestedLiterals.has(scope) || !grantedLiterals.has(scope)) {
+        continue;
+      }
+      const id = `literal:${scope}`;
+      if (emitted.has(id)) continue;
+      emitted.add(id);
+      issued.push({ kind: "literal", scope });
+      continue;
+    }
+
+    if (!keyIsResolvable(breadth.key)) continue;
+
+    const id = `${breadth.axis}:${breadth.key}`;
+    if (emitted.has(id)) continue;
+    emitted.add(id);
+
+    const verb = lowerVerb(
+      resolveOn(breadth.axis, breadth.key, requestedMaps),
+      resolveOn(breadth.axis, breadth.key, grantedMaps),
+    );
+    // Reached whenever one side does not reach the other's key at all, which
+    // is the ordinary case for a grant narrower than the request.
+    if (verb === "none") continue;
+    issued.push({
+      kind: "breadth",
+      axis: breadth.axis,
+      key: breadth.key,
+      verb,
+    });
+  }
+
+  return pruneRedundantEntries(issued).map(renderEntry);
+}
+
+/** The scopes of one side that carry a key the resolvers can reason about. */
+function resolvableScopes(scopes: readonly string[]): string[] {
+  return scopes.filter((scope) => {
+    const parsed = parseScope(scope);
+    const breadth = parsed ? breadthKey(parsed) : null;
+    return breadth !== null && keyIsResolvable(breadth.key);
+  });
+}
+
+/** The scopes of one side whose whole algebra is membership. */
+function membershipScopes(scopes: readonly string[]): string[] {
+  return scopes.filter((scope) => {
+    const parsed = parseScope(scope);
+    return parsed === null || breadthKey(parsed) === null;
+  });
 }

@@ -1294,6 +1294,70 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
     expect(poll.status).toBe(200);
     expect(poll.body.scope).toBe("core.note:read");
   });
+
+  // REGRESSION: what a device is issued was computed by testing each
+  // requested literal with `grantCoversScope`, which reads as an intersection
+  // and is not one. Coverage is not reflexive on a pinned set, so a request
+  // of `core.note:read *:write` failed its own `*:write` against a grant
+  // holding exactly that pair, and the device was issued the pin alone. The
+  // user approved both, the grant reached both, and the client was handed a
+  // narrower `scope` string rather than an error. The unit coverage is in
+  // `device-scope-merge.test.ts`; this pins that the route routes through it.
+  //
+  // Nothing here needs a second login: a first approval stores the request
+  // verbatim, so the grant and the request are the same set and the drop
+  // still happened.
+  it("issues a wildcard the device asked for alongside a narrower pin", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "token-pinned-wildcard@example.com",
+      "correct horse",
+    );
+
+    const login = await approveDeviceFlow(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read *:write",
+    );
+
+    // The premise, asserted rather than assumed: the record holds both, and
+    // the test the old filter ran answers false on the literal it contains.
+    const scopes = await standingGrantScopes(ctx);
+    expect(scopes).toEqual(["core.note:read", "*:write"]);
+    expect(grantCoversScope(scopes, "*:write")).toBe(false);
+
+    const poll = await pollToken(ctx, login.device_code, clientId);
+    expect(poll.status).toBe(200);
+    // The response field is a claim; the minted row is the authority, and the
+    // two are set from different expressions. Spending the token is what
+    // tells them apart, so the reach is asked of the data plane.
+    expect(poll.body.scope).toContain("*:write");
+    const token = poll.body.access_token as string;
+
+    const write = async (type: string): Promise<number> => {
+      const res = await ctx!.app.fetch(
+        new Request(`${ORIGIN}/items`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin: ORIGIN,
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ type, properties: { title: "from a CLI" } }),
+        }),
+      );
+      return res.status;
+    };
+
+    // The wildcard reaches a type the request never named concretely.
+    expect(await write("core.task")).toBe(201);
+    // And the pin under it still holds notes down to read, so the fix cannot
+    // be "issue the whole request and stop filtering".
+    expect(await write("core.note")).toBe(403);
+  });
 });
 
 describe("POST /auth/device/token — RFC 8628 error paths", () => {
