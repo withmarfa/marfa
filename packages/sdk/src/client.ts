@@ -642,19 +642,26 @@ export interface OccurrencesScan {
    */
   series_errors: number;
   /**
-   * Longest list of expansion failures the response will carry. Past
-   * this the list is capped rather than the read refused, and
-   * `series_errors_truncated` is set.
+   * Longest list of failures the response will carry, counted in
+   * entries. Past this the list is capped rather than the read refused,
+   * and `series_errors_truncated` is set.
+   *
+   * Entries rather than rows, and failures rather than *expansion*
+   * failures: one row can account for two, and most of the classes
+   * counted here never reach the expander at all — an unreadable rule
+   * and a timezone that does not resolve both fail before a single
+   * iteration is spent.
    */
   max_series_errors: number;
   /**
-   * Rule iterations the read spent on series that put no occurrence into
-   * `data`: a rule that ended before the window or produced nothing in
-   * it, one too frequent to reach the window before the per-series
+   * Rule iterations the read spent on expansions that returned no
+   * occurrence: a rule that ended before the window or produced nothing
+   * in it, one too frequent to reach the window before the per-series
    * iteration ceiling, and one refused for flooding the window — that
    * last having produced occurrences the refusal discarded, so the
-   * predicate is what reached the response rather than what the rule
-   * computed.
+   * predicate is what the expansion returned rather than what the rule
+   * computed. It is not a count of what reached `data`, which the server
+   * assembles later behind a filter this charge does not consult.
    *
    * Only iterations count. A series that fails before it iterates — an
    * unreadable rule, a timezone that does not resolve — is reported in
@@ -712,8 +719,8 @@ export interface OccurrencesResult {
   series_errors_truncated?: boolean;
   /**
    * Set when the server stopped expanding series before it had walked
-   * them all, having spent its whole expansion budget on series that
-   * produced nothing.
+   * them all, having spent its whole expansion budget on expansions that
+   * returned no occurrence.
    *
    * `data` is a partial calendar when this is set, and
    * `scan.series_unexpanded` says how many series were left. A narrower

@@ -53,7 +53,7 @@
  *     an iteration budget. `ITERATIONS_PER_YIELD` states the resulting
  *     bound on one uninterrupted stretch, in iterations.
  *   - **Expansion work is bounded across the whole request**, in the
- *     iterations spent on series that contribute nothing to `data`.
+ *     iterations spent on expansions that return no occurrence.
  *     `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` is what stops a space full
  *     of per-minute rules from taking hours of CPU in one request. It is
  *     the one bound here that can leave the calendar partial, and the
@@ -290,15 +290,15 @@ const SERIES_PER_YIELD = 32;
  * as long as the space gives it work.
  * `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` stops the loop, but over one
  * part of that work rather than over the sum of it: iterations spent on
- * series that contribute nothing to `data`. Nothing in this file bounds
+ * expansions that return no occurrence. Nothing in this file bounds
  * the total, and
  * that constant's docblock says what the remainder is worth.
  */
 const ITERATIONS_PER_YIELD = 20_000;
 
 /**
- * Rule iterations one request may spend on series that contribute
- * nothing to `data`, before it stops expanding.
+ * Rule iterations one request may spend on expansions that return no
+ * occurrence, before it stops expanding.
  *
  * ## The bound this replaces
  *
@@ -322,22 +322,33 @@ const ITERATIONS_PER_YIELD = 20_000;
  * would instead be spent fastest by the calendar with the most meetings
  * in it.
  *
- * **The predicate is what reached `data`, not what the rule produced**,
- * and the difference is a real class rather than a quibble. Three ways
- * a series contributes nothing:
+ * **The predicate is what the expansion RETURNED, not what the rule
+ * produced and not what reached `data`.** The charge is `expanded.length
+ * === 0` at the call site, and `data` is assembled two stages later,
+ * behind a fetch and a filter this charge never consults. So a series
+ * whose occurrences are all filtered out afterwards is not charged,
+ * however far it walked: measured, 100 series spending 366,000
+ * iterations put nothing in `data` and were charged zero. The bound is
+ * therefore looser than the response's own wording used to claim, and
+ * closing that means charging where `data` is assembled rather than
+ * where the expansion returns.
+ *
+ * Against what the rule produced, the difference is a real class rather
+ * than a quibble. Three ways an expansion returns nothing:
  *
  *   - it walked and its rule put no occurrence in the window;
  *   - it hit `MAX_EXPANSION_ITERATIONS` before reaching the window;
  *   - it hit `MAX_OCCURRENCES_PER_SERIES` — **having produced
  *     occurrences, which the refusal then discarded.**
  *
- * The third is charged like the other two and should be: those
- * occurrences are not in `data` and the walk that made them is spent.
+ * The third is charged like the other two and should be: the expansion
+ * returned nothing and the walk that made the discarded occurrences is
+ * spent.
  * Measured: one `FREQ=MINUTELY` rule over a two-day window is refused at
  * 2,000 occurrences and charges 2,001 iterations. An earlier version of
  * this docblock said a charged series produced no occurrence by
  * construction, which that fixture falsifies; what is true by
- * construction is that it contributed none.
+ * construction is that its expansion returned none.
  *
  * ## Why crossing it is a 200 and not a 400
  *
@@ -770,7 +781,7 @@ const ScanSchema = z.object({
     .number()
     .int()
     .describe(
-      "Rule iterations this request spent on series that put no occurrence into `data`: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window — that last having produced occurrences the refusal then discarded, so this is what reached the response rather than what the rule computed. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one.",
+      "Rule iterations this request spent on expansions that returned no occurrence: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window — that last having produced occurrences the refusal then discarded, so this is what the expansion returned rather than what the rule computed. It is not a count of what reached `data`, which is assembled later behind a filter this does not consult. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one.",
     ),
   max_unproductive_iterations: z
     .number()
@@ -820,14 +831,14 @@ const OccurrencesResponseSchema = z.object({
     ),
   /** Present and true when the request stopped expanding series before
    *  it had walked them all, having spent `scan.max_unproductive_iterations`
-   *  on series that produced nothing. `data` may be missing occurrences
-   *  the unexpanded series held, and `scan.series_unexpanded` says how
-   *  many there were. */
+   *  on expansions that returned no occurrence. `data` may be missing
+   *  occurrences the unexpanded series held, and
+   *  `scan.series_unexpanded` says how many there were. */
   expansion_incomplete: z
     .boolean()
     .optional()
     .describe(
-      "Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on series that produced nothing. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.",
+      "Present and true when the request stopped expanding series before it had walked them all, having spent `scan.max_unproductive_iterations` on expansions that returned no occurrence. `data` may be missing occurrences the unexpanded series held, and `scan.series_unexpanded` says how many were left. A narrower window does not recover it — the budget is spent walking rules from their own start, before the window is reached — so the moves are narrowing by `type` or fixing the rules `series_errors` names.",
     ),
 });
 
@@ -838,7 +849,7 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List event occurrences in a window",
   description:
-    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for the space, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on series that put no occurrence into `data`, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the space gives it work.",
+    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for the space, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on expansions that return no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the space gives it work.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -1078,10 +1089,12 @@ export function occurrenceRoutes(
       exceptionSeeds,
     );
 
-    /** Iterations spent on series that contributed nothing to `data`,
+    /** Iterations spent on expansions that returned no occurrence,
      *  which is the work `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` bounds.
      *  Not the same as "produced nothing": a series refused for flooding
-     *  the window produced occurrences and the refusal discarded them. */
+     *  the window produced occurrences and the refusal discarded them.
+     *  Nor the same as "reached `data`", which is assembled later behind
+     *  a filter this charge does not consult. */
     let unproductiveIterations = 0;
     /** Series the ceiling stopped this request from reaching. Reported,
      *  because a stop nobody is told about is a calendar quietly missing
@@ -1267,7 +1280,7 @@ export function occurrenceRoutes(
         // an early exit from the catch would otherwise skip the charge.
         const spent = work.iterations - before;
         iterationsSinceYield += spent;
-        // Charged only when the series put nothing into `data`, which
+        // Charged only when the expansion returned nothing, which
         // is what keeps the total-work ceiling from being spent by a
         // calendar that is merely full of meetings. A throw leaves this
         // empty whatever the rule computed, so a series refused for
