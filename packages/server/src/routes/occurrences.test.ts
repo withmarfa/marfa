@@ -481,6 +481,14 @@ describe("GET /occurrences", () => {
 });
 
 describe("the occurrence ceiling", () => {
+  // The ceiling's behavior is owned here. The client suite keeps its own
+  // read of the same rules, but asserts only what a typed client adds:
+  // that the refusal maps to a `ValidationError` with usable `details`,
+  // and that a successful read carries the ceiling back. Where the
+  // assembly stops is asserted against a synthetic calendar in
+  // `occurrences.pagination.test.ts`, which is the only place large
+  // enough to tell stopping early from stopping late.
+  //
   // Its own fixture, anchored well past every other case's window: the
   // series pass is unwindowed, so rules dense enough to flood a window
   // would be re-expanded by every assertion in this file if they
@@ -492,10 +500,6 @@ describe("the occurrence ceiling", () => {
     // under the per-series cap that would report them individually, and
     // 5,040 together — past the ceiling on the assembled result.
     //
-    // This ceiling was covered only from the client suite, against a
-    // real in-process server. That is a real test in the wrong layer: a
-    // server change that broke it would go red in a client's tests and
-    // nowhere here.
     for (const n of [1, 2, 3]) {
       await createEvent({
         title: `Hourly ${String(n)}`,

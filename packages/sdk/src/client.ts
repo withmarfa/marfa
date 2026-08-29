@@ -593,10 +593,36 @@ export interface OccurrenceSeriesError {
   message: string;
 }
 
+/**
+ * What one occurrences read cost, and the bound it is measured against.
+ *
+ * Present on every successful read rather than only on a refusal: a
+ * ceiling a caller hears about only when it fires announces itself too
+ * late to act on.
+ */
+export interface OccurrencesScan {
+  /**
+   * Event rows the request read, summed across its passes. Two of the
+   * three cannot be narrowed by the window, so this grows with the size
+   * of the calendar rather than with the window asked for.
+   */
+  events_read: number;
+  /** Occurrences returned: the length of `data`. */
+  occurrences: number;
+  /**
+   * Ceiling `occurrences` is refused at. Reported on every successful
+   * read so a calendar approaching it is visible before a request is
+   * refused, rather than only once one is.
+   */
+  max_occurrences: number;
+}
+
 export interface OccurrencesResult {
   data: Occurrence[];
   /** The window actually read, normalized to UTC. */
   window: { from: string; to: string };
+  /** What this read cost and what would stop it. */
+  scan: OccurrencesScan;
   /**
    * Series that could not expand — a malformed rule, or one flooding the
    * window. The rest of the calendar still returns, so a caller ignoring
@@ -2324,16 +2350,17 @@ export class MarfaClient {
      * so half the refusals would still need the round trip and a caller
      * could not tell the two apart.
      *
-     * A third refusal is shaped like those two and does not behave like
-     * them. When the space holds more events than one read will scan, the
-     * same `ValidationError` arrives carrying `max_events_scanned` and
-     * neither of the other keys. **Narrowing the window does not clear
-     * it.** The passes that gather series and exceptions cannot be
-     * windowed, since a rule written years ago produces occurrences in
-     * any window and an exception moved out of one still shadows the slot
-     * it left, so both read the space whole however little is asked for.
-     * A caller that has learned "narrow and retry" from the other two
-     * will otherwise loop on it. Branch on which key is present.
+     * There is no third refusal for the size of the calendar itself. The
+     * passes that gather series and exceptions cannot be windowed — a
+     * rule written years ago produces occurrences in any window, and an
+     * exception moved out of one still shadows the slot it left — so
+     * both read the space whole however little is asked for, and a large
+     * calendar is read slowly rather than refused. `scan` on the result
+     * is where that cost is visible: `events_read` grows with the
+     * calendar rather than with the window, and `max_occurrences`
+     * arrives on every success, so a calendar approaching the one
+     * ceiling that does refuse can be seen coming rather than met as a
+     * 400.
      */
     list: async (
       options: ListOccurrencesOptions,

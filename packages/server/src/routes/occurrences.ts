@@ -36,6 +36,16 @@
  * held at once is bounded by `MAX_OCCURRENCES` rather than by the size
  * of the space.
  *
+ * Three bounds do the rest of that work and none of them refuses a space
+ * for being large. Assembly stops the moment the window is over full, so
+ * a refusal costs the occurrences it took to justify it rather than
+ * every occurrence the space holds. The batched reads are consumed a
+ * chunk at a time, so nothing an id lookup returns outlives the chunk it
+ * arrived in. And both long loops — the page walk and the expansion —
+ * hand the event loop back periodically, so one caller's large calendar
+ * costs that caller latency rather than costing every other request on
+ * the instance its turn.
+ *
  * That leaves the projections themselves growing linearly with the
  * space's event count. It is survivable where holding whole rows is not,
  * and it is not free. Two follow-ups would remove the growth rather than
@@ -60,7 +70,7 @@ import {
   isValidTypePattern,
   matchesTypePattern,
 } from "@withmarfa/shared";
-import type { Edge, Item } from "@withmarfa/shared";
+import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
@@ -89,10 +99,11 @@ export const MAX_WINDOW_DAYS = 400;
  *
  * The one bound that still refuses, and it is recoverable in the way the
  * removed scan ceiling was not: a caller asks for less time and
- * succeeds. It is checked before any item is read, so a window that
- * cannot be served costs the assembly and no row fetches, and it is
- * published on every successful read (see `scan` on the response) so a
- * calendar growing toward it is visible before a request is refused.
+ * succeeds. It is checked as the result is assembled and before any item
+ * is read, so a window that cannot be served costs neither the rest of
+ * the assembly nor a single row fetch, and it is published on every
+ * successful read (see `scan` on the response) so a calendar growing
+ * toward it is visible before a request is refused.
  */
 export const MAX_OCCURRENCES = 5000;
 
@@ -122,6 +133,28 @@ const EVENT_PAGE_SIZE = 200;
 const ID_BATCH_SIZE = 500;
 
 /**
+ * Series expanded between one yield to the event loop and the next.
+ *
+ * `expandSeries` is synchronous and one call can walk up to
+ * `MAX_EXPANSION_ITERATIONS` of a rule, so a loop over every rule in a
+ * space is a single uninterrupted stretch of CPU: health checks, open
+ * streams and every other request on the instance wait behind it. The
+ * pause hands the loop back so the cost of a large calendar lands on the
+ * caller asking about it as latency, rather than on everyone else as a
+ * stall. Small enough that no single stretch is long, large enough that
+ * an ordinary calendar pays for a handful of pauses rather than one per
+ * meeting.
+ */
+const SERIES_PER_YIELD = 32;
+
+/** Hand the event loop one turn: `setImmediate` runs after the pending
+ *  I/O and timer callbacks rather than ahead of them, which a resolved
+ *  promise would not, being a microtask. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
  * Types whose items this route reads. Anything declaring the event
  * shape belongs here; `compatible_with` is what makes the Google type
  * readable through the same fields.
@@ -146,15 +179,12 @@ type EventScanNarrowing = Pick<
  *
  * Its own shape rather than one of the expander's because this pass asks
  * a different question: not how a rule unfolds, but whether this row is
- * a plain event that lands in the window. `has_recurrence` is resolved
- * here so the rule text does not have to be carried forward merely to be
- * tested for emptiness later.
+ * a plain event that lands in the window.
  */
 interface WindowSeed {
   id: string;
   starts_at: string;
   ends_at?: string;
-  has_recurrence: boolean;
 }
 
 /**
@@ -193,6 +223,13 @@ async function scanEvents<T>(
         if (projected !== undefined) kept.push(projected);
       }
       cursor = page.has_more ? (page.cursor ?? undefined) : undefined;
+      // Between pages for the same reason the expansion yields between
+      // batches. On a driver that answers over a socket the await above
+      // already returns the loop; on an embedded one it does not, and a
+      // walk of tens of thousands of rows is then a single stretch of
+      // synchronous reads and JSON parsing with every other request on
+      // the process behind it.
+      if (cursor !== undefined) await yieldToEventLoop();
     } while (cursor !== undefined);
   }
   return kept;
@@ -223,11 +260,16 @@ function projectException(item: Item): RecurrenceException | undefined {
 function projectWindow(item: Item): WindowSeed | undefined {
   const startsAt = stringProp(item, "starts_at");
   if (startsAt === undefined) return undefined;
+  // A row carrying a rule belongs to the series pass, which has already
+  // expanded it; this pass reaches it too because a series' own start is
+  // an ordinary start. Dropped here rather than skipped later, so a row
+  // this pass is certain not to use never outlives the page it arrived
+  // on — the discard rule the note at the top of this file states.
+  if (recurrenceProp(item).length > 0) return undefined;
   return {
     id: item.id,
     starts_at: startsAt,
     ends_at: stringProp(item, "ends_at"),
-    has_recurrence: recurrenceProp(item).length > 0,
   };
 }
 
@@ -235,9 +277,10 @@ function projectWindow(item: Item): WindowSeed | undefined {
  * The series pass's walk, exposed so a test can drive it against a
  * storage serving more rows than any single page.
  *
- * Exported for two properties that are otherwise unobservable: that the
- * walk runs to exhaustion rather than stopping at a ceiling, and that
- * what it retains is the projection rather than the row.
+ * Exported for the one property the route's own response cannot show:
+ * that what the walk retains is the projection and not the row. That the
+ * walk runs to exhaustion is visible from outside, on `scan.events_read`,
+ * and is asserted there.
  */
 export async function gatherSeriesSeeds(
   storage: Storage,
@@ -254,7 +297,14 @@ export async function gatherSeriesSeeds(
   );
 }
 
-/** Items for the given ids, read in batches. See `ID_BATCH_SIZE`. */
+/**
+ * Items for the given ids, read in batches. See `ID_BATCH_SIZE`.
+ *
+ * Narrowed to `active` because that is what the scans selected on.
+ * `getMany` excludes trashed rows and nothing else, so an item archived
+ * between a scan and this read would otherwise be rendered inside a 200
+ * carrying a state this route has never emitted.
+ */
 async function fetchItemsBatched(
   storage: Storage,
   spaceId: string | undefined,
@@ -265,29 +315,65 @@ async function fetchItemsBatched(
   for (let i = 0; i < unique.length; i += ID_BATCH_SIZE) {
     const slice = unique.slice(i, i + ID_BATCH_SIZE);
     for (const [id, item] of await storage.items.getMany(slice, spaceId)) {
+      if (item.state !== "active") continue;
       out.set(id, item);
     }
   }
   return out;
 }
 
-/** Parent edges for the given ids, read in batches. See `ID_BATCH_SIZE`. */
-async function fetchParentsBatched(
+/**
+ * Exceptions grouped under the series each one shadows, read in batches.
+ * See `ID_BATCH_SIZE`.
+ *
+ * An exception names its series through `parent-of`, so the series is
+ * resolved from the edge rather than from a property: the property would
+ * be a second, drift-prone copy of the same fact.
+ *
+ * Each chunk is consumed before the next is asked for, and the only
+ * thing kept from an edge is the id at the far end of it. Returning the
+ * edges instead would hold one fully hydrated row — `properties`
+ * included — per exception in the space until the last chunk landed,
+ * which is the retention chunking exists to avoid rather than one it
+ * merely reshapes.
+ *
+ * Ids are deduplicated on the way in, as the item read beside this one
+ * does: a repeated id is a repeated bind parameter, and it would put the
+ * same exception under its series twice.
+ */
+async function groupExceptionsBySeries(
   storage: Storage,
-  ids: readonly string[],
-): Promise<Map<string, Edge[]>> {
-  const out = new Map<string, Edge[]>();
+  exceptions: readonly RecurrenceException[],
+): Promise<Map<string, RecurrenceException[]>> {
+  const byId = new Map<string, RecurrenceException>();
+  for (const exception of exceptions) byId.set(exception.id, exception);
+  const ids = [...byId.keys()];
+
+  const bySeries = new Map<string, RecurrenceException[]>();
   for (let i = 0; i < ids.length; i += ID_BATCH_SIZE) {
     const slice = ids.slice(i, i + ID_BATCH_SIZE);
-    const page = await storage.edges.listToTargetsBatched(
+    const chunk = await storage.edges.listToTargetsBatched(
       slice,
       // One parent is all a `parent-of` exception has; asking for a
       // second would only widen what a malformed graph could return.
       1,
     );
-    for (const [id, edges] of page) out.set(id, edges);
+    // Walked in the order the ids were asked for rather than the order
+    // the store answered in, so two exceptions claiming the same slot
+    // resolve the same way on every dialect.
+    for (const exceptionId of slice) {
+      const seriesId = chunk
+        .get(exceptionId)
+        ?.find((edge) => edge.edge_type === "parent-of")?.source_id;
+      if (seriesId === undefined) continue;
+      const exception = byId.get(exceptionId);
+      if (exception === undefined) continue;
+      const list = bySeries.get(seriesId) ?? [];
+      list.push(exception);
+      bySeries.set(seriesId, list);
+    }
   }
-  return out;
+  return bySeries;
 }
 
 const OccurrenceSchema = z.object({
@@ -375,7 +461,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is — the response carries `max_occurrences` and `found` so the caller can narrow by an informed amount.",
+        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went.",
     },
     401: {
       content: {
@@ -543,32 +629,41 @@ export function occurrenceRoutes(storage: Storage) {
       projectWindow,
     );
 
-    // An exception names its series through parent-of, so the series is
-    // resolved from the edge rather than from a property: the property
-    // would be a second, drift-prone copy of the same fact.
-    //
     // Batched, because the per-item form issued one query per exception
     // and an exception is an ordinary shape — a calendar where several
     // hundred meetings have each been moved once is a busy calendar, not
     // a pathological one.
-    const exceptionsBySeries = new Map<string, RecurrenceException[]>();
-    if (exceptionSeeds.length > 0) {
-      const parentsByException = await fetchParentsBatched(
-        storage,
-        exceptionSeeds.map((seed) => seed.id),
-      );
-      for (const seed of exceptionSeeds) {
-        const seriesId = (parentsByException.get(seed.id) ?? []).find(
-          (edge) => edge.edge_type === "parent-of",
-        )?.source_id;
-        if (seriesId === undefined) continue;
-        const list = exceptionsBySeries.get(seriesId) ?? [];
-        list.push(seed);
-        exceptionsBySeries.set(seriesId, list);
-      }
-    }
+    const exceptionsBySeries = await groupExceptionsBySeries(
+      storage,
+      exceptionSeeds,
+    );
 
     const pending: PendingOccurrence[] = [];
+    /**
+     * Append one occurrence, refusing the moment the window is over full.
+     *
+     * The check belongs at the append rather than after the loops
+     * because a limit has to fail toward something bounded: a ceiling
+     * that is only consulted once everything it would have refused is
+     * already assembled does not make the work smaller, it only makes
+     * the answer a 400. Unbounded is not slower — a space dense enough
+     * to cross this by orders of magnitude would build every occurrence
+     * it holds in order to produce a refusal the first `MAX_OCCURRENCES`
+     * plus one already justified.
+     *
+     * `found` is therefore the count at the refusal rather than the
+     * window's true total, which is the price of not assembling it.
+     */
+    const appendPending = (occurrence: PendingOccurrence): void => {
+      if (pending.length >= MAX_OCCURRENCES) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `This window holds more than ${String(MAX_OCCURRENCES)} occurrences; narrow it`,
+          { max_occurrences: MAX_OCCURRENCES, found: pending.length + 1 },
+        );
+      }
+      pending.push(occurrence);
+    };
     const seriesErrors: { item_id: string; message: string }[] = [];
     // Exceptions an expansion actually consumed. Only these are hidden
     // from the standalone pass: an exception whose slot fell outside the
@@ -579,9 +674,16 @@ export function occurrenceRoutes(storage: Storage) {
     // Series first, standalone second, because only the expansion knows
     // which stored exceptions it consumed.
     const expandedSeries = new Set<string>();
+    let sinceYield = 0;
     for (const seed of seriesSeeds) {
       if (expandedSeries.has(seed.id)) continue;
       expandedSeries.add(seed.id);
+
+      sinceYield += 1;
+      if (sinceYield >= SERIES_PER_YIELD) {
+        sinceYield = 0;
+        await yieldToEventLoop();
+      }
 
       let expanded: Occurrence[];
       try {
@@ -606,7 +708,7 @@ export function occurrenceRoutes(storage: Storage) {
         if (occurrence.replaces !== undefined) {
           consumedExceptions.add(occurrence.item_id);
         }
-        pending.push({
+        appendPending({
           starts_at: occurrence.starts_at,
           ends_at: occurrence.ends_at,
           item_id: occurrence.item_id,
@@ -621,11 +723,6 @@ export function occurrenceRoutes(storage: Storage) {
       if (shownStandalone.has(seed.id)) continue;
       shownStandalone.add(seed.id);
 
-      // A row carrying a rule was already read and expanded by the first
-      // pass; the window scan reaches it too, because a series' own
-      // start is an ordinary start.
-      if (seed.has_recurrence) continue;
-
       // An exception an expansion consumed is already shown through its
       // series; showing it here too would double it.
       if (consumedExceptions.has(seed.id)) continue;
@@ -636,7 +733,7 @@ export function occurrenceRoutes(storage: Storage) {
       // against each other, so a column that ever disagreed with its row
       // shows up as a missing event rather than a wrong one.
       if (Number.isNaN(at.getTime()) || at < from || at >= to) continue;
-      pending.push({
+      appendPending({
         starts_at: at.toISOString(),
         ends_at:
           seed.ends_at !== undefined
@@ -644,16 +741,6 @@ export function occurrenceRoutes(storage: Storage) {
             : undefined,
         item_id: seed.id,
       });
-    }
-
-    // Checked before the items are read, so an over-full window costs the
-    // assembly and no row fetches at all.
-    if (pending.length > MAX_OCCURRENCES) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `This window holds more than ${String(MAX_OCCURRENCES)} occurrences; narrow it`,
-        { max_occurrences: MAX_OCCURRENCES, found: pending.length },
-      );
     }
 
     // The only place a whole row is read, and it is reached only for the
@@ -674,9 +761,9 @@ export function occurrenceRoutes(storage: Storage) {
     }[] = [];
     for (const occurrence of pending) {
       const shown = shownById.get(occurrence.item_id);
-      // Deleted between the scan and this read. Dropping it is the right
-      // direction — a meeting removed a moment ago should not render —
-      // and it is the only way the two can disagree.
+      // Deleted, trashed or moved out of `active` between the scan and
+      // this read. Dropping it is the right direction: a meeting removed
+      // or filed away a moment ago should not render.
       if (shown === undefined) continue;
       if (occurrence.replaces !== undefined) {
         // A replacement is shown at its own times, which is the whole

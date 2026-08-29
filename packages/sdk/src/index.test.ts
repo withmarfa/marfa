@@ -77,6 +77,7 @@ describe("package entry point", () => {
         from: "2026-05-01T00:00:00.000Z",
         to: "2026-05-08T00:00:00.000Z",
       },
+      scan: { events_read: 0, occurrences: 0, max_occurrences: 5000 },
       series_errors: [seriesError],
     };
     const occurrences: Occurrence[] = result.data;

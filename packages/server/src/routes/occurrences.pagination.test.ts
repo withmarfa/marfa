@@ -9,11 +9,20 @@
  * actually saw was the 200 most recent events of each type — and it
  * returned that as the calendar, with a 200 and no indication anything
  * was missing. A space passes 200 events without anyone noticing.
+ *
+ * The second half of the file goes further than a seeded fixture can and
+ * drives the route over a synthetic storage: what an unbounded scan costs
+ * only shows above tens of thousands of rows, and every bound that keeps
+ * "slower" from meaning "out of memory" is a property of a calendar too
+ * large to write to a database per dialect.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { OpenAPIHono } from "@hono/zod-openapi";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { gatherSeriesSeeds } from "./occurrences.js";
+import { gatherSeriesSeeds, occurrenceRoutes } from "./occurrences.js";
+import { createErrorHandler } from "../middleware/error-handler.js";
+import type { AppEnv } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import type { Item } from "@withmarfa/shared";
 
@@ -229,79 +238,499 @@ describe("GET /occurrences past the first page", () => {
   });
 });
 
-/**
- * A storage that serves `rowCount` synthetic series rows, a page at a time.
- *
- * The scan reaches nothing but `items.list`, so this is its whole
- * surface. Synthetic rather than seeded because the property under test
- * only starts above twenty thousand rows, and writing that many real
- * ones would cost minutes per dialect on a machine shared with CI to
- * prove something about a loop the rows play no part in.
- */
-function pagedStorage(rowCount: number): Storage {
-  const row = (i: number): Item =>
-    ({
-      id: `synthetic-${String(i)}`,
-      type: "core.event",
-      state: "active",
-      source: "synthetic",
-      space_id: null,
-      properties: {
-        title: `synthetic ${String(i)}`,
-        starts_at: "2026-06-01T09:00:00.000Z",
-        recurrence: ["RRULE:FREQ=WEEKLY"],
-        // Stands in for the blob a mirrored event really carries, which
-        // is what makes retaining rows rather than projections
-        // expensive.
-        description: "x".repeat(2048),
-      },
-      created_at: "2026-01-01T00:00:00.000Z",
-      updated_at: "2026-01-01T00:00:00.000Z",
-    }) as unknown as Item;
+// ---------------------------------------------------------------------------
+// A calendar larger than any fixture worth writing to a database.
+//
+// The properties below only appear above tens of thousands of rows, and
+// seeding that many real ones would cost minutes per dialect on a machine
+// shared with CI to prove something about loops the rows play no part in.
+// The route is still the thing under test: these drive `GET /occurrences`
+// through the real handler, so reinstating a scan ceiling, moving the
+// occurrence check back after the loops, or taking the yield out of the
+// expansion loop each fails a behavioral assertion rather than a compile.
+// ---------------------------------------------------------------------------
 
+const SYNTHETIC_FROM = "2026-06-01T00:00:00Z";
+const SYNTHETIC_TO = "2026-06-08T00:00:00Z";
+
+interface SyntheticRow {
+  id: string;
+  properties: Record<string, unknown>;
+}
+
+interface SyntheticCalendar {
+  storage: Storage;
+  /** Ids handed to `items.getMany`. A refusal should reach none of them. */
+  fetched: string[];
+}
+
+function syntheticRow(row: SyntheticRow): Item {
   return {
+    id: row.id,
+    type: "core.event",
+    state: "active",
+    // Not `integration:`-prefixed, so the orphan resolver answers from the
+    // rows themselves and this storage needs no connection surface.
+    source: "synthetic",
+    space_id: null,
+    properties: row.properties,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+  } as unknown as Item;
+}
+
+/**
+ * A storage serving the given rows, page by page, through the same three
+ * narrowings the route asks for.
+ *
+ * `parents` maps an exception's id to the series it hangs under, which is
+ * the whole of the edge surface this route reaches.
+ */
+function syntheticCalendar(
+  rows: readonly SyntheticRow[],
+  parents: ReadonlyMap<string, string> = new Map(),
+  /** Ids the scan sees as active and the later fetch does not, which is
+   *  the whole of the race between the two reads. */
+  archivedOnFetch: ReadonlySet<string> = new Set(),
+): SyntheticCalendar {
+  const items = rows.map(syntheticRow);
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const fetched: string[] = [];
+
+  const matches = (item: Item, filters: ItemFilters): boolean => {
+    if (filters.hasProperty !== undefined) {
+      return item.properties[filters.hasProperty] !== undefined;
+    }
+    const startsAt = item.properties.starts_at;
+    if (typeof startsAt !== "string") return false;
+    if (
+      filters.startsAtUtcFrom !== undefined &&
+      startsAt < filters.startsAtUtcFrom
+    ) {
+      return false;
+    }
+    return !(
+      filters.startsAtUtcTo !== undefined && startsAt >= filters.startsAtUtcTo
+    );
+  };
+
+  // An edge from a superseded chunk answers a read by throwing. Retention
+  // is not observable from outside, so the contract is asserted rather
+  // than measured: consuming each chunk before asking for the next passes,
+  // holding every chunk to read after the last does not.
+  let openChunk = 0;
+  const parentEdge = (seriesId: string, chunk: number): unknown => ({
+    edge_type: "parent-of",
+    get source_id(): string {
+      if (chunk !== openChunk) {
+        throw new Error(
+          "an edge was read after the chunk it arrived in was superseded",
+        );
+      }
+      return seriesId;
+    },
+  });
+
+  const storage = {
     items: {
       list: (filters: ItemFilters) => {
+        // Only one of the two event types exists here; the other answers
+        // empty, as a space with no Google calendar would.
+        if (filters.type !== "core.event") {
+          return Promise.resolve({ data: [], cursor: null, has_more: false });
+        }
+        const eligible = items.filter((item) => matches(item, filters));
         const offset =
           filters.cursor === undefined ? 0 : Number(filters.cursor);
-        const limit = Math.min(filters.limit ?? 50, 200);
-        const end = Math.min(offset + limit, rowCount);
-        const data: Item[] = [];
-        for (let i = offset; i < end; i += 1) data.push(row(i));
+        const end = Math.min(
+          offset + Math.min(filters.limit ?? 50, 200),
+          eligible.length,
+        );
         return Promise.resolve({
-          data,
-          cursor: end < rowCount ? String(end) : null,
-          has_more: end < rowCount,
+          data: eligible.slice(offset, end),
+          cursor: end < eligible.length ? String(end) : null,
+          has_more: end < eligible.length,
         });
+      },
+      getMany: (ids: string[]) => {
+        fetched.push(...ids);
+        const out = new Map<string, Item>();
+        for (const id of ids) {
+          const item = byId.get(id);
+          if (item === undefined) continue;
+          // `getMany` excludes trashed rows and nothing else, so a row
+          // that left `active` by any other transition still arrives.
+          out.set(
+            id,
+            archivedOnFetch.has(id)
+              ? ({ ...item, state: "archived" } as unknown as Item)
+              : item,
+          );
+        }
+        return Promise.resolve(out);
+      },
+    },
+    edges: {
+      listToTargetsBatched: (targetIds: string[]) => {
+        openChunk += 1;
+        const chunk = openChunk;
+        const out = new Map<string, unknown[]>();
+        for (const id of targetIds) {
+          const seriesId = parents.get(id);
+          if (seriesId !== undefined)
+            out.set(id, [parentEdge(seriesId, chunk)]);
+        }
+        return Promise.resolve(out);
       },
     },
   } as unknown as Storage;
+
+  return { storage, fetched };
 }
 
-describe("the unwindowed scan", () => {
+/**
+ * The real route over a synthetic storage.
+ *
+ * The error handler is the app's own, so a `MarfaError` lands on the wire
+ * as its own status rather than as a 500, and the auth middleware is stood
+ * in for: what is under test is the read, not the caller.
+ */
+function appOver(storage: Storage): OpenAPIHono<AppEnv> {
+  const app = new OpenAPIHono<AppEnv>();
+  app.onError(createErrorHandler({ errorWebhookUrl: "" }));
+  app.use("*", async (c, next) => {
+    c.set("apiKey", {
+      id: "key-under-test",
+      role: "admin",
+      is_platform: true,
+      space_id: undefined,
+    } as never);
+    c.set("clientIp", null as never);
+    await next();
+  });
+  app.route("/occurrences", occurrenceRoutes(storage));
+  return app;
+}
+
+async function readWindow(
+  app: OpenAPIHono<AppEnv>,
+  from = SYNTHETIC_FROM,
+  to = SYNTHETIC_TO,
+): Promise<Response> {
+  return await app.request(
+    `/occurrences?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+  );
+}
+
+describe("GET /occurrences over a calendar past the old scan ceiling", () => {
   // Comfortably past the 20,000-row total this route used to refuse the
   // whole calendar at. That refusal could not be recovered from: the one
-  // move a caller knows is to ask for a narrower window, and the window
-  // has no bearing on how many rows carry a rule.
+  // move a caller knows is to ask for a narrower window, and the window has
+  // no bearing on how many rows carry a rule.
   const PAST_THE_OLD_CEILING = 20_500;
 
-  it("walks past the row count that used to refuse the whole calendar", async () => {
+  it("serves the window rather than refusing the space", async () => {
+    const rows: SyntheticRow[] = [];
+    for (let i = 0; i < PAST_THE_OLD_CEILING; i += 1) {
+      rows.push({
+        id: `series-${String(i)}`,
+        properties: {
+          title: `retired series ${String(i)}`,
+          // A rule that ran once, years before the window: read and
+          // expanded like every other, contributing nothing to the answer.
+          starts_at: "2019-03-04T09:00:00.000Z",
+          recurrence: ["RRULE:FREQ=YEARLY;COUNT=1"],
+        },
+      });
+    }
+    for (let i = 0; i < 3; i += 1) {
+      rows.push({
+        id: `standalone-${String(i)}`,
+        properties: {
+          title: `meeting ${String(i)}`,
+          starts_at: `2026-06-0${String(i + 2)}T09:00:00.000Z`,
+          ends_at: `2026-06-0${String(i + 2)}T10:00:00.000Z`,
+        },
+      });
+    }
+
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      scan: { events_read: number };
+    };
+    // The three meetings actually in the window, found behind twenty
+    // thousand rows that a ceiling would have refused the read over.
+    expect(body.data.map((r) => r.item.properties.title)).toEqual([
+      "meeting 0",
+      "meeting 1",
+      "meeting 2",
+    ]);
+    // Every rule-bearing row was read, and the count is on the response so
+    // the size of the read is visible rather than merely survived.
+    expect(body.scan.events_read).toBeGreaterThan(PAST_THE_OLD_CEILING);
+  });
+});
+
+describe("the occurrence ceiling stops the assembly", () => {
+  // Four times the ceiling. The number matters: it is what `found` would
+  // report if the check ran after both loops instead of inside them.
+  const IN_WINDOW = 20_000;
+
+  function crowdedWindow(): SyntheticCalendar {
+    const rows: SyntheticRow[] = [];
+    for (let i = 0; i < IN_WINDOW; i += 1) {
+      rows.push({
+        id: `crowd-${String(i)}`,
+        properties: {
+          title: `crowded ${String(i)}`,
+          starts_at: "2026-06-03T09:00:00.000Z",
+        },
+      });
+    }
+    return syntheticCalendar(rows);
+  }
+
+  it("refuses on the occurrence that crosses it, not on the last one", async () => {
+    const calendar = crowdedWindow();
+    const res = await readWindow(appOver(calendar.storage));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { details?: { max_occurrences?: number; found?: number } };
+    };
+    expect(body.error.details?.max_occurrences).toBe(5000);
+    // The bound has to fail toward something bounded. Assembling all
+    // twenty thousand in order to report the total would make the refusal
+    // cost more than the read it is refusing, so `found` is the count the
+    // assembly stopped at.
+    expect(body.error.details?.found).toBe(5001);
+    // And no row was fetched to build an answer that was never returned.
+    expect(calendar.fetched).toHaveLength(0);
+  });
+
+  it("refuses a series that floods the window on the same terms", async () => {
+    // The other loop. Two hourly rules over a week are 336 occurrences,
+    // so the flood has to come from the series count rather than the rule.
+    const rows: SyntheticRow[] = [];
+    for (let i = 0; i < 6_000; i += 1) {
+      rows.push({
+        id: `daily-${String(i)}`,
+        properties: {
+          title: `daily ${String(i)}`,
+          starts_at: "2026-06-01T09:00:00.000Z",
+          recurrence: ["RRULE:FREQ=DAILY;COUNT=1"],
+        },
+      });
+    }
+    const calendar = syntheticCalendar(rows);
+    const res = await readWindow(appOver(calendar.storage));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { details?: { found?: number } };
+    };
+    expect(body.error.details?.found).toBe(5001);
+    expect(calendar.fetched).toHaveLength(0);
+  });
+
+  it("still serves a window that sits under the ceiling", async () => {
+    const rows: SyntheticRow[] = [];
+    for (let i = 0; i < 4_000; i += 1) {
+      rows.push({
+        id: `roomy-${String(i)}`,
+        properties: {
+          title: `roomy ${String(i)}`,
+          starts_at: "2026-06-03T09:00:00.000Z",
+        },
+      });
+    }
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      scan: { occurrences: number };
+    };
+    expect(body.data).toHaveLength(4_000);
+    expect(body.scan.occurrences).toBe(4_000);
+  });
+});
+
+describe("the expansion loop yields", () => {
+  /** Event-loop turns taken while one window read runs. */
+  async function turnsDuring(rows: readonly SyntheticRow[]): Promise<number> {
+    // Nothing in this request reaches a macrotask on its own: the
+    // synthetic storage resolves already-settled promises, which drain as
+    // microtasks. So a callback queued on the loop runs during the request
+    // only where the route hands the loop back.
+    let turns = 0;
+    let observing = true;
+    const observe = (): void => {
+      if (!observing) return;
+      turns += 1;
+      setImmediate(observe);
+    };
+    setImmediate(observe);
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    observing = false;
+    expect(res.status).toBe(200);
+    return turns;
+  }
+
+  it("takes more turns than walking the same rows costs on its own", async () => {
+    // Both loops yield, so the page walk alone already takes a few turns.
+    // The calibration is the same row count with no rule on it: it walks
+    // the same number of pages and expands nothing, so the difference is
+    // the expansion loop's own yielding and nothing else. Without it the
+    // two counts are the same, which is a synchronous walk over every rule
+    // in the space with every other request on the process behind it.
+    const COUNT = 1_000;
+    const rules: SyntheticRow[] = [];
+    const plain: SyntheticRow[] = [];
+    for (let i = 0; i < COUNT; i += 1) {
+      rules.push({
+        id: `series-${String(i)}`,
+        properties: {
+          title: `series ${String(i)}`,
+          starts_at: "2019-03-04T09:00:00.000Z",
+          recurrence: ["RRULE:FREQ=YEARLY;COUNT=1"],
+        },
+      });
+      plain.push({
+        id: `plain-${String(i)}`,
+        properties: {
+          title: `plain ${String(i)}`,
+          starts_at: "2026-06-03T09:00:00.000Z",
+        },
+      });
+    }
+
+    const walkOnly = await turnsDuring(plain);
+    const walkAndExpand = await turnsDuring(rules);
+    expect(walkAndExpand).toBeGreaterThan(walkOnly * 2);
+  });
+});
+
+describe("an item that leaves `active` mid-request", () => {
+  it("is dropped rather than rendered in a state this route never emits", async () => {
+    // The scans select on `state: "active"` and the item read that
+    // follows them does not, so between the two an archived row would
+    // otherwise come back inside a 200 carrying a state no occurrence has
+    // ever had.
+    const rows: SyntheticRow[] = [
+      {
+        id: "stays",
+        properties: {
+          title: "still on the calendar",
+          starts_at: "2026-06-03T09:00:00.000Z",
+        },
+      },
+      {
+        id: "archived",
+        properties: {
+          title: "filed away mid-request",
+          starts_at: "2026-06-04T09:00:00.000Z",
+        },
+      },
+    ];
+    const calendar = syntheticCalendar(rows, new Map(), new Set(["archived"]));
+    const res = await readWindow(appOver(calendar.storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      scan: { occurrences: number };
+    };
+    expect(body.data.map((r) => r.item.id)).toEqual(["stays"]);
+    // And the count on the response agrees with what was returned.
+    expect(body.scan.occurrences).toBe(1);
+  });
+});
+
+describe("the exception edges are consumed a chunk at a time", () => {
+  it("reads an edge before the next chunk supersedes it", async () => {
+    // Past `ID_BATCH_SIZE`, so the edges arrive in several chunks. Holding
+    // them all to read after the last is what this fixture refuses, and it
+    // is what returning the edges rather than the grouping would require.
+    const rows: SyntheticRow[] = [
+      {
+        id: "series",
+        properties: {
+          title: "the standup",
+          starts_at: "2026-06-01T09:00:00.000Z",
+          ends_at: "2026-06-01T09:15:00.000Z",
+          recurrence: ["RRULE:FREQ=DAILY"],
+        },
+      },
+    ];
+    const parents = new Map<string, string>();
+    // One moved instance inside the window, and a long tail of instances
+    // moved years ago — the ordinary shape of a series somebody has been
+    // rescheduling for a while.
+    rows.push({
+      id: "moved",
+      properties: {
+        title: "the standup, moved",
+        starts_at: "2026-06-03T15:00:00.000Z",
+        original_starts_at: "2026-06-03T09:00:00.000Z",
+      },
+    });
+    parents.set("moved", "series");
+    for (let i = 0; i < 1_200; i += 1) {
+      const id = `stale-${String(i)}`;
+      rows.push({
+        id,
+        properties: {
+          title: `moved long ago ${String(i)}`,
+          starts_at: "2019-03-04T09:00:00.000Z",
+          original_starts_at: "2019-03-04T09:00:00.000Z",
+        },
+      });
+      parents.set(id, "series");
+    }
+
+    const res = await readWindow(
+      appOver(syntheticCalendar(rows, parents).storage),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: OccurrenceRow[] };
+    const replacement = body.data.find((r) => r.replaces !== undefined);
+    // The grouping survived the chunking: the moved instance shadows the
+    // computed one and shows at its own time.
+    expect(replacement?.starts_at).toBe("2026-06-03T15:00:00.000Z");
+    expect(replacement?.replaces).toBe("2026-06-03T09:00:00.000Z");
+    expect(
+      body.data.filter((r) => r.starts_at === "2026-06-03T09:00:00.000Z"),
+    ).toHaveLength(0);
+  });
+});
+
+describe("the unwindowed scan", () => {
+  it("keeps the expansion's input rather than the row", async () => {
+    // The property that makes an unbounded walk affordable, and the one a
+    // regression would quietly undo: going back to accumulating rows still
+    // returns the right answer, just at kilobytes each instead of a couple
+    // of hundred bytes. Nothing else would notice.
+    const rows: SyntheticRow[] = [];
+    for (let i = 0; i < 3; i += 1) {
+      rows.push({
+        id: `series-${String(i)}`,
+        properties: {
+          title: `synthetic ${String(i)}`,
+          starts_at: "2026-06-01T09:00:00.000Z",
+          ends_at: "2026-06-01T09:30:00.000Z",
+          timezone: "Europe/London",
+          recurrence: ["RRULE:FREQ=WEEKLY"],
+          // Stands in for the blob a mirrored event really carries, which
+          // is what makes retaining rows rather than projections expensive.
+          description: "x".repeat(2048),
+        },
+      });
+    }
     const seeds = await gatherSeriesSeeds(
-      pagedStorage(PAST_THE_OLD_CEILING),
+      syntheticCalendar(rows).storage,
       undefined,
       ["core.event"],
     );
-    expect(seeds).toHaveLength(PAST_THE_OLD_CEILING);
-  });
-
-  it("keeps the expansion's input rather than the row", async () => {
-    // The property that makes an unbounded walk affordable, and the one
-    // a regression would quietly undo: going back to accumulating rows
-    // still returns the right answer, just at kilobytes each instead of
-    // a couple of hundred bytes. Nothing else would notice.
-    const seeds = await gatherSeriesSeeds(pagedStorage(3), undefined, [
-      "core.event",
-    ]);
+    expect(seeds).toHaveLength(3);
     expect(Object.keys(seeds[0] ?? {}).sort()).toEqual([
       "ends_at",
       "id",
@@ -313,8 +742,8 @@ describe("the unwindowed scan", () => {
   });
 
   it("reads the fixture's own series against real storage", async () => {
-    // The stub above proves the loop; this proves the loop is wired to a
-    // real store with a real narrowing behind it.
+    // The synthetic storages above prove the loops; this proves they are
+    // wired to a real store with a real narrowing behind them.
     const seeds = await gatherSeriesSeeds(ctx.storage, undefined, [
       "core.event",
     ]);
