@@ -83,6 +83,9 @@ describe("package entry point", () => {
         max_occurrences: 5000,
         series_errors: 1,
         max_series_errors: 500,
+        unproductive_iterations: 0,
+        max_unproductive_iterations: 2_000_000,
+        series_unexpanded: 0,
       },
       series_errors: [seriesError],
     };

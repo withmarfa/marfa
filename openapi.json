@@ -10982,7 +10982,7 @@
           "Items"
         ],
         "summary": "List event occurrences in a window",
-        "description": "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns. That list alone is capped rather than refused, at `scan.max_series_errors`: a failed series contributed no occurrence, so capping the report of it removes nothing from the calendar, and a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total.",
+        "description": "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series whose rule cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for the space, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on series that produce no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the space gives it work.",
         "security": [
           {
             "bearerAuth": []
@@ -11238,11 +11238,23 @@
                         },
                         "series_errors": {
                           "type": "integer",
-                          "description": "Series that could not be expanded, counted across the whole space. This is the true total even when `series_errors` on the envelope lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one."
+                          "description": "Series whose recurrence rule this request could not read or could not fully apply, counted across the event types this request read. Scoped to those types and not to the space: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the space is healthy. This is the true total for what was read even when `series_errors` on the envelope lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one."
                         },
                         "max_series_errors": {
                           "type": "integer",
-                          "description": "Longest list of expansion failures the response will carry. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because a series that failed to expand contributed no occurrence and capping the report of it drops nothing from the calendar."
+                          "description": "Longest list of expansion failures the response will carry. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it."
+                        },
+                        "unproductive_iterations": {
+                          "type": "integer",
+                          "description": "Rule iterations this request spent on series that produced no occurrence — a rule that ended before the window, one too frequent to expand, or one that could not be parsed. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one."
+                        },
+                        "max_unproductive_iterations": {
+                          "type": "integer",
+                          "description": "Ceiling `unproductive_iterations` stops expanding at. Iterations spent on series that do produce occurrences are not counted against it, so crossing it cannot be caused by a calendar having many meetings in it."
+                        },
+                        "series_unexpanded": {
+                          "type": "integer",
+                          "description": "Series left unexpanded because `max_unproductive_iterations` was reached before they were reached. Zero on any read that finished expanding; above zero, `expansion_incomplete` is set on the envelope and `data` may be missing occurrences these series would have contributed."
                         }
                       },
                       "required": [
@@ -11250,7 +11262,10 @@
                         "occurrences",
                         "max_occurrences",
                         "series_errors",
-                        "max_series_errors"
+                        "max_series_errors",
+                        "unproductive_iterations",
+                        "max_unproductive_iterations",
+                        "series_unexpanded"
                       ]
                     },
                     "series_errors": {
@@ -11273,6 +11288,9 @@
                     },
                     "series_errors_truncated": {
                       "type": "boolean"
+                    },
+                    "expansion_incomplete": {
+                      "type": "boolean"
                     }
                   },
                   "required": [
@@ -11285,7 +11303,7 @@
             }
           },
           "400": {
-            "description": "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. A space full of rules that cannot be expanded is not among these: that list is capped and the read succeeds.",
+            "description": "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. Broken rules do not cause this refusal on their own: that list is capped and the read succeeds however many of them there are. They do not exempt a space from it either — the ceiling counts the occurrences the window's healthy rows produce and is indifferent to how many rules failed, so a space holding both enough broken rules to cap the list and enough events to fill the window is refused on the second, exactly as a space with no broken rules would be.",
             "content": {
               "application/json": {
                 "schema": {

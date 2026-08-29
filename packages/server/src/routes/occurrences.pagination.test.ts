@@ -20,7 +20,11 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { gatherSeriesSeeds, occurrenceRoutes } from "./occurrences.js";
+import {
+  gatherSeriesSeeds,
+  occurrenceRoutes,
+  MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS,
+} from "./occurrences.js";
 import { createErrorHandler } from "../middleware/error-handler.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
@@ -423,9 +427,11 @@ async function readWindow(
   app: OpenAPIHono<AppEnv>,
   from = SYNTHETIC_FROM,
   to = SYNTHETIC_TO,
+  type?: string,
 ): Promise<Response> {
   return await app.request(
-    `/occurrences?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    `/occurrences?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}` +
+      (type === undefined ? "" : `&type=${encodeURIComponent(type)}`),
   );
 }
 
@@ -724,10 +730,17 @@ describe("the reported expansion failures are bounded", () => {
     expect(body.scan.series_errors).toBe(50_000);
   });
 
-  it("holds the response down while the space grows without limit", async () => {
+  it("holds the response down while unparsable rules grow without limit", async () => {
     // The retention argument the cap exists for, which trimming rather
     // than refusing does not weaken: accumulation still stops at 500
     // however many rules are broken. Measured at 4.8 MB before the cap.
+    //
+    // Scoped to the cheapest failure there is — `FREQ=NOPE` fails in the
+    // parser, before a single rule iteration. It pins bytes and nothing
+    // else, which is all a fixture this cheap can pin. The expensive
+    // class, where a rule fails only after walking its cap, is pinned by
+    // the expansion-budget suite below, because bytes were never what
+    // made that shape dangerous.
     const res = await readWindow(
       appOver(syntheticCalendar(broken(25_000)).storage),
     );
@@ -763,6 +776,237 @@ describe("the reported expansion failures are bounded", () => {
     const [failure] = body.series_errors ?? [];
     expect(failure).toBeDefined();
     expect(failure?.message.length).toBeLessThan(long.length);
+  });
+});
+
+describe("the reported failures are scoped to what the request read", () => {
+  // Not a defect being fixed but a limit being pinned, because the field
+  // reads like a space-wide health check and is not one. A request
+  // narrowed by `type` reads one type's rules and counts one type's
+  // failures; a credential permissioned for one event type is in the
+  // same position permanently. Counting the other type would mean
+  // scanning it — the cost the narrowing exists to avoid — and reporting
+  // rows behind a permission the caller does not hold.
+  it("counts nothing for a type it did not read", async () => {
+    const rows = Array.from({ length: 600 }, (_, i) => ({
+      id: `broken-${String(i)}`,
+      properties: {
+        title: `broken ${String(i)}`,
+        starts_at: "2025-06-01T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=NOPE;INTERVAL=x"],
+      },
+    }));
+    const app = appOver(syntheticCalendar(rows).storage);
+
+    const read = await readWindow(app);
+    expect(
+      ((await read.json()) as { scan: { series_errors: number } }).scan
+        .series_errors,
+    ).toBe(600);
+
+    // The same space, read as the other event type. Zero here is true of
+    // what was read and says nothing about the 600 rules alongside it,
+    // which is exactly what the field's description now claims and no
+    // more.
+    const narrowed = await readWindow(
+      app,
+      SYNTHETIC_FROM,
+      SYNTHETIC_TO,
+      "google.calendar.event",
+    );
+    expect(narrowed.status).toBe(200);
+    const body = (await narrowed.json()) as {
+      series_errors?: unknown[];
+      series_errors_truncated?: boolean;
+      scan: { series_errors: number };
+    };
+    expect(body.scan.series_errors).toBe(0);
+    expect(body.series_errors).toBeUndefined();
+    expect(body.series_errors_truncated).toBeUndefined();
+  });
+});
+
+describe("the occurrence ceiling and the broken-rule cap compose", () => {
+  it("refuses an over-full window in a space whose rules are broken", async () => {
+    // The 400's description used to end by saying a space full of rules
+    // that cannot be expanded is not among the reads it refuses. True of
+    // the broken rules on their own and false of this space, which holds
+    // both: the ceiling counts what the healthy rows produce and is
+    // indifferent to how many rules failed beside them.
+    const rows = [
+      ...Array.from({ length: 600 }, (_, i) => ({
+        id: `broken-${String(i)}`,
+        properties: {
+          title: `broken ${String(i)}`,
+          starts_at: "2025-06-01T09:00:00.000Z",
+          recurrence: ["RRULE:FREQ=NOPE;INTERVAL=x"],
+        },
+      })),
+      ...Array.from({ length: 6_000 }, (_, i) => ({
+        id: `plain-${String(i)}`,
+        properties: {
+          title: `plain ${String(i)}`,
+          starts_at: "2026-06-03T09:00:00.000Z",
+        },
+      })),
+    ];
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { max_occurrences?: number } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.details?.max_occurrences).toBe(5_000);
+  });
+});
+
+describe("the expansion budget bounds one request's total work", () => {
+  // The one deliberately expensive test in this file, at about six
+  // seconds. Pinning a ceiling denominated in rule iterations means
+  // spending them, and spending them is the whole assertion: without the
+  // ceiling this fixture walks three times as far, and a real space
+  // holding fifty thousand of these rules walks for hours.
+  /**
+   * Rules that walk their whole per-series iteration cap and emit
+   * nothing: per-minute from years before the window, so each one
+   * reaches `MAX_EXPANSION_ITERATIONS` long before it reaches the
+   * window, fails there, and contributes no occurrence.
+   *
+   * The expensive class, and the one refusing at the 501st failure used
+   * to bound by accident. Measured through the route at about 340 ms of
+   * CPU each, which is where "50,000 of them is hours" comes from.
+   */
+  function walkers(count: number): SyntheticRow[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `walker-${String(i)}`,
+      properties: {
+        title: `walker ${String(i)}`,
+        starts_at: "2019-03-04T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=MINUTELY"],
+      },
+    }));
+  }
+
+  /** How many walkers it takes to fill the budget, plus a few the
+   *  request must therefore never reach. */
+  const TO_FILL = Math.ceil(MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS / 100_000);
+
+  it("stops expanding rather than walking every rule in the space", async () => {
+    const rows = [
+      ...walkers(TO_FILL + 5),
+      {
+        id: "healthy",
+        properties: {
+          title: "a meeting that still works",
+          starts_at: "2026-06-03T09:00:00.000Z",
+        },
+      },
+    ];
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      expansion_incomplete?: boolean;
+      scan: {
+        unproductive_iterations: number;
+        max_unproductive_iterations: number;
+        series_unexpanded: number;
+        series_errors: number;
+      };
+    };
+
+    // Stopped, and stopped within one expansion of the budget: a single
+    // `expandSeries` call is atomic, so the last one admitted can always
+    // carry the total past the ceiling and no further.
+    expect(body.scan.unproductive_iterations).toBeGreaterThanOrEqual(
+      MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS,
+    );
+    expect(body.scan.unproductive_iterations).toBeLessThan(
+      MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS + 100_001,
+    );
+    // The five past the ceiling were never walked, and the response says
+    // so rather than stopping quietly. A calendar that is missing part
+    // of itself and does not admit it is the failure this whole file is
+    // organized around.
+    expect(body.scan.series_unexpanded).toBe(5);
+    expect(body.expansion_incomplete).toBe(true);
+    // Only the ones actually walked are reported as failures, which is
+    // what makes the two numbers say different things.
+    expect(body.scan.series_errors).toBe(TO_FILL);
+    // The stop is on the expansion, not on the calendar: the window pass
+    // still runs and its meetings still render.
+    expect(body.data.map((r) => r.item.properties.title)).toEqual([
+      "a meeting that still works",
+    ]);
+    // And the same fixture keeps the response small, which the cheap
+    // byte test above cannot speak for.
+    expect(Buffer.byteLength(JSON.stringify(body), "utf8")).toBeLessThan(
+      500_000,
+    );
+  });
+
+  it("charges nothing to series that produce occurrences", async () => {
+    // The property that makes the ceiling safe to have at all. These
+    // rules walk seven years of history before they reach the window —
+    // real work, and more of it than a short rule costs — but each one
+    // emits, so none of it is charged. A budget over all iterations
+    // would be spent fastest by the calendar with the most meetings in
+    // it, and would then truncate that calendar.
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      id: `daily-${String(i)}`,
+      properties: {
+        title: `daily ${String(i)}`,
+        starts_at: "2019-03-04T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=DAILY"],
+      },
+    }));
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      expansion_incomplete?: boolean;
+      scan: { unproductive_iterations: number; series_unexpanded: number };
+    };
+    // Seven days of window, thirty rules, every occurrence present.
+    expect(body.data).toHaveLength(30 * 7);
+    expect(body.scan.unproductive_iterations).toBe(0);
+    expect(body.scan.series_unexpanded).toBe(0);
+    expect(body.expansion_incomplete).toBeUndefined();
+  });
+
+  it("charges nothing to an expensive series that produces one occurrence", async () => {
+    // The hole in the ceiling, pinned rather than papered over. These
+    // rules walk their entire per-series cap and emit exactly once, so
+    // the budget is charged nothing at all for work the budget exists to
+    // bound. Measured through the route: ten of them cost 3.5 seconds
+    // and report `unproductive_iterations: 0`.
+    //
+    // What keeps it from being unbounded is the occurrence ceiling: a
+    // series emitting more than one occurrence gets to the window sooner
+    // and walks less, so the worst case is `MAX_OCCURRENCES` series each
+    // emitting once — about half an hour of CPU, and then a 400. It
+    // takes a space contrived to produce it, and nothing here would say
+    // so if one appeared.
+    const start = new Date(
+      new Date(SYNTHETIC_FROM).getTime() - 99_999 * 60_000,
+    ).toISOString();
+    const rows = Array.from({ length: 3 }, (_, i) => ({
+      id: `productive-walker-${String(i)}`,
+      properties: {
+        title: `productive walker ${String(i)}`,
+        starts_at: start,
+        recurrence: ["RRULE:FREQ=MINUTELY;COUNT=100000"],
+      },
+    }));
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      scan: { unproductive_iterations: number };
+    };
+    // One occurrence each, after a hundred thousand iterations each.
+    expect(body.data).toHaveLength(3);
+    expect(body.scan.unproductive_iterations).toBe(0);
   });
 });
 

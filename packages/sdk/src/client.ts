@@ -586,7 +586,8 @@ export interface Occurrence {
   replaces?: string;
 }
 
-/** A series the server could not expand. */
+/** A series whose rule the server could not read, or could not fully
+ *  apply. */
 export interface OccurrenceSeriesError {
   /** Item id of the series. */
   item_id: string;
@@ -616,11 +617,19 @@ export interface OccurrencesScan {
    */
   max_occurrences: number;
   /**
-   * Series that could not be expanded, counted across the whole space.
+   * Series whose recurrence rule the read could not use, counted across
+   * the event types it read.
    *
-   * The true total even when `series_errors` on the result lists fewer,
-   * which is what lets a caller tell a handful of broken rules from a
-   * corrupt import without being sent the bytes of the larger one.
+   * Scoped to those types rather than to the space. A `type` on the
+   * request, or a credential permissioned for one event type, narrows
+   * what was read and therefore what this counts, so a zero says the
+   * rules this read looked at were fine and says nothing at all about
+   * the ones it did not.
+   *
+   * The true total for what was read even when `series_errors` on the
+   * result lists fewer, which is what lets a caller tell a handful of
+   * broken rules from a corrupt import without being sent the bytes of
+   * the larger one.
    */
   series_errors: number;
   /**
@@ -629,6 +638,27 @@ export interface OccurrencesScan {
    * `series_errors_truncated` is set.
    */
   max_series_errors: number;
+  /**
+   * Rule iterations the read spent on series that produced no
+   * occurrence: a rule that ended before the window, one too frequent to
+   * expand, one that would not parse.
+   *
+   * The unit the expansion ceiling is denominated in, reported on every
+   * read rather than only on the one it truncates.
+   */
+  unproductive_iterations: number;
+  /**
+   * Ceiling `unproductive_iterations` stops the expansion at. Iterations
+   * spent on series that do produce occurrences are never counted
+   * against it, so a calendar cannot cross it by holding many meetings.
+   */
+  max_unproductive_iterations: number;
+  /**
+   * Series left unexpanded because the ceiling was reached first. Zero
+   * on a read that finished; above zero, `expansion_incomplete` is set
+   * and the calendar may be missing what those series held.
+   */
+  series_unexpanded: number;
 }
 
 export interface OccurrencesResult {
@@ -638,27 +668,41 @@ export interface OccurrencesResult {
   /** What this read cost and what would stop it. */
   scan: OccurrencesScan;
   /**
-   * Series that could not expand — a malformed rule, or one flooding the
-   * window. The rest of the calendar still returns, so a caller ignoring
-   * this renders a calendar with a repeating meeting silently absent
-   * from it.
+   * Series whose rule the server could not use — malformed, flooding the
+   * window, carrying no start to unfold from, or holding something that
+   * is not an RFC 5545 property line. The rest of the calendar still
+   * returns, so a caller ignoring this renders a calendar with a
+   * repeating meeting silently absent from it, or a repeating meeting
+   * silently shown once.
    *
    * Capped in both length and message size by the server. Past that cap
    * the list is trimmed and `series_errors_truncated` says so, while
    * `scan.series_errors` keeps the true count. The read still succeeds:
-   * a series that failed to expand contributed no occurrence, so a
-   * shorter list of failures costs the caller nothing from the calendar
-   * itself.
+   * this list is a diagnostic beside the calendar and nothing in `data`
+   * depends on it, so a shorter list costs the caller nothing from the
+   * calendar itself.
    */
   series_errors?: OccurrenceSeriesError[];
   /**
-   * Set when `series_errors` lists fewer failures than the space holds.
+   * Set when `series_errors` lists fewer failures than the read found.
    *
    * Worth branching on if the list is being shown to a person: it is the
    * difference between "these are the broken rules" and "these are 500
    * of them".
    */
   series_errors_truncated?: boolean;
+  /**
+   * Set when the server stopped expanding series before it had walked
+   * them all, having spent its whole expansion budget on series that
+   * produced nothing.
+   *
+   * `data` is a partial calendar when this is set, and
+   * `scan.series_unexpanded` says how many series were left. A narrower
+   * window will not help — the budget is spent walking rules from their
+   * own start, before the window is reached — so the move is a `type`
+   * narrowing, or fixing the rules `series_errors` names.
+   */
+  expansion_incomplete?: boolean;
 }
 
 export interface ListOccurrencesOptions {
@@ -2380,18 +2424,21 @@ export class MarfaClient {
      * could not tell the two apart.
      *
      * There is no third refusal. `series_errors` is capped rather than
-     * refused past `scan.max_series_errors`, because a series that could
-     * not expand contributed no occurrence and trimming the report of it
-     * takes nothing off the calendar — the healthy series in the same
-     * space still expand and return. A capped list sets
-     * `series_errors_truncated` and `scan.series_errors` keeps the true
-     * count, so a partial list is never mistaken for a complete one.
+     * refused past `scan.max_series_errors`, because that list is a
+     * diagnostic beside the calendar and nothing in `data` depends on it
+     * — the healthy series in the same space still expand and return. A
+     * capped list sets `series_errors_truncated` and
+     * `scan.series_errors` keeps the true count, so a partial list is
+     * never mistaken for a complete one. That count is scoped to the
+     * event types this read covered, so it is a statement about what was
+     * read and not about the space: pass a `type`, or use a credential
+     * permissioned for one event type, and the rules of the other type
+     * are neither read nor counted.
      *
      * There is no refusal for the size of the calendar itself either.
-     * The
-     * passes that gather series and exceptions cannot be windowed — a
-     * rule written years ago produces occurrences in any window, and an
-     * exception moved out of one still shadows the slot it left — so
+     * The passes that gather series and exceptions cannot be windowed —
+     * a rule written years ago produces occurrences in any window, and
+     * an exception moved out of one still shadows the slot it left — so
      * both read the space whole however little is asked for, and a large
      * calendar is read slowly rather than refused. `scan` on the result
      * is where that cost is visible: `events_read` grows with the
@@ -2399,6 +2446,16 @@ export class MarfaClient {
      * arrives on every success, so a calendar approaching the one
      * data-dependent ceiling that does refuse can be seen coming rather
      * than met as a 400.
+     *
+     * What "slowly" is bounded by is the expansion budget, and it is the
+     * one place the calendar can come back partial. A read spends at
+     * most `scan.max_unproductive_iterations` walking rules that produce
+     * no occurrence, and a space holding enough of them — per-minute
+     * reminders, or a long history of series that have ended — reaches
+     * that before it reaches every series. Such a read succeeds with
+     * `expansion_incomplete` set and `scan.series_unexpanded` above
+     * zero, which is worth branching on: it is the difference between a
+     * calendar and most of one.
      */
     list: async (
       options: ListOccurrencesOptions,

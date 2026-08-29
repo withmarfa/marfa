@@ -552,6 +552,92 @@ describe("the occurrence ceiling", () => {
   });
 });
 
+describe("a row whose declared rule cannot be used", () => {
+  // Every one of these writes with a 201: `core.event` requires `title`
+  // and nothing else, and `recurrence` is declared as an array of
+  // strings but validated only as an array. Each used to leave the
+  // response asserting `series_errors: 0` over a row it had quietly
+  // dropped or quietly misread, which is worse than saying nothing:
+  // nobody investigates a calendar that reports itself complete.
+  //
+  // Anchored in 2031, past every other fixture's window. The series
+  // pass is unwindowed, so these rows are scanned by every read in this
+  // file and only their own assertions should see them.
+  const FROM = "2031-05-01T00:00:00Z";
+  const TO = "2031-05-08T00:00:00Z";
+
+  it("reports a rule with no start to unfold it from", async () => {
+    // Absent from the calendar in both passes: the series pass has no
+    // anchor to expand from, and the window pass drops it for carrying a
+    // rule. It is reachable, it is invisible, and the only honest thing
+    // the response can do is name it.
+    const id = await createEvent({
+      title: "a rule with nothing to unfold",
+      recurrence: ["RRULE:FREQ=WEEKLY"],
+    });
+    const { status, rows, errors } = await occurrences(FROM, TO);
+    expect(status).toBe(200);
+    expect(rows.filter((r) => r.item.id === id)).toHaveLength(0);
+    const reported = errors.filter((e) => e.item_id === id);
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.message).toContain("starts_at");
+  });
+
+  it("reports a recurrence holding no readable property line", async () => {
+    // The narrower sibling. This one is not absent — it filters to an
+    // empty rule, so the window pass renders it as the single event its
+    // own times describe, which is the best answer available. What was
+    // wrong was that the rule went unapplied without a word: a caller
+    // asking for a repeating meeting got exactly one and no reason.
+    const id = await createEvent({
+      title: "a rule made of numbers",
+      starts_at: "2031-05-02T09:00:00.000Z",
+      recurrence: [7, 9],
+    });
+    const { status, rows, errors } = await occurrences(FROM, TO);
+    expect(status).toBe(200);
+    // Still on the calendar, once, at its own time.
+    const shown = rows.filter((r) => r.item.id === id);
+    expect(shown).toHaveLength(1);
+    expect(shown[0]?.series_id).toBeUndefined();
+    expect(errors.filter((e) => e.item_id === id)).toHaveLength(1);
+  });
+
+  it("reports a line dropped from a rule it still applied", async () => {
+    // The one that loses occurrences rather than gaining them: the
+    // dropped entry could have been the EXDATE, and expanding without it
+    // puts back the very occurrence it existed to remove. So the series
+    // expands — refusing it would take a working meeting off the
+    // calendar — and the response says a line was ignored.
+    const id = await createEvent({
+      title: "a rule with an unreadable line",
+      starts_at: "2031-05-02T14:00:00.000Z",
+      recurrence: ["RRULE:FREQ=DAILY;COUNT=3", { EXDATE: "nope" }],
+    });
+    const { status, rows, errors } = await occurrences(FROM, TO);
+    expect(status).toBe(200);
+    const shown = rows.filter((r) => r.item.id === id);
+    expect(shown).toHaveLength(3);
+    expect(shown.every((r) => r.series_id === id)).toBe(true);
+    expect(errors.filter((e) => e.item_id === id)).toHaveLength(1);
+  });
+
+  it("says nothing about a row that declares no rule at all", async () => {
+    // The control. An empty list is an explicit "this does not repeat",
+    // and a response that called it broken would be the same defect
+    // pointed the other way.
+    const id = await createEvent({
+      title: "an event that does not repeat",
+      starts_at: "2031-05-03T09:00:00.000Z",
+      recurrence: [],
+    });
+    const { status, rows, errors } = await occurrences(FROM, TO);
+    expect(status).toBe(200);
+    expect(rows.filter((r) => r.item.id === id)).toHaveLength(1);
+    expect(errors.filter((e) => e.item_id === id)).toHaveLength(0);
+  });
+});
+
 describe("the scan block", () => {
   it("reports the ceiling on a read nowhere near it", async () => {
     // The announcement is the point: a bound mentioned only when it
@@ -565,10 +651,13 @@ describe("the scan block", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: OccurrenceRow[];
+      expansion_incomplete?: boolean;
       scan: {
         events_read: number;
         occurrences: number;
         max_occurrences: number;
+        max_unproductive_iterations: number;
+        series_unexpanded: number;
       };
     };
     expect(body.scan.max_occurrences).toBe(5000);
@@ -577,5 +666,11 @@ describe("the scan block", () => {
     // narrowed by the window, so this is the figure that grows with the
     // calendar, and it is the one worth watching.
     expect(body.scan.events_read).toBeGreaterThan(0);
+    // The expansion budget announces itself the same way, and a read
+    // that finished expanding says so rather than leaving the caller to
+    // infer it from a missing field.
+    expect(body.scan.max_unproductive_iterations).toBeGreaterThan(0);
+    expect(body.scan.series_unexpanded).toBe(0);
+    expect(body.expansion_incomplete).toBeUndefined();
   });
 });
