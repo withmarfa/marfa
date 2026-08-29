@@ -29,7 +29,6 @@ import {
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   expandBundlesToScopes,
-  isContentScope,
   isValidScope,
 } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
@@ -170,59 +169,27 @@ export function buildAllowedScopes(
     // Metadata top-level
     "metadata:read",
     "metadata:write",
-    // The content category is DELIBERATELY ABSENT. `content:read` and
-    // `content:write` parse, project and merge correctly everywhere else in
-    // this build; nothing is half-built. What is missing is the words.
+    // The content category, the parent grant over everything a person
+    // saves. Withheld until this build for one reason: both literals share
+    // the type pattern `content`, which is the key both consent surfaces
+    // resolve copy on, so the authorize screen rendered one identical toggle
+    // for read and for write — and the device screen, which dedupes on the
+    // resolved string, printed ONE row where two grants had been approved.
+    // Writing a sentence would have taken the write level off that screen
+    // rather than merely leaving it undescribed.
     //
-    // Both literals share the type pattern `content`, and both consent
-    // surfaces resolve their copy on that pattern rather than on the whole
-    // literal. So the authorize screen renders one identical toggle label for
-    // the read level and the write level.
+    // Both halves are closed. A row label carries its operation, so the two
+    // literals resolve different strings and neither screen folds one away;
+    // and the pattern now has curated copy on both maps rather than falling
+    // through to a title-cased fragment of itself.
     //
-    // The device approval screen, which has no labels at all, fails in two
-    // different ways depending on whether copy exists, and both are worse
-    // than the authorize screen's. With no copy it prints the raw literals
-    // with no English beside them. With copy it prints ONE row rather than
-    // two, because `describeCapabilities` dedupes on the resolved string and
-    // both literals resolve the same one — so writing the sentence would not
-    // just leave the levels indistinguishable there, it would take the write
-    // level off the screen entirely.
-    //
-    // Publishing a scope the consent screen cannot describe is the defect
-    // being avoided: a person would be asked to approve the largest grant in
-    // the grammar and shown the same words whether it reads their content or
-    // rewrites it, or on the device screen shown one row where two grants
-    // were made. A grant nobody can be asked for correctly is not one to
-    // make askable. Telling the two levels apart needs a label that carries
-    // its operation, which is a separate change; the literals are published
-    // with it, not before it. That change closes both failures at once,
-    // because two rows resolving different strings stop deduping.
-    //
-    // **Absence here is not what enforces the withholding, and reading it as
-    // absolute would be wrong.** The bundle loop at the foot of this function
-    // folds every grammatically valid configured scope back into this set,
-    // and both literals are grammatical, so `MARFA_PERMISSION_BUNDLES` naming
-    // one would publish it. Before the category existed the grammar refused
-    // such a bundle and said so; that protection went when the literals
-    // started parsing. The explicit drop in that loop is what replaces it,
-    // and it is not the only one that had to be written: `isValidScope`
-    // stopped answering for these two the moment they began parsing, so
-    // every site admitting a scope on that check alone needs the drop beside
-    // it. `bundlePublishedScopes` carries it because a bundle scope also
-    // widens a client's stored ceiling, and the console key form carries it
-    // because the summary it shows an owner is read off the ticked type
-    // scopes and would describe a content literal as reaching nothing.
-    // **This package's `AGENTS.md` lists those sites rather than counting
-    // them**, because a count cannot say which one is missing, and one of
-    // them was.
-    //
-    // The category's OPEN-ENDEDNESS is disclosed correctly — `isOpenEnded`
-    // has an explicit arm for the kind, so both screens carry the line about
-    // reaching things that do not exist yet. That half of the gap is closed;
-    // it is the read/write distinction that is not.
-    //
-    // `content-scope-not-yet-requestable.test.ts` holds this and says what to
-    // delete when the copy lands.
+    // Requestable, and in no default bundle. An app opts into the category
+    // the way it opts into `*:read` — deliberately, by name. The default
+    // grant stays the curated per-type set, because a bundle reaching every
+    // content type is a wider promise than any shipped bundle makes today
+    // and is not a decision publishing the literal should make by itself.
+    "content:read",
+    "content:write",
     // Global type wildcards — full access, offered only via "Customize".
     "*:read",
     "*:write",
@@ -298,18 +265,6 @@ export function buildAllowedScopes(
       warnOnceAboutBundleScope(scope);
       continue;
     }
-    // A withheld literal is dropped here rather than admitted, and it needs
-    // its own test because the grammar no longer refuses it. A content
-    // literal is well-formed, so it would otherwise ride an operator's
-    // bundle straight into the allowlist and undo the withholding above from
-    // configuration nobody reviewing this file can see. It reads as the
-    // grammar check still covering it, which is precisely how the protection
-    // was lost: `content:read` was ungrammatical until this build, so such a
-    // bundle used to be warned about and dropped by the clause above.
-    if (isContentScope(scope)) {
-      warnOnceAboutWithheldBundleScope(scope);
-      continue;
-    }
     out.add(scope);
   }
 
@@ -331,25 +286,6 @@ function warnOnceAboutBundleScope(scope: string): void {
   log("warn", "permission bundle names a scope the grammar rejects", {
     scope,
     action: "dropped from the OAuth scope allowlist",
-  });
-}
-
-/**
- * The same once-per-literal budget for a scope the grammar accepts and this
- * build withholds. Separate from the line above because the two say different
- * things to an operator: one names a literal that means nothing and wants a
- * spelling fixed, the other names a real scope this build is not ready to put
- * in front of a person and wants the bundle entry removed until it is.
- */
-const reportedWithheldBundleScopes = new Set<string>();
-
-function warnOnceAboutWithheldBundleScope(scope: string): void {
-  if (reportedWithheldBundleScopes.has(scope)) return;
-  reportedWithheldBundleScopes.add(scope);
-  log("warn", "permission bundle names a scope this build withholds", {
-    scope,
-    action: "dropped from the OAuth scope allowlist",
-    reason: "no consent copy is written for the pattern",
   });
 }
 

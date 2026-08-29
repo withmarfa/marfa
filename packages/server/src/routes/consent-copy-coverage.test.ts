@@ -118,18 +118,15 @@ function distinctPatterns(
  * their own label maps and return before the description map is read, so
  * they are held to those maps instead, further down.
  *
- * **`content` is listed and reaches nothing today, deliberately.** The set
- * this guard checks is derived from the allowlist, and the content category's
- * two literals are withheld from it until copy exists that distinguishes
- * their levels — so `distinctPatterns` finds no content pattern and every
- * assertion below passes over an empty arm. Listing it anyway is what arms
- * the guard for the commit that publishes them: it reddens on that commit
- * rather than on some later one where a reviewer has to notice the omission,
- * which is how the category reached a screen undescribed the first time.
- *
- * That makes this line a latch, not the reminder. The reminder is
- * `../auth/content-scope-not-yet-requestable.test.ts`, which fails if the
- * literals become requestable while nothing describes them.
+ * **`content` was listed here before it reached anything, and that is why
+ * this guard covered the commit that published it.** The set checked here is
+ * derived from the allowlist, so while the category's two literals were
+ * withheld `distinctPatterns` found no content pattern and every assertion
+ * below passed over an empty arm. Listing it anyway armed the guard for the
+ * commit that published them rather than for some later one where a reviewer
+ * would have had to notice the omission — which is how the category reached
+ * a screen undescribed the first time. It is now a live arm rather than a
+ * latch, and the file that held the withholding is gone.
  *
  * A `never` guard here would be the stronger shape and does not fit: the
  * list is deliberately a subset of `ParsedScope["kind"]`, so exhaustiveness

@@ -1644,6 +1644,13 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // sort now, so `*` says what it reaches like every other entry and the
   // screens add the rest.
   "*": "Everything in your space.",
+  // Says what it reaches by saying what it does not, because the only
+  // thing separating it from `*` above is the system family: the
+  // category projects every system type to `none`, so a person holding
+  // it grants nothing about their connections, devices, webhooks or
+  // activity. Naming those four would date the sentence the next time
+  // one is added; naming the thing they have in common does not.
+  content: "Everything you save, and nothing about your account.",
   "core.*": "All standard content types.",
   "user.*": "Your custom types.",
   "app.*": "Types this app defines for itself.",
@@ -1774,13 +1781,12 @@ function describeScope(scope: ParsedScope): string | undefined {
       // a hard return here would discard it — silently, on the one screen
       // whose job is saying how large a grant is.
       //
-      // The map holds no `content` entry today, and that is the withholding
-      // rather than an omission: the two literals share the pattern
-      // `content`, so a single entry reads identically for the read level and
-      // the write level, and both literals stay out of `buildAllowedScopes`
-      // until a label can carry the operation. Writing the entry is the whole
-      // of publishing the copy — this arm needs no change for it, which is
-      // why it resolves rather than returns.
+      // The entry exists now, and this arm never changed to accommodate it —
+      // which is what resolving rather than hard-returning bought. The two
+      // literals still share the pattern `content`, so this map answers the
+      // same sentence for both; what tells the read level from the write one
+      // is the operation the row's label carries, which is derived per
+      // literal rather than looked up here.
       return CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
     case "edge": {
       // `edgeType` is optional on ParsedScope but always present when
