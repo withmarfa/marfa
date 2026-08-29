@@ -1436,19 +1436,23 @@ export function authRoutes(
     // The permissions the owner ticked, in the `<type>:<verb>` scope grammar.
     // Only valid scopes survive; the key is scoped to exactly these.
     //
-    // A content-category literal is dropped rather than admitted, and the
-    // drop is explicit because the grammar check above stopped answering for
-    // it: `content:write` did not parse until this build, so a submission
-    // naming one used to be refused by that filter alone. The picker on this
-    // form emits `<type>:<verb>` and nothing else, so reaching here takes a
-    // hand-crafted post — and what such a post would mint is a key that
-    // misdescribes itself rather than one that reaches too far. The category
-    // projects the global wildcard, so the key writes every non-system type
-    // in the space, while `pickedTypeScopeLevel` below sees no type scope at
-    // all: the owner is told the key can reach none of their content and it
-    // is minted with no edge permissions. A credential whose own summary is
-    // wrong is worse than one that was never minted, and the same reach is
-    // already askable honestly through full access.
+    // A content-category literal is dropped rather than admitted, and this
+    // drop OUTLIVES the withholding that put the others beside it there.
+    // `content:read` and `content:write` are requestable now — the consent
+    // screens describe them and tell the two levels apart — but nothing on
+    // THIS form learned to. `pickedTypeScopeLevel` below reads the ticked
+    // type scopes and knows nothing of the kind, so an admitted literal
+    // mints a key that misdescribes itself: the category projects the global
+    // wildcard, so the key writes every non-system type in the space, while
+    // the owner is told it reaches none of their content and it is minted
+    // with no edge permissions.
+    //
+    // Not an escalation, and not reachable by anyone using the page: the
+    // picker emits `<type>:<verb>` and nothing else, so arriving here takes
+    // a hand-crafted post, and the same reach is already askable honestly
+    // through full access. It stays because a credential whose own summary
+    // is wrong is worse than one that was never minted. Removing it means
+    // teaching the summary the kind first.
     const scopes = formData
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string")

@@ -18,10 +18,11 @@ describe("buildAllowedScopes", () => {
     expect(scopes).toContain("*:write");
   });
 
-  // The content category's requestability is asserted in
-  // `content-scope-not-yet-requestable.test.ts` rather than here, because the
-  // assertion is currently the negative one and the file that holds it says
-  // when to delete it.
+  it("includes the content category's two literals", () => {
+    const scopes = buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES);
+    expect(scopes).toContain("content:read");
+    expect(scopes).toContain("content:write");
+  });
 
   it("includes the metadata.edge_types sub-resource scopes", () => {
     const scopes = buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES);

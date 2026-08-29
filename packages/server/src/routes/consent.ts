@@ -556,6 +556,13 @@ export const SCOPE_LABELS: Record<string, string> = {
   "system.webhook": "Webhooks",
   "system.activity": "Activity",
   metadata: "Definitions in your space",
+  // The content category. A name rather than a description of reach,
+  // like every entry above it: what the grant covers is the description
+  // map's sentence, and that it covers types nobody has registered yet
+  // is the row's second line, composed from `isOpenEnded`. Saying either
+  // here would need a conjunction, and a conjunction in this map arrives
+  // in `summarize` as two list items.
+  content: "Your content",
 };
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;

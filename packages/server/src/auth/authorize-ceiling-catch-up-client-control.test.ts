@@ -394,14 +394,19 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
  * bundles publish, and `buildAllowedScopes` folds every grammatically valid
  * bundle scope into the live allowlist by construction.
  *
- * **A literal this build withholds is the one class that argument does not
+ * **A literal this build withheld was the one class that argument did not
  * reach**, because it is grammatical and the fold takes it in on grammar
- * alone. Each function drops it on a separate explicit rule instead, and two
- * rules can disagree where one construction cannot: `bundlePublishedScopes`
- * keeping what `buildAllowedScopes` drops would write a scope into a
- * client's stored ceiling that no request is ever validated against. So that
- * class is seeded below rather than reasoned about, on the same standard the
- * malformed one is held to.
+ * alone — so each function dropped it on a separate explicit rule instead,
+ * and two rules can disagree where one construction cannot.
+ * `bundlePublishedScopes` keeping what `buildAllowedScopes` drops writes a
+ * scope into a client's stored ceiling that no request is ever validated
+ * against.
+ *
+ * No literal is withheld now: the content category is published and both
+ * rules are gone, so the construction covers everything again. The category
+ * stays seeded below anyway, asserted into both sets rather than out of
+ * them, because a drop re-introduced to one function and not the other is
+ * the failure this file exists for and no ordinary literal can catch it.
  *
  * That is an invariant two functions hold between them and neither states, so
  * nothing fails when it stops holding. This is what fails.
@@ -422,12 +427,14 @@ describe("the bundle-published set stays inside the live allowlist", () => {
    *  An operator's bundle override parses arbitrary JSON, so this is a
    *  literal a real configuration can carry. */
   const MALFORMED = "core.note:redd";
-  /** Grammatical and deliberately unpublished. The second exclusion class,
-   *  and the one the grammar filter above does NOT catch: `isValidScope`
-   *  admits it, so each function drops it on a rule of its own. Seeded here
-   *  for the same reason the malformed literal is — the containment is only
-   *  asserted over classes the fixture actually carries. */
-  const WITHHELD = "content:read";
+  /** Grammatical, and the class that used to escape the containment
+   *  argument entirely: it was withheld from both sets by a rule of each
+   *  function's own, so two rules could have disagreed where one
+   *  construction cannot. Both functions publish it now, and it stays in
+   *  this fixture rather than leaving with the withholding — a drop
+   *  re-introduced to one function and not the other is exactly what this
+   *  file exists to catch, and only a seeded literal can catch it. */
+  const CATEGORY = "content:read";
   /** Valid, and in no shipped bundle, so its presence proves the constructed
    *  list reached both functions rather than being ignored. */
   const WELL_FORMED = "core.note:write";
@@ -437,9 +444,9 @@ describe("the bundle-published set stays inside the live allowlist", () => {
       id: "constructed",
       label: "Constructed",
       description:
-        "A bundle list carrying a literal the grammar refuses and one this " +
-        "build withholds.",
-      scopes: [WELL_FORMED, MALFORMED, WITHHELD],
+        "A bundle list carrying a literal the grammar refuses and the " +
+        "content category, which no longer answers to a rule of its own.",
+      scopes: [WELL_FORMED, MALFORMED, CATEGORY],
       default_on: false,
     },
   ];
@@ -463,21 +470,24 @@ describe("the bundle-published set stays inside the live allowlist", () => {
     expect(live.has(MALFORMED)).toBe(false);
   });
 
-  it("excludes a withheld bundle literal from both sets", () => {
-    // The exception the header above names, seeded rather than described.
-    // The containment argument runs through `isValidScope`: everything a
-    // bundle publishes is grammatical, and `buildAllowedScopes` folds every
-    // grammatical bundle scope in, so published is inside live by
-    // construction. A withheld literal is the one class that argument does
-    // not reach — it IS grammatical, and both functions drop it anyway, each
-    // on its own explicit rule. Two independent rules can disagree, and the
-    // one that would matter is `bundlePublishedScopes` keeping a literal
-    // `buildAllowedScopes` drops: that writes a scope into a client's stored
-    // ceiling that no request can then be validated against.
+  it("carries the content category into both sets, not into neither", () => {
+    // This case used to assert the opposite, and the change is the point.
+    // Both literals of the content category were dropped by each function on
+    // a rule of its own, which put them outside the containment argument:
+    // that argument runs through `isValidScope`, and a withheld literal IS
+    // grammatical, so nothing structural stopped the two rules disagreeing.
+    // The one that would have mattered is `bundlePublishedScopes` keeping a
+    // literal `buildAllowedScopes` drops, which writes a scope into a
+    // client's stored ceiling that no request can be validated against.
+    //
+    // The rules are gone and the class is back inside the argument. It is
+    // still seeded, because what would break this is a drop re-introduced to
+    // one function and not the other, and that is invisible to a fixture
+    // carrying only ordinary literals.
     expect(
-      isValidScope(WITHHELD),
-      "the withheld literal no longer parses, so this seeds the malformed " +
-        "class over again and says nothing about the withheld one",
+      isValidScope(CATEGORY),
+      "the seeded literal no longer parses, so this case has quietly become " +
+        "the malformed one over again",
     ).toBe(true);
 
     const published = bundlePublishedScopes(constructed);
@@ -487,16 +497,15 @@ describe("the bundle-published set stays inside the live allowlist", () => {
     expect(live.has(WELL_FORMED)).toBe(true);
 
     expect(
-      published.has(WITHHELD),
-      `${WITHHELD} would be written into a client's stored scope ceiling by ` +
-        `a catch-up, where every reader is an exact membership test.`,
-    ).toBe(false);
+      published.has(CATEGORY),
+      `${CATEGORY} is published, so a catch-up must write it into a ` +
+        `client's stored ceiling — every reader of that row is an exact ` +
+        `membership test, and a missing entry is a grant that cannot be used.`,
+    ).toBe(true);
     expect(
-      live.has(WITHHELD),
-      `${WITHHELD} is requestable through a configured bundle. If the ` +
-        `consent copy has landed and the literals are published, this ` +
-        `assertion is what to delete.`,
-    ).toBe(false);
+      live.has(CATEGORY),
+      `${CATEGORY} is requestable through a configured bundle.`,
+    ).toBe(true);
   });
 
   it("holds over the shipped bundle configuration", () => {
