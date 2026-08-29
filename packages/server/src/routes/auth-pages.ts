@@ -27,7 +27,10 @@ import {
   stampOAuthGrantLastUsed,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
-import { mergeDeviceApprovalScopes } from "./device-scope-merge.js";
+import {
+  mergeDeviceApprovalScopes,
+  intersectDeviceScopes,
+} from "./device-scope-merge.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import {
@@ -2959,9 +2962,18 @@ export function authRoutes(
     // the scope list intact. The lifecycle guard above is what refuses that
     // grant outright, and it runs before this line so the intersection is
     // only ever computed against a grant that is live on both axes.
-    const issuedScopes = row.scopes.filter((scope) =>
-      grantCoversScope(grantScopes, scope),
-    );
+    //
+    // **Computed on effective permissions, because a coverage test per
+    // literal is not an intersection.** Scope resolution gives an exact type
+    // id precedence over a wildcard spanning it, so coverage is not
+    // reflexive on a pinned set: `["core.*:write", "core.note:read"]` does
+    // not cover `core.*:write`, a literal it contains. A device asking for a
+    // wildcard alongside a narrower pin was therefore issued the pin alone,
+    // though the user had approved both and the grant reached both, and it
+    // was handed a narrower `scope` string rather than an error.
+    // `intersectDeviceScopes` is the merge's sibling and takes the minimum
+    // where that takes the maximum; the reasoning is at the function.
+    const issuedScopes = intersectDeviceScopes(row.scopes, grantScopes);
 
     // `offline_access` is what buys a refresh token, here as everywhere else.
     //
