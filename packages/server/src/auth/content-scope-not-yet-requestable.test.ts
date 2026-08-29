@@ -34,13 +34,17 @@
  * half of this that was silently wrong once and the same silence is what
  * publishing over would look like.
  *
- * **When the label change lands: publish the two literals in
- * `buildAllowedScopes`, and delete this file.** The label and description
- * tests here are the precondition, so they redden the moment the copy exists
- * — which is the signal that the withholding is now the wrong assertion
- * rather than the right one. `../routes/consent-copy-coverage.test.ts`
- * already lists `content` among the kinds it checks, so it takes over as the
- * guard on the same commit that publishes them.
+ * **The label change has landed, and half the reason is gone with it.** A
+ * row label now carries its operation, so the two literals resolve different
+ * strings and the device screen no longer folds one of them away. What is
+ * left is the copy itself: neither `SCOPE_LABELS` nor the description map
+ * holds a `content` entry, so publishing today would print a sentence
+ * nobody has written on an authorization screen.
+ *
+ * **What remains is not a code change.** Write the two entries, publish the
+ * two literals in `buildAllowedScopes`, and delete this file.
+ * `../routes/consent-copy-coverage.test.ts` already lists `content` among
+ * the kinds it checks, so it takes over as the guard on that same commit.
  */
 import { describe, it, expect } from "vitest";
 import { expandBundlesToScopes, parseScope } from "@withmarfa/shared";
@@ -276,28 +280,32 @@ describe("the content category is not yet requestable", () => {
         ).not.toContain(literal);
       }
 
-      // **The two rows become one, and that is a property of this family
-      // rather than an artifact of the fixture.** `describeCapabilities`
-      // dedupes on the resolved string, and both literals resolve the same
-      // one, so copy does not merely fail to tell the levels apart on this
-      // screen — it removes a level from it. With no copy the screen shows
-      // two rows, `content:read` and `content:write`; with copy it shows
-      // one, and nothing on it says a write was granted.
+      // **The collapse this assertion was written to record is over.**
+      // `describeCapabilities` dedupes on the resolved string, and until
+      // labels carried their operation both literals resolved the same one,
+      // so copy did not merely fail to tell the levels apart on this screen
+      // — it removed a level from it. That was the sharper half of the
+      // reason for withholding, and it is now fixed: a label carries its
+      // operation, the two rows resolve different strings, and both survive.
       //
-      // This is why the withholding is the right call rather than a
-      // cautious one, and it is asserted here because it is the half a
-      // reader of the gallery snapshots cannot see: the snapshots preview
-      // the pre-copy state, where two rows exist. Publishing the literals
-      // therefore takes more than writing a sentence. It takes a row label
-      // that carries its operation, at which point the two resolve
-      // differently and the dedupe stops matching them.
+      // The withholding still stands, on the half that remains. Both levels
+      // reaching the screen is necessary and not sufficient: `content` has
+      // no entry in the description map and none in `SCOPE_LABELS`, so the
+      // sentence a person would read is the one this test injects rather
+      // than one anybody has written. **Publishing now would put copy on an
+      // authorization screen that no one has authored.**
+      //
+      // So the step this file is waiting for is smaller than it was and is
+      // no longer a code change: write the two entries, publish the literals
+      // in `buildAllowedScopes`, and delete this file.
+      // `../routes/consent-copy-coverage.test.ts` already lists `content`
+      // and takes over as the guard on that commit.
       expect(
         occurrences(device),
-        `the device approval screen no longer collapses the two content ` +
-          `levels into one row. If a label now carries its operation, that ` +
-          `is the change this file is waiting for — publish the literals ` +
-          `and delete it.`,
-      ).toBe(1);
+        `the device approval screen collapsed the two content levels back ` +
+          `into one row. Labels carrying their operation is what stopped ` +
+          `that; if this is red again, that behavior has regressed.`,
+      ).toBe(2);
       expect(
         occurrences(authorize),
         `the authorize screen no longer renders a row per content level. ` +

@@ -159,19 +159,29 @@ describe("renderDeviceConsentScreen", () => {
     expect(html).not.toContain("openid:none");
   });
 
-  it("dedupes human labels across multiple scopes (no repeated lines)", () => {
+  it("dedupes a repeated grant without collapsing a read into a write", () => {
+    // **This case used to assert the opposite, and was right at the time.**
+    // The description map is keyed on the type pattern, which carries no
+    // verb, so a read and a write over one type produced byte-identical
+    // lines and printing both said nothing the first had not. What that
+    // meant on the screen is that a request to read and write somebody's
+    // notes rendered as one row admitting to neither, and this screen has no
+    // toggles, no sections and no second line to carry the difference
+    // anywhere else.
+    //
+    // The lines differ now, so the de-duplication collapses what it was
+    // always for: the same grant asked for twice.
     const html = renderDeviceConsentScreen({
       ...PARAMS,
-      // core.note read + write both resolve to the same human label; the
-      // device flow used to render it twice.
       scopes: [
         { kind: "type", typePattern: "core.note", operation: "read" },
         { kind: "type", typePattern: "core.note", operation: "write" },
+        { kind: "type", typePattern: "core.note", operation: "read" },
       ],
       descriptions: { "core.note": "Text you created." },
     });
-    const occurrences = html.split("Text you created.").length - 1;
-    expect(occurrences).toBe(1);
+    expect(html.split("Text you created. Read only.").length - 1).toBe(1);
+    expect(html.split("Text you created. Read and write.").length - 1).toBe(1);
   });
 });
 
