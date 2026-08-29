@@ -153,18 +153,18 @@ describe("grandfatherProfilesT074", () => {
 
   it("avoids reserved handles by suffixing", async () => {
     const id = `auth_${randomBytes(4).toString("hex")}`;
-    // `admin` is in RESERVED_HANDLE_WORDS — local-part of this email
-    // sanitizes straight to it.
+    // This local part sanitizes straight to `system`, a reserved root, so
+    // the suffix loop is what has to produce a claimable handle.
     await insertAuthUser(ctx.storage, {
       id,
-      email: "admin@example.com",
+      email: "system@example.com",
     });
     const report = await grandfatherProfilesT074(ctx.storage, SALT);
     expect(report.failed).toBe(0);
     const row = await ctx.storage.users!.getByAuthUserId(id);
     expect(row?.handle).toBeTruthy();
-    expect(row?.handle).not.toBe("admin");
-    expect(row?.handle?.startsWith("admin-")).toBe(true);
+    expect(row?.handle).not.toBe("system");
+    expect(row?.handle?.startsWith("system-")).toBe(true);
   });
 
   it("sets handle on existing users rows that have null handle", async () => {

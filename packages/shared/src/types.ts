@@ -1253,8 +1253,7 @@ export interface User {
    * Lowercase alphanumeric + hyphens, 3–32 chars. Required at signup
    * (nullable here because not every stored row carries one). The user id
    * (the immutable PK) is what foreign references key off; the handle is
-   * potentially renameable. Reserved roots and reserved structural words
-   * cannot be claimed.
+   * potentially renameable. Reserved roots cannot be claimed.
    */
   handle: string | null;
   /** FK to `auth_user.id`. Canonical bridge from authentication identity

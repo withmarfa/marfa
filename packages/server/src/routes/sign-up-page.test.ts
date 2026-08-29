@@ -693,7 +693,7 @@ describe("POST /auth/sign-up — hosted-mode invariants", () => {
     const res = await postHostedSignUp(hosted, {
       email: "alice@example.com",
       name: "Alice",
-      username: "admin",
+      username: "core",
       password: "correct horse",
       password_confirm: "correct horse",
       return_to: "/",

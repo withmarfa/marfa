@@ -110,85 +110,29 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Reserved words for the handle namespace. Four categories:
- *   - Structural words (admin, api, support, login, ...) that would clash
- *     with operational URL slugs and pronouns.
- *   - Future-reserved namespaces (sync, auth, data) — names plausibly
- *     needed for future platform-shipped namespaces. Cheap to lock now,
- *     easy to release later if no concrete driver materializes.
- *   - Major tech companies — squatting on these would create the most
- *     likely confusion vectors for end users browsing the marketplace.
- *   - Major consumer apps and platforms — same rationale.
+ * Returns true if the value names a reserved root: the type grammar's five
+ * namespace tiers plus `capability`. That set is the whole of what a handle
+ * claim is refused for. A handle is a namespace claim, not a URL path — it
+ * appears in a type identifier, in a scope literal and on a consent screen,
+ * and no route in the server is shaped like `/<handle>` — so the string's
+ * ordinary meaning is not this function's business.
  *
- * The list is intentionally non-exhaustive. Domain-verified claims can
- * unlock specific entries for the legitimate owner once that flow lands.
- */
-export const RESERVED_HANDLE_WORDS: ReadonlySet<string> = new Set([
-  // Structural / operational
-  "admin",
-  "api",
-  "support",
-  "help",
-  "docs",
-  "console",
-  "auth",
-  "login",
-  "logout",
-  "signup",
-  "register",
-  "settings",
-  "dashboard",
-  "billing",
-  "terms",
-  "privacy",
-  "about",
-  "home",
-  "you",
-  "me",
-  "we",
-  "us",
-  "marfa",
-  // Future-reserved namespaces
-  "sync",
-  "data",
-  // Major tech companies
-  "google",
-  "apple",
-  "microsoft",
-  "meta",
-  "amazon",
-  "netflix",
-  "twitter",
-  "x",
-  "linkedin",
-  "github",
-  "gitlab",
-  "openai",
-  "anthropic",
-  "mistral",
-  "cohere",
-  // Major consumer apps and platforms
-  "obsidian",
-  "notion",
-  "figma",
-  "linear",
-  "slack",
-  "discord",
-  "spotify",
-  "dropbox",
-  "evernote",
-  "todoist",
-]);
-
-/**
- * Returns true if the value matches a reserved root or a reserved
- * handle word (in either set). Callers needing a typed-error surface
- * should branch on this BEFORE calling `isValidHandle`, which
- * collapses every failure mode into a single boolean.
+ * What it covers is the roots the type grammar is written in, which is
+ * narrower than the set of first segments carrying meaning elsewhere in the
+ * platform. `metadata` and `edge` head scope literals the scope parser
+ * resolves and are ordinary claimable handles, so a claim refused here is a
+ * claim on the type vocabulary specifically, not on every reserved-sounding
+ * word the platform uses.
+ *
+ * This stays a function rather than an inlined `RESERVED_ROOTS.has` for two
+ * reasons. Callers needing a typed-error surface branch on it BEFORE
+ * calling `isValidHandle`, which collapses every failure mode into a single
+ * boolean; and the question a caller asks is whether a handle may be
+ * claimed, which should outlive whatever currently answers it.
  */
 export function isReservedHandle(value: string): boolean {
   if (typeof value !== "string") return false;
-  return RESERVED_ROOTS.has(value) || RESERVED_HANDLE_WORDS.has(value);
+  return RESERVED_ROOTS.has(value);
 }
 
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -196,9 +140,9 @@ const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 /**
  * Returns true if the value is a valid handle: lowercase alphanumeric and
  * hyphens only, 3–32 characters, no leading/trailing hyphens, no consecutive
- * hyphens, not a reserved root or structural word. Comparison is
- * case-insensitive — the canonical form is lowercase; collision detection at
- * the storage layer also lowercases.
+ * hyphens, not a reserved root. Comparison is case-insensitive — the
+ * canonical form is lowercase; collision detection at the storage layer
+ * also lowercases.
  */
 export function isValidHandle(value: string): boolean {
   if (typeof value !== "string") return false;
@@ -206,7 +150,6 @@ export function isValidHandle(value: string): boolean {
   if (value.includes("--")) return false;
   if (!HANDLE_RE.test(value)) return false;
   if (RESERVED_ROOTS.has(value)) return false;
-  if (RESERVED_HANDLE_WORDS.has(value)) return false;
   return true;
 }
 
@@ -222,7 +165,7 @@ export function isValidHandle(value: string): boolean {
  * existing hyphens) to a single hyphen, trims leading/trailing hyphens,
  * and caps at 32 chars. A too-short or empty local part is padded to the
  * 3-char floor with a `user-` prefix; a result that lands on a reserved
- * word is suffixed so it clears `isReservedHandle`.
+ * root is suffixed so it clears `isReservedHandle`.
  */
 export function deriveHandleFromEmail(email: string): string {
   const sanitize = (s: string): string =>
@@ -292,11 +235,11 @@ const INTEGRATION_NAME = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
  * regex, because a slash admitted into `isValidTypeIdentifier` would reach
  * every scope literal and permission-map key in the system.
  *
- * Reserved words are **not** checked here, matching
- * `isValidTypeIdentifier`: whether a publisher may claim `google` is an
- * authorization question answered at registration, where the credential is
- * in hand. A syntactic validator that refused reserved handles would refuse
- * the platform's own integrations, which live under `marfa/`.
+ * Reserved roots are **not** checked here, matching
+ * `isValidTypeIdentifier`: whether a caller may publish under a given
+ * handle is an authorization question answered at registration, where the
+ * credential is in hand. A syntactic validator that refused reserved roots
+ * would refuse the platform's own integrations, which live under `marfa/`.
  *
  * The slash is required. An earlier dot form existed while installed
  * connections were migrated onto this grammar; every stored name now carries

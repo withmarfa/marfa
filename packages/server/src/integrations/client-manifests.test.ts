@@ -59,9 +59,9 @@ describe("the client manifests this build ships", () => {
     //
     // Worth stating precisely, because the obvious summary is backwards:
     // `marfa` is the value `isValidHandle` **refuses**, being a reserved
-    // root and a reserved word, and `withmarfa` is the one it accepts. The
-    // platform reserves its own name rather than leaving it claimable, and
-    // its own integrations live under it by the same exception
+    // root, and `withmarfa` is the one it accepts. The platform reserves
+    // its own name rather than leaving it claimable, and its own
+    // integrations live under it by the same exception
     // `isValidIntegrationIdentifier` already makes. So the value here is
     // right and the reason is the opposite of "one is a handle and the
     // other is not".

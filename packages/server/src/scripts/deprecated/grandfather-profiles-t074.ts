@@ -91,8 +91,8 @@ async function pickFreeHandle(
   }
   const userStore = storage.users;
   let base = candidate;
-  // Reserved-handle suffix loop. We don't want to publish "admin" even
-  // if no other user has claimed it.
+  // Reserved-handle suffix loop. A reserved root is the type grammar's
+  // own, so it stays unclaimable even when no other user wants it.
   let i = 0;
   while (isReservedHandle(base) || !isValidHandle(base)) {
     i += 1;
