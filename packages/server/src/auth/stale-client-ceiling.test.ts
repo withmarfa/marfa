@@ -9,8 +9,9 @@
  *
  * **The obvious guard here would be a no-op, and it is worth saying why.**
  * Asserting `bundles ⊆ buildAllowedScopes()` looks like the property, but
- * `buildAllowedScopes` adds every configured bundle scope by construction, so
- * that containment is true by definition and would never have failed — not
+ * `buildAllowedScopes` adds every configured bundle scope it does not
+ * explicitly withhold, so that containment is true by definition for a
+ * shipped bundle and would never have failed — not
  * even on the day production could not sign anyone in. The rot was never a
  * code condition. It was a **data** condition: a row holding a set the code
  * had moved past.

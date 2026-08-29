@@ -1764,6 +1764,24 @@ function describeScope(scope: ParsedScope): string | undefined {
       // maps rather than this one: an entry here is a third name for the
       // same grant, in the one place neither renderer reads.
       return undefined;
+    case "content":
+      // Resolved from the curated map, unlike the two arms above, because
+      // both renderers do read the map for this kind. `describeCapabilities`
+      // on the device screen falls to `descriptions?.[s.typePattern]` for
+      // everything that is not OIDC or a capability, and `labelFor` on the
+      // authorize screen falls through `SCOPE_LABELS` to the same map. So a
+      // `content` entry written there reaches a person on both surfaces, and
+      // a hard return here would discard it — silently, on the one screen
+      // whose job is saying how large a grant is.
+      //
+      // The map holds no `content` entry today, and that is the withholding
+      // rather than an omission: the two literals share the pattern
+      // `content`, so a single entry reads identically for the read level and
+      // the write level, and both literals stay out of `buildAllowedScopes`
+      // until a label can carry the operation. Writing the entry is the whole
+      // of publishing the copy — this arm needs no change for it, which is
+      // why it resolves rather than returns.
+      return CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
     case "edge": {
       // `edgeType` is optional on ParsedScope but always present when
       // kind === "edge"; guard for the type-checker.

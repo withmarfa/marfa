@@ -565,3 +565,95 @@ describe("every way of asking for a credential is accounted for", () => {
     );
   });
 });
+
+describe("the console form mints no key it would describe wrongly", () => {
+  /** Post the key form as a browser would, and hand back the stored row. */
+  async function mintThroughForm(
+    cookie: string,
+    label: string,
+    fields: Record<string, string>[],
+  ): Promise<{ status: number }> {
+    const body = new URLSearchParams();
+    body.set("label", label);
+    for (const field of fields) {
+      for (const [k, v] of Object.entries(field)) body.append(k, v);
+    }
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/keys`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: body.toString(),
+      }),
+    );
+    return { status: res.status };
+  }
+
+  it("drops a hand-crafted content-category literal instead of minting on it", async () => {
+    // The form's picker emits `<type>:<verb>` only, so this shape takes a
+    // hand-crafted post — and it stopped being refused by the scope grammar
+    // the day the category began parsing. Admitting one mints a key whose own
+    // summary is wrong in the widest possible direction: the category
+    // projects the global wildcard, so the key writes every non-system type
+    // in the space, while the level the form reads back off the ticked type
+    // scopes is null, so the owner is told it reaches none of their content
+    // and it is minted with no edge permissions at all.
+    const email = `mint-content-${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const cookie = await signInAndCookie(email);
+    const label = `content-only-${Math.random().toString(36).slice(2, 8)}`;
+
+    const res = await mintThroughForm(cookie, label, [
+      { scopes: "content:write" },
+    ]);
+    expect(res.status).toBe(200);
+
+    // The row is the assertion: the form answers 200 with an error page
+    // rather than a status, and the "pick at least one" guard is what the
+    // drop leaves the request standing in front of.
+    const rows = await ctx.storage.keys.list();
+    expect(rows.some((k) => k.label === label)).toBe(false);
+  });
+
+  it("still mints on the type scopes the picker does emit", async () => {
+    // A gate that refuses everyone is as wrong as one that refuses no one,
+    // and the drop is one clause away from taking the ordinary case with it.
+    const email = `mint-typed-${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const cookie = await signInAndCookie(email);
+    const label = `typed-${Math.random().toString(36).slice(2, 8)}`;
+
+    const res = await mintThroughForm(cookie, label, [
+      { scopes: "core.note:write" },
+    ]);
+    expect(res.status).toBe(200);
+
+    const rows = await ctx.storage.keys.list();
+    const stored = rows.find((k) => k.label === label);
+    expect(stored).toBeDefined();
+    expect(stored?.type_permissions).toEqual({ "core.note": "write" });
+  });
+
+  it("mints on the ticked type scopes alone when a content literal rides along", async () => {
+    // The drop takes the literal, not the request. A post naming both leaves
+    // a key scoped to what the picker could actually have offered — which is
+    // the difference between dropping a scope and refusing a submission.
+    const email = `mint-mixed-${Math.random().toString(36).slice(2, 8)}@example.com`;
+    const cookie = await signInAndCookie(email);
+    const label = `mixed-${Math.random().toString(36).slice(2, 8)}`;
+
+    const res = await mintThroughForm(cookie, label, [
+      { scopes: "core.note:read" },
+      { scopes: "content:write" },
+    ]);
+    expect(res.status).toBe(200);
+
+    const rows = await ctx.storage.keys.list();
+    const stored = rows.find((k) => k.label === label);
+    expect(stored).toBeDefined();
+    // No global wildcard, and no `none` entries: the projection the category
+    // would have produced left no trace on the row.
+    expect(stored?.type_permissions).toEqual({ "core.note": "read" });
+  });
+});

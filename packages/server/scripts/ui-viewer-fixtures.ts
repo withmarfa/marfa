@@ -176,6 +176,18 @@ const scopeSet = (...literals: string[]): ParsedScope[] =>
  * a heading of its own, and a grant nobody has looked at is what this gallery
  * is for.
  *
+ * The two content-category literals are here on the same footing and for a
+ * sharper reason: they are withheld from the allowlist precisely BECAUSE of
+ * how they render, so this gallery is where half of that reason can be read
+ * rather than argued about. Their rows go when the copy lands.
+ *
+ * Only half, and the entry below says which half. These fixtures render what
+ * ships, and what ships has no copy for the pattern, so the device screen's
+ * post-copy behavior — two levels collapsing into one row — is a state no
+ * snapshot here can hold. It is held in
+ * `src/auth/content-scope-not-yet-requestable.test.ts` instead, which injects
+ * a description and renders both screens.
+ *
  * **A sample, not the coverage answer.** Whether every requestable scope
  * reaches a person as words rather than as machine text is asked of the scope
  * allowlist in `routes/consent-copy-coverage.test.ts`, because the allowlist
@@ -213,6 +225,51 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   "user.*:read",
   // A capability, which no request can carry today. See above.
   "capability.webhooks",
+  // The content category, both levels, which no request can carry today
+  // either — `buildAllowedScopes` withholds the pair until copy exists that
+  // tells the two apart. Previewed for the same reason the capability above
+  // is: the screens already render it, and the gallery is where a grant
+  // nobody has looked at gets looked at.
+  //
+  // **These two rows are half of the argument for withholding them, and the
+  // snapshots cannot show the other half.** Both literals share the type
+  // pattern `content`, which is the key both screens resolve copy on, so
+  // neither row can say which level it is. Two rows rather than one because
+  // one row cannot show that: what a reader has to see is the read level and
+  // the write level rendering the same word.
+  //
+  // The two screens fail differently and the snapshots are worth reading
+  // against each other. On the authorize screen both rows read "Content" and
+  // the ONLY thing telling them apart is which group they sorted into — so a
+  // person who reads the row and not the heading above it cannot tell what
+  // they are approving. The device screen has no groups and no labels: its
+  // rows are the bare literals, `content:read` and `content:write`, where the
+  // verb is legible only to somebody who reads scope grammar.
+  //
+  // **That device row is the pre-copy state, and it is the only state a
+  // snapshot here can hold.** These fixtures render what ships, and what
+  // ships has no `content` entry in the description map. Add one and the
+  // device screen renders ONE row rather than two: `describeCapabilities`
+  // dedupes on the resolved string, both literals resolve the same one, and
+  // a level disappears from the screen rather than merely going undescribed.
+  // So writing copy would make the device screen worse than these snapshots
+  // show, not better, and a reader taking "same word on both rows" as the
+  // whole of the case is reading the milder half of it.
+  //
+  // It is asserted rather than left to the gallery, in
+  // `src/auth/content-scope-not-yet-requestable.test.ts`, which injects a
+  // description and renders both screens: two rows on authorize, one on
+  // device. The condition that ends the collapse is a row label carrying its
+  // operation, at which point the two literals resolve different strings and
+  // the dedupe stops matching them — and that is the same change the
+  // literals are published with.
+  //
+  // Both rows DO carry the open-ended line, the same one `*:read` two entries
+  // up carries, and that is worth previewing rather than assuming — the
+  // derivation behind it had no arm for this kind and answered `false` until
+  // it was given one.
+  "content:read",
+  "content:write",
   // The wildcard over every relationship type, and the widest edge grant a
   // client can ask for. Nothing has ever described it on either screen.
   "edge.*:read",

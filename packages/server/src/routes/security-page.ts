@@ -131,9 +131,15 @@ function scopeSummary(scopes: readonly string[]): string {
     const parsed = parseScope(scope);
     if (!parsed) continue;
     switch (parsed.kind) {
+      // Every family that carries a verb, the content category included. It
+      // gets no clause of its own: this line is a glance, and "read and write
+      // your data" is already the widest honest phrasing of a category grant.
+      // Saying how large it is needs a sentence, which is the consent
+      // screen's job rather than this row's.
       case "type":
       case "edge":
       case "metadata":
+      case "content":
         if (parsed.operation === "write") writesData = true;
         else readsData = true;
         break;

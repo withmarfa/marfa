@@ -31,6 +31,7 @@ import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { projectPlatformRows } from "../platform-family.js";
+import { reportReservedRootRows } from "../reserved-root-rows.js";
 import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
 import { scanStoredValues, setStoredValueScan } from "../stored-value-scan.js";
 import { sqliteStoredValueCounts } from "./stored-value-counts.js";
@@ -115,6 +116,11 @@ export async function createSqliteStorage(
   // permissive one. Reasoning, and why this projects rather than refusing
   // to boot, is at the helper.
   const platformRows = projectPlatformRows(loadedTypes);
+  // A row under a reserved root that names no tier — a type whose identifier
+  // collides with a permission literal. Registration cannot produce one;
+  // reserving a root after the fact can. Reported and never acted on, on the
+  // same judgment the projection above makes.
+  reportReservedRootRows(loadedTypes);
   // What this instance still carries that the build no longer ships. Recorded
   // rather than acted on: the reasoning for reporting instead of pruning is
   // at the helper, and it is the same judgment the projection above makes

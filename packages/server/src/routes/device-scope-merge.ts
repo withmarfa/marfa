@@ -64,12 +64,13 @@ import type {
  * key pinned on the other, and what stops a pin on one side vanishing
  * because the other side said nothing about it.
  *
- * **Three axes carry breadth and two do not, and the split is not
- * cosmetic.** `scopesToTypePermissions` admits item-type scopes and nothing
- * else. Edge, metadata, OIDC and capability literals all project to
- * nothing, so a merge built on that map alone would drop four families on
- * the floor, and a dropped scope is a narrowing, which is the one thing this
- * function exists to prevent.
+ * **Three axes carry breadth, and three families sit outside all of them.
+ * The split is not cosmetic.** `scopesToTypePermissions` admits item-type
+ * scopes, plus the content category, which reaches that map as a complement
+ * rather than as a key anything could resolve against. Edge, metadata, OIDC
+ * and capability literals project into it not at all, so a merge built on
+ * that map alone would drop four families on the floor, and a dropped scope
+ * is a narrowing, which is the one thing this function exists to prevent.
  *
  * - **Item types** resolve exact-then-longest-wildcard-then-global, so they
  *   pin. They are the axis the bug was found on.
@@ -88,6 +89,14 @@ import type {
  *   capability is granted by naming it and by nothing else. Membership is
  *   the whole of their algebra, so a literal union is exactly right for them
  *   and nothing can pin anything.
+ * - **The content category is unioned beside them, and the reason differs.**
+ *   It carries a verb and it does reach the item-type map, so it is not a
+ *   membership family. What it writes there is a complement — the global
+ *   wildcard at the granted level, exact exclusions beneath it — which is
+ *   not a key any of the three axes could resolve a merge against. So it
+ *   escapes the axis merge, and the exclusions its projection writes then
+ *   outrank a wildcard the standing grant holds. `breadthKey`'s own arm
+ *   carries what that costs and why nothing reaches it today.
  * - **A literal this build cannot parse** is carried through untouched, on
  *   the same reasoning `grantCoversScope` applies to one: it is covered by
  *   being named and by nothing else, and dropping it over a grammar change
@@ -113,6 +122,21 @@ import type {
  * what the user granted. After the merge builds its list, every breadth entry
  * whose key the rest of the record already resolves to the same verb is
  * dropped, and that shape stays at one entry.
+ *
+ * **That sentence is about breadth entries, and one family is not one.** The
+ * content category occupies no key on any of the three axes, so `breadthKey`
+ * returns null, the merge unions its literals verbatim, and the prune — which
+ * walks breadth entries and nothing else — never looks at them. A record
+ * holding both levels therefore names the pattern `content` twice, once at
+ * each verb, which is the shape the paragraph above exists to remove
+ * everywhere it can reach. Both are kept deliberately: the pair projects at
+ * `write`, and dropping either would drop a grant that this record is the
+ * account of, which is the one thing a merge must not do. So the invariant is
+ * "one entry per key on a breadth axis", not "one entry per key", and the
+ * difference is written here because reading it as the second would make this
+ * family look like a defect in the prune. Unreachable while the literals are
+ * withheld from `buildAllowedScopes`; the change that publishes them decides
+ * whether a pair naming one pattern is worth collapsing to one line.
  *
  * **The elimination rule.** Walk the emitted entries of one breadth axis in
  * first-appearance order and drop `K:v` if and only if resolving `K` against
@@ -154,10 +178,15 @@ import type {
  * have to form a prefix tree over concrete ids. See {@link keyIsWellFormed},
  * which is what keeps the prune inside the set where the argument holds.
  *
- * **The literal family is never pruned.** Capability, OIDC and unparseable
- * literals have membership as their whole algebra. There is no verb to
- * resolve, so nothing among them can be redundant, and a deletion rule that
- * reached them would take away a grant rather than a restatement of one.
+ * **The unioned families are never pruned**, and there are four of them, not
+ * three. Capability, OIDC and unparseable literals have membership as their
+ * whole algebra: there is no verb to resolve, so nothing among them can be
+ * redundant, and a deletion rule that reached them would take away a grant
+ * rather than a restatement of one. The content category reaches the same
+ * place by a different road — it does carry a verb, but not on a key any
+ * axis holds — and the conclusion is the same, so the rule needs no arm for
+ * it. What differs is only why, which is why it is named here rather than
+ * folded into the sentence above it.
  *
  * This is a third literal-level operation on a structure that has twice
  * proved not to be a set, so it is written as a removal that provably changes
@@ -263,12 +292,49 @@ function breadthKey(
     case "oidc":
     case "capability":
       return null;
+    case "content":
+      // Union verbatim, with the two membership families, even though this
+      // one carries a verb. The category is a complement over the item-type
+      // axis rather than an entry in any of the three maps, so it occupies
+      // no key a breadth merge could resolve against. Between the two content
+      // literals the union is right on its own terms: if one side holds
+      // `content:read` and the other `content:write`, both survive and the
+      // projection resolves the pair at `write`, which is what either side
+      // conferring write means.
+      //
+      // **But returning `null` puts this arm back inside the hazard the
+      // header names, one level down.** "A plain set union NARROWS, because
+      // the appended exact id outranks the wildcard" is stated up there about
+      // literals; the category is not a literal on any axis, so it escapes
+      // the axis merge — and then its PROJECTION writes the exact keys. Every
+      // `SYSTEM_TYPE_IDS` member lands at `"none"` and `marfa.*` is clamped to
+      // read, both outranking whatever wildcard the standing grant holds. So
+      // unioning `content:read` into a standing `*:read` takes
+      // `system.credential` from read to none. The union preserves the
+      // literals; the projection underneath is what reorders. Fail-closed, so
+      // nothing is conferred, but it is a narrowing, and this arm is where it
+      // would go unnoticed.
+      //
+      // Returning null also puts both literals outside the prune, which
+      // walks breadth entries only. A record holding the pair names the
+      // pattern `content` twice, once at each verb — the restatement the
+      // prune exists to remove, kept here because collapsing it would drop a
+      // grant. The header's record invariant is scoped to breadth keys for
+      // this reason and says so.
+      //
+      // Not reachable today: the two literals are withheld from
+      // `buildAllowedScopes`, so no device approval can carry one. The
+      // change that publishes them owns this, and `content:read` alongside a
+      // wildcard is the case it has to answer.
+      return null;
     default: {
       // Compile-time exhaustiveness, on the same reasoning as `isTypeScope`
       // in the shared package: a kind added to the union stops this
       // compiling until someone decides how breadth works on it, rather than
-      // inheriting whichever arm happens to sit last. The runtime arm
-      // unions the literal, which cannot narrow.
+      // inheriting whichever arm happens to sit last. The runtime arm unions
+      // the literal, which preserves it; whether the projection underneath
+      // narrows on some key is a question the new kind's own arm answers, as
+      // the content arm above does.
       const _exhaustive: never = parsed.kind;
       void _exhaustive;
       return null;

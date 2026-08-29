@@ -286,11 +286,24 @@ function summarize(group: ScopeGroup): string {
   let openEnded = false;
   for (const scope of group.scopes) {
     if (isOpenEnded(scope)) openEnded = true;
-    // Same chain the toggle list uses, humanized floor included. Stopping at
-    // the curated map left an uncurated scope out of this sentence while the
-    // list below still showed it, so the summary undercounted exactly the
-    // scopes a reader is least likely to recognize. It is the same failure
-    // this function's own docstring describes, from the other end.
+    // Nearly the chain the toggle list uses, humanized floor included.
+    // Stopping at the curated map left an uncurated scope out of this
+    // sentence while the list below still showed it, so the summary
+    // undercounted exactly the scopes a reader is least likely to recognize.
+    // It is the same failure this function's own docstring describes, from
+    // the other end.
+    //
+    // **Nearly, and the missing link is worth naming rather than rounding
+    // off.** `labelFor` falls SCOPE_LABELS → the description map →
+    // `humanizeType`; this omits the middle one. So a pattern that no
+    // curated label names but a description does is summarized by a
+    // title-cased fragment of its own pattern while its row below reads the
+    // sentence, and the heading is then vaguer than the list it heads. That
+    // predates the content category and is not fixed here: threading the
+    // descriptions through would put paragraph-length registry prose into a
+    // comma-joined sentence, which is the failure the docstring above is
+    // about, so the fix is a short form rather than the map — the shape
+    // `capabilityShort` and `oidcShort` already take.
     //
     // Capabilities and the profile scopes resolve through their inline-list
     // forms rather than their toggle labels. A toggle label sits alone above

@@ -94,11 +94,28 @@ const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 /**
  * First segments a publisher may never claim, in the type grammar or as a
  * handle. Five of them name a namespace tier the platform defines
- * (`classifyNamespace`); `capability` names none, and is reserved for the
- * opposite reason — it is the root the OAuth capability scopes live under,
- * and reserving it is what stops a registered type ever sharing a literal
- * with a grant of administrative authority. A reserved root without a tier
- * is therefore a namespace nothing can occupy, which is the intent.
+ * (`classifyNamespace`). The other two name none, and are reserved for the
+ * opposite reason — each is a root an OAuth scope family lives under, and
+ * reserving it is what stops a registered type ever sharing a literal with
+ * a grant. A reserved root without a tier is therefore a namespace nothing
+ * can occupy, which is the intent.
+ *
+ * - `capability` holds the verb-less administrative scopes, so no type ever
+ *   shares a literal with a grant of administrative authority.
+ * - `content` holds the two content-category scopes, `content:read` and
+ *   `content:write`. Reserving it is what stops a registered type ever
+ *   sharing a first segment with a grant over the whole category: without
+ *   the entry, `content.note` is an ordinary publisher identifier and
+ *   `content` is a claimable handle.
+ *
+ * **Reserving a root is not what makes a scope literal under it
+ * unambiguous**, and the note is worth a line because the two look like one
+ * job. A scope's pattern half is checked by `isValidTypePattern`, whose
+ * concrete branch consults this set and whose subtree-wildcard branch does
+ * not — so `content.*` stays a well-formed pattern whatever this set holds.
+ * What refuses a scope under a claimed root is the root claim in
+ * `parseScope`. Two gates, two paths: registration asks this one, the scope
+ * grammar asks that one.
  */
 export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
   "core",
@@ -107,6 +124,7 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
   "user",
   "marfa",
   "capability",
+  "content",
 ]);
 
 /**

@@ -21,7 +21,7 @@
  * literal INTO the stored row, and the exact tests on both surfaces then
  * pass on their own terms.
  */
-import { isValidScope } from "@withmarfa/shared";
+import { isContentScope, isValidScope } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
@@ -51,6 +51,17 @@ export type CeilingCatchUpSurface = "authorize" | "device";
  * row and audit-logged as a scope, which is a false record rather than a
  * live grant, and the cheaper of the two to prevent.
  *
+ * **A scope the grammar accepts and the build withholds is filtered too**,
+ * and it needs saying separately because the grammar no longer answers for
+ * it. The content-category literals parse, so they clear the check above and
+ * would ride an operator's bundle into a stored ceiling — where the exact
+ * membership tests on both surfaces then pass, and the scope reaches a
+ * consent screen that has no words for it. `buildAllowedScopes` in
+ * `oauth-provider.ts` carries the withholding and the warning; this is one
+ * of the sites carrying the same drop, and the server package's `AGENTS.md`
+ * lists them rather than counting them, so a new one can be checked against
+ * the roster instead of against a number.
+ *
  * Off-by-default bundles are included on purpose. The widening runs before
  * either surface knows who is asking, so one unauthenticated request can
  * add an off-by-default bundle's scopes to a stored registration — and that
@@ -68,7 +79,9 @@ export function bundlePublishedScopes(
   bundles: readonly PermissionBundle[],
 ): Set<string> {
   return new Set(
-    bundles.flatMap((bundle) => bundle.scopes).filter((s) => isValidScope(s)),
+    bundles
+      .flatMap((bundle) => bundle.scopes)
+      .filter((s) => isValidScope(s) && !isContentScope(s)),
   );
 }
 
