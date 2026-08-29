@@ -586,24 +586,156 @@ export interface Occurrence {
   replaces?: string;
 }
 
-/** A series the server could not expand. */
+/** One failure found in a series' recurrence rule. A row reported twice
+ *  produces two of these, both carrying its id. */
 export interface OccurrenceSeriesError {
   /** Item id of the series. */
   item_id: string;
   message: string;
 }
 
+/**
+ * What one occurrences read cost, and the bound it is measured against.
+ *
+ * Present on every successful read rather than only on a refusal: a
+ * ceiling a caller hears about only when it fires announces itself too
+ * late to act on.
+ */
+export interface OccurrencesScan {
+  /**
+   * Event rows the request read, summed across its passes. Two of the
+   * three cannot be narrowed by the window, so this grows with the size
+   * of the calendar rather than with the window asked for.
+   */
+  events_read: number;
+  /** Occurrences returned: the length of `data`. */
+  occurrences: number;
+  /**
+   * Ceiling `occurrences` is refused at. Reported on every successful
+   * read so a calendar approaching it is visible before a request is
+   * refused, rather than only once one is.
+   */
+  max_occurrences: number;
+  /**
+   * Failures the read found in recurrence rules, counted across the
+   * event types it read.
+   *
+   * Entries rather than rows, matching the `series_errors` array: one
+   * row can account for two — an unreadable line dropped from its rule,
+   * and then a failure expanding what was left — so this is an upper
+   * bound on how many rows to go and look at. Group on `item_id` for
+   * the exact number.
+   *
+   * Scoped to those types rather than to the space. A `type` on the
+   * request, or a credential permissioned for one event type, narrows
+   * what was read and therefore what this counts, so a zero says the
+   * rules this read looked at were fine and says nothing at all about
+   * the ones it did not.
+   *
+   * It counts everything this read detected, even when `series_errors`
+   * on the result lists fewer, which is what lets a caller tell a
+   * handful of broken rules from a corrupt import without being sent the
+   * bytes of the larger one. A floor rather than a certificate: it
+   * counts the ways of being broken the server knows how to recognize,
+   * so zero is the absence of a detected failure and not a proof of
+   * health.
+   */
+  series_errors: number;
+  /**
+   * Longest list of failures the response will carry, counted in
+   * entries. Past this the list is capped rather than the read refused,
+   * and `series_errors_truncated` is set.
+   *
+   * Entries rather than rows, and failures rather than *expansion*
+   * failures: one row can account for two, and most of the classes
+   * counted here never reach the expander at all — an unreadable rule
+   * and a timezone that does not resolve both fail before a single
+   * iteration is spent.
+   */
+  max_series_errors: number;
+  /**
+   * Rule iterations the read spent on expansions that returned no
+   * occurrence: a rule that ended before the window or produced nothing
+   * in it, one too frequent to reach the window before the per-series
+   * iteration ceiling, and one refused for flooding the window — that
+   * last having produced occurrences the refusal discarded, so the
+   * predicate is what the expansion returned rather than what the rule
+   * computed. It is not a count of what reached `data`, which the server
+   * assembles later behind a filter this charge does not consult.
+   *
+   * Only iterations count. A series that fails before it iterates — an
+   * unreadable rule, a timezone that does not resolve — is reported in
+   * `series_errors` and charges nothing here.
+   *
+   * The unit the expansion ceiling is denominated in, reported on every
+   * read rather than only on the one it truncates.
+   */
+  unproductive_iterations: number;
+  /**
+   * Ceiling `unproductive_iterations` stops the expansion at. Iterations
+   * spent on series that do produce occurrences are never counted
+   * against it, so a calendar cannot cross it by holding many meetings.
+   */
+  max_unproductive_iterations: number;
+  /**
+   * Series left unexpanded because the ceiling was reached first. Zero
+   * on a read that finished; above zero, `expansion_incomplete` is set
+   * and the calendar may be missing what those series held.
+   */
+  series_unexpanded: number;
+}
+
 export interface OccurrencesResult {
   data: Occurrence[];
   /** The window actually read, normalized to UTC. */
   window: { from: string; to: string };
+  /** What this read cost and what would stop it. */
+  scan: OccurrencesScan;
   /**
-   * Series that could not expand — a malformed rule, or one flooding the
-   * window. The rest of the calendar still returns, so a caller ignoring
-   * this renders a calendar with a repeating meeting silently absent
-   * from it.
+   * One entry per failure the server found in a recurrence rule —
+   * malformed, flooding the window, carrying no start to unfold from,
+   * carrying a timezone that does not resolve, or holding something that
+   * is not an RFC 5545 property line. `item_id` names the row and one
+   * row can appear twice. The rest of the calendar still
+   * returns, so a caller ignoring this renders a calendar with a
+   * repeating meeting silently absent from it, or a repeating meeting
+   * silently shown once.
+   *
+   * Capped in both length and message size by the server. Past that cap
+   * the list is trimmed and `series_errors_truncated` says so, while
+   * `scan.series_errors` keeps the true count. The read still succeeds:
+   * this list is a diagnostic beside the calendar and nothing in `data`
+   * depends on it, so a shorter list costs the caller nothing from the
+   * calendar itself.
    */
   series_errors?: OccurrenceSeriesError[];
+  /**
+   * Set when `series_errors` lists fewer failures than the read found.
+   *
+   * Worth branching on if the list is being shown to a person: it is the
+   * difference between "these are the failures" and "these are 500 of
+   * them".
+   */
+  series_errors_truncated?: boolean;
+  /**
+   * Set when the server stopped expanding series before it had walked
+   * them all, having spent its whole expansion budget on expansions that
+   * returned no occurrence.
+   *
+   * `data` is a partial calendar when this is set, and
+   * `scan.series_unexpanded` says how many series were left. A narrower
+   * window will not help — the budget is spent walking rules from their
+   * own start, before the window is reached — so the move is a `type`
+   * narrowing, or fixing the rules `series_errors` names.
+   *
+   * The same two fields appear in a `ValidationError`'s `details` when
+   * the occurrence ceiling refuses a read whose expansion had already
+   * been truncated — see `occurrences.list`, which is where a caller
+   * meets them, because that refusal is a thrown error rather than this
+   * result. That refusal says to narrow the window, and these say that
+   * narrowing it still returns a partial calendar.
+   */
+  expansion_incomplete?: boolean;
 }
 
 export interface ListOccurrencesOptions {
@@ -2317,23 +2449,52 @@ export class MarfaClient {
      * the server's to apply: a span past its limit and a result past its
      * ceiling are both refused rather than trimmed, arriving as
      * `ValidationError` carrying the server's own `max_days` /
-     * `max_occurrences` in `details`. Nothing is pre-checked here. A
+     * `max_occurrences` in `details`. The occurrence refusal carries
+     * `found` beside `max_occurrences`, and — when expansion had already
+     * been truncated before the ceiling was crossed —
+     * `expansion_incomplete` and `series_unexpanded` as well. Branch on
+     * those two in the `catch`: the refusal says to narrow the window,
+     * and they say that narrowing it returns a calendar that is partial
+     * for a second reason. Nothing is pre-checked here. A
      * second copy of those constants would start refusing what the server
      * would happily serve the day either one moved, and it could only
      * ever cover the span — the occurrence ceiling depends on the data,
      * so half the refusals would still need the round trip and a caller
      * could not tell the two apart.
      *
-     * A third refusal is shaped like those two and does not behave like
-     * them. When the space holds more events than one read will scan, the
-     * same `ValidationError` arrives carrying `max_events_scanned` and
-     * neither of the other keys. **Narrowing the window does not clear
-     * it.** The passes that gather series and exceptions cannot be
-     * windowed, since a rule written years ago produces occurrences in
-     * any window and an exception moved out of one still shadows the slot
-     * it left, so both read the space whole however little is asked for.
-     * A caller that has learned "narrow and retry" from the other two
-     * will otherwise loop on it. Branch on which key is present.
+     * There is no third refusal. `series_errors` is capped rather than
+     * refused past `scan.max_series_errors`, because that list is a
+     * diagnostic beside the calendar and nothing in `data` depends on it
+     * — the healthy series in the same space still expand and return. A
+     * capped list sets `series_errors_truncated` and
+     * `scan.series_errors` keeps the true count, so a partial list is
+     * never mistaken for a complete one. That count is scoped to the
+     * event types this read covered, so it is a statement about what was
+     * read and not about the space: pass a `type`, or use a credential
+     * permissioned for one event type, and the rules of the other type
+     * are neither read nor counted.
+     *
+     * There is no refusal for the size of the calendar itself either.
+     * The passes that gather series and exceptions cannot be windowed —
+     * a rule written years ago produces occurrences in any window, and
+     * an exception moved out of one still shadows the slot it left — so
+     * both read the space whole however little is asked for, and a large
+     * calendar is read slowly rather than refused. `scan` on the result
+     * is where that cost is visible: `events_read` grows with the
+     * calendar rather than with the window, and `max_occurrences`
+     * arrives on every success, so a calendar approaching the one
+     * data-dependent ceiling that does refuse can be seen coming rather
+     * than met as a 400.
+     *
+     * What "slowly" is bounded by is the expansion budget, and it is the
+     * one place the calendar can come back partial. A read spends at
+     * most `scan.max_unproductive_iterations` walking rules that produce
+     * no occurrence, and a space holding enough of them — per-minute
+     * reminders, or a long history of series that have ended — reaches
+     * that before it reaches every series. Such a read succeeds with
+     * `expansion_incomplete` set and `scan.series_unexpanded` above
+     * zero, which is worth branching on: it is the difference between a
+     * calendar and most of one.
      */
     list: async (
       options: ListOccurrencesOptions,

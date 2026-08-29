@@ -376,6 +376,13 @@ describe("occurrences.list refusals", () => {
 });
 
 describe("occurrences.list occurrence ceiling", () => {
+  // What the ceiling does is the server's to assert, and the server suite
+  // asserts it — including the count the assembly stops at, which nothing
+  // outside the process can see. What belongs here is the half only a
+  // typed client has: the refusal arrives as a `ValidationError` whose
+  // `details` a caller can act on, and a read that succeeds carries the
+  // same ceiling back so that caller can see it coming.
+  //
   // Its own fixture: the series pass is unwindowed, so rules dense enough
   // to flood one window would be re-expanded on every read in the suite.
   let ceilingFx: KeysModeFixture;
@@ -414,21 +421,27 @@ describe("occurrences.list occurrence ceiling", () => {
 
     expect(err).toBeInstanceOf(ValidationError);
     expect(err?.status).toBe(400);
-    // The ceiling and the count both come back, so a caller can narrow by
-    // an informed amount rather than by guesswork.
+    // Both keys survive the trip through the error mapping, which is what
+    // a caller branching on the ceiling rather than on the message needs.
     expect(typeof err?.details?.max_occurrences).toBe("number");
     expect(err?.details?.found).toBeGreaterThan(
       err?.details?.max_occurrences as number,
     );
   });
 
-  it("serves a narrower window over the same rules", async () => {
+  it("carries the scan block back on a window that fits", async () => {
     // The other direction, so the refusal above is not a read that simply
-    // always fails.
+    // always fails — and the block that makes the ceiling visible before
+    // it fires. Read off the declared type rather than a cast: a field the
+    // server marks required and the client denies exists is a contract
+    // that only looks kept.
     const result = await ceilingFx.client.occurrences.list({
       from: "2029-01-01T00:00:00Z",
       to: "2029-01-03T00:00:00Z",
     });
     expect(result.data).toHaveLength(3 * 48);
+    expect(result.scan.occurrences).toBe(result.data.length);
+    expect(result.scan.max_occurrences).toBeGreaterThan(result.data.length);
+    expect(result.scan.events_read).toBeGreaterThan(0);
   });
 });

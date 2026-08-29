@@ -29,7 +29,11 @@ import ICAL from "ical.js";
 // shared with the calendar mapping, which has to derive a whole day's date
 // the same way this derives an occurrence's hour. Two copies of that would
 // be two chances to disagree about a transition.
-import { instantToWallClock, wallClockToInstant } from "@withmarfa/shared";
+import {
+  instantToWallClock,
+  wallClockToInstant,
+  zoneOffsetMinutes,
+} from "@withmarfa/shared";
 
 export interface RecurrenceSeries {
   /** Item id of the series. */
@@ -88,6 +92,27 @@ export const MAX_EXPANSION_ITERATIONS = 100_000;
 
 export class RecurrenceExpansionError extends Error {}
 
+/**
+ * How much rule-walking one expansion did, for a caller that has to
+ * budget in that unit.
+ *
+ * A series count says nothing about cost: one `COUNT=1` rule and one
+ * per-minute rule created a year ago are the same number of series and
+ * differ by five orders of magnitude in iterations. A caller pacing
+ * itself against wall-clock work needs the second number, so the
+ * expansion hands it back rather than leaving it to be guessed at.
+ *
+ * Accumulated on the way out, including when the expansion throws: the
+ * refusal at `MAX_EXPANSION_ITERATIONS` is the single most expensive
+ * thing this function does, and a budget that missed it would be blind
+ * to exactly the shape it exists for.
+ */
+export interface ExpansionWork {
+  /** Rule iterations performed, summed across every expansion that has
+   *  been given this accumulator. */
+  iterations: number;
+}
+
 /** ICAL.Time carries the fields; read them as a naive (floating) Date. */
 function icalTimeToWallClock(time: ICAL.Time): Date {
   return new Date(
@@ -129,6 +154,46 @@ function buildVevent(series: RecurrenceSeries): ICAL.Component {
     throw new RecurrenceExpansionError(
       `Series ${series.id} carries an EXRULE, which is not applied; express exclusions as EXDATE lines`,
     );
+  }
+
+  // `timezone` is a plain string field on both event types, so any value
+  // writes, and `Intl` raises a `RangeError` on one it cannot resolve.
+  // That raise happens in the conversion below, outside every guard in
+  // this file, so it reached the caller as a bug rather than as this
+  // series' problem: one row carrying `Europe/Berlim` answered the whole
+  // calendar with a 500, on every window, with the healthy meetings
+  // beside it lost and no narrowing that recovered. Refusing the one
+  // series is the rule the rest of this file already follows.
+  //
+  // Guarded on whether the zone resolves rather than through
+  // `isValidTimeZone`, which is stricter than `Intl`: `Etc/GMT+5` fails
+  // it and expands correctly here, so a read adopting it would take
+  // working meetings off the calendar to fix rows that were never
+  // broken.
+  //
+  // That helper is not a rule this field is held to. Its only caller is
+  // the profile route; an event's `timezone` is declared a string and
+  // checked to be one, and nothing checks that the string names a zone.
+  // That is the premise of this guard rather than an aside, because it
+  // is why a row like this exists to be read at all. Applying the
+  // helper at the write is the fix worth having and belongs there;
+  // until something does, the read has to survive whatever was stored.
+  //
+  // The probe warms the zone-formatter cache the conversions share, so
+  // every later use of this zone in this expansion is a map hit and
+  // cannot raise after it.
+  //
+  // Truthiness rather than `!== undefined`, because that is the test the
+  // conversions themselves apply: an empty string is "no zone" to them
+  // and expands in UTC, so probing it would refuse a series that works.
+  if (series.timezone) {
+    try {
+      zoneOffsetMinutes(dtstart, series.timezone);
+    } catch {
+      throw new RecurrenceExpansionError(
+        `Series ${series.id} carries a timezone that does not resolve: ${series.timezone}`,
+      );
+    }
   }
 
   const wall = instantToWallClock(dtstart, series.timezone);
@@ -178,12 +243,16 @@ function buildVevent(series: RecurrenceSeries): ICAL.Component {
  * shadowing is part of what an occurrence *is*: the caller cannot tell a
  * computed occurrence that still stands from one that was replaced
  * without redoing the same matching.
+ *
+ * `work`, when given, is credited with the rule iterations this call
+ * performed, whether it returns or throws. See `ExpansionWork`.
  */
 export function expandSeries(
   series: RecurrenceSeries,
   windowStart: Date,
   windowEnd: Date,
   exceptions: RecurrenceException[] = [],
+  work?: ExpansionWork,
 ): Occurrence[] {
   if (series.recurrence.length === 0) return [];
 
@@ -255,48 +324,54 @@ export function expandSeries(
   const coarseCutoffMs =
     instantToWallClock(windowStart, series.timezone).getTime() - 86_400_000;
 
-  while ((next = nextOccurrence())) {
-    iterations += 1;
-    if (iterations > MAX_EXPANSION_ITERATIONS) {
-      throw new RecurrenceExpansionError(
-        `Series ${series.id} iterates its rule more than ${String(MAX_EXPANSION_ITERATIONS)} times before it reaches the window; the rule is too frequent to expand at read time`,
-      );
-    }
-    const wallClock = icalTimeToWallClock(next);
-    if (wallClock.getTime() < coarseCutoffMs) continue;
-    const startsAt = wallClockToInstant(wallClock, series.timezone);
-    if (startsAt >= windowEnd) break;
-    if (startsAt < windowStart) continue;
+  try {
+    while ((next = nextOccurrence())) {
+      iterations += 1;
+      if (iterations > MAX_EXPANSION_ITERATIONS) {
+        throw new RecurrenceExpansionError(
+          `Series ${series.id} iterates its rule more than ${String(MAX_EXPANSION_ITERATIONS)} times before it reaches the window; the rule is too frequent to expand at read time`,
+        );
+      }
+      const wallClock = icalTimeToWallClock(next);
+      if (wallClock.getTime() < coarseCutoffMs) continue;
+      const startsAt = wallClockToInstant(wallClock, series.timezone);
+      if (startsAt >= windowEnd) break;
+      if (startsAt < windowStart) continue;
 
-    emitted += 1;
-    if (emitted > MAX_OCCURRENCES_PER_SERIES) {
-      throw new RecurrenceExpansionError(
-        `Series ${series.id} yields more than ${String(MAX_OCCURRENCES_PER_SERIES)} occurrences in this window; narrow the window`,
-      );
-    }
+      emitted += 1;
+      if (emitted > MAX_OCCURRENCES_PER_SERIES) {
+        throw new RecurrenceExpansionError(
+          `Series ${series.id} yields more than ${String(MAX_OCCURRENCES_PER_SERIES)} occurrences in this window; narrow the window`,
+        );
+      }
 
-    const exception = shadowed.get(startsAt.getTime());
-    if (exception) {
-      // The stored item carries its own times, so it is emitted by the
-      // caller from the item itself; recording the shadow here is what
-      // stops the computed occurrence being shown alongside it.
+      const exception = shadowed.get(startsAt.getTime());
+      if (exception) {
+        // The stored item carries its own times, so it is emitted by the
+        // caller from the item itself; recording the shadow here is what
+        // stops the computed occurrence being shown alongside it.
+        occurrences.push({
+          series_id: series.id,
+          starts_at: startsAt.toISOString(),
+          item_id: exception.id,
+          replaces: startsAt.toISOString(),
+        });
+        continue;
+      }
+
       occurrences.push({
         series_id: series.id,
         starts_at: startsAt.toISOString(),
-        item_id: exception.id,
-        replaces: startsAt.toISOString(),
+        ...(durationMs > 0
+          ? { ends_at: new Date(startsAt.getTime() + durationMs).toISOString() }
+          : {}),
+        item_id: series.id,
       });
-      continue;
     }
-
-    occurrences.push({
-      series_id: series.id,
-      starts_at: startsAt.toISOString(),
-      ...(durationMs > 0
-        ? { ends_at: new Date(startsAt.getTime() + durationMs).toISOString() }
-        : {}),
-      item_id: series.id,
-    });
+  } finally {
+    // In a `finally` because the iteration ceiling above throws, and the
+    // walk it abandons is the most expensive one this function performs.
+    if (work !== undefined) work.iterations += iterations;
   }
 
   return occurrences;

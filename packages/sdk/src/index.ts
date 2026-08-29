@@ -32,6 +32,7 @@ export type {
   SecureStorage,
   Occurrence,
   OccurrenceSeriesError,
+  OccurrencesScan,
   OccurrencesResult,
   ListOccurrencesOptions,
 } from "./client.js";
