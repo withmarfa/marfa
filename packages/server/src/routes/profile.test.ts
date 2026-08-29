@@ -382,7 +382,7 @@ describe("Profile routes", () => {
       });
       const res = await request(hosted.app, "PATCH", "/profile/me", {
         key: u.apiKey,
-        body: { username: "admin" },
+        body: { username: "core" },
       });
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: { code: string } };

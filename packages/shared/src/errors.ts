@@ -304,12 +304,17 @@ export enum ErrorCode {
    */
   EMAIL_SEND_FAILED = "email_send_failed",
   /**
-   * Handle claim was rejected because the value is on the reserved list
-   * (a structural-namespace word, a future-reserved namespace, or a
-   * brand the registry blocks at signup to prevent squatting and
-   * impersonation). Distinct from `validation_error` so the API caller
-   * can show a specific message and, eventually, route the claimant
-   * into a domain-verification flow if they own the matching domain.
+   * Handle claim was rejected because the value names a reserved root:
+   * one of the type grammar's namespace tiers, or `capability`. A handle
+   * appears as the first segment of a type identifier, so a claim on one
+   * of these would let its holder register into the platform's own
+   * vocabulary.
+   *
+   * Distinct from `validation_error` because the two say different things
+   * to the claimant. This one means the handle is well-formed and refused
+   * for what it names; `validation_error` means it never cleared the
+   * grammar. A value that fails both reports this one, since the routes
+   * check the root before the format.
    */
   HANDLE_RESERVED = "handle_reserved",
   /**

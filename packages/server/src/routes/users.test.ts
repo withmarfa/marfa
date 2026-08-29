@@ -321,34 +321,6 @@ describe("User-auth routes — authMode=hosted", () => {
       expect(body.user.handle).toBe(minted.providerAccountId);
     });
 
-    it("rejects a reserved brand handle with 400 handle_reserved", async () => {
-      const minted = await mintUser(hosted.storage, "reserved-brand", {
-        name: "Reserved Test",
-      });
-
-      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: minted.apiKey,
-        body: { handle: "google" },
-      });
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as ErrorBody;
-      expect(body.error.code).toBe("handle_reserved");
-    });
-
-    it("rejects a reserved structural word with 400 handle_reserved", async () => {
-      const minted = await mintUser(hosted.storage, "reserved-struct", {
-        name: "Reserved Test",
-      });
-
-      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
-        key: minted.apiKey,
-        body: { handle: "admin" },
-      });
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as ErrorBody;
-      expect(body.error.code).toBe("handle_reserved");
-    });
-
     it("rejects a reserved namespace root with 400 handle_reserved", async () => {
       const minted = await mintUser(hosted.storage, "reserved-root", {
         name: "Reserved Test",
@@ -363,18 +335,22 @@ describe("User-auth routes — authMode=hosted", () => {
       expect(body.error.code).toBe("handle_reserved");
     });
 
-    it("rejects a reserved future-namespace handle with 400 handle_reserved", async () => {
-      const minted = await mintUser(hosted.storage, "reserved-sync", {
-        name: "Reserved Test",
+    it("accepts a handle that only names a company or a page", async () => {
+      // The namespace roots are the whole reservation. A handle is never
+      // a route here, so a word like `google` costs nothing to hand out,
+      // and refusing it was a defense against a collision this platform
+      // cannot have.
+      const minted = await mintUser(hosted.storage, "ordinary-word", {
+        name: "Ordinary Test",
       });
 
       const res = await request(hosted.app, "PUT", "/auth/me/handle", {
         key: minted.apiKey,
-        body: { handle: "sync" },
+        body: { handle: "google" },
       });
-      expect(res.status).toBe(400);
-      const body = (await res.json()) as ErrorBody;
-      expect(body.error.code).toBe("handle_reserved");
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { user: User };
+      expect(body.user.handle).toBe("google");
     });
 
     it("rejects a malformed handle with 400 validation_error", async () => {

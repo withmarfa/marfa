@@ -387,42 +387,22 @@ describe("isValidHandle", () => {
     expect(isValidHandle("foo bar")).toBe(false);
   });
 
-  it("rejects reserved namespace roots", () => {
+  it("rejects every reserved namespace root", () => {
     expect(isValidHandle("core")).toBe(false);
     expect(isValidHandle("system")).toBe(false);
     expect(isValidHandle("app")).toBe(false);
     expect(isValidHandle("user")).toBe(false);
     expect(isValidHandle("marfa")).toBe(false);
+    expect(isValidHandle("capability")).toBe(false);
   });
 
-  it("rejects reserved structural words", () => {
-    expect(isValidHandle("admin")).toBe(false);
-    expect(isValidHandle("api")).toBe(false);
-    expect(isValidHandle("login")).toBe(false);
-    expect(isValidHandle("settings")).toBe(false);
-  });
-
-  it("rejects future-reserved namespace handles", () => {
-    expect(isValidHandle("sync")).toBe(false);
-    expect(isValidHandle("auth")).toBe(false);
-    expect(isValidHandle("data")).toBe(false);
-  });
-
-  it("rejects major tech-company brand handles", () => {
-    expect(isValidHandle("google")).toBe(false);
-    expect(isValidHandle("apple")).toBe(false);
-    expect(isValidHandle("microsoft")).toBe(false);
-    expect(isValidHandle("github")).toBe(false);
-    expect(isValidHandle("openai")).toBe(false);
-    expect(isValidHandle("anthropic")).toBe(false);
-  });
-
-  it("rejects major consumer-app brand handles", () => {
-    expect(isValidHandle("obsidian")).toBe(false);
-    expect(isValidHandle("notion")).toBe(false);
-    expect(isValidHandle("figma")).toBe(false);
-    expect(isValidHandle("linear")).toBe(false);
-    expect(isValidHandle("slack")).toBe(false);
+  it("accepts a handle that merely names a company or a page", () => {
+    // A handle is a namespace claim, not a URL path — nothing in the
+    // server routes on one — so `google.invoice` or `settings.note` is
+    // odd rather than dangerous, and the grammar is what decides.
+    expect(isValidHandle("google")).toBe(true);
+    expect(isValidHandle("settings")).toBe(true);
+    expect(isValidHandle("admin")).toBe(true);
   });
 
   it("returns false for non-string input", () => {
@@ -448,7 +428,7 @@ describe("deriveHandleFromEmail", () => {
       "@example.com",
       "UPPER.Case@Example.com",
       "weird!!!chars###@x.io",
-      "admin@example.com",
+      "system@example.com",
       "a-very-long-local-part-that-exceeds-the-thirty-two-char-limit@x.io",
       "...@x.io",
     ]) {
@@ -479,34 +459,36 @@ describe("deriveHandleFromEmail", () => {
     expect(handle.endsWith("-")).toBe(false);
   });
 
-  it("suffixes a reserved local part so it is no longer reserved", () => {
-    const handle = deriveHandleFromEmail("admin@example.com");
+  it("suffixes a local part that lands on a reserved root", () => {
+    const handle = deriveHandleFromEmail("system@example.com");
+    expect(handle).toBe("system-1");
     expect(isReservedHandle(handle)).toBe(false);
     expect(isValidHandle(handle)).toBe(true);
+  });
+
+  it("does not suffix a local part that is merely a common word", () => {
+    expect(deriveHandleFromEmail("admin@example.com")).toBe("admin");
   });
 });
 
 describe("isReservedHandle", () => {
-  it("returns true for reserved namespace roots", () => {
+  it("returns true for every reserved namespace root", () => {
     expect(isReservedHandle("core")).toBe(true);
     expect(isReservedHandle("system")).toBe(true);
     expect(isReservedHandle("app")).toBe(true);
     expect(isReservedHandle("user")).toBe(true);
     expect(isReservedHandle("marfa")).toBe(true);
+    expect(isReservedHandle("capability")).toBe(true);
   });
 
-  it("returns true for reserved structural and brand words", () => {
-    expect(isReservedHandle("admin")).toBe(true);
-    expect(isReservedHandle("google")).toBe(true);
-    expect(isReservedHandle("obsidian")).toBe(true);
-    expect(isReservedHandle("sync")).toBe(true);
-    expect(isReservedHandle("data")).toBe(true);
-  });
-
-  it("returns false for handles that aren't on either list", () => {
+  it("returns false for everything that is not a root", () => {
+    // The roots are the whole list: a handle collides with the type
+    // grammar or it does not, and no other word is refused.
     expect(isReservedHandle("alice")).toBe(false);
     expect(isReservedHandle("august-cayzer")).toBe(false);
     expect(isReservedHandle("a1b2c3")).toBe(false);
+    expect(isReservedHandle("admin")).toBe(false);
+    expect(isReservedHandle("google")).toBe(false);
   });
 
   it("does not enforce length or grammar — that's isValidHandle's job", () => {
@@ -535,10 +517,10 @@ describe("isValidIntegrationIdentifier", () => {
   });
 
   it("does not judge reserved words — that is registration's question", () => {
-    // The platform's own integrations live under `marfa/`, and `google` and
-    // `todoist` are reserved handle words. Refusing them syntactically would
-    // refuse most of the shipped set; whether a publisher may claim a handle
-    // is answered where the credential is in hand.
+    // `marfa` is a reserved root and the platform's own integrations live
+    // under `marfa/`, so refusing reserved values syntactically would refuse
+    // the shipped set. Whether a publisher may publish under a handle is
+    // answered at registration, where the credential is in hand.
     expect(isValidIntegrationIdentifier("marfa/podcasts")).toBe(true);
     expect(isValidIntegrationIdentifier("todoist/tasks")).toBe(true);
   });

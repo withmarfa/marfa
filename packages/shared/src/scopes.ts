@@ -60,10 +60,10 @@ export const CAPABILITY_ROOT = "capability";
  * resource axis the data plane already fences — an item type, an edge type,
  * a metadata sub-resource — and an administrative surface is none of those.
  * The two namespaces that read as though they would serve both fail for
- * concrete reasons rather than stylistic ones. `admin.*` is a reserved
- * handle word but not a reserved root, and type registration consults the
- * roots, so a real type could appear under it and a grant there would be
- * ambiguous between the two readings. `system.*` is worse: `system.connection`
+ * concrete reasons rather than stylistic ones. `admin.*` is not reserved at
+ * all — it is not a root, and type registration consults the roots — so a
+ * real type could appear under it and a grant there would be ambiguous
+ * between the two readings. `system.*` is worse: `system.connection`
  * is a live type with a live scope in the default read bundle, so a
  * capability beside it is indistinguishable from a type grant by inspection.
  *
