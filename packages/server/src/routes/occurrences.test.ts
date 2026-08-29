@@ -638,6 +638,49 @@ describe("a row whose declared rule cannot be used", () => {
   });
 });
 
+describe("a series carrying a timezone that does not resolve", () => {
+  // `core.event.timezone` is declared `{"type": "string"}` with no
+  // format, so every one of these writes with a 201, and `Intl` raises
+  // a `RangeError` rather than returning anything for them. The raise
+  // reached this route as a bug rather than as a series' own failure, so
+  // one row took the whole calendar down with a 500 — permanently, on
+  // every window, because the series pass is unwindowed and no narrowing
+  // reaches it. The healthy meeting below is the half that makes it
+  // matter: it was lost too, and its owner could do nothing about it but
+  // find and delete a row they had no reason to suspect.
+  const FROM = "2033-02-01T00:00:00Z";
+  const TO = "2033-02-08T00:00:00Z";
+
+  it.each([
+    ["a misspelled IANA zone", "Europe/Berlim"],
+    ["an offset written as a zone", "UTC+1"],
+    ["a GMT offset", "GMT+2"],
+    ["a Windows zone name", "Pacific Standard Time"],
+  ])("degrades that series and not the read: %s", async (_label, zone) => {
+    const badId = await createEvent({
+      title: `unresolvable zone ${zone}`,
+      starts_at: "2033-02-02T09:00:00.000Z",
+      timezone: zone,
+      recurrence: ["RRULE:FREQ=DAILY"],
+    });
+    const healthyId = await createEvent({
+      title: "a meeting beside it",
+      starts_at: "2033-02-03T09:00:00.000Z",
+    });
+
+    const { status, rows, errors } = await occurrences(FROM, TO);
+    expect(status).toBe(200);
+    // The calendar still answers, and the row that had nothing wrong
+    // with it is still on it.
+    expect(rows.filter((r) => r.item.id === healthyId)).toHaveLength(1);
+    // The broken series contributes no occurrence and is named.
+    expect(rows.filter((r) => r.item.id === badId)).toHaveLength(0);
+    const reported = errors.filter((e) => e.item_id === badId);
+    expect(reported).toHaveLength(1);
+    expect(reported[0]?.message).toContain("timezone");
+  });
+});
+
 describe("the scan block", () => {
   it("reports the ceiling on a read nowhere near it", async () => {
     // The announcement is the point: a bound mentioned only when it

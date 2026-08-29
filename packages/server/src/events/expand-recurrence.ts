@@ -29,7 +29,11 @@ import ICAL from "ical.js";
 // shared with the calendar mapping, which has to derive a whole day's date
 // the same way this derives an occurrence's hour. Two copies of that would
 // be two chances to disagree about a transition.
-import { instantToWallClock, wallClockToInstant } from "@withmarfa/shared";
+import {
+  instantToWallClock,
+  wallClockToInstant,
+  zoneOffsetMinutes,
+} from "@withmarfa/shared";
 
 export interface RecurrenceSeries {
   /** Item id of the series. */
@@ -150,6 +154,39 @@ function buildVevent(series: RecurrenceSeries): ICAL.Component {
     throw new RecurrenceExpansionError(
       `Series ${series.id} carries an EXRULE, which is not applied; express exclusions as EXDATE lines`,
     );
+  }
+
+  // `timezone` is a plain string field on both event types, so any value
+  // writes, and `Intl` raises a `RangeError` on one it cannot resolve.
+  // That raise happens in the conversion below, outside every guard in
+  // this file, so it reached the caller as a bug rather than as this
+  // series' problem: one row carrying `Europe/Berlim` answered the whole
+  // calendar with a 500, on every window, with the healthy meetings
+  // beside it lost and no narrowing that recovered. Refusing the one
+  // series is the rule the rest of this file already follows.
+  //
+  // Guarded on whether the zone resolves rather than through
+  // `isValidTimeZone`, which is the write-side shape rule and is
+  // stricter than `Intl`: `Etc/GMT+5` fails it and expands correctly
+  // here, so a read adopting it would take working meetings off the
+  // calendar to fix rows that were never broken. The write is where that
+  // stricter rule belongs.
+  //
+  // The probe warms the zone-formatter cache the conversions share, so
+  // every later use of this zone in this expansion is a map hit and
+  // cannot raise after it.
+  //
+  // Truthiness rather than `!== undefined`, because that is the test the
+  // conversions themselves apply: an empty string is "no zone" to them
+  // and expands in UTC, so probing it would refuse a series that works.
+  if (series.timezone) {
+    try {
+      zoneOffsetMinutes(dtstart, series.timezone);
+    } catch {
+      throw new RecurrenceExpansionError(
+        `Series ${series.id} carries a timezone that does not resolve: ${series.timezone}`,
+      );
+    }
   }
 
   const wall = instantToWallClock(dtstart, series.timezone);

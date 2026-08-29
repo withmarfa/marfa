@@ -330,6 +330,58 @@ describe("expandSeries", () => {
       ),
     ).toThrow(RecurrenceExpansionError);
   });
+
+  // `timezone` is a plain string field on the event types, so each of
+  // these stores with a 201. `Intl` raises a `RangeError` rather than
+  // returning anything, and that raise used to leave this function as
+  // something no caller could attribute to a series — which is the whole
+  // difference between one bad row and a calendar that will not load.
+  it.each([
+    ["a misspelled IANA zone", "Europe/Berlim"],
+    ["an offset written as a zone", "UTC+1"],
+    ["a GMT offset", "GMT+2"],
+    ["a Windows zone name", "Pacific Standard Time"],
+  ])("refuses %s as this series' failure, not as a crash", (_label, zone) => {
+    expect(() =>
+      expandSeries(
+        weekly({ timezone: zone }),
+        new Date("2026-03-01T00:00:00Z"),
+        new Date("2026-03-25T00:00:00Z"),
+      ),
+    ).toThrow(RecurrenceExpansionError);
+  });
+
+  it("still expands a series whose zone is an empty string", () => {
+    // The conversions read an empty zone as no zone and advance the rule
+    // in UTC. A guard testing for `undefined` rather than for
+    // truthiness would refuse this, which is a working meeting removed
+    // from a calendar to fix a row that expands correctly.
+    const occurrences = expandSeries(
+      weekly({ timezone: "" }),
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-25T00:00:00Z"),
+    );
+    expect(occurrences.map((o) => o.starts_at)).toEqual([
+      "2026-03-03T08:00:00.000Z",
+      "2026-03-10T08:00:00.000Z",
+      "2026-03-17T08:00:00.000Z",
+      "2026-03-24T08:00:00.000Z",
+    ]);
+  });
+
+  it("still expands a resolvable zone the write-side rule would refuse", () => {
+    // `isValidTimeZone` rejects `Etc/GMT+5` deliberately, as an offset
+    // rather than a zone. `Intl` resolves it, so this series works, and
+    // guarding the read on the stricter rule would have taken a working
+    // meeting off the calendar in the name of fixing a row that is not
+    // broken.
+    const occurrences = expandSeries(
+      weekly({ timezone: "Etc/GMT+5" }),
+      new Date("2026-03-01T00:00:00Z"),
+      new Date("2026-03-25T00:00:00Z"),
+    );
+    expect(occurrences.length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------
