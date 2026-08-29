@@ -166,10 +166,17 @@ export const MAX_SERIES_ERRORS = 500;
  *
  * A count alone does not bound bytes. Most of these messages are this
  * file's own fixed strings, but the malformed-rule ones carry ical.js's
- * error text verbatim, which is as long as whatever it was handed. With
- * both bounds the array is at most a few hundred kilobytes, which is
- * what makes `MAX_SERIES_ERRORS` a bound on the response rather than
- * only on its length.
+ * error text verbatim, which is as long as whatever it was handed —
+ * measured at 4,072 characters from a single long property value. This
+ * counts characters rather than bytes, so the byte ceiling on the array
+ * is `MAX_SERIES_ERRORS` times four times this plus the item ids: a few
+ * hundred kilobytes, against 4.8 MB measured without it. That product,
+ * not the count alone, is what makes `MAX_SERIES_ERRORS` a bound on the
+ * response rather than only on its length.
+ *
+ * Truncating a message loses nothing a caller needs to act: `item_id`
+ * is its own field, so the row still names which series to go and look
+ * at.
  */
 const MAX_SERIES_ERROR_MESSAGE_CHARS = 200;
 
@@ -201,11 +208,18 @@ const ID_BATCH_SIZE = 500;
 /**
  * Series expanded between one yield to the event loop and the next.
  *
- * This bounds the *per-series* cost, which is real and which the
- * iteration budget below cannot see: building a synthetic VEVENT and
+ * This bounds the *number of per-series parses* between yields, which
+ * the iteration budget below cannot see: building a synthetic VEVENT and
  * parsing it through ical.js happens once per series whatever its rule
  * says, and a rule that ends before it starts costs a parse and zero
  * iterations. Both counters run, and whichever trips first yields.
+ *
+ * It bounds the count and not the cost, and the difference is worth
+ * stating rather than glossing. `recurrence` is a caller-written array,
+ * so one series can carry thousands of RDATE lines and its parse is as
+ * long as that array. What this guarantees is 32 parses per stretch, not
+ * 32 short ones. Bounding the cost would mean bounding the property,
+ * which is a write-side rule and does not belong on a read.
  */
 const SERIES_PER_YIELD = 32;
 
