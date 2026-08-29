@@ -586,8 +586,8 @@ export interface Occurrence {
   replaces?: string;
 }
 
-/** A series whose rule the server could not read, or could not fully
- *  apply. */
+/** One failure found in a series' recurrence rule. A row reported twice
+ *  produces two of these, both carrying its id. */
 export interface OccurrenceSeriesError {
   /** Item id of the series. */
   item_id: string;
@@ -617,8 +617,14 @@ export interface OccurrencesScan {
    */
   max_occurrences: number;
   /**
-   * Series whose recurrence rule the read could not use, counted across
-   * the event types it read.
+   * Failures the read found in recurrence rules, counted across the
+   * event types it read.
+   *
+   * Entries rather than rows, matching the `series_errors` array: one
+   * row can account for two — an unreadable line dropped from its rule,
+   * and then a failure expanding what was left — so this is an upper
+   * bound on how many rows to go and look at. Group on `item_id` for
+   * the exact number.
    *
    * Scoped to those types rather than to the space. A `type` on the
    * request, or a credential permissioned for one event type, narrows
@@ -642,9 +648,13 @@ export interface OccurrencesScan {
    */
   max_series_errors: number;
   /**
-   * Rule iterations the read spent on series that produced no
-   * occurrence: a rule that ended before the window, or one too frequent
-   * to reach it before the per-series iteration ceiling.
+   * Rule iterations the read spent on series that put no occurrence into
+   * `data`: a rule that ended before the window or produced nothing in
+   * it, one too frequent to reach the window before the per-series
+   * iteration ceiling, and one refused for flooding the window — that
+   * last having produced occurrences the refusal discarded, so the
+   * predicate is what reached the response rather than what the rule
+   * computed.
    *
    * Only iterations count. A series that fails before it iterates — an
    * unreadable rule, a timezone that does not resolve — is reported in
@@ -675,10 +685,11 @@ export interface OccurrencesResult {
   /** What this read cost and what would stop it. */
   scan: OccurrencesScan;
   /**
-   * Series whose rule the server could not use — malformed, flooding the
-   * window, carrying no start to unfold from, carrying a timezone that
-   * does not resolve, or holding something that is not an RFC 5545
-   * property line. The rest of the calendar still
+   * One entry per failure the server found in a recurrence rule —
+   * malformed, flooding the window, carrying no start to unfold from,
+   * carrying a timezone that does not resolve, or holding something that
+   * is not an RFC 5545 property line. `item_id` names the row and one
+   * row can appear twice. The rest of the calendar still
    * returns, so a caller ignoring this renders a calendar with a
    * repeating meeting silently absent from it, or a repeating meeting
    * silently shown once.
@@ -695,8 +706,8 @@ export interface OccurrencesResult {
    * Set when `series_errors` lists fewer failures than the read found.
    *
    * Worth branching on if the list is being shown to a person: it is the
-   * difference between "these are the broken rules" and "these are 500
-   * of them".
+   * difference between "these are the failures" and "these are 500 of
+   * them".
    */
   series_errors_truncated?: boolean;
   /**
@@ -712,8 +723,10 @@ export interface OccurrencesResult {
    *
    * The same two fields appear in a `ValidationError`'s `details` when
    * the occurrence ceiling refuses a read whose expansion had already
-   * been truncated. That refusal says to narrow the window, and these
-   * say that narrowing it still returns a partial calendar.
+   * been truncated — see `occurrences.list`, which is where a caller
+   * meets them, because that refusal is a thrown error rather than this
+   * result. That refusal says to narrow the window, and these say that
+   * narrowing it still returns a partial calendar.
    */
   expansion_incomplete?: boolean;
 }
@@ -2429,7 +2442,13 @@ export class MarfaClient {
      * the server's to apply: a span past its limit and a result past its
      * ceiling are both refused rather than trimmed, arriving as
      * `ValidationError` carrying the server's own `max_days` /
-     * `max_occurrences` in `details`. Nothing is pre-checked here. A
+     * `max_occurrences` in `details`. The occurrence refusal carries
+     * `found` beside `max_occurrences`, and — when expansion had already
+     * been truncated before the ceiling was crossed —
+     * `expansion_incomplete` and `series_unexpanded` as well. Branch on
+     * those two in the `catch`: the refusal says to narrow the window,
+     * and they say that narrowing it returns a calendar that is partial
+     * for a second reason. Nothing is pre-checked here. A
      * second copy of those constants would start refusing what the server
      * would happily serve the day either one moved, and it could only
      * ever cover the span — the occurrence ceiling depends on the data,

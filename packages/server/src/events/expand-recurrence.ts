@@ -166,11 +166,18 @@ function buildVevent(series: RecurrenceSeries): ICAL.Component {
   // series is the rule the rest of this file already follows.
   //
   // Guarded on whether the zone resolves rather than through
-  // `isValidTimeZone`, which is the write-side shape rule and is
-  // stricter than `Intl`: `Etc/GMT+5` fails it and expands correctly
-  // here, so a read adopting it would take working meetings off the
-  // calendar to fix rows that were never broken. The write is where that
-  // stricter rule belongs.
+  // `isValidTimeZone`, which is stricter than `Intl`: `Etc/GMT+5` fails
+  // it and expands correctly here, so a read adopting it would take
+  // working meetings off the calendar to fix rows that were never
+  // broken.
+  //
+  // That helper is not a rule this field is held to. Its only caller is
+  // the profile route; an event's `timezone` is declared a string and
+  // checked to be one, and nothing checks that the string names a zone.
+  // That is the premise of this guard rather than an aside, because it
+  // is why a row like this exists to be read at all. Applying the
+  // helper at the write is the fix worth having and belongs there;
+  // until something does, the read has to survive whatever was stored.
   //
   // The probe warms the zone-formatter cache the conversions share, so
   // every later use of this zone in this expansion is a map hit and

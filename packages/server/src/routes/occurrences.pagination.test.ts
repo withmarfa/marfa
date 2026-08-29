@@ -25,6 +25,11 @@ import {
   occurrenceRoutes,
   MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS,
 } from "./occurrences.js";
+import { expandSeries } from "../events/expand-recurrence.js";
+import type {
+  ExpansionWork,
+  RecurrenceSeries,
+} from "../events/expand-recurrence.js";
 import { createErrorHandler } from "../middleware/error-handler.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
@@ -406,7 +411,13 @@ function syntheticCalendar(
  * as its own status rather than as a 500, and the auth middleware is stood
  * in for: what is under test is the read, not the caller.
  */
-function appOver(storage: Storage): OpenAPIHono<AppEnv> {
+function appOver(
+  storage: Storage,
+  /** Stands in for `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS`. Reaching
+   *  that ceiling means walking it, and at the production value that is
+   *  six seconds per test on a box that also runs CI. */
+  maxUnproductiveIterations?: number,
+): OpenAPIHono<AppEnv> {
   const app = new OpenAPIHono<AppEnv>();
   app.onError(createErrorHandler({ errorWebhookUrl: "" }));
   app.use("*", async (c, next) => {
@@ -419,7 +430,15 @@ function appOver(storage: Storage): OpenAPIHono<AppEnv> {
     c.set("clientIp", null as never);
     await next();
   });
-  app.route("/occurrences", occurrenceRoutes(storage));
+  app.route(
+    "/occurrences",
+    occurrenceRoutes(
+      storage,
+      maxUnproductiveIterations === undefined
+        ? {}
+        : { maxUnproductiveIterations },
+    ),
+  );
   return app;
 }
 
@@ -638,8 +657,8 @@ describe("the expansion loop is paced by work, not by series count", () => {
   const UNDER_THE_SERIES_BUDGET = 30;
 
   /** Minutes before the window, so the rule terminates on its own COUNT
-   *  having emitted nothing: pure pre-window walking, which is exactly
-   *  what a long-lived frequent rule costs on every read. */
+   *  having contributed nothing: pure pre-window walking, which is
+   *  exactly what a long-lived frequent rule costs on every read. */
   function walking(iterationsEach: number): SyntheticRow[] {
     return Array.from({ length: UNDER_THE_SERIES_BUDGET }, (_, i) => ({
       id: `walker-${String(i)}`,
@@ -860,17 +879,30 @@ describe("the occurrence ceiling and the broken-rule cap compose", () => {
   });
 });
 
-describe("the expansion budget bounds the walking that emits nothing", () => {
-  // The one deliberately expensive test in this file, at about six
-  // seconds. Pinning a ceiling denominated in rule iterations means
-  // spending them, and spending them is the whole assertion: without the
-  // ceiling this fixture walks three times as far, and a real space
-  // holding fifty thousand of these rules walks for hours.
+describe("the expansion budget bounds the walking that contributes nothing", () => {
   /**
-   * Rules that walk their whole per-series iteration cap and emit
+   * A tenth of the production ceiling, handed to the route.
+   *
+   * Reaching a ceiling denominated in rule iterations means walking
+   * them, and at the production value that was six seconds a test on a
+   * box that also runs the organization's CI. Every assertion below is
+   * written against whatever value is in force — the overshoot, the
+   * count left unexpanded, what the refusal carries — so a tenth
+   * exercises the same code and the same arithmetic at a tenth of the
+   * cost. The production number is pinned by the equality below, which
+   * is what was really being asserted by spending it.
+   */
+  const BUDGET = MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS / 10;
+
+  it("is two million iterations unless a caller says otherwise", () => {
+    expect(MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS).toBe(2_000_000);
+  });
+
+  /**
+   * Rules that walk their whole per-series iteration cap and contribute
    * nothing: per-minute from years before the window, so each one
    * reaches `MAX_EXPANSION_ITERATIONS` long before it reaches the
-   * window, fails there, and contributes no occurrence.
+   * window and fails there.
    *
    * The expensive class, and the one refusing at the 501st failure used
    * to bound by accident. Measured through the route at about 340 ms of
@@ -889,7 +921,7 @@ describe("the expansion budget bounds the walking that emits nothing", () => {
 
   /** How many walkers it takes to fill the budget, plus a few the
    *  request must therefore never reach. */
-  const TO_FILL = Math.ceil(MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS / 100_000);
+  const TO_FILL = Math.ceil(BUDGET / 100_000);
 
   it("stops expanding rather than walking every rule in the space", async () => {
     const rows = [
@@ -902,7 +934,9 @@ describe("the expansion budget bounds the walking that emits nothing", () => {
         },
       },
     ];
-    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    const res = await readWindow(
+      appOver(syntheticCalendar(rows).storage, BUDGET),
+    );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       data: OccurrenceRow[];
@@ -918,12 +952,12 @@ describe("the expansion budget bounds the walking that emits nothing", () => {
     // Stopped, and stopped within one expansion of the budget: a single
     // `expandSeries` call is atomic, so the last one admitted can always
     // carry the total past the ceiling and no further.
-    expect(body.scan.unproductive_iterations).toBeGreaterThanOrEqual(
-      MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS,
-    );
-    expect(body.scan.unproductive_iterations).toBeLessThan(
-      MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS + 100_001,
-    );
+    expect(body.scan.unproductive_iterations).toBeGreaterThanOrEqual(BUDGET);
+    expect(body.scan.unproductive_iterations).toBeLessThan(BUDGET + 100_001);
+    // The ceiling in force is the one reported, so a caller reading the
+    // response is never comparing against a number the route is not
+    // using.
+    expect(body.scan.max_unproductive_iterations).toBe(BUDGET);
     // The five past the ceiling were never walked, and the response says
     // so rather than stopping quietly. A calendar that is missing part
     // of itself and does not admit it is the failure this whole file is
@@ -949,9 +983,9 @@ describe("the expansion budget bounds the walking that emits nothing", () => {
     // The property that makes the ceiling safe to have at all. These
     // rules walk seven years of history before they reach the window —
     // real work, and more of it than a short rule costs — but each one
-    // emits, so none of it is charged. A budget over all iterations
-    // would be spent fastest by the calendar with the most meetings in
-    // it, and would then truncate that calendar.
+    // contributes, so none of it is charged. A budget over all
+    // iterations would be spent fastest by the calendar with the most
+    // meetings in it, and would then truncate that calendar.
     const rows = Array.from({ length: 30 }, (_, i) => ({
       id: `daily-${String(i)}`,
       properties: {
@@ -1000,22 +1034,61 @@ describe("the expansion budget bounds the walking that emits nothing", () => {
     expect(body.scan.unproductive_iterations).toBe(0);
   });
 
-  it("charges nothing for work it plainly did, and the cost shows", async () => {
-    // The hole in the ceiling, witnessed rather than described. Both
-    // fixtures are a hundred daily rules emitting seven occurrences
-    // each, so both are charged nothing; they differ only in how far
-    // they walk to reach the window. A decade-old rule that is still
-    // running walks its whole history on every read, which is the
-    // ordinary shape of a long-lived calendar rather than a contrived
-    // one.
+  it("charges a series that produced occurrences and had them discarded", async () => {
+    // The other direction, and the one an audit asking "what charges
+    // zero unexpectedly" walks straight past. A rule flooding the window
+    // is refused by `MAX_OCCURRENCES_PER_SERIES` — a third ceiling —
+    // after producing two thousand occurrences, and the refusal throws
+    // them away. `expanded` is empty after any throw, so the walk is
+    // charged.
     //
-    // The assertion is a *lower* bound on the expensive read relative to
-    // the cheap one, which is the direction that survives a shared or
-    // slower machine: contention inflates both and can only widen the
-    // gap. It fails if the walking stops happening — or if someone
-    // writes that this budget bounds a request's total work, because
-    // here is a request doing three orders of magnitude more of it with
-    // the counter reading zero throughout.
+    // Charging it is right: none of that reached `data` and the walk is
+    // spent either way. What was wrong was three descriptions saying the
+    // counter covers series that produced no occurrence, when the
+    // predicate is what they contributed.
+    const res = await readWindow(
+      appOver(
+        syntheticCalendar([
+          {
+            id: "flooder",
+            properties: {
+              title: "every minute, all week",
+              starts_at: SYNTHETIC_FROM,
+              recurrence: ["RRULE:FREQ=MINUTELY"],
+            },
+          },
+        ]).storage,
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: OccurrenceRow[];
+      series_errors?: { item_id: string; message: string }[];
+      scan: { series_errors: number; unproductive_iterations: number };
+    };
+    // Two thousand produced, none contributed.
+    expect(body.data).toHaveLength(0);
+    expect(body.scan.series_errors).toBe(1);
+    expect(body.series_errors?.[0]?.message).toContain("occurrences");
+    // One iteration past the per-series occurrence ceiling, exactly.
+    expect(body.scan.unproductive_iterations).toBe(2_001);
+  });
+
+  it("charges nothing for walking that a caller can count exactly", async () => {
+    // The hole in the ceiling, exhibited. Both fixtures are a hundred
+    // daily rules contributing seven occurrences each, so both are
+    // charged nothing; they differ only in how far they walk to reach
+    // the window. A decade-old rule that is still running walks its
+    // whole history on every read, which is the ordinary shape of a
+    // long-lived calendar rather than a contrived one.
+    //
+    // This test cannot stop anyone writing that the budget bounds a
+    // request's total work — no test fails when prose is edited, and
+    // this file's own history proves it, because the suite above carried
+    // an overstated name for a whole commit while staying green. What it
+    // does is hold a counterexample in the exact unit the bound is
+    // denominated in, so a reader who doubts the claim has a number to
+    // cite rather than a stopwatch to argue about.
     const daily = (anchor: string, prefix: string): SyntheticRow[] =>
       Array.from({ length: 100 }, (_, i) => ({
         id: `${prefix}-${String(i)}`,
@@ -1026,44 +1099,58 @@ describe("the expansion budget bounds the walking that emits nothing", () => {
         },
       }));
 
-    const timed = async (
-      rows: SyntheticRow[],
-    ): Promise<{ ms: number; charged: number; occurrences: number }> => {
-      const began = Date.now();
+    // Ten years of history before the window.
+    const far = daily("2016-06-01T09:00:00.000Z", "far");
+    // The same rules, anchored the day before it.
+    const near = daily("2026-05-31T09:00:00.000Z", "near");
+
+    const charged = async (rows: SyntheticRow[]): Promise<number> => {
       const res = await readWindow(appOver(syntheticCalendar(rows).storage));
-      const ms = Date.now() - began;
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
         data: OccurrenceRow[];
         expansion_incomplete?: boolean;
         scan: { unproductive_iterations: number };
       };
+      // Same calendar either way: a hundred rules, seven days.
+      expect(body.data).toHaveLength(700);
       expect(body.expansion_incomplete).toBeUndefined();
-      return {
-        ms,
-        charged: body.scan.unproductive_iterations,
-        occurrences: body.data.length,
-      };
+      return body.scan.unproductive_iterations;
     };
 
-    // Ten years of history before the window; about 3,800 iterations
-    // each to reach it.
-    const far = await timed(daily("2016-06-01T09:00:00.000Z", "far"));
-    // The same rules, anchored the day before the window.
-    const near = await timed(daily("2026-05-31T09:00:00.000Z", "near"));
+    expect(await charged(far)).toBe(0);
+    expect(await charged(near)).toBe(0);
 
-    // Same calendar either way: a hundred rules, seven days.
-    expect(far.occurrences).toBe(700);
-    expect(near.occurrences).toBe(700);
-    // And the budget saw none of the difference.
-    expect(far.charged).toBe(0);
-    expect(near.charged).toBe(0);
-    expect(far.ms).toBeGreaterThan(near.ms * 3);
+    // What the budget saw none of, in its own unit. `expandSeries`
+    // accumulates iterations for exactly this purpose and is
+    // deterministic, so these are equalities rather than a wall clock
+    // and a ratio that a loaded machine can move.
+    const walked = (rows: SyntheticRow[]): number => {
+      const work: ExpansionWork = { iterations: 0 };
+      for (const row of rows) {
+        const series: RecurrenceSeries = {
+          id: row.id,
+          starts_at: row.properties.starts_at as string,
+          recurrence: row.properties.recurrence as string[],
+        };
+        expandSeries(
+          series,
+          new Date(SYNTHETIC_FROM),
+          new Date(SYNTHETIC_TO),
+          [],
+          work,
+        );
+      }
+      return work.iterations;
+    };
+
+    expect(walked(far)).toBe(366_000);
+    expect(walked(near)).toBe(900);
   });
 
   it("says on the refusal that expansion was already truncated", async () => {
     // The two ceilings compose, and the advice differs. Expansion spends
-    // its budget on rules that emit nothing, the window pass then
+    // its budget on rules that contribute nothing, the window pass then
     // crosses the occurrence ceiling, and the caller is told to narrow
     // the window — which returns a calendar already missing whatever the
     // unexpanded series held. Without this the caller learns that only
@@ -1078,7 +1165,9 @@ describe("the expansion budget bounds the walking that emits nothing", () => {
         },
       })),
     ];
-    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    const res = await readWindow(
+      appOver(syntheticCalendar(rows).storage, BUDGET),
+    );
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
       error: {

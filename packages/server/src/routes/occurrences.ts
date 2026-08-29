@@ -53,7 +53,7 @@
  *     an iteration budget. `ITERATIONS_PER_YIELD` states the resulting
  *     bound on one uninterrupted stretch, in iterations.
  *   - **Expansion work is bounded across the whole request**, in the
- *     iterations spent on series that emit nothing.
+ *     iterations spent on series that contribute nothing to `data`.
  *     `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` is what stops a space full
  *     of per-minute rules from taking hours of CPU in one request. It is
  *     the one bound here that can leave the calendar partial, and the
@@ -140,12 +140,13 @@ export const MAX_WINDOW_DAYS = 400;
 export const MAX_OCCURRENCES = 5000;
 
 /**
- * How many expansion failures the response will list.
+ * How many rule failures the response will list, counted in entries
+ * rather than in rows: one row can produce two.
  *
  * `series_errors` is a second result array and `MAX_OCCURRENCES`
- * structurally cannot bound it: a series that fails to expand emits no
- * occurrence, so a space can cross every other bound here at zero and
- * still return an arbitrarily long list. Measured before this existed:
+ * structurally cannot bound it. A space of rules that all fail in the
+ * parser contributes no occurrence at all, so it sits at zero against
+ * every other bound here and still returns an arbitrarily long list. Measured before this existed:
  * 25,000 rows carrying a malformed rule answered 200 with a 4.8 MB JSON
  * body, built as one string in memory. Ten times that is the fail-open
  * crash this change exists to remove, relocated into the other array.
@@ -175,8 +176,13 @@ export const MAX_OCCURRENCES = 5000;
  *     a partial list is never mistaken for a complete one. That is the
  *     whole of what "quietly" meant.
  *   - **The true count is reported anyway**, as `scan.series_errors`, so
- *     a caller can tell 501 broken rules from 50,000 without the bytes
- *     of either. Diagnostics are compressible in a way meetings are not.
+ *     a caller can tell 501 failures from 50,000 without the bytes of
+ *     either. Diagnostics are compressible in a way meetings are not.
+ *     Both numbers are entries rather than rows, which is what makes the
+ *     comparison behind `series_errors_truncated` exact; a row reported
+ *     twice consumes two entries of this cap, and a space where every
+ *     broken rule is broken in two ways fits half as many rows under
+ *     it.
  *
  * Refusing here was tried first and was wrong. The series pass is
  * unwindowed, so a refusal could not be recovered from by asking for a
@@ -284,14 +290,15 @@ const SERIES_PER_YIELD = 32;
  * as long as the space gives it work.
  * `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` stops the loop, but over one
  * part of that work rather than over the sum of it: iterations spent on
- * series that emit nothing. Nothing in this file bounds the total, and
+ * series that contribute nothing to `data`. Nothing in this file bounds
+ * the total, and
  * that constant's docblock says what the remainder is worth.
  */
 const ITERATIONS_PER_YIELD = 20_000;
 
 /**
- * Rule iterations one request may spend on series that emit nothing,
- * before it stops expanding.
+ * Rule iterations one request may spend on series that contribute
+ * nothing to `data`, before it stops expanding.
  *
  * ## The bound this replaces
  *
@@ -306,16 +313,31 @@ const ITERATIONS_PER_YIELD = 20_000;
  * throughout — but a request that answers in an hour is not, and no
  * bound in this file had anything to say about it.
  *
- * ## Why it counts only the series that emit nothing
+ * ## Why it counts only the series that contribute nothing
  *
  * Because crossing it stops the expansion, and a stop that lands on a
- * healthy series takes that series' meetings off the calendar. A series
- * that hit the per-series iteration ceiling contributed no occurrence by
- * construction, and a series whose rule produced nothing in the window
- * contributed none either, so a budget denominated in *that* work is
- * spent by exactly the shape this exists to stop. A budget over all
- * iterations would instead be spent fastest by the calendar with the
- * most meetings in it.
+ * healthy series takes that series' meetings off the calendar. A budget
+ * denominated in work that put nothing on the calendar is spent by
+ * exactly the shape this exists to stop; a budget over all iterations
+ * would instead be spent fastest by the calendar with the most meetings
+ * in it.
+ *
+ * **The predicate is what reached `data`, not what the rule produced**,
+ * and the difference is a real class rather than a quibble. Three ways
+ * a series contributes nothing:
+ *
+ *   - it walked and its rule put no occurrence in the window;
+ *   - it hit `MAX_EXPANSION_ITERATIONS` before reaching the window;
+ *   - it hit `MAX_OCCURRENCES_PER_SERIES` — **having produced
+ *     occurrences, which the refusal then discarded.**
+ *
+ * The third is charged like the other two and should be: those
+ * occurrences are not in `data` and the walk that made them is spent.
+ * Measured: one `FREQ=MINUTELY` rule over a two-day window is refused at
+ * 2,000 occurrences and charges 2,001 iterations. An earlier version of
+ * this docblock said a charged series produced no occurrence by
+ * construction, which that fixture falsifies; what is true by
+ * construction is that it contributed none.
  *
  * ## Why crossing it is a 200 and not a 400
  *
@@ -337,13 +359,15 @@ const ITERATIONS_PER_YIELD = 20_000;
  * The dead-history arithmetic above applies unchanged to a decade-old
  * daily rule that is still running: it walks the same few thousand
  * iterations to reach the window, it is commoner than one that ended,
- * and because it then emits, none of that is charged. Measured through
- * the route: 100 such rules over a seven-day window cost 1,240 ms and
- * report `unproductive_iterations` as zero, against 6 ms for the same
- * hundred rules anchored the day before the window, which return the
- * same seven hundred occurrences and the same zero. Five thousand of
- * them — a large calendar, not a contrived one — extrapolates to about
- * a minute, still with nothing on the counter and no flag.
+ * and because it then contributes, none of that is charged. Counted
+ * exactly, through the expander's own accumulator: 100 such rules over
+ * a seven-day window walk 366,000 iterations and report
+ * `unproductive_iterations` as zero, against 900 for the same hundred
+ * anchored the day before the window, which return the same seven
+ * hundred occurrences and the same zero. Five thousand of them — a
+ * large calendar, not a contrived one — is 18 million iterations, which
+ * timed at about a minute when this was measured on a wall clock, still
+ * with nothing on the counter and no flag.
  *
  * What stops it being unbounded is the occurrence ceiling rather than
  * anything here — a series emitting more than once reached the window
@@ -355,12 +379,15 @@ const ITERATIONS_PER_YIELD = 20_000;
  *
  * **What the number is.** Two million is twenty full per-series
  * expansions, measured at 6.0 seconds of CPU end to end through the
- * route, so it is a ceiling on the shape below rather than a target
- * anything ordinary approaches.
+ * route at this value, so it is a ceiling on the shape below rather
+ * than a target anything ordinary approaches. The tests exercise the
+ * mechanism at a fraction of it — see `OccurrenceRouteOptions` — and
+ * pin this number by equality rather than by spending it.
  *
  * **A large calendar's dead history is charged like a pathological
  * rule**, because from here the two are indistinguishable: both walk and
- * emit nothing. A daily rule that ran for a decade and ended costs about
+ * contribute nothing. A daily rule that ran for a decade and ended costs
+ * about
  * 3,650 iterations on every read of a later window, so roughly 550 of
  * them fill this budget, against 20 per-minute rules. A space past that
  * gets a partial calendar and is told so. Narrowing that would mean
@@ -731,19 +758,19 @@ const ScanSchema = z.object({
     .number()
     .int()
     .describe(
-      "Series whose recurrence rule this request could not read or could not fully apply, counted across the event types this request read. Scoped to those types and not to the space: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the space is healthy. It counts everything this read detected, even when `series_errors` on the envelope lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it is a count of the ways of being broken this route knows how to recognize.",
+      "Failures this request found in recurrence rules, in the same unit as the `series_errors` array on the envelope: entries, not rows. One row can account for two — an unreadable line dropped from its rule is one failure, and expanding what was left then failing is another — so this is an upper bound on the number of rows to go and look at, and `item_id` is what a caller groups on to get the exact number. Counted across the event types this request read, and scoped to those and not to the space: a request narrowed by `type`, or a credential permissioned for one event type, is told about the rules it read and nothing about the ones it did not, so a zero here is not a statement that the rest of the space is healthy. It counts everything this read detected, even when the array lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one. Read it as a floor rather than as a certificate: it counts the ways of being broken this route knows how to recognize.",
     ),
   max_series_errors: z
     .number()
     .int()
     .describe(
-      "Longest list of expansion failures the response will carry. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it.",
+      "Longest list of failures the response will carry, counted in entries. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because the list is a diagnostic beside the calendar and nothing in `data` depends on it. Entries rather than rows is the unit that matters here as well: a row reported twice consumes two of these.",
     ),
   unproductive_iterations: z
     .number()
     .int()
     .describe(
-      "Rule iterations this request spent on series that produced no occurrence: a rule that ended before the window, or one too frequent to reach it before the per-series iteration ceiling. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one.",
+      "Rule iterations this request spent on series that put no occurrence into `data`: a rule that ended before the window or produced nothing in it, one too frequent to reach the window before the per-series iteration ceiling, and one refused for flooding the window — that last having produced occurrences the refusal then discarded, so this is what reached the response rather than what the rule computed. Only iterations are counted, so a series that fails before it iterates — an unreadable rule, a timezone that does not resolve — is reported in `series_errors` and charges nothing here. The unit the expansion ceiling is denominated in, reported on every successful read so a calendar approaching it is visible before it truncates one.",
     ),
   max_unproductive_iterations: z
     .number()
@@ -766,19 +793,20 @@ const OccurrencesResponseSchema = z.object({
    *  that is only mentioned when it fires announces itself too late to
    *  act on. */
   scan: ScanSchema,
-  /** One entry per series whose rule could not be read or could not be
-   *  fully applied — a malformed rule, one that floods the window, one
-   *  with no start to unfold from, or a `recurrence` holding something
-   *  that is not a property line. The rest of the calendar still
-   *  returns; failing the whole read for one bad series would make a
-   *  single six-year-old meeting take the calendar down. Capped at
-   *  `MAX_SERIES_ERRORS` entries, past which `series_errors_truncated`
-   *  is set and `scan.series_errors` carries the real total. */
+  /** One entry per failure found in a rule — malformed, flooding the
+   *  window, no start to unfold from, an unresolvable timezone, or a
+   *  `recurrence` holding something that is not a property line. One row
+   *  can produce two, so entries are the unit here and in the count
+   *  beside it. The rest of the calendar still returns; failing the
+   *  whole read for one bad series would make a single six-year-old
+   *  meeting take the calendar down. Capped at `MAX_SERIES_ERRORS`
+   *  entries, past which `series_errors_truncated` is set and
+   *  `scan.series_errors` carries the real total. */
   series_errors: z
     .array(SeriesErrorSchema)
     .optional()
     .describe(
-      "One entry per series whose recurrence rule could not be read or could not be fully applied: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. A reported series may still appear in `data` — a rule that could not be applied leaves the row rendering as the single event its own times describe — so this is a report about rules rather than about which rows are missing.",
+      "One entry per failure found in a recurrence rule: a malformed rule, one that floods the window, one with no start to unfold from, a timezone that does not resolve, or a `recurrence` holding something that is not an RFC 5545 property line. Absent when there were none. `item_id` names the row, and one row can appear more than once — a dropped rule line and a failure expanding what was left are two entries against the same id. A reported row may still appear in `data`: a rule that could not be applied leaves the row rendering as the single event its own times describe, and a rule missing one unreadable line still contributes every occurrence the rest of it produces. This reports on rules rather than on which rows are missing.",
     ),
   /** Present and true when `series_errors` lists fewer failures than the
    *  request found. The array is capped rather than the read refused, so
@@ -788,7 +816,7 @@ const OccurrencesResponseSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      "Present and true when `series_errors` lists fewer failures than the request found. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total.",
+      "Present and true when `series_errors` lists fewer failures than the request found. Both are counted in entries, so the comparison is exact. The array is capped at `scan.max_series_errors` rather than the read refused, so this is how the response says the list is partial; `scan.series_errors` carries the real total.",
     ),
   /** Present and true when the request stopped expanding series before
    *  it had walked them all, having spent `scan.max_unproductive_iterations`
@@ -810,7 +838,7 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List event occurrences in a window",
   description:
-    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series whose rule cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for the space, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on series that produce no occurrence, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the space gives it work.",
+    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. Its refusal carries `max_occurrences` and `found` in `details`, and `expansion_incomplete` with `series_unexpanded` as well when expansion had already been truncated — worth branching on, because the refusal says to narrow the window and those two say that narrowing it returns a calendar that is partial for a second reason. A rule that cannot be read or cannot be fully applied is reported in `series_errors` while the rest of the calendar still returns. Entries there are failures rather than rows: one row can carry two, and `item_id` is what a caller groups on. That list alone is capped rather than refused, at `scan.max_series_errors`: it is a diagnostic beside the calendar and nothing in `data` depends on it, so a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total for the event types the request read — not for the space, which a request narrowed by `type` or a credential permissioned for one event type never sees all of. Expansion itself is bounded too: a request spends at most `scan.max_unproductive_iterations` rule iterations on series that put no occurrence into `data`, and one that reaches that ceiling stops expanding, sets `expansion_incomplete` and reports `scan.series_unexpanded`, rather than running for as long as the space gives it work.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -900,7 +928,32 @@ interface PendingOccurrence {
   replaces?: string;
 }
 
-export function occurrenceRoutes(storage: Storage) {
+/** What a caller may vary about this route. */
+export interface OccurrenceRouteOptions {
+  /**
+   * Ceiling on iterations spent on series that contribute nothing,
+   * defaulting to `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS`.
+   *
+   * Here so a test can reach the ceiling without spending it. Pinning a
+   * bound denominated in rule iterations means walking them, and at the
+   * production value that is six seconds per test on a box that also
+   * runs CI. Every assertion about the behavior is written against
+   * whatever value is in force — how far past the ceiling one expansion
+   * may carry the total, how many series go unexpanded, what the
+   * refusal carries — so a tenth of it exercises the same code and the
+   * same arithmetic. The production number is pinned by a separate
+   * equality check, which is the assertion that would otherwise have
+   * been buried inside a slow one.
+   */
+  maxUnproductiveIterations?: number;
+}
+
+export function occurrenceRoutes(
+  storage: Storage,
+  options: OccurrenceRouteOptions = {},
+) {
+  const maxUnproductiveIterations =
+    options.maxUnproductiveIterations ?? MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS;
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(occurrencesRoute, async (c) => {
@@ -962,7 +1015,7 @@ export function occurrenceRoutes(storage: Storage) {
             series_errors: 0,
             max_series_errors: MAX_SERIES_ERRORS,
             unproductive_iterations: 0,
-            max_unproductive_iterations: MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS,
+            max_unproductive_iterations: maxUnproductiveIterations,
             series_unexpanded: 0,
           },
         },
@@ -1025,8 +1078,10 @@ export function occurrenceRoutes(storage: Storage) {
       exceptionSeeds,
     );
 
-    /** Iterations spent on series that emitted nothing, which is the
-     *  work `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` bounds. */
+    /** Iterations spent on series that contributed nothing to `data`,
+     *  which is the work `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS` bounds.
+     *  Not the same as "produced nothing": a series refused for flooding
+     *  the window produced occurrences and the refusal discarded them. */
     let unproductiveIterations = 0;
     /** Series the ceiling stopped this request from reaching. Reported,
      *  because a stop nobody is told about is a calendar quietly missing
@@ -1083,28 +1138,47 @@ export function occurrenceRoutes(storage: Storage) {
      * fully applied, listing it while the list has room and counting it
      * either way.
      *
-     * Four classes reach this today: the expander's own refusals, a rule
-     * with no start to unfold from, a `recurrence` carrying something
-     * that is not a property line, and a timezone that does not resolve.
-     * The middle two used to be dropped in the projection and were
-     * invisible in both passes; the last used to leave the expander as a
-     * `RangeError` and answered the whole calendar with a 500.
+     * Two sources reach this. `projectSeries` reports what it can tell
+     * from the row alone — a `recurrence` that is not a list, one
+     * holding no readable property line, one whose readable lines have
+     * no `starts_at` to unfold from, and one carrying entries that are
+     * not property lines beside readable ones. `expandSeries` reports
+     * its own refusals, the unresolvable timezone among them.
      *
      * **This is a list, not a guarantee.** An earlier version of this
      * comment said every way the route declines a rule comes through
      * here, and the timezone case was live in the file at the time —
      * asserting completeness is what turned an inherited hole into a
      * false claim, which is the mistake the array itself exists to stop
-     * the response from making. What holds is the direction that can be
-     * checked: a row listed here is a rule this read genuinely could not
-     * use. Whether some other way of being broken has no path to this
-     * function is a question for whoever next goes looking, and
+     * the response from making.
+     *
+     * The replacement overclaimed in a second way, which is worth
+     * keeping written down because it is the same reflex: it said a row
+     * listed here is a rule the read could not use. **Not use, or not
+     * fully apply** — the fourth projection class above is reported and
+     * expands, contributing every occurrence the readable lines produce.
+     * That qualifier is on the schema and on the SDK and was missing
+     * only here, which is how a caller reading the source got a stronger
+     * promise than a caller reading the API.
+     *
+     * What holds is narrower than either: an entry names a row and a
+     * thing that was wrong with its rule. It does not say the row is
+     * absent from `data`, and the absence of an entry does not say the
+     * row is sound. Whether some other way of being broken has no path
+     * to this function is a question for whoever next goes looking, and
      * `scan.series_errors` should be read as a floor.
      *
+     * **One row can arrive here twice**, and the count is in entries
+     * rather than in rows because of it: a rule whose unreadable line
+     * was dropped is reported by the projection and reported again if
+     * expanding what was left then fails. Both are true and both name
+     * the row through `item_id`, so a caller counting distinct rules
+     * groups on that rather than reading the length.
+     *
      * Counting past the cap costs one integer and is the difference
-     * between "at least 500 rules are broken" and "50,000 are", which is
-     * the difference between a caller ignoring it and a caller stopping
-     * an import. See `MAX_SERIES_ERRORS` for why this array is the one
+     * between "at least 500 failures" and "50,000", which is the
+     * difference between a caller ignoring it and a caller stopping an
+     * import. See `MAX_SERIES_ERRORS` for why this array is the one
      * place in this file where trimming beats refusing.
      */
     const appendSeriesError = (itemId: string, message: string): void => {
@@ -1150,7 +1224,7 @@ export function occurrenceRoutes(storage: Storage) {
       // ceiling bounds the work done rather than merely reporting on it.
       // The series that crossed it has already been walked; this one and
       // everything after it are not.
-      if (unproductiveIterations >= MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS) {
+      if (unproductiveIterations >= maxUnproductiveIterations) {
         seriesUnexpanded += 1;
         continue;
       }
@@ -1166,7 +1240,7 @@ export function occurrenceRoutes(storage: Storage) {
       }
 
       // Initialized empty rather than assigned in every path: a series
-      // that threw emitted nothing, which is what both the charge below
+      // that threw contributed nothing, which is what both the charge below
       // and the append loop after it need to know, so the failure needs
       // no flag of its own.
       let expanded: Occurrence[] = [];
@@ -1193,9 +1267,12 @@ export function occurrenceRoutes(storage: Storage) {
         // an early exit from the catch would otherwise skip the charge.
         const spent = work.iterations - before;
         iterationsSinceYield += spent;
-        // Charged only when the series emitted nothing, which is what
-        // keeps the total-work ceiling from being spent by a calendar
-        // that is merely full of meetings. See
+        // Charged only when the series put nothing into `data`, which
+        // is what keeps the total-work ceiling from being spent by a
+        // calendar that is merely full of meetings. A throw leaves this
+        // empty whatever the rule computed, so a series refused for
+        // flooding the window is charged for the walk that produced the
+        // occurrences the refusal discarded — deliberate, and stated on
         // `MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS`.
         if (expanded.length === 0) unproductiveIterations += spent;
       }
@@ -1360,7 +1437,7 @@ export function occurrenceRoutes(storage: Storage) {
           series_errors: seriesErrorCount,
           max_series_errors: MAX_SERIES_ERRORS,
           unproductive_iterations: unproductiveIterations,
-          max_unproductive_iterations: MAX_UNPRODUCTIVE_EXPANSION_ITERATIONS,
+          max_unproductive_iterations: maxUnproductiveIterations,
           series_unexpanded: seriesUnexpanded,
         },
         ...(seriesErrors.length > 0 ? { series_errors: seriesErrors } : {}),

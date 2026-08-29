@@ -622,6 +622,43 @@ describe("a row whose declared rule cannot be used", () => {
     expect(errors.filter((e) => e.item_id === id)).toHaveLength(1);
   });
 
+  it("reports one row twice when two things are wrong with its rule", async () => {
+    // Both sources fire on this row: the projection drops the entry that
+    // is not a property line, and the expander then refuses the EXRULE
+    // that was left. Two entries against one `item_id`, and
+    // `scan.series_errors` counts two.
+    //
+    // Pinned because the field's description used to say "one entry per
+    // series", which made the count read as a number of broken rules —
+    // it is a number of failures, and a caller wanting rules groups on
+    // `item_id`. It also decides the cap's unit: this row consumes two
+    // of the 500 entries, not one.
+    const id = await createEvent({
+      title: "broken two ways",
+      starts_at: "2031-05-04T09:00:00.000Z",
+      recurrence: [42, "EXRULE:FREQ=DAILY"],
+    });
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/occurrences?from=${encodeURIComponent(FROM)}&to=${encodeURIComponent(TO)}`,
+      { key: memberKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      series_errors?: SeriesError[];
+      scan: { series_errors: number };
+    };
+    const mine = (body.series_errors ?? []).filter((e) => e.item_id === id);
+    expect(mine).toHaveLength(2);
+    // Different failures, not the same one twice.
+    expect(new Set(mine.map((e) => e.message)).size).toBe(2);
+    // And the count is in the same unit as the array, which is what
+    // makes the truncation comparison behind `series_errors_truncated`
+    // exact.
+    expect(body.scan.series_errors).toBeGreaterThanOrEqual(2);
+  });
+
   it("says nothing about a row that declares no rule at all", async () => {
     // The control. An empty list is an explicit "this does not repeat",
     // and a response that called it broken would be the same defect
