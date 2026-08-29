@@ -22,6 +22,7 @@
 
 import { parseScope } from "@withmarfa/shared";
 import { capabilityShort } from "./capability-labels.js";
+import { scopeOperation } from "./scope-operation.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
 
@@ -119,6 +120,13 @@ function formatDate(iso: string): string {
  * to base a narrow claim on, so it reads as the widest. Overstating an app's
  * reach costs a revoke nobody needed; understating it loses the decision
  * this page exists for.
+ *
+ * **What a scope permits is asked of `scope-operation.ts`, the same module
+ * the consent screens ask.** This page is where somebody comes to review a
+ * grant a consent screen took, so the two describing one grant in two
+ * vocabularies would be a defect visible only to the person who saw both.
+ * The switch stays, because it answers a different question — which clause
+ * of this sentence a scope feeds — and only the read/write derivation folds.
  */
 function scopeSummary(scopes: readonly string[]): string {
   let writesData = false;
@@ -139,10 +147,28 @@ function scopeSummary(scopes: readonly string[]): string {
       case "type":
       case "edge":
       case "metadata":
-      case "content":
-        if (parsed.operation === "write") writesData = true;
-        else readsData = true;
+      case "content": {
+        // Asked of `scopeOperation` rather than read off `parsed.operation`,
+        // so the one derivation the consent screens use is the one this page
+        // uses. Two copies of a rule are two rules eventually, and this arm
+        // already answered differently from that module at one input: it
+        // read a verb-bearing scope carrying no verb as a read, where that
+        // module refuses to answer for it. Nothing produces that input today
+        // — `parseScope` gives "none" only to the two verb-less families,
+        // which never reach this arm — so folding changes no rendered line.
+        // It removes the second derivation, which is the argument
+        // `scope-operation.ts` makes for existing.
+        const operation = scopeOperation(parsed);
+        if (operation === "write") writesData = true;
+        else if (operation === "read") readsData = true;
+        // A verb-bearing scope with no verb grants nothing, but nothing here
+        // can tell that from a grammar this build predates, so it lands with
+        // the other family this page cannot characterize. Overstating costs
+        // a revoke nobody needed, which is the direction this whole function
+        // already leans.
+        else unknownFamily = true;
         break;
+      }
       case "oidc":
         identifiesYou = true;
         break;

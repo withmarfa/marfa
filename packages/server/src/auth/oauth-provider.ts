@@ -349,7 +349,7 @@ function warnOnceAboutWithheldBundleScope(scope: string): void {
   log("warn", "permission bundle names a scope this build withholds", {
     scope,
     action: "dropped from the OAuth scope allowlist",
-    reason: "no consent copy distinguishes its read and write levels",
+    reason: "no consent copy is written for the pattern",
   });
 }
 

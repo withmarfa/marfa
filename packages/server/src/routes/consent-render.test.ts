@@ -230,8 +230,12 @@ describe("renderConsentScreen — soft-tile groups", () => {
   it("renders per-type toggles with human labels, not raw scope strings", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toContain('class="subrow"');
-    expect(html).toContain("<span>Notes</span>");
-    expect(html).toContain("<span>Tasks</span>");
+    // The name, then what the grant permits. `PARAMS` asks for both halves
+    // of `core.note`, and a row that named the type alone rendered the same
+    // word twice; `consent-operation.test.ts` holds that apart.
+    expect(html).toContain("<span>Notes (read only)</span>");
+    expect(html).toContain("<span>Notes (read and write)</span>");
+    expect(html).toContain("<span>Tasks (read only)</span>");
     expect(html).toContain('class="sw"');
   });
 
@@ -334,10 +338,14 @@ describe("renderConsentScreen — re-consent diff", () => {
       ...PARAMS,
       priorScopes: ["core.note:read", "core.task:write"],
     });
-    // Removed: core.task:write → label "Tasks", as quiet text not a checkbox.
+    // Removed: core.task:write → "Tasks (read and write)", as quiet text
+    // not a checkbox. The operation is on this line for the reason it is on
+    // every other: dropping the write half of a grant while keeping the read
+    // half is an ordinary narrowing, and the type alone cannot say which
+    // half went.
     expect(html).toContain(">No longer needed<");
     expect(html).toMatch(
-      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Tasks</,
+      /No longer needed<\/p>\s*<p class="rmeta"[^>]*>Tasks \(read and write\)</,
     );
   });
 

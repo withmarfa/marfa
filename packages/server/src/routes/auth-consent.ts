@@ -1626,10 +1626,10 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // **The prohibition is not tidiness, it is the only way the two screens
   // can be made to agree.** These sentences used to carry a futurity clause,
   // because the device screen has no toggles and no second line and this is
-  // the whole of what it says about a grant. But `labelFor` on the authorize
-  // screen falls through to this map wherever nothing curated names the
-  // pattern, so the clause written for one screen arrived as the other
-  // screen's toggle label, directly above a line about to state the same
+  // the whole of what it says about a grant. But `scopeName` on the
+  // authorize screen falls through to this map wherever nothing curated
+  // names the pattern, so the clause written for one screen arrived as the
+  // other screen's toggle label, directly above a line about to state the same
   // thing. What reconciled them was a regex looking for the word "later" in
   // the label, and a check on the copy cannot tell a clause that means
   // futurity from a word that merely spells it: futurity phrased in other
@@ -1743,14 +1743,14 @@ export async function resolveWildcardExpansions(
 function describeScope(scope: ParsedScope): string | undefined {
   switch (scope.kind) {
     case "oidc":
-      // Deliberately absent. `labelFor` in `consent.ts` and
+      // Deliberately absent. `scopeName` in `consent.ts` and
       // `describeCapabilities` in `device-pages.ts` both resolve an OIDC
       // literal through `oidc-labels.ts` and return before they look at this
       // map, so anything written here for one was computed and discarded. A
       // third register existed to fill it and is gone with it.
       return undefined;
     case "capability":
-      // Deliberately absent, for the reason above. `labelFor` in
+      // Deliberately absent, for the reason above. `scopeName` in
       // `consent.ts` and `describeCapabilities` in `device-pages.ts` both
       // resolve a capability literal through `capability-labels.ts` and
       // return before they look at this map, so anything written here for

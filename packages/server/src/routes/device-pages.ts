@@ -18,6 +18,7 @@ import { capabilityLabel } from "./capability-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
 import { isOpenEnded, OPEN_ENDED_SENTENCE } from "./scope-openness.js";
+import { operationSentence } from "./scope-operation.js";
 
 interface DevicePageParams {
   /** Pre-filled user_code from ?user_code=X. Optional. */
@@ -76,6 +77,29 @@ function openEndedSuffixed(scope: ParsedScope, base: string): string {
  * scope literal; how wide the grant is does not stop being true because the
  * words for it went missing.
  *
+ * **{@link operationSentence} is appended on the same terms, and it is what
+ * keeps this screen able to tell a read from a change.** The description map
+ * is keyed on the type pattern, which carries no verb, so `core.note:read`
+ * and `core.note:write` both resolved to "Your notes." — and this function
+ * de-duplicates on the rendered line, so the second was dropped and a
+ * request to read and write somebody's notes rendered as one row saying
+ * neither. The authorize screen had the same gap and separated the two by
+ * which section they landed in, which this screen has no equivalent of at
+ * all. Composed from the grammar rather than curated, so a sentence written
+ * here cannot go quiet while the other surface speaks.
+ *
+ * **The read half of a pattern held at both operations is printed, not
+ * folded into the write line.** `summarize` on the authorize screen does
+ * fold it, and the difference is that screen's truncation rather than a
+ * disagreement about what a write grant confers. That sentence names four
+ * and then counts, so a name it does not have to spend is a name the
+ * futurity clause can have; this one prints every line it resolves and
+ * truncates nothing. Folding here would buy space nothing was competing for
+ * and cost the reader the shape of the request the client actually made.
+ * Being un-editable is not the reason — that is what excuses the toggle
+ * rows, which submit a literal per row, and it does not reach a screen that
+ * submits nothing per line.
+ *
  * The verb-less families are named rather than defaulted, because the
  * fallback is a literal this function rebuilds and the naive rebuild is
  * wrong for them. Appending `:${operation}` to a capability produces
@@ -109,9 +133,14 @@ function describeCapabilities(
         : s.kind === "capability"
           ? (capabilityLabel(s.typePattern) ?? literal)
           : openEndedSuffixed(s, descriptions?.[s.typePattern] ?? literal);
-    if (seen.has(human)) continue;
-    seen.add(human);
-    out.push(human);
+    // What the grant reaches, then how far it reaches, then what it permits.
+    // The permission goes last so the futurity clause stays beside the noun
+    // phrase it qualifies rather than being split off from it.
+    const permits = operationSentence(s);
+    const line = permits === undefined ? human : `${human} ${permits}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    out.push(line);
   }
   return out;
 }

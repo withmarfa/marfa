@@ -58,6 +58,7 @@
 import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
   HIDDEN_MECHANISM_SCOPES,
+  parseScope,
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
@@ -71,6 +72,12 @@ import {
   OPEN_ENDED_EXPANSION_TAIL,
   OPEN_ENDED_LINE,
 } from "./scope-openness.js";
+import {
+  operationSentence,
+  scopeOperation,
+  sharedOperationSentence,
+  withOperation,
+} from "./scope-operation.js";
 
 interface ConsentParams {
   clientName: string;
@@ -280,12 +287,101 @@ function buildGroups(
  * holds none while reaching every metadata sub-resource, so the two
  * derivations disagreed on the one heading that most needed the clause and
  * it was the only open-ended group that never got it.
+ *
+ * **What the group permits is stated too, and the de-duplication is keyed on
+ * it.** These names resolve through a chain keyed on the type pattern, which
+ * carries no verb, so `core.note:read` and `core.note:write` both produced
+ * the word "Notes" and the second was dropped as a repeat of the first. That
+ * is the mechanism by which a summary of a read-and-write request read
+ * exactly like a summary of a read one. Where every scope in the group
+ * permits the same thing the sentence says so once at the end; where they
+ * disagree, which is what a merged section is, each name carries it.
+ *
+ * **A pattern held at both operations contributes one name**, in the write
+ * form, because a write grant confers read. The reason that is worth doing
+ * is the four-name truncation below rather than the redundancy; the note at
+ * the collapse itself carries it. What the group permits is then asked of
+ * what survives that collapse, so a group holding both halves of one grant
+ * states the operation once at the end like any other group whose members
+ * agree.
  */
 function summarize(group: ScopeGroup): string {
+  // Asked of every scope the group holds, including the ones the collapse
+  // below drops and the ones no chain finds a word for: a group reaching
+  // things that do not exist yet does so whether or not this sentence ends
+  // up naming the scope that reaches them.
+  const openEnded = group.scopes.some((scope) => isOpenEnded(scope));
+  // **A pattern the group holds at both operations is stated once, in the
+  // write form.** A write grant confers read, so "Notes (read and write)" is
+  // the whole truth where "Notes (read only), Notes (read and write)" is one
+  // fact said twice.
+  //
+  // Redundancy is the smaller half of it. This sentence names four and then
+  // counts, so doubling the names halves the threshold, and the shipped
+  // `custom` bundle emits both halves for every writable root: at two of
+  // them the list tipped into "and N more", which is the branch that
+  // replaces the clause saying the grant reaches types nobody has registered
+  // yet. That clause went missing on the one bundle whose own description
+  // promises exactly that.
+  //
+  // **The collapse raises that threshold; it does not decouple the two.**
+  // The `custom` bundle reaches four names at three own roots and tips at
+  // four, where the count takes the slot the clause was in and the sentence
+  // stops saying the grant reaches types nobody has registered yet. The
+  // sentence did that before the collapse existed, at five names instead of
+  // four, so it is the truncation's defect rather than this fold's. What
+  // `scope-openness.ts` guarantees is narrower than it looks: both surfaces
+  // read one answer for *which* scopes are open-ended, which is what stopped
+  // the two derivations disagreeing, and it cannot keep a sentence that has
+  // run out of room from dropping the clause. Fixing that means giving the
+  // count and the clause separate room rather than one slot;
+  // `consent-operation.test.ts` pins where the clause dies today so that
+  // whoever does it can see what they are changing.
+  //
+  // **Keyed on the family and the pattern, not on the rendered name.** Two
+  // patterns can resolve to one word, and merging those would claim write
+  // over a grant that only carries read.
+  //
+  // The family half is redundant against anything `parseScope` produced,
+  // which derives kind and pattern from the same literal and so cannot
+  // answer one pattern for two families. It is here because that guarantee
+  // lives in another file while this fold is the thing that would go wrong:
+  // `ParsedScope` is an ordinary interface, `device-pages.test.ts` already
+  // hand-builds literals of it, and a hand-built pair sharing a pattern
+  // across two families would silently fold one family's read into the
+  // other's write. Keyed this way the collapse can only ever fold a pattern
+  // into itself, whatever built the value.
+  //
+  // **Only here, and what makes it the exception is the truncation rather
+  // than the redundancy.** This sentence names four and then counts, so a
+  // name the collapse does not have to spend is a name the futurity clause
+  // can have. Neither other surface is short of room, and both keep the
+  // pair. A toggle row is a separately tickable grant whose literal is what
+  // the form submits, so folding one into the other would hide a checkbox.
+  // The device screen prints every line it resolves and truncates nothing,
+  // so folding there would drop a line to buy space nothing was competing
+  // for, and cost the reader the shape of the request the client actually
+  // made. `consent-operation.test.ts` holds both surfaces to that.
+  const foldKey = (scope: ParsedScope): string =>
+    `${scope.kind}:${scope.typePattern}`;
+  const writable = new Set(
+    group.scopes
+      .filter((scope) => scopeOperation(scope) === "write")
+      .map(foldKey),
+  );
+  const stated = group.scopes.filter(
+    (scope) =>
+      !(scopeOperation(scope) === "read" && writable.has(foldKey(scope))),
+  );
+  // Asked of what survives the collapse rather than of what the group holds,
+  // because the collapse is what decides how many operations the sentence
+  // still has to distinguish. A group holding both halves of one grant has
+  // one name left and one thing to say about it, and saying it once at the
+  // end is what this function does with every other shared property.
+  const shared = sharedOperationSentence(stated);
   const names: string[] = [];
-  let openEnded = false;
-  for (const scope of group.scopes) {
-    if (isOpenEnded(scope)) openEnded = true;
+  const seen = new Set<string>();
+  for (const scope of stated) {
     // Nearly the chain the toggle list uses, humanized floor included.
     // Stopping at the curated map left an uncurated scope out of this
     // sentence while the list below still showed it, so the summary
@@ -315,7 +411,16 @@ function summarize(group: ScopeGroup): string {
       oidcShort(scope.oidcScope ?? scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
-    if (label && !names.includes(label)) names.push(label);
+    if (!label) continue;
+    // Keyed on what the row permits as well as on what it names, so two
+    // grants that differ only in operation survive as two. The rendered name
+    // carries the operation only where the group has no single answer to
+    // state at the end, and either way the key does, so the two shapes
+    // cannot de-duplicate differently.
+    const key = `${label} ${scopeOperation(scope) ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(shared === undefined ? withOperation(scope, label) : label);
   }
   if (names.length === 0) return group.desc;
 
@@ -336,7 +441,8 @@ function summarize(group: ScopeGroup): string {
   // have a sentence form, so the fix is not a general lowercasing pass: a
   // brand keeps its capital wherever it lands, and "Notes, Tasks and Files"
   // is a list of names that reads correctly as it stands.
-  return `${list.charAt(0).toUpperCase()}${list.slice(1)}.`;
+  const sentence = `${list.charAt(0).toUpperCase()}${list.slice(1)}.`;
+  return shared === undefined ? sentence : `${sentence} ${shared}`;
 }
 
 /**
@@ -483,23 +589,102 @@ export function humanizeType(typePattern: string): string {
   return typePattern.endsWith(".*") ? `${titled} (all)` : titled;
 }
 
-/** Human toggle label for a scope. */
+/**
+ * Human toggle label for a scope, saying both what the grant reaches and
+ * what it permits.
+ *
+ * **The name half is keyed on the type pattern, which carries no verb**, so
+ * every term in the chain below answers the same string for a read and a
+ * write over one type. The operation is composed on top rather than curated
+ * into the maps, and it is applied over the whole chain rather than inside
+ * it so that the humanized floor an uncurated pattern falls to carries it as
+ * well. A distinction that held only for the curated set would be none: a
+ * third-party app's custom request is the grant a person has least other
+ * information about.
+ *
+ * **Which of the two forms carries it is decided by what the name half
+ * turned out to be, rather than by the scope.** The parenthesis
+ * {@link withOperation} appends is written for a name, and `SCOPE_LABELS`,
+ * the OIDC and capability maps and the humanized floor all answer one:
+ * "Notes (read and write)" is what that form is for. The description map
+ * answers a sentence instead, so a row resolved through it read "Everything
+ * in your space. (read only)", with the bracket stranded past the period.
+ * That is not a corner of this screen: every wildcard but `user.*`, every
+ * edge type and three of the `system.*` types have no curated label at all,
+ * and a runtime-registered type's description is whatever prose its author
+ * wrote. A sentence therefore takes {@link operationSentence}, which is the
+ * string the device screen already prints for the same scope, so the two
+ * surfaces end up saying one grant one way wherever both fall this far.
+ *
+ * **Splitting the forms is also what makes the parenthesis's own reason
+ * true.** {@link withOperation} is bracketed because {@link summarize}
+ * joins names into a list sentence and a comma or an "and" inside one
+ * arrives there as two items. That argument is about names, and `summarize`
+ * resolves through `SCOPE_LABELS` and the humanized floor without ever
+ * consulting a description — so it covered every path except the one that
+ * was rendering wrong.
+ *
+ * The verb-less families take neither form, decided on `kind` in an
+ * exhaustive switch rather than on which branch below returned.
+ */
 function labelFor(
   scope: ParsedScope,
   descriptions: Record<string, string> | undefined,
 ): string {
+  const name = scopeName(scope, descriptions);
+  if (!name.isSentence) return withOperation(scope, name.text);
+  const permits = operationSentence(scope);
+  return permits === undefined
+    ? name.text
+    : `${endStopped(name.text)} ${permits}`;
+}
+
+/** What the grant reaches, with no statement of what it permits, and whether
+ *  the chain answered with a name or with a sentence. */
+interface ScopeName {
+  text: string;
+  isSentence: boolean;
+}
+
+/**
+ * Resolves the name half, and reports which register it came from.
+ *
+ * `isSentence` is set by which branch answered rather than by inspecting
+ * the string. Every other branch reads a map this repository curates under
+ * a rule that keeps its entries names; the description branch is the one
+ * that can end up holding a runtime-registered type's own prose, which
+ * nothing here governs. Sniffing for a trailing period instead would make
+ * the form depend on how an unrelated author punctuated, and would take the
+ * bracket off any curated label that ever gained one.
+ */
+function scopeName(
+  scope: ParsedScope,
+  descriptions: Record<string, string> | undefined,
+): ScopeName {
   if (scope.kind === "oidc") {
     const lit = scope.oidcScope ?? scope.typePattern;
-    return oidcLabel(lit) ?? humanizeType(lit);
+    return { text: oidcLabel(lit) ?? humanizeType(lit), isSentence: false };
   }
   if (scope.kind === "capability" && scope.capability) {
-    return CAPABILITY_LABELS[scope.capability];
+    return { text: CAPABILITY_LABELS[scope.capability], isSentence: false };
   }
-  return (
-    SCOPE_LABELS[scope.typePattern] ??
-    descriptions?.[scope.typePattern] ??
-    humanizeType(scope.typePattern)
-  );
+  const curated = SCOPE_LABELS[scope.typePattern];
+  if (curated !== undefined) return { text: curated, isSentence: false };
+  const described = descriptions?.[scope.typePattern];
+  if (described !== undefined) return { text: described, isSentence: true };
+  return { text: humanizeType(scope.typePattern), isSentence: false };
+}
+
+/**
+ * The sentence with a full stop on it, added only where one is missing.
+ *
+ * A description is a sentence, but only the curated map guarantees it is
+ * punctuated as one: an uncurated pattern falls through to its registry
+ * entry, and that is prose somebody wrote for an API reference. Without the
+ * stop the operation would run into the last word of it.
+ */
+function endStopped(text: string): string {
+  return /[.!?]["')\]]?$/.test(text) ? text : `${text}.`;
 }
 
 /** Renders the OAuth consent screen as an HTML string. */
@@ -658,22 +843,35 @@ export function renderConsentScreen(params: ConsentParams): string {
         ? `<p class="lsec" style="margin-top:8px">New</p>${groupedTiles(addedVisible)}`
         : "";
     // The standing grant keeps the same partition the new request uses, and
-    // that is deliberate rather than untouched.
-    //
-    // It costs something real: "Other read access" and "Other write access"
+    // it costs something real: "Other read access" and "Other write access"
     // render in both sections, covering different scopes each time, and the
     // second stack is most of the height between the reader and the buttons.
-    // Collapsing it into one tile fixes both and loses more than it fixes,
-    // because the read and write halves of a grant are told apart by their
-    // bundle headings and by nothing else. `labelFor` resolves a row from
-    // `typePattern` alone, so `core.note:read` and `core.note:write` are both
-    // the word "Notes"; merged into one body they become two identical rows,
-    // and `summarize` de-duplicates them into one word. A screen that cannot
-    // say an app may write your notes has failed at the only job it has.
     //
-    // So the shorter standing grant is structural work rather than a smaller
-    // edit: it needs the operation carried by the row, or the section
-    // summarized without re-listing it. Left whole here on purpose.
+    // **One of the two things that blocked collapsing it is now gone.** The
+    // read and write halves of a grant were told apart by their bundle
+    // headings and by nothing else, because `labelFor` resolved a row from
+    // `typePattern` alone and `core.note:read` and `core.note:write` were
+    // both the word "Notes": merged into one body they became two identical
+    // rows, which `summarize` then de-duplicated into one. `withOperation`
+    // now carries the operation on the row itself and into the summary's
+    // de-duplication key, so a merged section keeps the distinction and
+    // `consent-operation.test.ts` is what holds it there.
+    //
+    // **The other one is `groupedTiles`'s `alreadyGranted` parameter, and it
+    // is still here.** `defaultOn` is a property of a group rather than of a
+    // row, and that parameter forces it true for everything built from kept
+    // scopes. Merge the two stacks and one group can hold an added
+    // off-by-default scope beside a kept one,
+    // where either setting is destructive in one direction: on, and a scope
+    // the person never agreed to rides in ticked; off, and an untouched
+    // Continue submits a narrowing, which the decision route treats as a
+    // promise that the removed access stops working and revokes the client's
+    // live tokens. That parameter's own docstring spells the second one out.
+    // Collapsing also erases new-versus-kept, which is the distinction this
+    // whole diff exists to draw.
+    //
+    // So this stays whole until `defaultOn` moves from the group to the row.
+    // Not a density decision yet.
     const keptSection =
       keptVisible.length > 0
         ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible, true)}`
@@ -685,17 +883,32 @@ export function renderConsentScreen(params: ConsentParams): string {
     // form for the same reason the summaries do: the toggle labels are
     // capitalized and two of them carry a comma, which turns one item in this
     // list into two fragments.
+    //
+    // Carrying what each dropped grant permitted, for the reason every other
+    // row on this screen does. Giving up the write half of a type while
+    // keeping the read half is an ordinary shape of a narrowing, and without
+    // the operation this line prints the same word that "Already allowed" is
+    // still showing two sections above it.
+    //
+    // The literal is put through the grammar for that half rather than sliced
+    // for it, since the verb-less families are precisely the ones whose
+    // literal carries no colon. A stored grant the grammar refuses — one
+    // written under an older build — keeps the hand-recovered pattern and
+    // says nothing about an operation nothing could read.
     const removedLabels = Array.from(
       new Set(
         diff.removed.map((lit) => {
+          const parsed = parseScope(lit);
           const lastColon = lit.lastIndexOf(":");
-          const typePattern = lastColon > 0 ? lit.slice(0, lastColon) : lit;
-          return (
+          const typePattern =
+            parsed?.typePattern ??
+            (lastColon > 0 ? lit.slice(0, lastColon) : lit);
+          const name =
             capabilityShort(typePattern) ??
             oidcLabel(typePattern) ??
             SCOPE_LABELS[typePattern] ??
-            humanizeType(typePattern)
-          );
+            humanizeType(typePattern);
+          return parsed ? withOperation(parsed, name) : name;
         }),
       ),
     );
