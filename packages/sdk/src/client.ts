@@ -626,10 +626,13 @@ export interface OccurrencesScan {
    * rules this read looked at were fine and says nothing at all about
    * the ones it did not.
    *
-   * The true total for what was read even when `series_errors` on the
-   * result lists fewer, which is what lets a caller tell a handful of
-   * broken rules from a corrupt import without being sent the bytes of
-   * the larger one.
+   * It counts everything this read detected, even when `series_errors`
+   * on the result lists fewer, which is what lets a caller tell a
+   * handful of broken rules from a corrupt import without being sent the
+   * bytes of the larger one. A floor rather than a certificate: it
+   * counts the ways of being broken the server knows how to recognize,
+   * so zero is the absence of a detected failure and not a proof of
+   * health.
    */
   series_errors: number;
   /**
@@ -640,8 +643,12 @@ export interface OccurrencesScan {
   max_series_errors: number;
   /**
    * Rule iterations the read spent on series that produced no
-   * occurrence: a rule that ended before the window, one too frequent to
-   * expand, one that would not parse.
+   * occurrence: a rule that ended before the window, or one too frequent
+   * to reach it before the per-series iteration ceiling.
+   *
+   * Only iterations count. A series that fails before it iterates — an
+   * unreadable rule, a timezone that does not resolve — is reported in
+   * `series_errors` and charges nothing here.
    *
    * The unit the expansion ceiling is denominated in, reported on every
    * read rather than only on the one it truncates.
@@ -669,8 +676,9 @@ export interface OccurrencesResult {
   scan: OccurrencesScan;
   /**
    * Series whose rule the server could not use — malformed, flooding the
-   * window, carrying no start to unfold from, or holding something that
-   * is not an RFC 5545 property line. The rest of the calendar still
+   * window, carrying no start to unfold from, carrying a timezone that
+   * does not resolve, or holding something that is not an RFC 5545
+   * property line. The rest of the calendar still
    * returns, so a caller ignoring this renders a calendar with a
    * repeating meeting silently absent from it, or a repeating meeting
    * silently shown once.
@@ -701,6 +709,11 @@ export interface OccurrencesResult {
    * window will not help — the budget is spent walking rules from their
    * own start, before the window is reached — so the move is a `type`
    * narrowing, or fixing the rules `series_errors` names.
+   *
+   * The same two fields appear in a `ValidationError`'s `details` when
+   * the occurrence ceiling refuses a read whose expansion had already
+   * been truncated. That refusal says to narrow the window, and these
+   * say that narrowing it still returns a partial calendar.
    */
   expansion_incomplete?: boolean;
 }
