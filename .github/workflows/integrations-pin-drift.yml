@@ -287,15 +287,18 @@ jobs:
     # `cancelled` and `skipped` open an alert rather than staying silent. A
     # guard that did not run is not a guard that ran green.
     needs: [drift]
+    # Skipped when no alert destination is configured, so a fork sends nothing.
     if: >-
       always() && (github.event_name == 'schedule'
       || (github.event_name == 'workflow_dispatch'
       && github.ref == 'refs/heads/main'))
+      && vars.ALERT_WEBHOOK_URL != ''
     runs-on: ubuntu-latest
     steps:
-      - name: Report outcome to aic-alerts
+      - name: Report outcome
         env:
-          ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          ALERT_URL: ${{ vars.ALERT_WEBHOOK_URL }}
+          ALERT_TOKEN: ${{ secrets.ALERT_WEBHOOK_TOKEN }}
           RESULTS: ${{ join(needs.*.result, ',') }}
           WORKFLOW: ${{ github.workflow }}
           REPO: ${{ github.repository }}
@@ -306,11 +309,19 @@ jobs:
             *,cancelled,*|*,skipped,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
             *) STATE=resolved; TITLE="$WORKFLOW is green again on $REPO" ;;
           esac
+          # The destination may or may not need a credential, so the header is
+          # built rather than hardcoded: an empty token would otherwise be sent
+          # as "Bearer " with nothing after it, which reads as a malformed
+          # request rather than an unauthenticated one.
+          AUTH=()
+          if [ -n "${ALERT_TOKEN:-}" ]; then
+            AUTH=(-H "Authorization: Bearer $ALERT_TOKEN")
+          fi
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
                 --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULTS" \
             '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
               fields:{Repository:$r,Workflow:$w,Jobs:$j}}' \
-          | curl -sS --fail-with-body --max-time 20 -X POST https://alerts.cyzr.me/alert \
-              -H "Authorization: Bearer $ALERTS_SECRET" \
+          | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
+              "${AUTH[@]}" \
               -H "Content-Type: application/json" --data @- \
-          || echo "aic-alerts POST did not succeed (see above); not failing the run over it."
+          || echo "Alert POST did not succeed (see above); not failing the run over it."
