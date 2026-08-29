@@ -668,10 +668,37 @@ export function scopesToTypePermissions(
     // The stronger of the two wins, which is the rule this loop already
     // applied — `current === "none"` is the only clause added, and it can
     // only be reached by an entry the category put there. A scope literal is
-    // never `"none"`: the grammar has no way to spell one, so lowering a row
-    // below its parent is not expressible here and this cannot narrow. A set
-    // holding no content literal never sees a `"none"` and projects exactly
-    // as it did before.
+    // never `"none"`: the grammar has no way to spell one, so no key this
+    // loop writes ends up below the level a literal named. A set holding no
+    // content literal never sees a `"none"` and projects exactly as it did
+    // before.
+    //
+    // **That is a statement about keys, and it is NOT the statement that
+    // adding the category to a grant can only widen it.** Do not read it as
+    // one. `resolveTypePermission` puts an exact key ahead of any wildcard,
+    // and the category writes exact keys — every `SYSTEM_TYPE_IDS` member at
+    // `"none"`, and `marfa.*` clamped to `"read"` on the write level. So a
+    // grant already holding a wildcard that reached those ids loses them when
+    // the category is added beside it:
+    //
+    //   ["*:read"]                   → system.credential resolves "read"
+    //   ["*:read", "content:read"]   → system.credential resolves "none"
+    //   ["*:write"]                  → marfa.captured_email resolves "write"
+    //   ["*:write", "content:write"] → marfa.captured_email resolves "read"
+    //
+    // A strictly larger scope set therefore covers strictly less, and
+    // `grantCoversScope` flips from true to false across the same pair. That
+    // is fail-closed in both cases and confers nothing, so it is not an
+    // escalation — but it does mean a standing grant re-consented alongside
+    // the category is asked for again rather than waved through, and any
+    // caller reasoning that a superset is safe to substitute is wrong.
+    //
+    // The four resolutions above are asserted rather than described.
+    // `scopes.test.ts` holds them under "adding the content category to a
+    // wildcard grant can narrow it", so a change that stops one of them
+    // being true reddens there instead of leaving this comment standing
+    // over a measurement nobody rechecks. The previous version of this
+    // comment was wrong for exactly as long as it took somebody to read it.
     if (
       parsed.operation === "write" ||
       current === undefined ||

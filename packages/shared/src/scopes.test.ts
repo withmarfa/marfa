@@ -1560,6 +1560,59 @@ describe("the content category projection", () => {
   });
 });
 
+describe("adding the content category to a wildcard grant can narrow it", () => {
+  // Four resolutions, asserted rather than described. The comment on
+  // `scopesToTypePermissions` states them as measured fact, and until this
+  // block existed nothing held any of them: the tests above cover the
+  // projection on its own and never the wildcard-plus-category combination
+  // the claim is actually about.
+  //
+  // The property is that a strictly larger scope set covers strictly less.
+  // `resolveTypePermission` puts an exact key ahead of any wildcard, and the
+  // category writes exact keys, so the exclusions it projects outrank a
+  // wildcard the same grant already holds. Fail-closed in both directions and
+  // therefore not an escalation — but a caller substituting a superset is
+  // wrong, and this is what says so out loud when somebody tries.
+
+  it("takes a system type from read to none when the category joins `*:read`", () => {
+    const wildcardOnly = scopesToTypePermissions(["*:read"]);
+    const withCategory = scopesToTypePermissions(["*:read", "content:read"]);
+    // The fixture has to be honest about why the second answer is `none`:
+    // this id is in the family-backed exclusion set the projection reads.
+    expect(SYSTEM_TYPE_IDS.has("system.credential")).toBe(true);
+    expect(resolveTypePermission("system.credential", wildcardOnly)).toBe(
+      "read",
+    );
+    expect(resolveTypePermission("system.credential", withCategory)).toBe(
+      "none",
+    );
+  });
+
+  it("clamps an integration type from write to read when the category joins `*:write`", () => {
+    const wildcardOnly = scopesToTypePermissions(["*:write"]);
+    const withCategory = scopesToTypePermissions(["*:write", "content:write"]);
+    // Squarely inside the category rather than excluded from it, which is
+    // what makes this a clamp to `read` and not a drop to `none`.
+    expect(INTEGRATION_TYPE_IDS.has("marfa.captured_email")).toBe(true);
+    expect(resolveTypePermission("marfa.captured_email", wildcardOnly)).toBe(
+      "write",
+    );
+    expect(resolveTypePermission("marfa.captured_email", withCategory)).toBe(
+      "read",
+    );
+  });
+
+  it("flips `grantCoversScope` from true to false across the same pair", () => {
+    // The consequence a person meets: a standing grant re-consented alongside
+    // the category is asked for again rather than waved through. Coverage is
+    // the same projection read through a different door, so it moves with it.
+    expect(grantCoversScope(["*:read"], "system.credential:read")).toBe(true);
+    expect(
+      grantCoversScope(["*:read", "content:read"], "system.credential:read"),
+    ).toBe(false);
+  });
+});
+
 describe("the content category is covered by holding it and by nothing else", () => {
   // One case, two held sets, one assertion each way — the arm decides from
   // the difference between a parent grant and a row grant, so both have to be
