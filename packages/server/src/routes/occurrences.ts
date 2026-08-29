@@ -42,8 +42,10 @@
  *   - **Assembly stops the moment the window is over full**, so the rest
  *     of the assembly and every item fetch are saved.
  *   - **`series_errors` is capped in count and in message length**, so
- *     the other result array cannot grow without limit either. This one
- *     does refuse, and `MAX_SERIES_ERRORS` states what that costs.
+ *     the other result array cannot grow without limit either. This is
+ *     the one bound here that trims rather than refuses, and
+ *     `MAX_SERIES_ERRORS` states at length why this array is the place
+ *     that is correct and everywhere else it would not be.
  *   - **The batched reads are consumed a chunk at a time**, so nothing
  *     an id lookup returns outlives the chunk it arrived in.
  *   - **Both long loops hand the event loop back periodically** — the
@@ -132,8 +134,7 @@ export const MAX_WINDOW_DAYS = 400;
 export const MAX_OCCURRENCES = 5000;
 
 /**
- * Ceiling on the reported expansion failures, across every series in
- * the space.
+ * How many expansion failures the response will list.
  *
  * `series_errors` is a second result array and `MAX_OCCURRENCES`
  * structurally cannot bound it: a series that fails to expand emits no
@@ -143,21 +144,36 @@ export const MAX_OCCURRENCES = 5000;
  * body, built as one string in memory. Ten times that is the fail-open
  * crash this change exists to remove, relocated into the other array.
  *
- * **It refuses rather than truncating**, and the argument that talked
- * the occurrence path out of a work ceiling does not reach here. That
- * argument is that any bound either refuses a large calendar or serves
- * it with meetings silently missing. A series that errored contributed
- * no meeting by construction, so this ceiling refuses nothing a healthy
- * calendar contains and drops nothing from one that is served.
+ * ## Why this one truncates where the rules above forbid truncating
  *
- * **What it does cost, stated plainly:** unlike the occurrence ceiling,
- * this refusal is not recoverable by asking for a narrower window,
- * because the series pass is unwindowed. A space holding more than this
- * many broken rules cannot be read until the rules are repaired or
- * removed, and the refusal says so. That is the deliberate trade: five
- * hundred distinct broken rules is a corrupt import rather than a large
- * calendar, and a response nobody can hold in memory is not a better
- * answer than being told.
+ * Every other bound in this file refuses rather than trims, and the
+ * reason is that a calendar quietly missing a meeting looks exactly like
+ * a correct answer. None of that reaches this array, on three counts:
+ *
+ *   - **No occurrence is dropped.** A series that failed to expand
+ *     contributed nothing to `data` by construction, so capping the list
+ *     of failures cannot remove a meeting from the calendar. The healthy
+ *     series in the same space expand and return exactly as they would
+ *     have.
+ *   - **The response declares its own incompleteness.**
+ *     `series_errors_truncated` is on the envelope beside the array, so
+ *     a partial list is never mistaken for a complete one. That is the
+ *     whole of what "quietly" meant.
+ *   - **The true count is reported anyway**, as `scan.series_errors`, so
+ *     a caller can tell 501 broken rules from 50,000 without the bytes
+ *     of either. Diagnostics are compressible in a way meetings are not.
+ *
+ * Refusing here was tried first and was wrong. The series pass is
+ * unwindowed, so a refusal could not be recovered from by asking for a
+ * narrower window: a space with 501 broken rules would have received no
+ * calendar at all, its healthy series having expanded perfectly well.
+ * That is precisely the fail-closed scan ceiling this change exists to
+ * remove, reintroduced one array over.
+ *
+ * The retention argument that motivated the ceiling is untouched:
+ * accumulation still stops here, so the array in memory is bounded by
+ * this and by `MAX_SERIES_ERROR_MESSAGE_CHARS` whatever the space holds.
+ * What changed is only that the request still succeeds.
  */
 export const MAX_SERIES_ERRORS = 500;
 
@@ -530,6 +546,18 @@ const ScanSchema = z.object({
     .describe(
       "Ceiling `occurrences` is refused at. Reported on every successful read so a calendar approaching it is visible before a request is refused, rather than only once one is.",
     ),
+  series_errors: z
+    .number()
+    .int()
+    .describe(
+      "Series that could not be expanded, counted across the whole space. This is the true total even when `series_errors` on the envelope lists fewer, which is what lets a caller tell a handful of broken rules from a corrupt import without receiving the bytes of the larger one.",
+    ),
+  max_series_errors: z
+    .number()
+    .int()
+    .describe(
+      "Longest list of expansion failures the response will carry. Past this the list is capped and `series_errors_truncated` says so; the read still succeeds, because a series that failed to expand contributed no occurrence and capping the report of it drops nothing from the calendar.",
+    ),
 });
 
 const OccurrencesResponseSchema = z.object({
@@ -542,9 +570,15 @@ const OccurrencesResponseSchema = z.object({
   /** One entry per series that could not expand — a malformed rule, or
    *  a rule that floods the window. The rest of the calendar still
    *  returns; failing the whole read for one bad series would make a
-   *  single six-year-old meeting take the calendar down. Bounded by
-   *  `MAX_SERIES_ERRORS`, past which the read is refused instead. */
+   *  single six-year-old meeting take the calendar down. Capped at
+   *  `MAX_SERIES_ERRORS` entries, past which `series_errors_truncated`
+   *  is set and `scan.series_errors` carries the real total. */
   series_errors: z.array(SeriesErrorSchema).optional(),
+  /** Present and true when `series_errors` lists fewer failures than the
+   *  space holds. The array is capped rather than the read refused, so
+   *  this is how the response says the list is partial — see
+   *  `scan.series_errors` for how many there actually were. */
+  series_errors_truncated: z.boolean().optional(),
 });
 
 const occurrencesRoute = createRoute({
@@ -554,7 +588,7 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List event occurrences in a window",
   description:
-    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Three bounds apply and all three refuse rather than silently trimming: the window may not be longer than `max_days`, the assembled result may not exceed `max_occurrences`, and the space may not hold more than `max_series_errors` rules that fail to expand. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns.",
+    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Two bounds refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns. That list alone is capped rather than refused, at `scan.max_series_errors`: a failed series contributed no occurrence, so capping the report of it removes nothing from the calendar, and a capped list sets `series_errors_truncated` while `scan.series_errors` still carries the true total.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -582,7 +616,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; a window whose occurrences exceed `max_occurrences`; or a space holding more than `max_series_errors` rules that cannot be expanded. The last two can refuse a window that is otherwise perfectly valid, because they depend on what the space and the window hold rather than on how long the window is. Each carries its own ceiling plus `found`, where `found` is the count the read stopped at rather than the true total: the read is abandoned as soon as a ceiling is crossed instead of continuing in order to report how far past it the space went. Narrowing the window recovers from the occurrence ceiling; it does not recover from the series-error ceiling, which is unwindowed by nature and asks for the broken rules to be repaired or removed.",
+        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went. A space full of rules that cannot be expanded is not among these: that list is capped and the read succeeds.",
     },
     401: {
       content: {
@@ -698,6 +732,8 @@ export function occurrenceRoutes(storage: Storage) {
             events_read: 0,
             occurrences: 0,
             max_occurrences: MAX_OCCURRENCES,
+            series_errors: 0,
+            max_series_errors: MAX_SERIES_ERRORS,
           },
         },
         200,
@@ -786,27 +822,22 @@ export function occurrenceRoutes(storage: Storage) {
       pending.push(occurrence);
     };
     const seriesErrors: { item_id: string; message: string }[] = [];
+    /** Series that failed, including the ones past the list's cap. What
+     *  makes the cap reportable rather than merely silent. */
+    let seriesErrorCount = 0;
     /**
-     * Record one series that could not expand, refusing once the space
-     * holds more broken rules than a response can carry.
+     * Record one series that could not expand, listing it while the list
+     * has room and counting it either way.
      *
-     * Refused at the append for the same reason `appendPending` is: a
-     * ceiling consulted after the loop has already built everything it
-     * would have refused makes the answer a 400 without making the work
-     * smaller. See `MAX_SERIES_ERRORS` for why refusing beats truncating
-     * on this array specifically, and for what the refusal costs.
+     * Counting past the cap costs one integer and is the difference
+     * between "at least 500 rules are broken" and "50,000 are", which is
+     * the difference between a caller ignoring it and a caller stopping
+     * an import. See `MAX_SERIES_ERRORS` for why this array is the one
+     * place in this file where trimming beats refusing.
      */
     const appendSeriesError = (itemId: string, message: string): void => {
-      if (seriesErrors.length >= MAX_SERIES_ERRORS) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `More than ${String(MAX_SERIES_ERRORS)} series in this space carry a rule that cannot be expanded; repair or remove them`,
-          {
-            max_series_errors: MAX_SERIES_ERRORS,
-            found: seriesErrors.length + 1,
-          },
-        );
-      }
+      seriesErrorCount += 1;
+      if (seriesErrors.length >= MAX_SERIES_ERRORS) return;
       seriesErrors.push({
         item_id: itemId,
         message:
@@ -1029,8 +1060,13 @@ export function occurrenceRoutes(storage: Storage) {
           events_read: budget.scanned,
           occurrences: results.length,
           max_occurrences: MAX_OCCURRENCES,
+          series_errors: seriesErrorCount,
+          max_series_errors: MAX_SERIES_ERRORS,
         },
         ...(seriesErrors.length > 0 ? { series_errors: seriesErrors } : {}),
+        ...(seriesErrorCount > seriesErrors.length
+          ? { series_errors_truncated: true }
+          : {}),
       },
       200,
     );

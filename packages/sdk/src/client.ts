@@ -615,6 +615,20 @@ export interface OccurrencesScan {
    * refused, rather than only once one is.
    */
   max_occurrences: number;
+  /**
+   * Series that could not be expanded, counted across the whole space.
+   *
+   * The true total even when `series_errors` on the result lists fewer,
+   * which is what lets a caller tell a handful of broken rules from a
+   * corrupt import without being sent the bytes of the larger one.
+   */
+  series_errors: number;
+  /**
+   * Longest list of expansion failures the response will carry. Past
+   * this the list is capped rather than the read refused, and
+   * `series_errors_truncated` is set.
+   */
+  max_series_errors: number;
 }
 
 export interface OccurrencesResult {
@@ -629,11 +643,22 @@ export interface OccurrencesResult {
    * this renders a calendar with a repeating meeting silently absent
    * from it.
    *
-   * Bounded in both length and message size by the server. Past that
-   * bound the read is refused rather than the list truncated, so this
-   * array is never a partial account of what failed.
+   * Capped in both length and message size by the server. Past that cap
+   * the list is trimmed and `series_errors_truncated` says so, while
+   * `scan.series_errors` keeps the true count. The read still succeeds:
+   * a series that failed to expand contributed no occurrence, so a
+   * shorter list of failures costs the caller nothing from the calendar
+   * itself.
    */
   series_errors?: OccurrenceSeriesError[];
+  /**
+   * Set when `series_errors` lists fewer failures than the space holds.
+   *
+   * Worth branching on if the list is being shown to a person: it is the
+   * difference between "these are the broken rules" and "these are 500
+   * of them".
+   */
+  series_errors_truncated?: boolean;
 }
 
 export interface ListOccurrencesOptions {
@@ -2354,16 +2379,16 @@ export class MarfaClient {
      * so half the refusals would still need the round trip and a caller
      * could not tell the two apart.
      *
-     * A third refusal is keyed on the space rather than the window, and
-     * a caller should expect it to be the one it cannot retry its way
-     * out of: a space carrying more rules that fail to expand than the
-     * server will report refuses the read outright, with
-     * `max_series_errors` in `details`. Asking for less time does not
-     * help, because the pass that finds those rules is not windowed. The
-     * remedy is to repair or remove the rules, and the errors that fit
-     * under the ceiling arrive on `series_errors` as they always did.
+     * There is no third refusal. `series_errors` is capped rather than
+     * refused past `scan.max_series_errors`, because a series that could
+     * not expand contributed no occurrence and trimming the report of it
+     * takes nothing off the calendar — the healthy series in the same
+     * space still expand and return. A capped list sets
+     * `series_errors_truncated` and `scan.series_errors` keeps the true
+     * count, so a partial list is never mistaken for a complete one.
      *
-     * There is still no refusal for the size of the calendar itself. The
+     * There is no refusal for the size of the calendar itself either.
+     * The
      * passes that gather series and exceptions cannot be windowed — a
      * rule written years ago produces occurrences in any window, and an
      * exception moved out of one still shadows the slot it left — so
@@ -2372,8 +2397,8 @@ export class MarfaClient {
      * is where that cost is visible: `events_read` grows with the
      * calendar rather than with the window, and `max_occurrences`
      * arrives on every success, so a calendar approaching the one
-     * data-dependent ceiling a narrower window can recover from can be
-     * seen coming rather than met as a 400.
+     * data-dependent ceiling that does refuse can be seen coming rather
+     * than met as a 400.
      */
     list: async (
       options: ListOccurrencesOptions,

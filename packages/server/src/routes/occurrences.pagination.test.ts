@@ -673,31 +673,67 @@ describe("the reported expansion failures are bounded", () => {
     }));
   }
 
-  it("serves a space sitting on the ceiling", async () => {
+  it("lists every failure in a space sitting on the cap", async () => {
     const res = await readWindow(
       appOver(syntheticCalendar(broken(500)).storage),
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       series_errors?: { item_id: string; message: string }[];
+      series_errors_truncated?: boolean;
+      scan: { series_errors: number; max_series_errors: number };
     };
     expect(body.series_errors).toHaveLength(500);
+    expect(body.scan.series_errors).toBe(500);
+    expect(body.scan.max_series_errors).toBe(500);
+    // A full list is not a truncated one, and must not claim to be.
+    expect(body.series_errors_truncated).toBeUndefined();
   });
 
-  it("refuses rather than truncating once the space crosses it", async () => {
-    // Truncating would be the worse answer: the array would silently stop
-    // being an account of what failed, and nothing on the response would
-    // say so.
-    const calendar = syntheticCalendar(broken(501));
-    const res = await readWindow(appOver(calendar.storage));
-    expect(res.status).toBe(400);
+  it("caps the list and says so rather than refusing the calendar", async () => {
+    // The whole point of trimming here rather than refusing: the healthy
+    // series in this space expanded perfectly well, and a space with 501
+    // broken rules getting no calendar at all would be the fail-closed
+    // ceiling this route exists to have removed.
+    const rows = [
+      ...broken(50_000),
+      {
+        id: "healthy",
+        properties: {
+          title: "a meeting that still works",
+          starts_at: "2026-06-03T09:00:00.000Z",
+        },
+      },
+    ];
+    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+    expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      error: { details?: { max_series_errors?: number; found?: number } };
+      data: OccurrenceRow[];
+      series_errors?: { item_id: string; message: string }[];
+      series_errors_truncated?: boolean;
+      scan: { series_errors: number };
     };
-    expect(body.error.details?.max_series_errors).toBe(500);
-    expect(body.error.details?.found).toBe(501);
-    // Refused before a single row was read to build an answer nobody gets.
-    expect(calendar.fetched).toHaveLength(0);
+    // The calendar still answers the question it was asked.
+    expect(body.data.map((r) => r.item.properties.title)).toEqual([
+      "a meeting that still works",
+    ]);
+    // The list is capped, the response says the list is capped, and the
+    // true count is reported so 50,000 is distinguishable from 501.
+    expect(body.series_errors).toHaveLength(500);
+    expect(body.series_errors_truncated).toBe(true);
+    expect(body.scan.series_errors).toBe(50_000);
+  });
+
+  it("holds the response down while the space grows without limit", async () => {
+    // The retention argument the cap exists for, which trimming rather
+    // than refusing does not weaken: accumulation still stops at 500
+    // however many rules are broken. Measured at 4.8 MB before the cap.
+    const res = await readWindow(
+      appOver(syntheticCalendar(broken(25_000)).storage),
+    );
+    expect(res.status).toBe(200);
+    const bytes = Buffer.byteLength(await res.text(), "utf8");
+    expect(bytes).toBeLessThan(500_000);
   });
 
   it("bounds one message as well as the count", async () => {
@@ -769,6 +805,45 @@ describe("a row's time and the item it renders cannot disagree", () => {
     expect(row?.ends_at).toBe("2026-06-03T15:30:00.000Z");
     // The whole point: the two halves of the row agree.
     expect(row?.item.properties.starts_at).toBe(row?.starts_at);
+  });
+
+  it("shows a row moved out of the window at its new time, not its old slot", async () => {
+    // The direction chosen deliberately, so changing it has to be
+    // deliberate too. The window selects which rows appear; it does not
+    // constrain what time they are shown at. That is already how
+    // `replaces` behaves — a stored exception moved outside the window is
+    // shown at its own time rather than dropped — and a standalone row
+    // that moved is the same question with the same answer.
+    //
+    // The alternative is to re-check the window after the fetch and drop
+    // the row, which loses a meeting that exists in order to honor a
+    // filter that was already applied when it was selected.
+    const calendar = syntheticCalendar(
+      [
+        {
+          id: "escaped",
+          properties: {
+            title: "moved clean out of the window",
+            starts_at: "2026-06-03T09:00:00.000Z",
+          },
+        },
+      ],
+      new Map(),
+      new Set(),
+      // A month past SYNTHETIC_TO, so no reading of the window contains it.
+      new Map([["escaped", { starts_at: "2026-07-15T09:00:00.000Z" }]]),
+    );
+    const res = await readWindow(appOver(calendar.storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { starts_at: string; item: Item }[];
+    };
+    expect(body.data).toHaveLength(1);
+    expect(body.data[0]?.starts_at).toBe("2026-07-15T09:00:00.000Z");
+    // Still the property that matters: the two halves of the row agree.
+    expect(body.data[0]?.item.properties.starts_at).toBe(
+      body.data[0]?.starts_at,
+    );
   });
 
   it("shows a computed series occurrence at the slot the rule produced", async () => {
