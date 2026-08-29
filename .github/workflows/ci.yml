@@ -675,9 +675,11 @@ jobs:
     #
     # An individual job cancelled while the run carried on still reaches
     # the `cancelled` branch below, and that one is worth saying.
+    # Skipped when no alert destination is configured, so a fork sends nothing.
     if: >-
       always() && !cancelled()
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      && vars.ALERT_WEBHOOK_URL != ''
     runs-on: ubuntu-latest
     permissions:
       # Reads this run's own jobs and their steps. Nothing else.
@@ -687,7 +689,8 @@ jobs:
       - name: Classify and report
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ALERTS_SECRET: ${{ secrets.ALERTS_SECRET }}
+          ALERT_URL: ${{ vars.ALERT_WEBHOOK_URL }}
+          ALERT_TOKEN: ${{ secrets.ALERT_WEBHOOK_TOKEN }}
           CODE: ${{ needs.changes.outputs.code }}
           RESULTS: ${{ join(needs.*.result, ',') }}
           WORKFLOW: ${{ github.workflow }}
@@ -765,13 +768,21 @@ jobs:
             TITLE="$WORKFLOW failed on main"
             DETAIL="a job failed with a failing step, so this is a real result"
           fi
+          # The destination may or may not need a credential, so the header is
+          # built rather than hardcoded: an empty token would otherwise be sent
+          # as "Bearer " with nothing after it, which reads as a malformed
+          # request rather than an unauthenticated one.
+          AUTH=()
+          if [ -n "${ALERT_TOKEN:-}" ]; then
+            AUTH=(-H "Authorization: Bearer $ALERT_TOKEN")
+          fi
 
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW/main" \
                 --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" \
                 --arg c "$GITHUB_SHA" --arg j "$RESULTS" --arg d "$DETAIL" \
             '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
               fields:{Repository:$r,Workflow:$w,Commit:$c,Jobs:$j,What:$d}}' \
-          | curl -sS --fail-with-body --max-time 20 -X POST https://alerts.cyzr.me/alert \
-              -H "Authorization: Bearer $ALERTS_SECRET" \
+          | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
+              "${AUTH[@]}" \
               -H "Content-Type: application/json" --data @- \
-          || echo "aic-alerts POST did not succeed (see above); not failing the run over it."
+          || echo "Alert POST did not succeed (see above); not failing the run over it."
