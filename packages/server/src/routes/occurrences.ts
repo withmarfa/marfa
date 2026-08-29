@@ -36,15 +36,38 @@
  * held at once is bounded by `MAX_OCCURRENCES` rather than by the size
  * of the space.
  *
- * Three bounds do the rest of that work and none of them refuses a space
- * for being large. Assembly stops the moment the window is over full, so
- * a refusal costs the occurrences it took to justify it rather than
- * every occurrence the space holds. The batched reads are consumed a
- * chunk at a time, so nothing an id lookup returns outlives the chunk it
- * arrived in. And both long loops — the page walk and the expansion —
- * hand the event loop back periodically, so one caller's large calendar
- * costs that caller latency rather than costing every other request on
- * the instance its turn.
+ * Four bounds do the rest of that work and none of them refuses a space
+ * for being large:
+ *
+ *   - **Assembly stops the moment the window is over full**, so the rest
+ *     of the assembly and every item fetch are saved.
+ *   - **`series_errors` is capped in count and in message length**, so
+ *     the other result array cannot grow without limit either. This one
+ *     does refuse, and `MAX_SERIES_ERRORS` states what that costs.
+ *   - **The batched reads are consumed a chunk at a time**, so nothing
+ *     an id lookup returns outlives the chunk it arrived in.
+ *   - **Both long loops hand the event loop back periodically** — the
+ *     page walk between pages, the expansion on both a series budget and
+ *     an iteration budget. `ITERATIONS_PER_YIELD` states the resulting
+ *     bound on one uninterrupted stretch, in iterations.
+ *
+ * **What the occurrence ceiling does not bound, and it reads as though
+ * it does.** All three `scanEvents` calls run to exhaustion and the
+ * exceptions are grouped over every exception in the space *before* the
+ * first occurrence is appended, so a refusal costs the whole read that
+ * preceded it: every row scanned, every projection built, every edge
+ * chunk walked. A window holding two million standalone events
+ * materializes two million projections in order to answer 400. The
+ * ceiling bounds the assembly and the item fetches, which is what it
+ * says on the constant, and nothing before them.
+ *
+ * Bounding the passes too was considered and declined. A ceiling on
+ * rows read is the fail-closed scan ceiling this change removed. A
+ * ceiling on kept projections cannot be set safely either: a window seed
+ * is dropped later if its series consumed it as an exception, so a cap
+ * on seeds kept would drop meetings a healthy calendar contains, which
+ * is the one outcome worth less than a slow read. The claim is corrected
+ * rather than the property added.
  *
  * That leaves the projections themselves growing linearly with the
  * space's event count. It is survivable where holding whole rows is not,
@@ -82,6 +105,7 @@ import {
   RecurrenceExpansionError,
 } from "../events/expand-recurrence.js";
 import type {
+  ExpansionWork,
   Occurrence,
   RecurrenceException,
   RecurrenceSeries,
@@ -106,6 +130,48 @@ export const MAX_WINDOW_DAYS = 400;
  * toward it is visible before a request is refused.
  */
 export const MAX_OCCURRENCES = 5000;
+
+/**
+ * Ceiling on the reported expansion failures, across every series in
+ * the space.
+ *
+ * `series_errors` is a second result array and `MAX_OCCURRENCES`
+ * structurally cannot bound it: a series that fails to expand emits no
+ * occurrence, so a space can cross every other bound here at zero and
+ * still return an arbitrarily long list. Measured before this existed:
+ * 25,000 rows carrying a malformed rule answered 200 with a 4.8 MB JSON
+ * body, built as one string in memory. Ten times that is the fail-open
+ * crash this change exists to remove, relocated into the other array.
+ *
+ * **It refuses rather than truncating**, and the argument that talked
+ * the occurrence path out of a work ceiling does not reach here. That
+ * argument is that any bound either refuses a large calendar or serves
+ * it with meetings silently missing. A series that errored contributed
+ * no meeting by construction, so this ceiling refuses nothing a healthy
+ * calendar contains and drops nothing from one that is served.
+ *
+ * **What it does cost, stated plainly:** unlike the occurrence ceiling,
+ * this refusal is not recoverable by asking for a narrower window,
+ * because the series pass is unwindowed. A space holding more than this
+ * many broken rules cannot be read until the rules are repaired or
+ * removed, and the refusal says so. That is the deliberate trade: five
+ * hundred distinct broken rules is a corrupt import rather than a large
+ * calendar, and a response nobody can hold in memory is not a better
+ * answer than being told.
+ */
+export const MAX_SERIES_ERRORS = 500;
+
+/**
+ * Longest reported expansion-failure message.
+ *
+ * A count alone does not bound bytes. Most of these messages are this
+ * file's own fixed strings, but the malformed-rule ones carry ical.js's
+ * error text verbatim, which is as long as whatever it was handed. With
+ * both bounds the array is at most a few hundred kilobytes, which is
+ * what makes `MAX_SERIES_ERRORS` a bound on the response rather than
+ * only on its length.
+ */
+const MAX_SERIES_ERROR_MESSAGE_CHARS = 200;
 
 /**
  * Rows read per page while gathering the events to expand.
@@ -135,17 +201,48 @@ const ID_BATCH_SIZE = 500;
 /**
  * Series expanded between one yield to the event loop and the next.
  *
- * `expandSeries` is synchronous and one call can walk up to
- * `MAX_EXPANSION_ITERATIONS` of a rule, so a loop over every rule in a
- * space is a single uninterrupted stretch of CPU: health checks, open
- * streams and every other request on the instance wait behind it. The
- * pause hands the loop back so the cost of a large calendar lands on the
- * caller asking about it as latency, rather than on everyone else as a
- * stall. Small enough that no single stretch is long, large enough that
- * an ordinary calendar pays for a handful of pauses rather than one per
- * meeting.
+ * This bounds the *per-series* cost, which is real and which the
+ * iteration budget below cannot see: building a synthetic VEVENT and
+ * parsing it through ical.js happens once per series whatever its rule
+ * says, and a rule that ends before it starts costs a parse and zero
+ * iterations. Both counters run, and whichever trips first yields.
  */
 const SERIES_PER_YIELD = 32;
+
+/**
+ * Rule iterations walked between one yield to the event loop and the
+ * next.
+ *
+ * A series count is the wrong unit for the expansion's cost and this
+ * loop used to be paced by it alone. `expandSeries` is synchronous and
+ * one call walks up to `MAX_EXPANSION_ITERATIONS` — 100,000 — so 32
+ * series between yields permitted 3.2 million iterations in a single
+ * uninterrupted stretch of CPU, with health checks, open streams and
+ * every other request on the instance waiting behind it. That is not an
+ * exotic shape: a `FREQ=MINUTELY` reminder created a year ago burns the
+ * whole cap on every read, forever, and 32 of them ran between yields.
+ * Measured through the route at 11.5 seconds, and invariant in the
+ * number of series, because it was always exactly 32 expansions deep.
+ *
+ * **The bound this buys, stated in the unit that costs:** one
+ * uninterrupted stretch walks at most
+ * `ITERATIONS_PER_YIELD + MAX_EXPANSION_ITERATIONS - 1` iterations —
+ * 119,999 today. The second term is irreducible here and is most of the
+ * bound: one `expandSeries` call is atomic, so a stretch can always be
+ * one full expansion longer than the budget that admitted it. Shrinking
+ * it means either refusing more rules or making the expansion itself
+ * resumable, and a rule's phase is anchored at the series start, so it
+ * cannot be resumed mid-stream.
+ *
+ * **What is deliberately not bounded:** the total work one request may
+ * do. Iterations accumulate across every series in the space, and a
+ * ceiling on the sum would refuse a calendar for being large — the
+ * fail-closed scan ceiling this change removed, re-denominated. A large
+ * calendar stays slower rather than refused; what this fixes is that
+ * "slower" no longer means "the process stops answering for eleven
+ * seconds at a time".
+ */
+const ITERATIONS_PER_YIELD = 20_000;
 
 /** Hand the event loop one turn: `setImmediate` runs after the pending
  *  I/O and timer callbacks rather than ahead of them, which a resolved
@@ -358,9 +455,18 @@ async function groupExceptionsBySeries(
       // second would only widen what a malformed graph could return.
       1,
     );
-    // Walked in the order the ids were asked for rather than the order
-    // the store answered in, so two exceptions claiming the same slot
-    // resolve the same way on every dialect.
+    // Walked over the slice rather than over the map the store answered
+    // with, because that is what makes each chunk's edges unreachable
+    // once the next chunk is asked for — the retention property this
+    // function exists for, not a determinism one.
+    //
+    // Determinism is real here and comes from somewhere else: the scan
+    // hands these ids over in the store's keyset order, which is a total
+    // order and identical in both dialects. Iterating the returned map
+    // instead would preserve that too, since it is keyed by the same
+    // ids. An earlier version of this comment credited the slice walk
+    // with fixing a dialect-dependent resolution that never existed,
+    // which points the next reader at the wrong fragile part.
     for (const exceptionId of slice) {
       const seriesId = chunk
         .get(exceptionId)
@@ -422,7 +528,8 @@ const OccurrencesResponseSchema = z.object({
   /** One entry per series that could not expand — a malformed rule, or
    *  a rule that floods the window. The rest of the calendar still
    *  returns; failing the whole read for one bad series would make a
-   *  single six-year-old meeting take the calendar down. */
+   *  single six-year-old meeting take the calendar down. Bounded by
+   *  `MAX_SERIES_ERRORS`, past which the read is refused instead. */
   series_errors: z.array(SeriesErrorSchema).optional(),
 });
 
@@ -433,7 +540,7 @@ const occurrencesRoute = createRoute({
   tags: ["Items"],
   summary: "List event occurrences in a window",
   description:
-    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. Two bounds apply and both refuse rather than silently trimming: the window may not be longer than `max_days`, and the assembled result may not exceed `max_occurrences`. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns.",
+    "Returns the events that fall inside a time window, expanding recurring series from their rules at read time rather than storing occurrences. Single events appear by their own times; a series contributes one entry per occurrence in the window, carrying `series_id`; a stored exception replaces the occurrence it was recorded against and carries `replaces`. A row is shown at the times its own item carries; only a computed series occurrence, whose time the item does not hold, is shown at the time the rule produced. Three bounds apply and all three refuse rather than silently trimming: the window may not be longer than `max_days`, the assembled result may not exceed `max_occurrences`, and the space may not hold more than `max_series_errors` rules that fail to expand. The second depends on what the window holds, so a window well inside the length limit can still be refused for being too full; `scan.max_occurrences` is reported on every successful read so the ceiling is visible before it is reached. A series that cannot expand (a malformed rule, or one that floods the window) is reported in `series_errors` while the rest of the calendar still returns.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -461,7 +568,7 @@ const occurrencesRoute = createRoute({
         },
       },
       description:
-        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; or a window whose occurrences exceed `max_occurrences`. The last of these can refuse a window that is otherwise perfectly valid, because it depends on what the window holds rather than on how long it is. It carries `max_occurrences` and `found`, where `found` is the count assembly stopped at rather than the window's total: the read is abandoned as soon as the ceiling is crossed instead of continuing in order to report how far past it the window went.",
+        "A missing, unreadable or inverted window; a window longer than `max_days`; an invalid type identifier; a window whose occurrences exceed `max_occurrences`; or a space holding more than `max_series_errors` rules that cannot be expanded. The last two can refuse a window that is otherwise perfectly valid, because they depend on what the space and the window hold rather than on how long the window is. Each carries its own ceiling plus `found`, where `found` is the count the read stopped at rather than the true total: the read is abandoned as soon as a ceiling is crossed instead of continuing in order to report how far past it the space went. Narrowing the window recovers from the occurrence ceiling; it does not recover from the series-error ceiling, which is unwindowed by nature and asks for the broken rules to be repaired or removed.",
     },
     401: {
       content: {
@@ -665,6 +772,35 @@ export function occurrenceRoutes(storage: Storage) {
       pending.push(occurrence);
     };
     const seriesErrors: { item_id: string; message: string }[] = [];
+    /**
+     * Record one series that could not expand, refusing once the space
+     * holds more broken rules than a response can carry.
+     *
+     * Refused at the append for the same reason `appendPending` is: a
+     * ceiling consulted after the loop has already built everything it
+     * would have refused makes the answer a 400 without making the work
+     * smaller. See `MAX_SERIES_ERRORS` for why refusing beats truncating
+     * on this array specifically, and for what the refusal costs.
+     */
+    const appendSeriesError = (itemId: string, message: string): void => {
+      if (seriesErrors.length >= MAX_SERIES_ERRORS) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `More than ${String(MAX_SERIES_ERRORS)} series in this space carry a rule that cannot be expanded; repair or remove them`,
+          {
+            max_series_errors: MAX_SERIES_ERRORS,
+            found: seriesErrors.length + 1,
+          },
+        );
+      }
+      seriesErrors.push({
+        item_id: itemId,
+        message:
+          message.length > MAX_SERIES_ERROR_MESSAGE_CHARS
+            ? `${message.slice(0, MAX_SERIES_ERROR_MESSAGE_CHARS)}…`
+            : message,
+      });
+    };
     // Exceptions an expansion actually consumed. Only these are hidden
     // from the standalone pass: an exception whose slot fell outside the
     // window, or whose series could not expand, still deserves to appear
@@ -674,24 +810,35 @@ export function occurrenceRoutes(storage: Storage) {
     // Series first, standalone second, because only the expansion knows
     // which stored exceptions it consumed.
     const expandedSeries = new Set<string>();
-    let sinceYield = 0;
+    // Two budgets, one for each thing an expansion costs. See
+    // `SERIES_PER_YIELD` and `ITERATIONS_PER_YIELD`; neither substitutes
+    // for the other, so whichever fills first hands the loop back.
+    let seriesSinceYield = 0;
+    let iterationsSinceYield = 0;
+    const work: ExpansionWork = { iterations: 0 };
     for (const seed of seriesSeeds) {
       if (expandedSeries.has(seed.id)) continue;
       expandedSeries.add(seed.id);
 
-      sinceYield += 1;
-      if (sinceYield >= SERIES_PER_YIELD) {
-        sinceYield = 0;
+      seriesSinceYield += 1;
+      if (
+        seriesSinceYield >= SERIES_PER_YIELD ||
+        iterationsSinceYield >= ITERATIONS_PER_YIELD
+      ) {
+        seriesSinceYield = 0;
+        iterationsSinceYield = 0;
         await yieldToEventLoop();
       }
 
       let expanded: Occurrence[];
+      const before = work.iterations;
       try {
         expanded = expandSeries(
           seed,
           from,
           to,
           exceptionsBySeries.get(seed.id) ?? [],
+          work,
         );
       } catch (err) {
         // One series that cannot expand degrades that series, never the
@@ -699,10 +846,16 @@ export function occurrenceRoutes(storage: Storage) {
         // calendar. Anything not the expander's own error type is a
         // genuine bug and stays loud.
         if (err instanceof RecurrenceExpansionError) {
-          seriesErrors.push({ item_id: seed.id, message: err.message });
+          appendSeriesError(seed.id, err.message);
           continue;
         }
         throw err;
+      } finally {
+        // In a `finally` because the refusal above is the expensive
+        // case: a rule that walks the full iteration cap and yields
+        // nothing is precisely what the budget has to charge for, and
+        // the `continue` in the catch would otherwise skip the charge.
+        iterationsSinceYield += work.iterations - before;
       }
       for (const occurrence of expanded) {
         if (occurrence.replaces !== undefined) {
@@ -765,20 +918,52 @@ export function occurrenceRoutes(storage: Storage) {
       // this read. Dropping it is the right direction: a meeting removed
       // or filed away a moment ago should not render.
       if (shown === undefined) continue;
-      if (occurrence.replaces !== undefined) {
-        // A replacement is shown at its own times, which is the whole
-        // point of having moved it.
-        //
-        // The fallback is load-bearing rather than incidental: an
-        // exception with no readable `starts_at` of its own is shown at
-        // the slot it replaced, so `starts_at` and `replaces` come back
-        // equal and the row reads as "moved to where it already was".
-        // That is the truthful rendering — such a row replaced its
-        // slot's content and not its time — and it is preferred to the
-        // two alternatives. Dropping the row loses a meeting. Dropping
-        // `replaces` when it matches would trade a redundant field for
-        // the only signal a caller has that this is a stored
-        // replacement rather than a computed occurrence.
+
+      /**
+       * One rule decides what time a row is shown at: **the fetched
+       * item is the authority for its own times, and only a computed
+       * occurrence — which the item does not carry a time for — comes
+       * from the expansion.**
+       *
+       * Two rules used to apply. A standalone row and a computed one
+       * were both rendered from the scan-time projection while a
+       * replacement re-derived from the fetched item, so two rows in one
+       * response followed opposite rules. That was survivable while the
+       * gap between scan and fetch was microseconds. It is not now: the
+       * yields above widen that gap to the length of the whole request,
+       * so a meeting moved while the request was in flight rendered its
+       * old slot beside the new `item.properties.starts_at`, in the same
+       * object, contradicting itself.
+       *
+       * A computed occurrence is exempt because there is nothing to
+       * re-derive: the item is the series, and its `starts_at` is the
+       * rule's anchor rather than this slot. That leaves one residual,
+       * which nothing cheap fixes — a series rescheduled mid-request
+       * shows slots computed from the anchor it had when it was read.
+       * Re-expanding at render time would mean holding every seed and
+       * repeating the walk this route is trying to bound.
+       *
+       * The window stays a filter over which rows appear, not a
+       * constraint on what time they are shown at. That is the rule
+       * `replaces` already followed — a moved instance is shown at its
+       * own time, which may fall outside the window — and applying it to
+       * a standalone row that moved is the same answer to the same
+       * question.
+       */
+      const itemIsAuthority =
+        occurrence.series_id === undefined || occurrence.replaces !== undefined;
+
+      if (itemIsAuthority) {
+        // The fallback is load-bearing rather than incidental: a row
+        // with no readable `starts_at` of its own is shown at the slot
+        // it was found at. For a replacement that means `starts_at` and
+        // `replaces` come back equal and the row reads as "moved to
+        // where it already was", which is the truthful rendering — such
+        // a row replaced its slot's content and not its time. Dropping
+        // the row would lose a meeting; dropping `replaces` when it
+        // matches would trade a redundant field for the only signal a
+        // caller has that this is a stored replacement rather than a
+        // computed occurrence.
         const shownEndsAt = stringProp(shown, "ends_at");
         results.push({
           starts_at: toInstantString(
@@ -792,19 +977,20 @@ export function occurrenceRoutes(storage: Storage) {
           ...(occurrence.series_id !== undefined
             ? { series_id: occurrence.series_id }
             : {}),
-          replaces: occurrence.replaces,
+          ...(occurrence.replaces !== undefined
+            ? { replaces: occurrence.replaces }
+            : {}),
         });
         continue;
       }
+
       results.push({
         starts_at: occurrence.starts_at,
         ...(occurrence.ends_at !== undefined
           ? { ends_at: occurrence.ends_at }
           : {}),
         item: shown,
-        ...(occurrence.series_id !== undefined
-          ? { series_id: occurrence.series_id }
-          : {}),
+        series_id: occurrence.series_id,
       });
     }
 

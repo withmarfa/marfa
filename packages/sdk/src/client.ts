@@ -628,6 +628,10 @@ export interface OccurrencesResult {
    * window. The rest of the calendar still returns, so a caller ignoring
    * this renders a calendar with a repeating meeting silently absent
    * from it.
+   *
+   * Bounded in both length and message size by the server. Past that
+   * bound the read is refused rather than the list truncated, so this
+   * array is never a partial account of what failed.
    */
   series_errors?: OccurrenceSeriesError[];
 }
@@ -2350,7 +2354,16 @@ export class MarfaClient {
      * so half the refusals would still need the round trip and a caller
      * could not tell the two apart.
      *
-     * There is no third refusal for the size of the calendar itself. The
+     * A third refusal is keyed on the space rather than the window, and
+     * a caller should expect it to be the one it cannot retry its way
+     * out of: a space carrying more rules that fail to expand than the
+     * server will report refuses the read outright, with
+     * `max_series_errors` in `details`. Asking for less time does not
+     * help, because the pass that finds those rules is not windowed. The
+     * remedy is to repair or remove the rules, and the errors that fit
+     * under the ceiling arrive on `series_errors` as they always did.
+     *
+     * There is still no refusal for the size of the calendar itself. The
      * passes that gather series and exceptions cannot be windowed — a
      * rule written years ago produces occurrences in any window, and an
      * exception moved out of one still shadows the slot it left — so
@@ -2359,8 +2372,8 @@ export class MarfaClient {
      * is where that cost is visible: `events_read` grows with the
      * calendar rather than with the window, and `max_occurrences`
      * arrives on every success, so a calendar approaching the one
-     * ceiling that does refuse can be seen coming rather than met as a
-     * 400.
+     * data-dependent ceiling a narrower window can recover from can be
+     * seen coming rather than met as a 400.
      */
     list: async (
       options: ListOccurrencesOptions,

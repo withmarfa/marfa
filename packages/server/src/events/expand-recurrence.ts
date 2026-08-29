@@ -88,6 +88,27 @@ export const MAX_EXPANSION_ITERATIONS = 100_000;
 
 export class RecurrenceExpansionError extends Error {}
 
+/**
+ * How much rule-walking one expansion did, for a caller that has to
+ * budget in that unit.
+ *
+ * A series count says nothing about cost: one `COUNT=1` rule and one
+ * per-minute rule created a year ago are the same number of series and
+ * differ by five orders of magnitude in iterations. A caller pacing
+ * itself against wall-clock work needs the second number, so the
+ * expansion hands it back rather than leaving it to be guessed at.
+ *
+ * Accumulated on the way out, including when the expansion throws: the
+ * refusal at `MAX_EXPANSION_ITERATIONS` is the single most expensive
+ * thing this function does, and a budget that missed it would be blind
+ * to exactly the shape it exists for.
+ */
+export interface ExpansionWork {
+  /** Rule iterations performed, summed across every expansion that has
+   *  been given this accumulator. */
+  iterations: number;
+}
+
 /** ICAL.Time carries the fields; read them as a naive (floating) Date. */
 function icalTimeToWallClock(time: ICAL.Time): Date {
   return new Date(
@@ -178,12 +199,16 @@ function buildVevent(series: RecurrenceSeries): ICAL.Component {
  * shadowing is part of what an occurrence *is*: the caller cannot tell a
  * computed occurrence that still stands from one that was replaced
  * without redoing the same matching.
+ *
+ * `work`, when given, is credited with the rule iterations this call
+ * performed, whether it returns or throws. See `ExpansionWork`.
  */
 export function expandSeries(
   series: RecurrenceSeries,
   windowStart: Date,
   windowEnd: Date,
   exceptions: RecurrenceException[] = [],
+  work?: ExpansionWork,
 ): Occurrence[] {
   if (series.recurrence.length === 0) return [];
 
@@ -255,48 +280,54 @@ export function expandSeries(
   const coarseCutoffMs =
     instantToWallClock(windowStart, series.timezone).getTime() - 86_400_000;
 
-  while ((next = nextOccurrence())) {
-    iterations += 1;
-    if (iterations > MAX_EXPANSION_ITERATIONS) {
-      throw new RecurrenceExpansionError(
-        `Series ${series.id} iterates its rule more than ${String(MAX_EXPANSION_ITERATIONS)} times before it reaches the window; the rule is too frequent to expand at read time`,
-      );
-    }
-    const wallClock = icalTimeToWallClock(next);
-    if (wallClock.getTime() < coarseCutoffMs) continue;
-    const startsAt = wallClockToInstant(wallClock, series.timezone);
-    if (startsAt >= windowEnd) break;
-    if (startsAt < windowStart) continue;
+  try {
+    while ((next = nextOccurrence())) {
+      iterations += 1;
+      if (iterations > MAX_EXPANSION_ITERATIONS) {
+        throw new RecurrenceExpansionError(
+          `Series ${series.id} iterates its rule more than ${String(MAX_EXPANSION_ITERATIONS)} times before it reaches the window; the rule is too frequent to expand at read time`,
+        );
+      }
+      const wallClock = icalTimeToWallClock(next);
+      if (wallClock.getTime() < coarseCutoffMs) continue;
+      const startsAt = wallClockToInstant(wallClock, series.timezone);
+      if (startsAt >= windowEnd) break;
+      if (startsAt < windowStart) continue;
 
-    emitted += 1;
-    if (emitted > MAX_OCCURRENCES_PER_SERIES) {
-      throw new RecurrenceExpansionError(
-        `Series ${series.id} yields more than ${String(MAX_OCCURRENCES_PER_SERIES)} occurrences in this window; narrow the window`,
-      );
-    }
+      emitted += 1;
+      if (emitted > MAX_OCCURRENCES_PER_SERIES) {
+        throw new RecurrenceExpansionError(
+          `Series ${series.id} yields more than ${String(MAX_OCCURRENCES_PER_SERIES)} occurrences in this window; narrow the window`,
+        );
+      }
 
-    const exception = shadowed.get(startsAt.getTime());
-    if (exception) {
-      // The stored item carries its own times, so it is emitted by the
-      // caller from the item itself; recording the shadow here is what
-      // stops the computed occurrence being shown alongside it.
+      const exception = shadowed.get(startsAt.getTime());
+      if (exception) {
+        // The stored item carries its own times, so it is emitted by the
+        // caller from the item itself; recording the shadow here is what
+        // stops the computed occurrence being shown alongside it.
+        occurrences.push({
+          series_id: series.id,
+          starts_at: startsAt.toISOString(),
+          item_id: exception.id,
+          replaces: startsAt.toISOString(),
+        });
+        continue;
+      }
+
       occurrences.push({
         series_id: series.id,
         starts_at: startsAt.toISOString(),
-        item_id: exception.id,
-        replaces: startsAt.toISOString(),
+        ...(durationMs > 0
+          ? { ends_at: new Date(startsAt.getTime() + durationMs).toISOString() }
+          : {}),
+        item_id: series.id,
       });
-      continue;
     }
-
-    occurrences.push({
-      series_id: series.id,
-      starts_at: startsAt.toISOString(),
-      ...(durationMs > 0
-        ? { ends_at: new Date(startsAt.getTime() + durationMs).toISOString() }
-        : {}),
-      item_id: series.id,
-    });
+  } finally {
+    // In a `finally` because the iteration ceiling above throws, and the
+    // walk it abandons is the most expensive one this function performs.
+    if (work !== undefined) work.iterations += iterations;
   }
 
   return occurrences;

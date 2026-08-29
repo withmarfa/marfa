@@ -292,6 +292,10 @@ function syntheticCalendar(
   /** Ids the scan sees as active and the later fetch does not, which is
    *  the whole of the race between the two reads. */
   archivedOnFetch: ReadonlySet<string> = new Set(),
+  /** Ids whose properties differ between the scan and the later fetch:
+   *  a meeting moved while the request was in flight. The other half of
+   *  the same race, and the one that renders rather than disappears. */
+  movedOnFetch: ReadonlyMap<string, Record<string, unknown>> = new Map(),
 ): SyntheticCalendar {
   const items = rows.map(syntheticRow);
   const byId = new Map(items.map((item) => [item.id, item]));
@@ -360,11 +364,14 @@ function syntheticCalendar(
           if (item === undefined) continue;
           // `getMany` excludes trashed rows and nothing else, so a row
           // that left `active` by any other transition still arrives.
+          const moved = movedOnFetch.get(id);
           out.set(
             id,
             archivedOnFetch.has(id)
               ? ({ ...item, state: "archived" } as unknown as Item)
-              : item,
+              : moved !== undefined
+                ? { ...item, properties: { ...item.properties, ...moved } }
+                : item,
           );
         }
         return Promise.resolve(out);
@@ -555,27 +562,27 @@ describe("the occurrence ceiling stops the assembly", () => {
   });
 });
 
-describe("the expansion loop yields", () => {
-  /** Event-loop turns taken while one window read runs. */
-  async function turnsDuring(rows: readonly SyntheticRow[]): Promise<number> {
-    // Nothing in this request reaches a macrotask on its own: the
-    // synthetic storage resolves already-settled promises, which drain as
-    // microtasks. So a callback queued on the loop runs during the request
-    // only where the route hands the loop back.
-    let turns = 0;
-    let observing = true;
-    const observe = (): void => {
-      if (!observing) return;
-      turns += 1;
-      setImmediate(observe);
-    };
+/** Event-loop turns taken while one window read runs. */
+async function turnsDuring(rows: readonly SyntheticRow[]): Promise<number> {
+  // Nothing in this request reaches a macrotask on its own: the
+  // synthetic storage resolves already-settled promises, which drain as
+  // microtasks. So a callback queued on the loop runs during the request
+  // only where the route hands the loop back.
+  let turns = 0;
+  let observing = true;
+  const observe = (): void => {
+    if (!observing) return;
+    turns += 1;
     setImmediate(observe);
-    const res = await readWindow(appOver(syntheticCalendar(rows).storage));
-    observing = false;
-    expect(res.status).toBe(200);
-    return turns;
-  }
+  };
+  setImmediate(observe);
+  const res = await readWindow(appOver(syntheticCalendar(rows).storage));
+  observing = false;
+  expect(res.status).toBe(200);
+  return turns;
+}
 
+describe("the expansion loop yields", () => {
   it("takes more turns than walking the same rows costs on its own", async () => {
     // Both loops yield, so the page walk alone already takes a few turns.
     // The calibration is the same row count with no rule on it: it walks
@@ -607,6 +614,191 @@ describe("the expansion loop yields", () => {
     const walkOnly = await turnsDuring(plain);
     const walkAndExpand = await turnsDuring(rules);
     expect(walkAndExpand).toBeGreaterThan(walkOnly * 2);
+  });
+});
+
+describe("the expansion loop is paced by work, not by series count", () => {
+  /**
+   * Under `SERIES_PER_YIELD` series, so the series budget can never
+   * trip; the difference between the two fixtures is entirely how many
+   * rule iterations they walk.
+   *
+   * This is the shape the series-only pacing missed. One `COUNT=1` rule
+   * and one that walks five thousand iterations are the same number of
+   * series and differ by three orders of magnitude in CPU, so a budget
+   * denominated in series permitted an arbitrarily long uninterrupted
+   * stretch and reported itself as bounded.
+   */
+  const UNDER_THE_SERIES_BUDGET = 30;
+
+  /** Minutes before the window, so the rule terminates on its own COUNT
+   *  having emitted nothing: pure pre-window walking, which is exactly
+   *  what a long-lived frequent rule costs on every read. */
+  function walking(iterationsEach: number): SyntheticRow[] {
+    return Array.from({ length: UNDER_THE_SERIES_BUDGET }, (_, i) => ({
+      id: `walker-${String(i)}`,
+      properties: {
+        title: `walker ${String(i)}`,
+        starts_at: "2019-03-04T09:00:00.000Z",
+        recurrence: [`RRULE:FREQ=MINUTELY;COUNT=${String(iterationsEach)}`],
+      },
+    }));
+  }
+
+  it("hands the loop back for rules that walk, not only for many rules", async () => {
+    // 30 x 5,000 = 150,000 iterations against a 20,000 budget, so the
+    // loop is expected to pause several times over.
+    const heavy = await turnsDuring(walking(5_000));
+    // The same 30 series and the same single page, walking one iteration
+    // each. Nothing here should pause at all, which is what makes the
+    // comparison attributable to the iterations and nothing else.
+    const light = await turnsDuring(walking(1));
+    expect(light).toBeLessThanOrEqual(2);
+    expect(heavy).toBeGreaterThanOrEqual(light + 5);
+  });
+});
+
+describe("the reported expansion failures are bounded", () => {
+  // `MAX_OCCURRENCES` structurally cannot bound this array: a series that
+  // fails to expand emits no occurrence, so every other ceiling here can
+  // sit at zero while this one grows with the space.
+  function broken(count: number): SyntheticRow[] {
+    return Array.from({ length: count }, (_, i) => ({
+      id: `broken-${String(i)}`,
+      properties: {
+        title: `broken ${String(i)}`,
+        starts_at: "2025-06-01T09:00:00.000Z",
+        recurrence: ["RRULE:FREQ=NOPE;INTERVAL=x"],
+      },
+    }));
+  }
+
+  it("serves a space sitting on the ceiling", async () => {
+    const res = await readWindow(
+      appOver(syntheticCalendar(broken(500)).storage),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      series_errors?: { item_id: string; message: string }[];
+    };
+    expect(body.series_errors).toHaveLength(500);
+  });
+
+  it("refuses rather than truncating once the space crosses it", async () => {
+    // Truncating would be the worse answer: the array would silently stop
+    // being an account of what failed, and nothing on the response would
+    // say so.
+    const calendar = syntheticCalendar(broken(501));
+    const res = await readWindow(appOver(calendar.storage));
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { details?: { max_series_errors?: number; found?: number } };
+    };
+    expect(body.error.details?.max_series_errors).toBe(500);
+    expect(body.error.details?.found).toBe(501);
+    // Refused before a single row was read to build an answer nobody gets.
+    expect(calendar.fetched).toHaveLength(0);
+  });
+
+  it("bounds one message as well as the count", async () => {
+    // A count alone does not bound bytes. The malformed-rule message
+    // carries the parser's own text, which is as long as whatever it was
+    // handed, so a space of a few hundred broken rules could still build
+    // a response nobody can hold.
+    const long = "X".repeat(4_000);
+    const res = await readWindow(
+      appOver(
+        syntheticCalendar([
+          {
+            id: "verbose",
+            properties: {
+              title: "verbose failure",
+              starts_at: "2025-06-01T09:00:00.000Z",
+              recurrence: [`RRULE:FREQ=DAILY;BYDAY=${long}`],
+            },
+          },
+        ]).storage,
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      series_errors?: { item_id: string; message: string }[];
+    };
+    const [failure] = body.series_errors ?? [];
+    expect(failure).toBeDefined();
+    expect(failure?.message.length).toBeLessThan(long.length);
+  });
+});
+
+describe("a row's time and the item it renders cannot disagree", () => {
+  // The scan projects a time, the item is fetched at the end, and the
+  // yields in between widen that gap from microseconds to the length of
+  // the whole request. A meeting moved inside that gap used to render the
+  // slot the scan saw beside the item's new `starts_at`, in one object.
+  it("shows a standalone row at the time its own item carries", async () => {
+    const calendar = syntheticCalendar(
+      [
+        {
+          id: "moved",
+          properties: {
+            title: "moved while the request was in flight",
+            starts_at: "2026-06-03T09:00:00.000Z",
+            ends_at: "2026-06-03T10:00:00.000Z",
+          },
+        },
+      ],
+      new Map(),
+      new Set(),
+      new Map([
+        [
+          "moved",
+          {
+            starts_at: "2026-06-03T14:30:00.000Z",
+            ends_at: "2026-06-03T15:30:00.000Z",
+          },
+        ],
+      ]),
+    );
+    const res = await readWindow(appOver(calendar.storage));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { starts_at: string; ends_at?: string; item: Item }[];
+    };
+    const [row] = body.data;
+    expect(row?.starts_at).toBe("2026-06-03T14:30:00.000Z");
+    expect(row?.ends_at).toBe("2026-06-03T15:30:00.000Z");
+    // The whole point: the two halves of the row agree.
+    expect(row?.item.properties.starts_at).toBe(row?.starts_at);
+  });
+
+  it("shows a computed series occurrence at the slot the rule produced", async () => {
+    // The exemption, and the reason the rule is "the item is the
+    // authority for its own times" rather than "always re-read": the item
+    // here is the series, and its `starts_at` is the rule's anchor rather
+    // than this slot. Re-deriving would collapse every occurrence onto
+    // the anchor.
+    const res = await readWindow(
+      appOver(
+        syntheticCalendar([
+          {
+            id: "weekly",
+            properties: {
+              title: "weekly stand-up",
+              starts_at: "2026-06-01T09:00:00.000Z",
+              recurrence: ["RRULE:FREQ=WEEKLY;COUNT=2"],
+            },
+          },
+        ]).storage,
+      ),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      data: { starts_at: string; series_id?: string; item: Item }[];
+    };
+    expect(body.data.map((r) => r.starts_at)).toEqual([
+      "2026-06-01T09:00:00.000Z",
+    ]);
+    expect(body.data[0]?.series_id).toBe("weekly");
   });
 });
 
