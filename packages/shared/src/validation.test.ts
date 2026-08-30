@@ -11,10 +11,13 @@ import {
   isValidTypePattern,
   isValidHandle,
   isReservedHandle,
+  isValidEdgeTypeIdentifier,
+  RESERVED_ROOTS,
   deriveHandleFromEmail,
   matchesTypePattern,
   resolveTypePermission,
 } from "./validation.js";
+import { NAMESPACE_TIER_ROOTS, SCOPE_FAMILY_ROOTS } from "./scope-roots.js";
 
 describe("isValidTimestamp", () => {
   it("accepts full ISO 8601 with Z", () => {
@@ -568,5 +571,84 @@ describe("the two grammars stay apart", () => {
     expect(isValidTypeIdentifier("core/note")).toBe(false);
     expect(isValidTypePattern("core/note")).toBe(false);
     expect(isValidTypePattern("core/media.*")).toBe(false);
+  });
+});
+
+describe("the reserved roots are derived rather than typed out", () => {
+  // The set is what stops a registered type ever sharing a first segment with
+  // an OAuth scope family. It was a hand list, and every family that arrived
+  // needed a second edit to be protected: `capability` got one, `content` got
+  // one, and `metadata` and `edge` never did. This pins the derivation so the
+  // next family is protected by having been declared.
+  it("is exactly the namespace tiers plus every scope-family root", () => {
+    expect([...RESERVED_ROOTS].sort()).toEqual(
+      [...NAMESPACE_TIER_ROOTS, ...SCOPE_FAMILY_ROOTS].sort(),
+    );
+  });
+
+  it("holds every scope-family root, which is the property that was missing", () => {
+    // Mutation check: drop a name from SCOPE_FAMILY_ROOTS and this reddens.
+    for (const root of SCOPE_FAMILY_ROOTS) {
+      expect(RESERVED_ROOTS.has(root), root).toBe(true);
+    }
+  });
+
+  it("refuses `metadata` and `edge` as handles, which it used to admit", () => {
+    // `parseScope` tries the metadata and edge matchers BEFORE the type
+    // matcher, so a type registered under a claimed `metadata` handle could
+    // never have its own scope literal read as a type grant:
+    // `metadata.types:write` is taken by the metadata family first, and that
+    // is the scope gating `POST /types`.
+    for (const root of ["metadata", "edge"]) {
+      expect(isReservedHandle(root), root).toBe(true);
+      expect(isValidHandle(root), root).toBe(false);
+      expect(isValidTypeIdentifier(`${root}.anything`), root).toBe(false);
+    }
+  });
+
+  it("still admits a publisher handle the shipped registry occupies", () => {
+    // Deliberate, and the reason is on `isReservedHandle`. A handle naming a
+    // shipped publisher root is a namespace collision rather than a grammar
+    // confusion, and reserving `google` while admitting `google-drive` is the
+    // half-protection T-1008 removed. `google.calendar.event` also has to stay
+    // a valid identifier, which putting the root in this set would prevent.
+    expect(isValidHandle("google")).toBe(true);
+    expect(isValidTypeIdentifier("google.calendar.event")).toBe(true);
+  });
+});
+
+describe("isValidEdgeTypeIdentifier", () => {
+  it("admits the shipped kebab vocabulary", () => {
+    for (const id of [
+      "about",
+      "attached-to",
+      "authored-by",
+      "derived-from",
+      "in-collection",
+      "in-thread",
+      "parent-of",
+      "references",
+      "supersedes",
+    ]) {
+      expect(isValidEdgeTypeIdentifier(id), id).toBe(true);
+    }
+  });
+
+  it("refuses what the hyphen escape hatch used to admit", () => {
+    // `!isValidTypeIdentifier(id) && !id.includes("-")` skipped the check
+    // entirely for anything hyphenated, so every one of these registered.
+    for (const id of ["-", "MY-EDGE", "a b-c", "../-", "..--..", "-leading"]) {
+      expect(isValidEdgeTypeIdentifier(id), id).toBe(false);
+    }
+  });
+
+  it("defers to the type grammar for a namespaced identifier", () => {
+    // Same tiers, same arity, same reserved-root refusals. A second dotted
+    // grammar here is how the two axes drift, which is the defect this closes
+    // arriving from the other direction.
+    expect(isValidEdgeTypeIdentifier("acme.list-member")).toBe(true);
+    expect(isValidEdgeTypeIdentifier("user.mine")).toBe(true);
+    expect(isValidEdgeTypeIdentifier("metadata.anything")).toBe(false);
+    expect(isValidEdgeTypeIdentifier("acme")).toBe(true);
   });
 });

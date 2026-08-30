@@ -1,4 +1,5 @@
 import type { TypePermission } from "./types.js";
+import { RESERVED_ROOT_NAMES } from "./scope-roots.js";
 import {
   GLOBAL_TYPE_WILDCARD,
   subtreeWildcardRoot,
@@ -93,20 +94,18 @@ const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
 
 /**
  * First segments a publisher may never claim, in the type grammar or as a
- * handle. Five of them name a namespace tier the platform defines
- * (`classifyNamespace`). The other two name none, and are reserved for the
+ * handle. Five name a namespace tier the platform defines
+ * (`classifyNamespace`). The rest name none, and are reserved for the
  * opposite reason — each is a root an OAuth scope family lives under, and
- * reserving it is what stops a registered type ever sharing a literal with
- * a grant. A reserved root without a tier is therefore a namespace nothing
- * can occupy, which is the intent.
+ * reserving it is what stops a registered type ever sharing a literal with a
+ * grant. A reserved root without a tier is therefore a namespace nothing can
+ * occupy, which is the intent.
  *
- * - `capability` holds the verb-less administrative scopes, so no type ever
- *   shares a literal with a grant of administrative authority.
- * - `content` holds the two content-category scopes, `content:read` and
- *   `content:write`. Reserving it is what stops a registered type ever
- *   sharing a first segment with a grant over the whole category: without
- *   the entry, `content.note` is an ordinary publisher identifier and
- *   `content` is a claimable handle.
+ * **Derived rather than typed out**, from `scope-roots.ts`. It was a hand
+ * list, and every scope family that arrived needed a second edit here to be
+ * protected — `capability` got one, `content` got one, and `metadata` and
+ * `edge` never did, which is the hole this closes. Composing it means the
+ * next family is protected by having been declared.
  *
  * **Reserving a root is not what makes a scope literal under it
  * unambiguous**, and the note is worth a line because the two look like one
@@ -117,30 +116,32 @@ const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
  * `parseScope`. Two gates, two paths: registration asks this one, the scope
  * grammar asks that one.
  */
-export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
-  "core",
-  "system",
-  "app",
-  "user",
-  "marfa",
-  "capability",
-  "content",
-]);
+export const RESERVED_ROOTS: ReadonlySet<string> = new Set(RESERVED_ROOT_NAMES);
 
 /**
- * Returns true if the value names a reserved root: the type grammar's five
- * namespace tiers plus `capability`. That set is the whole of what a handle
- * claim is refused for. A handle is a namespace claim, not a URL path — it
- * appears in a type identifier, in a scope literal and on a consent screen,
- * and no route in the server is shaped like `/<handle>` — so the string's
- * ordinary meaning is not this function's business.
+ * Returns true if the value names a reserved root, which is the whole of what
+ * a handle claim is refused for.
  *
- * What it covers is the roots the type grammar is written in, which is
- * narrower than the set of first segments carrying meaning elsewhere in the
- * platform. `metadata` and `edge` head scope literals the scope parser
- * resolves and are ordinary claimable handles, so a claim refused here is a
- * claim on the type vocabulary specifically, not on every reserved-sounding
- * word the platform uses.
+ * A handle is a namespace claim, not a URL path — it appears in a type
+ * identifier, in a scope literal and on a consent screen, and no route in the
+ * server is shaped like `/<handle>` — so the string's ordinary meaning is not
+ * this function's business.
+ *
+ * **`metadata` and `edge` are refused here now, and the previous reasoning
+ * for admitting them did not survive a read of the parser.** It held that
+ * they head scope literals the parser resolves and are therefore ordinary
+ * claimable handles. `parseScope` tries the metadata and edge matchers BEFORE
+ * the type matcher, so a type registered under a claimed `metadata` handle
+ * can never have its scope literal read as a type grant at all:
+ * `metadata.types:write` is taken by the metadata family first, and that is
+ * the scope gating `POST /types`.
+ *
+ * **A shipped publisher root is deliberately NOT refused here.** A handle
+ * naming one is a namespace collision rather than a grammar confusion, and
+ * reserving `google` while admitting `google-drive` is the half-protection
+ * T-1008 removed on the operator's ruling. The collision is answered where it
+ * happens, by the seed refusing to overwrite a registration it did not write,
+ * rather than by a name list here.
  *
  * This stays a function rather than an inlined `RESERVED_ROOTS.has` for two
  * reasons. Callers needing a typed-error surface branch on it BEFORE
@@ -151,6 +152,36 @@ export const RESERVED_ROOTS: ReadonlySet<string> = new Set([
 export function isReservedHandle(value: string): boolean {
   if (typeof value !== "string") return false;
   return RESERVED_ROOTS.has(value);
+}
+
+/**
+ * A single-segment kebab edge name: `parent-of`, `in-thread`, `attached-to`.
+ * Starts with a letter, ends with a letter or digit, no dots.
+ */
+const EDGE_KEBAB_NAME = /^[a-z](?:[a-z0-9_-]*[a-z0-9])?$/;
+
+/**
+ * Returns true if the value is a well-formed edge-type identifier: either a
+ * single-segment kebab name, or anything the type grammar accepts.
+ *
+ * **Deferring to `isValidTypeIdentifier` for the dotted form is the point.**
+ * A namespaced edge type is a namespaced identifier, so it should be the same
+ * identifier the type axis means — same tiers, same arity per tier, same
+ * reserved-root refusals. Writing a second dotted grammar here is how the two
+ * axes drift, which is the defect this ticket is about, arriving from the
+ * other direction.
+ *
+ * What this replaces was not a looser grammar but an escape hatch:
+ * `!isValidTypeIdentifier(id) && !id.includes("-")` admitted the kebab set by
+ * skipping the check entirely for anything containing a hyphen, so `"-"`,
+ * `"MY-EDGE"`, `"a b-c"`, `"../-"` and `"..--.."` all registered. Naming the
+ * kebab form admits the nine shipped ids without exempting everything that
+ * happens to share a character with them.
+ */
+export function isValidEdgeTypeIdentifier(value: string): boolean {
+  if (typeof value !== "string") return false;
+  if (!value.includes(".")) return EDGE_KEBAB_NAME.test(value);
+  return isValidTypeIdentifier(value);
 }
 
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -167,7 +198,7 @@ export function isValidHandle(value: string): boolean {
   if (value.length < 3 || value.length > 32) return false;
   if (value.includes("--")) return false;
   if (!HANDLE_RE.test(value)) return false;
-  if (RESERVED_ROOTS.has(value)) return false;
+  if (isReservedHandle(value)) return false;
   return true;
 }
 

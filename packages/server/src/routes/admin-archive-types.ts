@@ -18,6 +18,7 @@ import {
   getTypeSchema,
   isCoreEdgeType,
   isValidTypeIdentifier,
+  isValidEdgeTypeIdentifier,
   registerEdgeTypeSchema,
   validateTypeSchema,
 } from "@withmarfa/shared";
@@ -291,7 +292,10 @@ function parseTypeEntries(
         );
       }
       const body = parsed.data;
-      if (!isValidTypeIdentifier(body.id) && !body.id.includes("-")) {
+      // The same grammar the live route applies. This copy carried the same
+      // hyphen escape hatch, against a file a caller supplies, so a restore
+      // was the laxest door onto the edge vocabulary.
+      if (!isValidEdgeTypeIdentifier(body.id)) {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Archive carries an edge type with an invalid identifier: ${body.id}`,
