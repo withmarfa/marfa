@@ -322,6 +322,14 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // grammar — the plugin's own scope validation runs at /oauth2/authorize
     // (which mints the code), but a hand-crafted URL into /authorize
     // shouldn't bypass that.
+    // **Not a door onto the allowlist, and enumerated here because it looks
+    // like one.** `isValidScope` alone is the right filter at this site: it
+    // refuses invalid grammar with a 400 and admits nothing to a stored
+    // ceiling. Everything it passes is re-validated by the plugin against the
+    // client's registered row, so a withheld literal arriving here is refused
+    // one step later rather than published. The three sites that DO write are
+    // `buildAllowedScopes`, `bundlePublishedScopes` and the self-serve key
+    // mint, and all three consult `isWithheldFromAllowlist`.
     const scopeLiterals = scopeParam.split(/\s+/).filter(Boolean);
     const parsed: ParsedScope[] = [];
     for (const literal of scopeLiterals) {

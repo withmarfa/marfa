@@ -49,6 +49,10 @@ import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
 } from "./ceiling-catchup.js";
+import {
+  isWithheldFromAllowlist,
+  warnOnceAboutWithheldBundleScope,
+} from "./allowlist-withholding.js";
 import { matchesRegisteredRedirectUri } from "./redirect-uri-match.js";
 import { serverAddedResponseParam } from "./redirect-params.js";
 
@@ -275,9 +279,19 @@ export function buildAllowedScopes(
   // narrowing, and reaches a token as a grant nothing can enforce and
   // nothing will ever refuse, which is indistinguishable from working until
   // the day the name it was meant to be starts meaning something.
+  // Two filters, and they answer different questions. `isValidScope` asks
+  // whether the grammar recognizes the literal at all; `isWithheldFromAllowlist`
+  // asks whether this server is willing to publish one it recognizes. Only the
+  // first was here, so a bundle naming `capability.keys` published a scope the
+  // allowlist deliberately never emits — administrative authority, arriving
+  // through the one door that does not pass a parser.
   for (const scope of expandBundlesToScopes(permissionBundles)) {
     if (!isValidScope(scope)) {
       warnOnceAboutBundleScope(scope);
+      continue;
+    }
+    if (isWithheldFromAllowlist(scope)) {
+      warnOnceAboutWithheldBundleScope(scope);
       continue;
     }
     out.add(scope);
