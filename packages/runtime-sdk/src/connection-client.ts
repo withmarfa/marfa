@@ -122,7 +122,26 @@ export interface CreateItemInput {
  * than refusing it: a signature cannot be the enforcement point when the
  * language lets the value through.
  */
-export type UpdateItemPatch = Omit<CreateItemInput, "type">;
+export type UpdateItemPatch = Omit<CreateItemInput, "type"> & {
+  /**
+   * Whether `properties` lays over the item's or becomes them.
+   *
+   * Absent means `merge`, which is what every caller before this meant.
+   * `replace` says the set sent IS the item's properties, so a field the
+   * row holds and this write does not name is removed.
+   *
+   * Reach for it where the shape you are sending is meant to be the whole
+   * shape — a mapped write, where a person's rules decide the item and the
+   * family's own fields are not meant to survive underneath. Merging there
+   * leaves the family properties sitting under the mapped ones, unreported,
+   * re-merged on every sweep, and invisible to the person who thought they
+   * had replaced them.
+   *
+   * The result is validated either way, so a replace dropping a field the
+   * type requires is refused rather than written.
+   */
+  properties_mode?: "merge" | "replace";
+};
 
 export interface ItemResource {
   id: string;
