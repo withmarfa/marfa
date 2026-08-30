@@ -326,12 +326,22 @@ const ITERATIONS_PER_YIELD = 20_000;
  * produced and not what reached `data`.** The charge is `expanded.length
  * === 0` at the call site, and `data` is assembled two stages later,
  * behind a fetch and a filter this charge never consults. So a series
- * whose occurrences are all filtered out afterwards is not charged,
- * however far it walked: measured, 100 series spending 366,000
- * iterations put nothing in `data` and were charged zero. The bound is
- * therefore looser than the response's own wording used to claim, and
- * closing that means charging where `data` is assembled rather than
- * where the expansion returns.
+ * whose occurrences are all dropped after the fetch is not charged for
+ * the walk that produced them.
+ *
+ * **That gap cannot be closed by charging later, and it is worth saying
+ * why rather than leaving it as an omission.** The only filter between
+ * the two is the one that drops a row deleted, trashed or moved out of
+ * `active` between the scan and the fetch — a concurrent mutation, not
+ * an ordinary calendar shape. Charging where `data` is assembled would
+ * mean charging after the scan loop has finished and every series has
+ * already been walked, which turns a ceiling that stops work into a
+ * counter that reports it. The check at the head of the loop is placed
+ * before the expansion for exactly that reason.
+ *
+ * The looseness a caller would actually notice is the one recorded
+ * below under what this does not bound, and it is much larger than this
+ * one: a series that does emit is never charged at all.
  *
  * Against what the rule produced, the difference is a real class rather
  * than a quibble. Three ways an expansion returns nothing:
