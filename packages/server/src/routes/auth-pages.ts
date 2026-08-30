@@ -66,6 +66,7 @@ import {
   type SecurityPageSession,
 } from "./security-page.js";
 import { PerEmailThrottle } from "../auth/per-email-throttle.js";
+import { isWithheldFromAllowlist } from "../auth/allowlist-withholding.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import {
   renderDevicePage,
@@ -1456,7 +1457,16 @@ export function authRoutes(
     const scopes = formData
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string")
-      .filter((s) => isValidScope(s) && !isContentScope(s));
+      // The content drop is a standing limitation recorded elsewhere; the
+      // withheld drop is this ticket's. A hand-crafted post to this form could
+      // name `capability.keys`, and while that grants nothing today — the
+      // literal projects into no permission map — a mint door admitting a
+      // literal it cannot enforce is the same shape as the bundle door, and it
+      // is cheaper to refuse than to rely on the projection staying inert.
+      .filter(
+        (s) =>
+          isValidScope(s) && !isContentScope(s) && !isWithheldFromAllowlist(s),
+      );
     // Full access carries its own grant and needs no ticked scopes, so it is
     // resolved before the "pick at least one" guard rather than after it.
     const wantsFullAccess = formData.get("full_access") === "on";

@@ -22,6 +22,7 @@
  * pass on their own terms.
  */
 import { isValidScope } from "@withmarfa/shared";
+import { publishableBundleScopes } from "./allowlist-withholding.js";
 import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { log } from "../middleware/logger.js";
@@ -67,8 +68,14 @@ export type CeilingCatchUpSurface = "authorize" | "device";
 export function bundlePublishedScopes(
   bundles: readonly PermissionBundle[],
 ): Set<string> {
+  // The withheld drop belongs here as much as in `buildAllowedScopes`, and
+  // more subtly: this set is what a stale client ceiling is WIDENED BY. A
+  // capability literal admitted here is written into a registration row, where
+  // it outlives the configuration that introduced it — so the drop applied at
+  // one door and not the other would leave the narrower door repairing the
+  // damage the wider one had already stored.
   return new Set(
-    bundles.flatMap((bundle) => bundle.scopes).filter((s) => isValidScope(s)),
+    publishableBundleScopes(bundles, (scope) => isValidScope(scope)),
   );
 }
 
