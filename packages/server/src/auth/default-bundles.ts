@@ -181,7 +181,7 @@ function namespaceRootsOf(ids: readonly string[]): string[] {
  *   granted to an already-connected app automatically; the user approves it
  *   on the next connect.
  * - Everything in `system.*` stays out except `system.connection:read` (the
- *   "Connected accounts" toggle), so an app reading "your content" cannot
+ *   "Connections" toggle), so an app reading "your content" cannot
  *   read security internals (credentials, devices, webhooks).
  * - Publisher-tier registry types (the integration set) are the person's
  *   own synced content, so `connected` covers them for READ. Writes stay

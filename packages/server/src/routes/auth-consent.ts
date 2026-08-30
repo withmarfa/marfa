@@ -1514,9 +1514,20 @@ async function resolvePriorScopes(
  * the exact failure it exists to catch.
  */
 export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
+  // **The possessive is dropped from the name of a content type, and kept
+  // where it locates or distinguishes.** Every type on this screen is equally
+  // the reader's, so "Your notes" beside "Bookmarks and saved links" invited
+  // them to look for a difference that was not there, which is the whole of
+  // what the word was doing. Dropped, the entries read as one list.
+  //
+  // It stays in two places, and both carry information a reader would lose:
+  // "in your space" and "about your account" say where the grant reaches, and
+  // `user.*` is "Your custom types" precisely because `app.*` immediately
+  // below it is the app's. Neither is decoration.
+  //
   // Core content
-  "core.note": "Your notes.",
-  "core.task": "Your tasks and to-dos.",
+  "core.note": "Notes.",
+  "core.task": "Tasks and to-dos.",
   "core.bookmark": "Bookmarks and saved links.",
   "core.highlight": "Highlights and excerpts.",
   "core.event": "Calendar events.",
@@ -1577,25 +1588,38 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.song": "Songs.",
 
   // System
-  "system.account_holder": "You, as something items can link to.",
+  "system.account_holder": "The entry that represents you in your space.",
   "system.activity": "Background activity and notifications.",
   "system.app": "Connected apps.",
   "system.connection": "Connections to other apps and services.",
-  "system.credential": "API keys and credentials.",
+  "system.credential": "Keys that give access to your space.",
   "system.device": "Devices signed in to your account.",
   "system.integration": "Available integrations.",
   "system.webhook": "Webhook subscriptions.",
 
   // Edge types: relationships between items.
-  "edge.about": "Links between items and what they're about.",
-  "edge.parent-of": "Parent and child relationships.",
-  "edge.in-thread": "Items grouped into threads.",
-  "edge.in-collection": "Items grouped into collections.",
-  "edge.attached-to": "File attachments on items.",
-  "edge.references": "References between items.",
-  "edge.authored-by": "Who created what.",
-  "edge.derived-from": "Items derived from other items.",
-  "edge.supersedes": "Updates and replacements between items.",
+  //
+  // One shape, and it is a question about the reader's own data rather than a
+  // noun for the relation. These entries previously carried three: a
+  // relationship noun ("Parent and child relationships."), a description of
+  // what the platform does with it ("Items grouped into threads."), and an
+  // abstract restatement of the identifier ("References between items.",
+  // "Items derived from other items."). The third shape is the one that
+  // earns nothing: a space owner reading it has been told the type id back,
+  // spelled differently, and the row above already said that.
+  //
+  // So each of these answers which of the person's things the relation joins,
+  // in the words they would use for it. That rule is checkable against a new
+  // entry, where "share a shape" was not.
+  "edge.about": "What an item is about.",
+  "edge.parent-of": "Which items sit inside others.",
+  "edge.in-thread": "Which thread an item belongs to.",
+  "edge.in-collection": "Which collection an item belongs to.",
+  "edge.attached-to": "Which item a file is attached to.",
+  "edge.references": "Which items point to others.",
+  "edge.authored-by": "Who made an item.",
+  "edge.derived-from": "Which item another came from.",
+  "edge.supersedes": "Which item replaces another.",
 
   // Metadata layer: sub-resources rather than item types, so no registry
   // holds a description to fall back to and this is the only source.
@@ -1643,6 +1667,13 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // the device screen needed the copy to carry it. It needs nothing of the
   // sort now, so `*` says what it reaches like every other entry and the
   // screens add the rest.
+  // `routes/keys-page.ts` renders "Everything in your space" as a section
+  // heading, without this entry's full stop, and that divergence is correct:
+  // one is a heading and the other is a sentence a consent row prints.
+  // Recorded because nothing will catch it if it stops being correct — the
+  // duplicate-copy guard excludes non-dotted keys by construction, since a
+  // bare `*` is an ordinary field name in code, so `*` sits outside what the
+  // guard can see rather than having been overlooked by it.
   "*": "Everything in your space.",
   // Says what it reaches by saying what it does not, because the only
   // thing separating it from `*` above is the system family: the

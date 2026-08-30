@@ -426,7 +426,7 @@ describe("DEFAULT_PERMISSION_BUNDLES", () => {
   it("keeps system.* out of write; read touches only system.connection", () => {
     const write = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "write");
     expect(write?.scopes.some((s) => s.startsWith("system."))).toBe(false);
-    // "Connected accounts" folds system.connection:read into the read bundle;
+    // "Connections" folds system.connection:read into the read bundle;
     // it's the only system.* scope in the default grant.
     const read = DEFAULT_PERMISSION_BUNDLES.find((b) => b.id === "read");
     const readSystem =

@@ -550,12 +550,32 @@ export const SCOPE_LABELS: Record<string, string> = {
   "readwise.highlight": "Readwise highlights",
   "todoist.task": "Todoist tasks",
   "user.*": "Your custom types",
-  "system.connection": "Connected accounts",
+  // "Connected accounts" named less than the description beside it: a
+  // connection need not have a login, so the label narrowed the grant to the
+  // case that happens to have one. "Connections" is what the description
+  // already says.
+  //
+  // **`system.activity` has the same defect and cannot be fixed here.** Its
+  // label drops notifications, which is the half a reader cares about, and
+  // every label that carries both halves needs a conjunction — which the
+  // separator guard in `consent-render.test.ts` forbids, correctly, because
+  // `summarize` joins these into a list and an "and" inside one arrives there
+  // as two items. Closing it needs a short inline form distinct from the
+  // toggle label, the shape `CAPABILITY_SHORT` already takes for exactly this
+  // reason. That is a map, not a word, so it is not in this pass.
+  "system.connection": "Connections",
   "system.integration": "Available integrations",
   "system.device": "Devices",
   "system.webhook": "Webhooks",
   "system.activity": "Activity",
   metadata: "Definitions in your space",
+  // The two metadata sub-resources had no entry at all, so `labelFor` fell to
+  // `humanizeType` and answered "Types" and "Edge types" while the row beneath
+  // printed the full sentence. Same scope, two registers, one screen — the
+  // same defect as the two labels above, arriving through an absence rather
+  // than through a wording choice.
+  "metadata.types": "Custom data types",
+  "metadata.edge_types": "Custom relationship types",
   // The content category. A name rather than a description of reach,
   // like every entry above it: what the grant covers is the description
   // map's sentence, and that it covers types nobody has registered yet

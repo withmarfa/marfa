@@ -185,10 +185,7 @@ describe("a consent row states the operation, not only the type", () => {
     const lines = deviceLines(
       device([parse("core.note:read"), parse("core.note:write")]),
     );
-    expect(lines).toEqual([
-      "Your notes. Read only.",
-      "Your notes. Read and write.",
-    ]);
+    expect(lines).toEqual(["Notes. Read only.", "Notes. Read and write."]);
   });
 
   it("uses one vocabulary across both surfaces", () => {
@@ -231,12 +228,10 @@ describe("a consent row states the operation, not only the type", () => {
    */
   it("ends a description-derived row as a sentence rather than a stranded bracket", () => {
     const labels = rowLabels(
-      authorize([parse("*:read"), parse("metadata.edge_types:write")]),
+      authorize([parse("*:read"), parse("edge.about:write")]),
     );
     expect(labels).toContain("Everything in your space. Read only.");
-    expect(labels).toContain(
-      "Custom relationship types in your space. Read and write.",
-    );
+    expect(labels).toContain("What an item is about. Read and write.");
     for (const label of labels) expect(label).not.toMatch(/\.\s*\(read/);
   });
 
@@ -258,7 +253,11 @@ describe("a consent row states the operation, not only the type", () => {
     // is also this row's label wherever nothing curated names the pattern.
     // Where both surfaces fall that far they now render one identical
     // string, which is the agreement the operation module exists for.
-    const scopes = [parse("metadata.edge_types:write")];
+    // `metadata.edge_types` was this case's example until it gained a curated
+    // label, which moved it off the description path this asserts about. An
+    // edge type is the same population and the docstring above already names
+    // it.
+    const scopes = [parse("edge.about:write")];
     const row = rowLabels(authorize(scopes))[0];
     expect(deviceLines(device(scopes))).toContain(row);
   });
