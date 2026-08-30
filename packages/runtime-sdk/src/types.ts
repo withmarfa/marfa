@@ -173,7 +173,30 @@ export interface Continuation {
     processed: number;
     /** The author's own summary of where the run reached. */
     watermark?: string;
+    /**
+     * A digest of the position this slice carried, where it carried one.
+     *
+     * Folded into the comparison alongside the watermark, because a sweep
+     * against a provider with no domain key can still advance: it walks
+     * pages of an unordered listing and has a position but nothing to
+     * report as a watermark. Without this, such a sweep with a fixed
+     * per-slice cap reports an identical fingerprint every slice and is
+     * abandoned on its second, which made the watermark mandatory in
+     * practice while the type presented it as optional.
+     */
+    position?: string;
   };
+  /**
+   * Ask for the chain to be bounded by the slice and wall-clock ceilings
+   * alone, because nothing this sweep can report advances.
+   *
+   * The honest declaration for a provider with no domain key and no
+   * carried position. The alternative an author is otherwise pushed
+   * towards is reporting an invented watermark purely to keep the
+   * comparison moving, which defeats the guard silently rather than
+   * saying so.
+   */
+  stallGuard?: "ceilings";
   /**
    * Earliest the next slice should run, in milliseconds. Clamped by the
    * runtime. This is the honest answer to a rate limit: park with the

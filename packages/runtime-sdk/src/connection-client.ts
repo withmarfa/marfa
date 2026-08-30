@@ -31,6 +31,16 @@ import {
 import { CYCLE_HEADERS } from "@withmarfa/shared";
 export { CYCLE_HEADERS };
 
+/** Per-call overrides for an outbound provider request. */
+export interface ProxyRequestOptions {
+  /**
+   * Abort this call specifically. Defaults to the runtime's budget
+   * signal, so an integration gets the deadline behaviour without
+   * threading anything through its own call sites.
+   */
+  signal?: AbortSignal;
+}
+
 export interface ConnectionClientOptions {
   /** Base URL of the Marfa server (e.g. `https://marfa.so`). */
   apiUrl: string;
@@ -44,6 +54,19 @@ export interface ConnectionClientOptions {
   refreshCredential: () => Promise<RuntimeCredential>;
   /** Custom fetch for testing — defaults to globalThis.fetch. */
   fetch?: typeof fetch;
+  /**
+   * Aborts outbound provider calls made through `proxyRequest`. The
+   * runtime passes `ctx.budget.signal`, so a call still in flight at the
+   * soft deadline is not what carries the run past the dispatch bound.
+   *
+   * **Deliberately not applied to this client's own Marfa calls.** The
+   * soft deadline is when a handler is asked to wrap up, and wrapping up
+   * means writing — a final page of items, an activity row, the cursor.
+   * A signal that aborted those would cut off the commit the deadline
+   * exists to make room for, so the reserve between the soft deadline and
+   * the bound would buy nothing.
+   */
+  signal?: AbortSignal;
   /**
    * Parent cycle metadata for this run. When the integration is reacting
    * to an `ItemEventMessage`, pass `message.cycle`. When it's a fresh
@@ -211,6 +234,7 @@ export class ConnectionClient {
   private readonly apiUrl: string;
   private readonly refreshCredential: () => Promise<RuntimeCredential>;
   private readonly fetchImpl: typeof fetch;
+  private readonly outboundSignal: AbortSignal | undefined;
   /**
    * Parent cycle metadata for this run, captured at construction time.
    * The client stamps `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` on
@@ -227,6 +251,7 @@ export class ConnectionClient {
     this.apiUrl = opts.apiUrl.replace(/\/$/, "");
     this.refreshCredential = opts.refreshCredential;
     this.fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
+    this.outboundSignal = opts.signal;
     this.cycleParent = opts.cycleParent ?? null;
   }
 
@@ -386,9 +411,11 @@ export class ConnectionClient {
     method: string,
     upstreamPath: string,
     body?: unknown,
+    options?: ProxyRequestOptions,
   ): Promise<Response> {
     const path = `/connections/${this.credential.connection_id}/proxy${upstreamPath}`;
     const url = `${this.apiUrl}${path}`;
+    const signal = options?.signal ?? this.outboundSignal;
     return this.fetchImpl(url, {
       method,
       headers: {
@@ -396,6 +423,7 @@ export class ConnectionClient {
         ...(body !== undefined ? { "Content-Type": "application/json" } : {}),
       },
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...(signal !== undefined && { signal }),
     });
   }
 
@@ -409,9 +437,11 @@ export class ConnectionClient {
     method: string,
     upstreamPath: string,
     formFields: Record<string, string>,
+    options?: ProxyRequestOptions,
   ): Promise<Response> {
     const path = `/connections/${this.credential.connection_id}/proxy${upstreamPath}`;
     const url = `${this.apiUrl}${path}`;
+    const signal = options?.signal ?? this.outboundSignal;
     const body = new URLSearchParams(formFields).toString();
     return this.fetchImpl(url, {
       method,
@@ -420,6 +450,7 @@ export class ConnectionClient {
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body,
+      ...(signal !== undefined && { signal }),
     });
   }
 
