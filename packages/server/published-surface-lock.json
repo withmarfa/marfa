@@ -5,7 +5,7 @@
     "exports": 83
   },
   "@withmarfa/runtime-test": {
-    "version": "1.2.0",
+    "version": "2.0.0",
     "hash": "9d6330e36f6790cb2e43a4745f87147235ca32e861a6ac3f888e500a27487167",
     "exports": 9
   },
