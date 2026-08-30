@@ -1624,11 +1624,13 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // Asked of the allowlist for the same reason the test below is: the
     // fourth sub-resource has to arrive here rather than on a screen.
     //
-    // Scoped to the metadata entries deliberately. Across the rest of the
-    // map the same regex would fire on "References between items." and
-    // "Updates and replacements between items.", where the first word is a
-    // noun that happens to spell a verb. Every metadata line is a plain
-    // noun phrase, so here the leading word settles it.
+    // Scoped to the metadata entries deliberately, and the reason is about
+    // this family rather than about the rest of the map. Every metadata line
+    // is a plain noun phrase, so the leading word settles the question on its
+    // own. Elsewhere the map is written to no such rule, and a leading-word
+    // check applied across it would be testing a convention nothing else
+    // holds — passing or failing on how an entry happens to open rather than
+    // on whether it names an act.
     const metadata = buildAllowedScopes()
       .map(parse)
       .filter((s) => s.kind === "metadata");
@@ -1789,7 +1791,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // The registry's own sentence is written for a developer reading API
     // docs. Both screens show the curated one now; the device screen used to
     // show this.
-    expect(out["core.note"]).toBe("Your notes.");
+    expect(out["core.note"]).toBe("Notes.");
     expect(out["core.note"]).not.toBe(
       TYPE_REGISTRY.get("core.note")?.description,
     );
@@ -1886,12 +1888,13 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
  * `device-grant.test.ts`, which drives the real request.
  */
 describe("the authorize screen and the device screen describe a scope alike", () => {
-  const UNLABELED = [
-    "metadata.types:write",
-    "core.*:read",
-    "app.*:read",
-    "*:read",
-  ];
+  // Literals with no `SCOPE_LABELS` entry, which is the population this
+  // describes. `metadata.types:write` used to sit here and no longer
+  // qualifies: it gained a curated label, so the authorize screen now renders
+  // the label where this fixture needs it to render the description.
+  // `edge.about:read` replaces it as a member of the family that still has no
+  // labels at all, so the case keeps the same reach.
+  const UNLABELED = ["edge.about:read", "core.*:read", "app.*:read", "*:read"];
 
   it("renders the same copy on both, from the one map", () => {
     const scopes = UNLABELED.map(parse);

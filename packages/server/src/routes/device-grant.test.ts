@@ -593,8 +593,8 @@ describe("GET /auth/device/consent — gated on session", () => {
       registry,
       "fixture assumes the registry describes core.note",
     ).toMatch(/\S/);
-    expect(registry).not.toBe("Your notes.");
-    expect(html).toContain("Your notes.");
+    expect(registry).not.toBe("Notes.");
+    expect(html).toContain("Notes.");
     expect(html).not.toContain(registry);
   });
 });
