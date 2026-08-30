@@ -1,5 +1,6 @@
 import type { MetadataPermission, TypePermission } from "./types.js";
 import { isValidTypePattern, resolveTypePermission } from "./validation.js";
+import { CAPABILITY_ROOT, CONTENT_ROOT } from "./scope-roots.js";
 import { SYSTEM_TYPE_IDS } from "./type-registry.js";
 import {
   GLOBAL_TYPE_WILDCARD,
@@ -53,7 +54,7 @@ export type OidcScope = "openid" | "profile" | "email" | "offline_access";
  * point: the other five roots classify types, this one exists so that
  * nothing ever does.
  */
-export const CAPABILITY_ROOT = "capability";
+export { CAPABILITY_ROOT } from "./scope-roots.js";
 
 /**
  * Authority over one administrative surface, named and consented to rather
@@ -258,7 +259,7 @@ export function hasCapability(
  * category grant it is not. Refusing the whole namespace except its two
  * members is the only reading with no second interpretation.
  */
-export const CONTENT_ROOT = "content";
+export { CONTENT_ROOT } from "./scope-roots.js";
 
 /**
  * A grant over the whole content category: every type a person would call
@@ -402,9 +403,34 @@ export function isTypeScope(parsed: ParsedScope): boolean {
 const SCOPE_RE = /^(\*|[a-z][a-z0-9_.*-]*):(read|write)$/;
 // `edge.<type>:<verb>` — type can be kebab-case (parent-of, in-thread) or
 // namespaced (karakeep.list-member).
+//
+// **This class still admits a second wildcard, and that is the remaining half
+// of the edge-grammar work rather than an oversight.** `edge.*.*` parses here
+// where `isValidTypePattern` refuses `core.*.*`, because the type axis routes
+// a wildcard's root through `TYPE_ID_PREFIX` and this has no equivalent.
+// Narrowing it is a one-line change and its consequences are not: the merge
+// and intersect paths reason about STORED grants, so a literal that stops
+// parsing stops being reasoned about, and eleven cases in
+// `device-scope-merge.test.ts` pin what happens to a malformed key today.
+// Closing it means deciding what those paths owe a key a validator can refuse
+// but a stored grant may already carry, which is a separate piece of work
+// from the registration door below.
 const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
 // `metadata.<subresource>:<verb>` — sub-resource is a single dot-free
 // segment (`types`, future siblings).
+//
+// **The metadata axis does not have the edge axis's second-wildcard hole**,
+// asked and answered rather than assumed: the sub-resource class carries
+// neither a dot nor an asterisk, so `metadata.*.*:write` is refused here and
+// falls through to no other matcher that would take it.
+//
+// It has a neighbouring one worth naming, because it is not this regex's to
+// fix. `metadata.*:read` falls past this matcher to `SCOPE_RE`, clears
+// `isValidTypePattern` because the root `metadata` satisfies
+// `TYPE_ID_PREFIX`, and parses as `kind: "type"` — an item-type grant over a
+// namespace, wearing a literal that reads as a metadata grant. Reserving
+// `metadata` as a root is what stops a type ever occupying that namespace;
+// the literal still parses on the type axis.
 const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
 
 /** Standard OIDC literals. Recognized by `parseScope` ahead of the
