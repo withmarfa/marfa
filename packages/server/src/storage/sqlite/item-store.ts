@@ -707,6 +707,7 @@ export class SqliteItemStore implements ItemStore {
           currentProps,
           incomingProps,
           input.null_clears === true,
+          input.properties_mode ?? "merge",
         );
         const newVersion = row.version + 1;
         const newTier = input.tier ?? row.tier;

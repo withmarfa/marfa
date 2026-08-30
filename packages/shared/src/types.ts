@@ -237,6 +237,19 @@ export interface UpdateItemInput {
    * for owner writes to integration-owned rows; never caller-supplied.
    */
   null_clears?: boolean;
+  /**
+   * Whether `properties` lays over the row's or becomes them.
+   *
+   * Defaults to `merge`, which is what every existing caller means. A
+   * `replace` says the incoming set IS the item's properties, so a field the
+   * row holds and the write does not name is gone.
+   *
+   * It exists because the clearing behaviour was otherwise reachable only by
+   * naming every field to be removed, which puts the type's shape in every
+   * call site. The result is validated either way, so a replace that drops a
+   * required field is refused rather than written.
+   */
+  properties_mode?: "merge" | "replace";
   version?: number;
   /** Force a version snapshot for this update, bypassing the
    *  snapshot-interval throttle in version gating. */

@@ -517,7 +517,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values while tier and timestamp replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped.",
+    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -538,6 +538,14 @@ const updateItemRoute = createRoute({
              *  in silence, which is how a re-type could be attempted,
              *  answered with a 200, and do nothing. */
             type: z.string().optional(),
+            /** Whether `properties` lays over the item's or becomes them.
+             *  Defaults to `merge`, which is what every caller before this
+             *  meant. A `replace` says the set sent IS the item's
+             *  properties, so a field the row holds and this write does not
+             *  name is removed. The result is validated either way, so a
+             *  replace dropping a required field is refused rather than
+             *  written. */
+            properties_mode: z.enum(["merge", "replace"]).optional(),
             version: z.number().int().min(0).optional(),
             force_snapshot: z.boolean().optional(),
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
@@ -1315,6 +1323,11 @@ export function itemRoutes(storage: Storage) {
               spaceId,
             ),
             nullClears,
+            // "merge", because this branch is the natural-key upsert on
+            // `POST /items` and that route offers no mode. Stated rather
+            // than defaulted silently, so the prediction is visibly tied to
+            // what the door it predicts can actually be asked for.
+            "merge",
           );
           const validation = validateProperties(existing.type, merged, {
             spaceId,
@@ -2125,10 +2138,19 @@ export function itemRoutes(storage: Storage) {
     }
 
     if (body.properties) {
-      const merged = {
-        ...item.properties,
-        ...body.properties,
-      };
+      // Through the shared helper rather than a shallow spread of its own,
+      // because this has to predict exactly what the store will write. A
+      // hand-rolled copy was a fourth version of a rule that already had
+      // three, and it silently stopped agreeing the moment a caller could
+      // ask for a replace: it would have validated the merged set while the
+      // store wrote the replaced one, so a write dropping a required field
+      // passed validation on the strength of the value it was removing.
+      const merged = mergeUpdateProperties(
+        item.properties,
+        resolveIncomingProperties(item.type, body.properties, false, tid),
+        false,
+        body.properties_mode ?? "merge",
+      );
       if (getTypeSchema(item.type, tid)) {
         const validation = validateProperties(item.type, merged, {
           spaceId: tid,
@@ -2195,6 +2217,9 @@ export function itemRoutes(storage: Storage) {
               id,
               {
                 properties: body.properties,
+                ...(body.properties_mode !== undefined && {
+                  properties_mode: body.properties_mode,
+                }),
                 version: body.version,
                 force_snapshot: body.force_snapshot === true ? true : undefined,
                 tier: hasTier ? body.tier : undefined,
