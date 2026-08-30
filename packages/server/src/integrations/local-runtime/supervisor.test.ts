@@ -30,6 +30,7 @@ import {
   type HandlerResult,
   type ScheduleMessage,
   familyOnlyMappingResolver,
+  progressFingerprint,
 } from "@withmarfa/runtime-sdk";
 import { initEventLog, __resetCycleDetectionForTests } from "../../pubsub.js";
 import type { Item } from "@withmarfa/shared";
@@ -1918,8 +1919,19 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
             // refuse this — the ceilings would let it straight through.
             slice: 2,
             started_at_ms: Date.now() - 30_000,
-            progress_fingerprint: "3@w7",
-            seen_fingerprints: ["3@w7"],
+            // Derived rather than written out, because the fingerprint's
+            // shape is the runtime's business and a fixture that spells it
+            // by hand stops testing the check the moment the shape widens.
+            progress_fingerprint: progressFingerprint({
+              resume: null,
+              progress: { processed: 3, watermark: "w7" },
+            }),
+            seen_fingerprints: [
+              progressFingerprint({
+                resume: null,
+                progress: { processed: 3, watermark: "w7" },
+              }),
+            ],
           },
         },
       });
@@ -1963,8 +1975,20 @@ describe("local-runtime supervisor: the job was reclaimed mid-run", () => {
             started_at_ms: Date.now() - 30_000,
             // Immediately previous slice was B, so the consecutive check
             // passes. A is in the history, so the loop is caught anyway.
-            progress_fingerprint: "1@B",
-            seen_fingerprints: ["1@A", "1@B"],
+            progress_fingerprint: progressFingerprint({
+              resume: null,
+              progress: { processed: 1, watermark: "B" },
+            }),
+            seen_fingerprints: [
+              progressFingerprint({
+                resume: null,
+                progress: { processed: 1, watermark: "A" },
+              }),
+              progressFingerprint({
+                resume: null,
+                progress: { processed: 1, watermark: "B" },
+              }),
+            ],
           },
         },
       });

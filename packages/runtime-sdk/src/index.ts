@@ -78,7 +78,15 @@ export {
   progressFingerprint,
 } from "./queue-consumer.js";
 export { sweep } from "./sweep.js";
-export type { SweepSpec, SweepPageInput, SweepPageOutput } from "./sweep.js";
+export type { ProxyRequestOptions } from "./connection-client.js";
+export type {
+  SweepSpec,
+  SweepPageInput,
+  SweepPageOutput,
+  SweepPageContinue,
+  SweepPageDone,
+  SweepPageFailed,
+} from "./sweep.js";
 export type {
   ConsumerEnvironment,
   DlqProducer,

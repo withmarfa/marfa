@@ -999,3 +999,87 @@ describe("MarfaApiError structured fields", () => {
     });
   });
 });
+
+describe("the budget signal on outbound provider calls", () => {
+  function signalCapturingFetch(seen: (AbortSignal | null | undefined)[]) {
+    return ((_input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(init?.signal);
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+  }
+
+  it("reaches proxyRequest, which is the only path an integration uses", async () => {
+    // The guarantee was documented and unavailable: `proxyRequest` took no
+    // options argument at all, so the signal could not be passed on the
+    // one call every integration makes.
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const controller = new AbortController();
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: null,
+      fetch: signalCapturingFetch(seen),
+      signal: controller.signal,
+    });
+
+    await client.proxyRequest("GET", "/v1/things");
+    expect(seen[0]).toBe(controller.signal);
+  });
+
+  it("reaches the form-encoded variant too", async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const controller = new AbortController();
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: null,
+      fetch: signalCapturingFetch(seen),
+      signal: controller.signal,
+    });
+
+    await client.proxyRequestForm("POST", "/api/v1/sync", { a: "b" });
+    expect(seen[0]).toBe(controller.signal);
+  });
+
+  it("is overridable per call", async () => {
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const outer = new AbortController();
+    const inner = new AbortController();
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: null,
+      fetch: signalCapturingFetch(seen),
+      signal: outer.signal,
+    });
+
+    await client.proxyRequest("GET", "/v1/things", undefined, {
+      signal: inner.signal,
+    });
+    expect(seen[0]).toBe(inner.signal);
+  });
+
+  it("does not reach this client's own Marfa writes", async () => {
+    // Deliberate, and the reserve between the soft deadline and the
+    // dispatch bound is what depends on it. The deadline is when a handler
+    // is asked to wrap up, and wrapping up means writing — a final page of
+    // items, an activity row, the cursor. A signal that aborted those
+    // would cut off the commit the deadline exists to leave room for.
+    const seen: (AbortSignal | null | undefined)[] = [];
+    const controller = new AbortController();
+    const client = new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      cycleParent: null,
+      fetch: signalCapturingFetch(seen),
+      signal: controller.signal,
+    });
+
+    await client.createItem({ type: "core.note", properties: { title: "t" } });
+    expect(seen[0]).toBeUndefined();
+  });
+});

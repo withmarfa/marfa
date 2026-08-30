@@ -103,15 +103,20 @@ function buildContext(
 ): { ctx: ConnectionContext; arm: () => () => void } {
   const { message, credential, apiUrl, echo } = request;
   const cycleParent = message.kind === "item-event" ? message.cycle : null;
+  // The budget is built first so its signal can be handed to the client:
+  // an outbound provider call still in flight at the soft deadline is
+  // exactly what carries a run past the dispatch bound, and the signal was
+  // unreachable from the only path integrations use to make one.
+  const { budget, arm } = createBudget({
+    startedAtMs: request.startedAtMs,
+    softLimitMs: request.softLimitMs,
+  });
   const client = new ConnectionClient({
     apiUrl,
     credential,
     refreshCredential: () => Promise.resolve(credential),
     cycleParent,
-  });
-  const { budget, arm } = createBudget({
-    startedAtMs: request.startedAtMs,
-    softLimitMs: request.softLimitMs,
+    signal: budget.signal,
   });
   return {
     ctx: {

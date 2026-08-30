@@ -40,9 +40,19 @@ export interface Budget {
    */
   readonly shouldYield: boolean;
   /**
-   * Aborts at the soft deadline. Pass it to `fetch` and to the Marfa
-   * client so a call already in flight when the deadline passes is not
-   * what carries the run past it.
+   * Aborts at the soft deadline, so a provider call already in flight
+   * when it passes is not what carries the run past the dispatch bound.
+   *
+   * **The runtime already applies it to `ctx.marfa.proxyRequest`**, which
+   * is the path integrations reach a provider through, so there is
+   * nothing to thread through your own call sites. Pass it explicitly
+   * only to a `fetch` you make yourself.
+   *
+   * **Not applied to this client's own Marfa calls, deliberately.** The
+   * soft deadline is when a handler is asked to wrap up, and wrapping up
+   * means writing: a last page of items, an activity row, the cursor.
+   * Aborting those would cut off the commit the deadline exists to leave
+   * room for.
    */
   readonly signal: AbortSignal;
   /**

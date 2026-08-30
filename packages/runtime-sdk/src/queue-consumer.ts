@@ -256,8 +256,20 @@ const SEEN_FINGERPRINT_WINDOW = 16;
  * cost the second to buy nothing for the first.
  */
 export function progressFingerprint(continuation: Continuation): string {
-  const { processed, watermark } = continuation.progress;
-  return `${String(processed)}@${watermark ?? ""}`;
+  const { processed, watermark, position } = continuation.progress;
+  // The position is folded in because a sweep can advance without having
+  // anything to report as a watermark: an unordered listing, a feed with
+  // no time ordering. Comparing count against watermark alone made a
+  // sweep with a fixed per-slice cap report the same value every slice
+  // and be abandoned on its second, which is what made the watermark
+  // mandatory in practice while the type presented it as optional.
+  //
+  // Widening the format is safe across a deploy in the only direction
+  // that matters: a chain in flight compares an old-format fingerprint
+  // against a new-format one, they differ, and differing reads as
+  // progress. The failure it could have caused is a false stall, and that
+  // is the one this cannot produce.
+  return `${String(processed)}@${watermark ?? ""}#${position ?? ""}`;
 }
 
 /**
@@ -278,6 +290,14 @@ export function assessChainProgress(
   continuation: Continuation,
 ): string | null {
   if (inbound === undefined) return null;
+
+  // A sweep that has declared it can report nothing that advances is
+  // bounded by the slice and wall-clock ceilings instead. The alternative
+  // an author is otherwise pushed towards is reporting an invented
+  // watermark purely to keep this comparison moving, which defeats the
+  // guard silently rather than saying so — and a guard defeated in a way
+  // nobody can see is worse than one switched off in a way they can.
+  if (continuation.stallGuard === "ceilings") return null;
 
   // A slice that parked asking not to be resumed yet was refused by the
   // provider rather than stalled by itself, and neither guard below can
@@ -337,16 +357,21 @@ export async function buildConnectionContext(
   // stamps the integration as the chain head); item-event handlers
   // inherit the parent's cycle from the queue message.
   const cycleParent = message.kind === "item-event" ? message.cycle : null;
+  const storage = env.storageFor(message.connection_id);
+  // Built before the client so its signal can be handed over: an outbound
+  // provider call still in flight at the soft deadline is what carries a
+  // run past the dispatch bound, and until now the signal could not reach
+  // the only path an integration uses to make one.
+  const { budget, arm } = createBudget({
+    startedAtMs,
+    softLimitMs: env.softLimitMs,
+  });
   const client = new ConnectionClient({
     apiUrl: env.apiUrl,
     credential,
     refreshCredential: () => env.mintCredential(message.connection_id),
     cycleParent,
-  });
-  const storage = env.storageFor(message.connection_id);
-  const { budget, arm } = createBudget({
-    startedAtMs,
-    softLimitMs: env.softLimitMs,
+    signal: budget.signal,
   });
   // Armed and not handed back. The timer is unref'd, so it cannot hold
   // the process open, and the controller it aborts belongs to this

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   assessChainProgress,
   consumeBatch,
+  progressFingerprint,
   type ConsumerEnvironment,
   type DlqProducer,
 } from "./queue-consumer.js";
@@ -644,11 +645,38 @@ describe("assessChainProgress", () => {
   }
 
   it("abandons a chain whose two consecutive slices report the same position", () => {
-    // The control. Without it the exemption below would read as a guard
+    // The control. Without it every exemption below would read as a guard
     // that had simply been switched off.
-    expect(assessChainProgress(inbound("0@"), parked())).toMatch(
-      /stopped making progress/,
-    );
+    const same = parked();
+    expect(
+      assessChainProgress(inbound(progressFingerprint(same)), same),
+    ).toMatch(/stopped making progress/);
+  });
+
+  it("sees a sweep that moved its position but has no watermark", () => {
+    // The reason a watermark was mandatory in practice. A sweep with a
+    // fixed per-slice cap walking an unordered listing reports the same
+    // count every slice and has nothing to put in the watermark, so
+    // comparing count against watermark alone abandoned it on slice two.
+    const first = parked({ progress: { processed: 100, position: "page-1" } });
+    const second = parked({ progress: { processed: 100, position: "page-2" } });
+    expect(
+      assessChainProgress(inbound(progressFingerprint(first)), second),
+    ).toBeNull();
+  });
+
+  it("still abandons one whose position did not move either", () => {
+    const stuck = parked({ progress: { processed: 100, position: "page-1" } });
+    expect(
+      assessChainProgress(inbound(progressFingerprint(stuck)), stuck),
+    ).toMatch(/stopped making progress/);
+  });
+
+  it("stands aside for a sweep that declared it can report nothing", () => {
+    const same = parked({ stallGuard: "ceilings" });
+    expect(
+      assessChainProgress(inbound(progressFingerprint(same)), same),
+    ).toBeNull();
   });
 
   it("does not call a slice parked under an upstream delay a stall", () => {
@@ -658,19 +686,21 @@ describe("assessChainProgress", () => {
     // operator it stopped making progress argues against the one reading
     // that would explain it. The slice and wall-clock ceilings still bound
     // the chain.
+    const throttled = parked({ notBefore: 5_000 });
     expect(
-      assessChainProgress(inbound("0@"), parked({ notBefore: 5_000 })),
+      assessChainProgress(inbound(progressFingerprint(throttled)), throttled),
     ).toBeNull();
   });
 
   it("does not call a slice parked under an upstream delay a loop either", () => {
     // The second guard has the same misdiagnosis available to it: a
     // sustained throttle returns to a position it has already reported.
+    const revisited = parked();
     const seen: ContinuationInput = {
-      ...inbound("9@x"),
-      seen_fingerprints: ["0@"],
+      ...inbound("a-position-it-has-since-left"),
+      seen_fingerprints: [progressFingerprint(revisited)],
     };
-    expect(assessChainProgress(seen, parked())).toMatch(/looping/);
+    expect(assessChainProgress(seen, revisited)).toMatch(/looping/);
     expect(assessChainProgress(seen, parked({ notBefore: 5_000 }))).toBeNull();
   });
 });

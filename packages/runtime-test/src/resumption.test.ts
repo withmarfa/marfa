@@ -48,6 +48,7 @@ describe("a handler that parks", () => {
         key: "main",
         page: ({ resume }) =>
           Promise.resolve({
+            outcome: "continue",
             next: ((resume as number | undefined) ?? 0) + 1,
             watermark: `w${String(((resume as number | undefined) ?? 0) + 1)}`,
             processed: 1,
@@ -100,8 +101,17 @@ describe("a handler that parks", () => {
           // running to the harness's slice ceiling.
           return Promise.resolve(
             at >= 2
-              ? { watermark: `w${String(at)}`, processed: 1 }
-              : { next: at + 1, watermark: `w${String(at + 1)}`, processed: 1 },
+              ? ({
+                  outcome: "done",
+                  watermark: `w${String(at)}`,
+                  processed: 1,
+                } as const)
+              : ({
+                  outcome: "continue",
+                  next: at + 1,
+                  watermark: `w${String(at + 1)}`,
+                  processed: 1,
+                } as const),
           );
         },
         resumeAcrossSlices: true,
@@ -160,8 +170,13 @@ describe("a handler that parks", () => {
           // chain is two slices rather than unbounded.
           return Promise.resolve(
             watermark === "w1"
-              ? { watermark: "w1", processed: 0 }
-              : { next: "provider-token", watermark: "w1", processed: 1 },
+              ? ({ outcome: "done", watermark: "w1", processed: 0 } as const)
+              : ({
+                  outcome: "continue",
+                  next: "provider-token",
+                  watermark: "w1",
+                  processed: 1,
+                } as const),
           );
         },
       }),
@@ -189,6 +204,7 @@ describe("a handler that parks", () => {
         key: "main",
         page: () =>
           Promise.resolve({
+            outcome: "continue",
             next: 1,
             processed: 0,
             notBefore: 5_000,
@@ -216,6 +232,7 @@ describe("a handler that parks", () => {
         page: () => {
           calls += 1;
           return Promise.resolve({
+            outcome: "continue" as const,
             next: calls,
             processed: 1,
             notBefore: 5_000,
@@ -240,7 +257,12 @@ describe("a handler that parks", () => {
     registerScheduleHandler((ctx, message) =>
       sweep(ctx, message, {
         key: "main",
-        page: () => Promise.resolve({ watermark: "w9", processed: 3 }),
+        page: () =>
+          Promise.resolve({
+            outcome: "done" as const,
+            watermark: "w9",
+            processed: 3,
+          }),
       }),
     );
 
