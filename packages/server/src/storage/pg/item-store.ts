@@ -990,6 +990,38 @@ export class PgItemStore implements ItemStore {
     });
   }
 
+  async purgeRevokedAppGrantsOlderThan(
+    beforeDate: string,
+    spaceId?: string | null,
+  ): Promise<number> {
+    // Three predicates on `properties` rather than one on `state`, because a
+    // grant revoked through the user-facing path keeps `state: "active"`: the
+    // revoke writes the status and leaves the lifecycle alone so the record
+    // survives as a record. A sweep shaped like the trash purge would match
+    // nothing at all.
+    const where = and(
+      eq(items.type, "system.connection"),
+      sql`${items.properties}->>'kind' = 'app'`,
+      sql`${items.properties}->>'status' = 'revoked'`,
+      sql`${items.properties}->>'revoked_at' < ${beforeDate}`,
+      spaceCondition(items.space_id, spaceId),
+    );
+
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx.select({ id: items.id }).from(items).where(where);
+      if (idRows.length === 0) return 0;
+
+      const ids = idRows.map((row) => row.id);
+      // Same obligation as the two sweeps above: edges carry no FK to items.
+      // A grant row is an edge target more often than an activity row is —
+      // `authored-by` and the account holder both point at connections.
+      await tx.delete(edges).where(inArray(edges.source_id, ids));
+      await tx.delete(edges).where(inArray(edges.target_id, ids));
+      await tx.delete(items).where(inArray(items.id, ids));
+      return ids.length;
+    });
+  }
+
   async restore(id: string, spaceId?: string): Promise<Item> {
     const row = await this.getRaw(id, spaceId);
     if (!row) {

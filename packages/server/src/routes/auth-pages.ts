@@ -2704,19 +2704,37 @@ export function authRoutes(
     // cascade between this read and this write, and the write then puts
     // the grant back to active with `revoked_at` cleared: an end state
     // neither ordering of the two user actions would produce.
-    const grant = await withConsentLock(
+    //
+    // **The binding is inside the lock too, and that is the half that was
+    // missing.** The revoke's sweep is `deleteDeviceCodesForGrant`, keyed on
+    // `connection_item_id`, and it runs inside this same lock. With the bind
+    // outside it, a revoke could take the lock the moment the grant write
+    // released it, run its entire cascade past a code whose grant reference
+    // was still null — matching nothing — and release; the bind then attached
+    // that code to a grant that had just been revoked. Revocation deletes
+    // device codes rather than flipping their status, so the `status =
+    // 'pending'` predicate the bind runs under was still satisfied and the
+    // write succeeded.
+    //
+    // Inside, the two orderings are the only two outcomes. Approval first:
+    // the code is bound before the sweep runs, so the sweep finds and deletes
+    // it. Revoke first: the cascade completes against nothing, and the
+    // approval that follows creates a fresh grant and binds to that.
+    const { grant, ok } = await withConsentLock(
       row.client_id,
       sessionResult.session.user.id,
-      () =>
-        createUserAppGrant(
+      async () => {
+        const created = await createUserAppGrant(
           storage,
           sessionResult.session.user,
           row.client_id,
           row.scopes,
           "marfa/oauth/device",
-        ),
+        );
+        const bound = await storage.oauth.approveDeviceCode(row.id, created.id);
+        return { grant: created, ok: bound };
+      },
     );
-    const ok = await storage.oauth.approveDeviceCode(row.id, grant.id);
     if (!ok) {
       // Race: someone else flipped it in between. Surface as already-resolved.
       return c.redirect(

@@ -7,6 +7,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { setActivePermissionBundles } from "../config.js";
+import { setConsentLockBackend } from "../auth/consent-lock.js";
 import { grantCoversScope, TYPE_REGISTRY } from "@withmarfa/shared";
 
 /**
@@ -1860,5 +1861,80 @@ describe("POST /auth/device — off-by-default scopes", () => {
         expect(res.status).toBe(200);
       },
     );
+  });
+});
+
+/**
+ * The device code is bound to its grant inside the same consent lock that
+ * created it.
+ *
+ * **The window this closes, stated as the sequence that produced it.** The
+ * grant write held the lock and the binding ran after it was released. A
+ * revoke taking the lock in that gap ran its whole cascade — including
+ * `deleteDeviceCodesForGrant`, which is keyed on `connection_item_id` — past a
+ * code whose grant reference was still null, so the sweep matched nothing.
+ * The binding then attached that code to a grant that had just been revoked,
+ * and it succeeded because revocation deletes device codes rather than
+ * flipping their status, leaving the `status = 'pending'` predicate satisfied.
+ *
+ * **Asserted through the lock rather than by racing two requests.** A race
+ * test that loses its race leaves the same end state as one that never
+ * raced, so it keeps passing and quietly stops covering anything. Observing
+ * that the binding happens while the lock is held is the property itself.
+ */
+describe("POST /auth/device/consent binds the code inside the consent lock", () => {
+  afterEach(() => {
+    setConsentLockBackend(null);
+  });
+
+  it("holds the lock across the binding, not only across the grant write", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const cookie = await signInAndCookie(
+      ctx,
+      "device-lock@example.com",
+      "correct horse",
+    );
+
+    // The backend is composed inside the in-process queue, so this flag is
+    // true for exactly the span the lock is held.
+    let lockHeld = false;
+    setConsentLockBackend(async (_key, fn) => {
+      lockHeld = true;
+      try {
+        return await fn();
+      } finally {
+        lockHeld = false;
+      }
+    });
+
+    const oauth = ctx.storage.oauth;
+    const realApprove = oauth.approveDeviceCode.bind(oauth);
+    let heldAtBinding: boolean | undefined;
+    oauth.approveDeviceCode = async (codeId: string, grantId: string) => {
+      heldAtBinding = lockHeld;
+      return realApprove(codeId, grantId);
+    };
+
+    const init = await initiate(ctx, clientId, "core.note:read");
+    const res = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: new URLSearchParams({
+          user_code: init.user_code,
+          decision: "approve",
+        }).toString(),
+      }),
+    );
+    expect(res.status).toBe(200);
+
+    // Undefined would mean the binding never ran at all, which would pass a
+    // naive truthiness check while covering nothing.
+    expect(heldAtBinding).toBe(true);
   });
 });
