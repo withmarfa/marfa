@@ -260,6 +260,19 @@ export async function sweep<TResume extends Json>(
     }
     resume = output.next;
 
+    // A page that asked not to be resumed before a given time has answered
+    // a rate limit, and calling the provider again inside this slice is the
+    // one response that cannot help. Breaking here rather than collecting
+    // `notBefore` and acting on it only after the loop is the difference
+    // between parking with the provider's own delay and spending the whole
+    // page allowance against a provider that has already refused.
+    //
+    // The alternative an adopter is otherwise pushed towards is worse: a
+    // re-entry guard inside `page()` that returns the same position without
+    // touching the wire, whose obvious neighbour — returning `{}` on the
+    // second call — is a sweep that stopped early and reported completion.
+    if (output.notBefore !== undefined) break;
+
     if (ctx.budget.shouldYield) break;
   }
 

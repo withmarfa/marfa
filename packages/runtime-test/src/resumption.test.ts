@@ -202,6 +202,37 @@ describe("a handler that parks", () => {
     expect(harness.continuations[0]?.notBefore).toBe(5_000);
   });
 
+  it("stops calling a page that has asked not to be resumed yet", async () => {
+    // A real budget, rather than the `softLimitMs: 0` its sibling above
+    // uses, is what makes this a test about `notBefore` at all: with the
+    // budget already spent the loop breaks on the yield check whatever the
+    // page returned, so that test passes against a driver which ignores
+    // `notBefore` entirely.
+    const harness = createTestHarness({ integrationName: INTEGRATION });
+    let calls = 0;
+    registerScheduleHandler((ctx, message) =>
+      sweep(ctx, message, {
+        key: "main",
+        page: () => {
+          calls += 1;
+          return Promise.resolve({
+            next: calls,
+            processed: 1,
+            notBefore: 5_000,
+          });
+        },
+      }),
+    );
+
+    await harness.connection("conn_a").send(scheduleMessage("conn_a"));
+    await harness.consume();
+
+    // The case this exists for is a 429, where calling the provider again
+    // inside the same slice is the one response that cannot help.
+    expect(calls).toBe(1);
+    expect(harness.continuations[0]?.notBefore).toBe(5_000);
+  });
+
   it("a sweep that finishes inside one slice never enqueues anything", async () => {
     // The control. Without it, a driver that parked unconditionally would
     // pass every test above.

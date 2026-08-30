@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+  assessChainProgress,
   consumeBatch,
   type ConsumerEnvironment,
   type DlqProducer,
@@ -12,6 +13,8 @@ import {
 } from "./handlers.js";
 import { createInMemoryStorage } from "./in-memory-storage.js";
 import type {
+  Continuation,
+  ContinuationInput,
   ItemEventMessage,
   ScheduleMessage,
   WebhookMessage,
@@ -622,5 +625,52 @@ describe("nextHopMetadata (SDK)", () => {
     );
     expect(meta.hop_count).toBe(4);
     expect(meta.originating_connection_id).toBe("conn-orig");
+  });
+});
+
+describe("assessChainProgress", () => {
+  function inbound(fingerprint: string): ContinuationInput {
+    return {
+      resume: null,
+      chain_id: "sweep_a",
+      slice: 1,
+      started_at_ms: 0,
+      progress_fingerprint: fingerprint,
+    };
+  }
+
+  function parked(extra: Partial<Continuation> = {}): Continuation {
+    return { resume: null, progress: { processed: 0 }, ...extra };
+  }
+
+  it("abandons a chain whose two consecutive slices report the same position", () => {
+    // The control. Without it the exemption below would read as a guard
+    // that had simply been switched off.
+    expect(assessChainProgress(inbound("0@"), parked())).toMatch(
+      /stopped making progress/,
+    );
+  });
+
+  it("does not call a slice parked under an upstream delay a stall", () => {
+    // A fully throttled slice writes nothing and holds its watermark, so
+    // it reports the same fingerprint as the slice before it. That is a
+    // provider refusing rather than a sweep looping, and telling an
+    // operator it stopped making progress argues against the one reading
+    // that would explain it. The slice and wall-clock ceilings still bound
+    // the chain.
+    expect(
+      assessChainProgress(inbound("0@"), parked({ notBefore: 5_000 })),
+    ).toBeNull();
+  });
+
+  it("does not call a slice parked under an upstream delay a loop either", () => {
+    // The second guard has the same misdiagnosis available to it: a
+    // sustained throttle returns to a position it has already reported.
+    const seen: ContinuationInput = {
+      ...inbound("9@x"),
+      seen_fingerprints: ["0@"],
+    };
+    expect(assessChainProgress(seen, parked())).toMatch(/looping/);
+    expect(assessChainProgress(seen, parked({ notBefore: 5_000 }))).toBeNull();
   });
 });
