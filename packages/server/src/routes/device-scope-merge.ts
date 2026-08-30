@@ -3,13 +3,16 @@ import {
   scopesToTypePermissions,
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
+  scopesToProfilePermissions,
   resolveTypePermission,
   edgePermissionCovers,
   metadataPermissionCovers,
+  profilePermissionCovers,
   subtreeWildcardRoot,
   GLOBAL_TYPE_WILDCARD,
 } from "@withmarfa/shared";
 import type {
+  ProfilePermission,
   ParsedScope,
   TypePermission,
   MetadataPermission,
@@ -264,6 +267,7 @@ interface AxisMaps {
   type: Record<string, TypePermission>;
   edge: Record<string, "read" | "write">;
   metadata: Record<string, MetadataPermission>;
+  profile: Record<string, ProfilePermission>;
 }
 
 function project(scopes: readonly string[]): AxisMaps {
@@ -271,10 +275,11 @@ function project(scopes: readonly string[]): AxisMaps {
     type: scopesToTypePermissions(scopes),
     edge: scopesToEdgePermissions(scopes),
     metadata: scopesToMetadataPermissions(scopes),
+    profile: scopesToProfilePermissions(scopes),
   };
 }
 
-type BreadthAxis = "type" | "edge" | "metadata";
+type BreadthAxis = "type" | "edge" | "metadata" | "profile";
 
 /**
  * The key a breadth-carrying scope occupies in its axis's permission map,
@@ -306,6 +311,19 @@ function breadthKey(
       return {
         axis: "metadata",
         key: parsed.subresource ?? GLOBAL_TYPE_WILDCARD,
+      };
+    case "profile":
+      // An axis of its own rather than `null`, because this family carries
+      // real breadth: `profile:<verb>` is the wildcard key and
+      // `profile.<row>:<verb>` is an exact one, exactly as metadata is. Left
+      // unioned verbatim, a standing `profile:read` beside an approved
+      // `profile.name:write` would survive as two literals whose projection
+      // then resolves the row at write and the category at read — which is
+      // correct, but the prune could never see the pair as one breadth
+      // question and would keep restating it.
+      return {
+        axis: "profile",
+        key: parsed.profileRow ?? GLOBAL_TYPE_WILDCARD,
       };
     case "oidc":
     case "capability":
@@ -372,6 +390,8 @@ function resolveOn(
       return verbFrom((op) => edgePermissionCovers(maps.edge, key, op));
     case "metadata":
       return verbFrom((op) => metadataPermissionCovers(maps.metadata, key, op));
+    case "profile":
+      return verbFrom((op) => profilePermissionCovers(maps.profile, key, op));
   }
 }
 
@@ -389,6 +409,10 @@ function literalFor(
       return key === GLOBAL_TYPE_WILDCARD
         ? `metadata:${verb}`
         : `metadata.${key}:${verb}`;
+    case "profile":
+      return key === GLOBAL_TYPE_WILDCARD
+        ? `profile:${verb}`
+        : `profile.${key}:${verb}`;
   }
 }
 

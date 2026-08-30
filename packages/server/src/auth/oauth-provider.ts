@@ -26,6 +26,10 @@ import { oauthProvider } from "@better-auth/oauth-provider";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { createHmac } from "node:crypto";
 import {
+  profilePermissionCovers,
+  scopesToProfilePermissions,
+  PROFILE_ROWS,
+  PROFILE_ROOT,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   expandBundlesToScopes,
@@ -169,6 +173,17 @@ export function buildAllowedScopes(
     // Metadata top-level
     "metadata:read",
     "metadata:write",
+    // Category 2, Your profile. The levelled parent and one literal per row.
+    // Published rather than withheld because the consent screen has shipped a
+    // "Your profile" bundle since before any of this was enforced, and a
+    // bundle offering a category no client can request is a screen making a
+    // promise the grammar cannot keep.
+    `${PROFILE_ROOT}:read`,
+    `${PROFILE_ROOT}:write`,
+    ...PROFILE_ROWS.flatMap((row) => [
+      `${PROFILE_ROOT}.${row}:read`,
+      `${PROFILE_ROOT}.${row}:write`,
+    ]),
     // The content category, the parent grant over everything a person
     // saves. Withheld until this build for one reason: both literals share
     // the type pattern `content`, which is the key both consent surfaces
@@ -483,11 +498,28 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // the (now-deleted) homegrown /auth/userinfo handler.
     customIdTokenClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
-      if (scopes.includes("profile")) {
-        claims.name = user.name;
-        if ("image" in user && user.image) claims.picture = user.image;
+      // **The union with Category 2, and it is the half that makes the gate
+      // real.** `/oauth/userinfo` and the direct `/profile/*` routes are two
+      // doors onto one resource rather than two resources, so a caller reads
+      // if it holds the OIDC literal OR the corresponding profile scope.
+      // Treating them as disjoint would leave this an ungated read path for
+      // exactly the data the direct routes now protect, which is the same
+      // defect in a second location rather than a fix.
+      const profilePerms = scopesToProfilePermissions(scopes);
+      const readsName =
+        scopes.includes("profile") ||
+        profilePermissionCovers(profilePerms, "name", "read");
+      const readsEmail =
+        scopes.includes("email") ||
+        profilePermissionCovers(profilePerms, "email", "read");
+      const readsAvatar =
+        scopes.includes("profile") ||
+        profilePermissionCovers(profilePerms, "avatar", "read");
+      if (readsName) claims.name = user.name;
+      if (readsAvatar && "image" in user && user.image) {
+        claims.picture = user.image;
       }
-      if (scopes.includes("email")) {
+      if (readsEmail) {
         claims.email = user.email;
         if ("emailVerified" in user) {
           claims.email_verified = user.emailVerified;
@@ -499,11 +531,28 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // /userinfo response shape (OIDC) — same gating as id_token.
     customUserInfoClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {};
-      if (scopes.includes("profile")) {
-        claims.name = user.name;
-        if ("image" in user && user.image) claims.picture = user.image;
+      // **The union with Category 2, and it is the half that makes the gate
+      // real.** `/oauth/userinfo` and the direct `/profile/*` routes are two
+      // doors onto one resource rather than two resources, so a caller reads
+      // if it holds the OIDC literal OR the corresponding profile scope.
+      // Treating them as disjoint would leave this an ungated read path for
+      // exactly the data the direct routes now protect, which is the same
+      // defect in a second location rather than a fix.
+      const profilePerms = scopesToProfilePermissions(scopes);
+      const readsName =
+        scopes.includes("profile") ||
+        profilePermissionCovers(profilePerms, "name", "read");
+      const readsEmail =
+        scopes.includes("email") ||
+        profilePermissionCovers(profilePerms, "email", "read");
+      const readsAvatar =
+        scopes.includes("profile") ||
+        profilePermissionCovers(profilePerms, "avatar", "read");
+      if (readsName) claims.name = user.name;
+      if (readsAvatar && "image" in user && user.image) {
+        claims.picture = user.image;
       }
-      if (scopes.includes("email")) {
+      if (readsEmail) {
         claims.email = user.email;
         if ("emailVerified" in user) {
           claims.email_verified = user.emailVerified;

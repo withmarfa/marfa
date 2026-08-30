@@ -68,6 +68,7 @@ export function scopeOperation(scope: ParsedScope): Operation | undefined {
     case "edge":
     case "metadata":
     case "content":
+    case "profile":
       // `operation` is typed across the whole union, so the verb-less value
       // is refused here rather than defaulted to "read". A scope of a
       // verb-bearing kind carrying no verb is malformed, and answering for

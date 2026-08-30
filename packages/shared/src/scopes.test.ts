@@ -838,6 +838,7 @@ describe("only type scopes reach the item-type axis", () => {
     oidc: "openid",
     capability: "capability.webhooks",
     content: "content:read",
+    profile: "profile.name:write",
   };
 
   // Which families reach `type_permissions` at all, as a second total record
@@ -845,7 +846,9 @@ describe("only type scopes reach the item-type axis", () => {
   // `isTypeScope`, with its own pattern as the key. `content` reaches it
   // through an arm of its own, projecting a complement — its pattern never
   // becomes a key, which is the property the standalone case below pins. The
-  // other four must not reach it by any route.
+  // other five must not reach it by any route — `profile` included, and it is
+  // the one most worth stating: Category 2 is a separate category from
+  // Category 1, and a grant in one never implies access in the other.
   const REACHES_TYPE_AXIS: Record<ParsedScope["kind"], boolean> = {
     type: true,
     edge: false,
@@ -853,6 +856,7 @@ describe("only type scopes reach the item-type axis", () => {
     oidc: false,
     capability: false,
     content: true,
+    profile: false,
   };
 
   const kinds = Object.keys(LITERAL_BY_KIND) as ParsedScope["kind"][];

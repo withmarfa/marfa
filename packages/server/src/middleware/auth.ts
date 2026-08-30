@@ -11,8 +11,10 @@ import {
   scopesToTypePermissions,
   scopesToEdgePermissions,
   scopesToMetadataPermissions,
+  scopesToProfilePermissions,
   edgePermissionCovers,
   metadataPermissionCovers,
+  profilePermissionCovers,
 } from "@withmarfa/shared";
 import type { ApiKey, MarfaRole } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -352,6 +354,7 @@ export function authMiddleware(
       const metadataPermissions = scopesToMetadataPermissions(
         oauthToken.scopes,
       );
+      const profilePermissions = scopesToProfilePermissions(oauthToken.scopes);
       // Space id from the plugin's referenceId column (= our clientReference
       // output, which returns the user's space_id at consent time).
       const oauthSpaceId = oauthToken.referenceId ?? undefined;
@@ -408,6 +411,7 @@ export function authMiddleware(
         extension_permissions: {},
         edge_permissions: edgePermissions,
         metadata_permissions: metadataPermissions,
+        profile_permissions: profilePermissions,
         created_at: createdAtIso,
         last_used_at: null,
       });
@@ -1212,6 +1216,36 @@ export function requireMetadataPermission(
     ErrorCode.FORBIDDEN,
     `Missing metadata.${subresource}:${level} permission`,
     { metadata_subresource: subresource, required: level },
+  );
+}
+
+/**
+ * Category 2 of the permission model, Your profile.
+ *
+ * Deliberately the same shape as {@link requireMetadataPermission}, including
+ * the role bypass, because the distinction that matters is not which endpoint
+ * a caller chose but what it holds. `roleBypassesPermissionMaps` returns false
+ * for a `scope_enforced` key, so a first-party credential resolving to a space
+ * passes as it always has while an OAuth access token must carry
+ * `profile:<verb>` or `profile.<row>:<verb>`.
+ *
+ * **The category is levelled, so `read` is a level rather than a baseline.** A
+ * token holding nothing here may not read a name or an email address, which is
+ * the difference between this and an item-type axis and the reason the design
+ * calls it Category 2 rather than a field on Category 1.
+ */
+export function requireProfilePermission(
+  c: Context<AppEnv>,
+  row: string,
+  level: "read" | "write",
+): void {
+  const apiKey = checkAuth(c.get("apiKey"));
+  if (roleBypassesPermissionMaps(apiKey)) return;
+  if (profilePermissionCovers(apiKey.profile_permissions, row, level)) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `Missing profile.${row}:${level} permission`,
+    { profile_row: row, required: level },
   );
 }
 

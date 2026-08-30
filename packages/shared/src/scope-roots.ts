@@ -32,6 +32,8 @@ export const CONTENT_ROOT = "content";
 export const METADATA_ROOT = "metadata";
 /** Relationship scopes, `edge.<type>:<verb>`. */
 export const EDGE_ROOT = "edge";
+/** Category 2 of the permission model — your name, email and avatar. */
+export const PROFILE_ROOT = "profile";
 
 /**
  * Every root an OAuth scope family lives under.
@@ -48,6 +50,7 @@ export const SCOPE_FAMILY_ROOTS = [
   CONTENT_ROOT,
   METADATA_ROOT,
   EDGE_ROOT,
+  PROFILE_ROOT,
 ] as const;
 
 /**

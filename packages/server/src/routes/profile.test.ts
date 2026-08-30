@@ -335,9 +335,14 @@ describe("Profile routes", () => {
       // Mint an OAuth bearer through the plugin-tables setup helper.
       // Writes into auth_oauth_*, same end-to-end behavior as creating
       // a client + token via the raw three-step.
+      // `profile:read` alongside the OIDC literals, and the addition is the
+      // point rather than boilerplate. The OIDC literals authorise the three
+      // claims `/oauth/userinfo` answers; this route answers a wider object —
+      // username, bio, timezone and the timestamps — so it is gated on the
+      // category's own parent scope. The refusal case is directly below.
       const { token: rawToken } = await seedOauthBearer(
         hosted.storage,
-        ["openid", "profile", "email"],
+        ["openid", "profile", "email", "profile:read"],
         {
           clientName: "olive-test-client",
           spaceId: u.spaceId,
@@ -532,6 +537,137 @@ describe("Profile routes", () => {
       expect(clearRes.status).toBe(200);
       const body = (await clearRes.json()) as ProfileBody;
       expect(body.avatar_url).toBe("/profile/placeholder/kate.svg");
+    });
+  });
+
+  /**
+   * Category 2 is enforced by a scope, which it was not.
+   *
+   * Every route here was gated on authentication alone, so an access token
+   * granted nothing but `core.note:read` could read a person's email address
+   * and rewrite their name. These cases are the refusals, and each is written
+   * so that removing the corresponding `requireProfilePermission` call turns
+   * one of them red.
+   *
+   * **The bearer holds the OIDC literals throughout**, which is the sharp
+   * version of the test: those are what the shipped `profile` bundle grants
+   * by default, so this is the shape almost every consenting app actually
+   * has. They authorise the three claims `/oauth/userinfo` answers and they
+   * do not authorise this wider object.
+   */
+  describe("Category 2 is gated on a scope, not on being authenticated", () => {
+    async function bearerWith(scopes: string[], handle: string) {
+      const u = await provisionUser(hosted, {
+        handle,
+        email: `${handle}@example.com`,
+      });
+      const { token } = await seedOauthBearer(hosted.storage, scopes, {
+        clientName: `${handle}-client`,
+        spaceId: u.spaceId,
+        authUserId: u.authUserId,
+      });
+      return { token, user: u };
+    }
+
+    const OIDC_ONLY = ["openid", "profile", "email"];
+
+    it("refuses a read to a token holding only the OIDC literals", async () => {
+      const { token } = await bearerWith(OIDC_ONLY, "reader");
+      const res = await request(hosted.app, "GET", "/profile/me", {
+        key: token,
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("refuses a name change to a token that was granted no profile write", async () => {
+      // The defect in one line: this is what "any token can change a name"
+      // meant, and it is the case the ticket was filed for.
+      const { token } = await bearerWith(
+        [...OIDC_ONLY, "profile:read"],
+        "renamer",
+      );
+      const res = await request(hosted.app, "PATCH", "/profile/me", {
+        key: token,
+        body: { first_name: "Mallory" },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("refuses a handle claim, which is the type-namespacing identifier", async () => {
+      // `PUT /auth/me/handle` lives in another file, which is why the
+      // ticket's own route table missed it. A handle namespaces published
+      // types as `<handle>.<type>`, so an ungated write here hands an app the
+      // string the type grammar is built on.
+      const { token } = await bearerWith(
+        [...OIDC_ONLY, "profile:read"],
+        "claimer",
+      );
+      const res = await request(hosted.app, "PUT", "/auth/me/handle", {
+        key: token,
+        body: { handle: "somethingelse" },
+      });
+      expect(res.status).toBe(403);
+    });
+
+    it("admits a read once the category is granted", async () => {
+      const { token } = await bearerWith(
+        [...OIDC_ONLY, "profile:read"],
+        "granted",
+      );
+      const res = await request(hosted.app, "GET", "/profile/me", {
+        key: token,
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("admits a write once the category is granted", async () => {
+      const { token } = await bearerWith(
+        [...OIDC_ONLY, "profile:write"],
+        "writer",
+      );
+      const res = await request(hosted.app, "PATCH", "/profile/me", {
+        key: token,
+        body: { first_name: "Wanda" },
+      });
+      expect(res.status).toBe(200);
+    });
+
+    it("lets a row grant reach its own row and no wider one", async () => {
+      // The parent/row split, which is the argument for cloning the metadata
+      // shape rather than inventing one. `profile.avatar:write` is the one
+      // row grant that maps onto a whole route, because the avatar routes
+      // touch the avatar and nothing else.
+      const { token } = await bearerWith(
+        [...OIDC_ONLY, "profile.avatar:write"],
+        "rowholder",
+      );
+      // The row it names: reaches the avatar delete.
+      const del = await request(hosted.app, "DELETE", "/profile/me/avatar", {
+        key: token,
+      });
+      expect(del.status).not.toBe(403);
+      // Not the category: the PATCH writes username, bio and timezone, none
+      // of which is the row this token holds.
+      const patch = await request(hosted.app, "PATCH", "/profile/me", {
+        key: token,
+        body: { first_name: "Nope" },
+      });
+      expect(patch.status).toBe(403);
+    });
+
+    it("still admits a first-party credential, which holds no scopes at all", async () => {
+      // The distinction the gate is built on is what the caller holds rather
+      // than which endpoint it chose: `roleBypassesPermissionMaps` is false
+      // for a `scope_enforced` OAuth token and true for an ordinary key, so
+      // the CLI and the MCP are unaffected by any of the above.
+      const u = await provisionUser(hosted, {
+        handle: "firstparty",
+        email: "firstparty@example.com",
+      });
+      const res = await request(hosted.app, "GET", "/profile/me", {
+        key: u.apiKey,
+      });
+      expect(res.status).toBe(200);
     });
   });
 

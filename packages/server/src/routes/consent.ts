@@ -568,6 +568,10 @@ export const SCOPE_LABELS: Record<string, string> = {
   "system.device": "Devices",
   "system.webhook": "Webhooks",
   "system.activity": "Activity",
+  profile: "Profile",
+  "profile.name": "Name",
+  "profile.email": "Email address",
+  "profile.avatar": "Avatar",
   metadata: "Definitions in your space",
   // The two metadata sub-resources had no entry at all, so `labelFor` fell to
   // `humanizeType` and answered "Types" and "Edge types" while the row beneath
