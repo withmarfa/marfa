@@ -78,6 +78,18 @@ export function isOpenEnded(scope: ParsedScope): boolean {
       // rather than into the metadata map, so the projection arm sees an
       // empty object. This is the arm whose absence was the defect.
       return true;
+    case "profile":
+      // Answered by the family rather than by the spelling, because this
+      // category's breadth is carried by which form the literal takes rather
+      // than by a wildcard in it. `profile:<verb>` reaches the whole category
+      // INCLUDING rows added to it later, which is the definition this
+      // predicate exists to state; `profile.<row>:<verb>` reaches exactly one
+      // row and can never widen.
+      //
+      // Deriving it from the pattern the way the three below do would answer
+      // false for both, since neither literal carries an asterisk and neither
+      // projects into the metadata map.
+      return scope.profileRow === undefined;
     case "type":
     case "edge":
     case "metadata": {

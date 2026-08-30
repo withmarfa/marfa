@@ -169,6 +169,21 @@ function scopeSummary(scopes: readonly string[]): string {
         else unknownFamily = true;
         break;
       }
+      case "profile": {
+        // Category 2 is about the person rather than their content, so a read
+        // lands with the OIDC family below: what it buys is knowing who you
+        // are. A write is not the same fact and must not collapse into it —
+        // it changes your name, your handle or your avatar — so it also sets
+        // the data-writing flag.
+        //
+        // That overstates by a shade, since your profile is not your content.
+        // It is the direction this function already leans, and the honest
+        // alternative is a fourth clause on a line that exists to be glanced
+        // at. Naming the category precisely is the consent screen's job.
+        identifiesYou = true;
+        if (scopeOperation(parsed) === "write") writesData = true;
+        break;
+      }
       case "oidc":
         identifiesYou = true;
         break;

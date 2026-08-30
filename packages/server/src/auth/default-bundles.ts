@@ -297,6 +297,18 @@ export function buildDefaultPermissionBundles(
       // toggles said name, picture and email. `profile` returns `name` and
       // `picture`, `email` returns the address.
       description: "Your name, picture and email address.",
+      // **The OIDC literals only, and Category 2's own scopes deliberately
+      // stay out.** This bundle is `default_on`, so adding `profile:read`
+      // here would widen every existing consenting app from the three OIDC
+      // claims to the whole profile surface — bio, timezone and the username
+      // that namespaces published types — silently, on the next approval.
+      //
+      // Category 2 follows the content category's precedent instead:
+      // requestable, and in no shipped bundle, so an application opts in by
+      // name. What this bundle grants is unchanged by that category becoming
+      // enforceable; the two overlap on the reads that `/oauth/userinfo`
+      // answers, and the union that makes them agree is in `oauth-provider.ts`
+      // rather than here.
       scopes: ["openid", "profile", "email"],
       default_on: true,
     },

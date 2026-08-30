@@ -23,6 +23,7 @@
 import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
+  GLOBAL_TYPE_WILDCARD,
   MarfaError,
   ErrorCode,
   isValidHandle,
@@ -30,7 +31,7 @@ import {
   isValidTimeZone,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireProfilePermission } from "../middleware/auth.js";
 import { reserveQuota } from "../middleware/quota.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
@@ -438,11 +439,21 @@ export function profileRoutes(
   }
 
   router.openapi(getProfileRoute, async (c) => {
+    // The parent rather than a row, because this route answers the whole
+    // category: `ProfileSchema` carries username, bio, timezone and the
+    // timestamps alongside the three rows the category enumerates. A row
+    // grant cannot describe that surface, so requiring one would be a
+    // fiction — see the note on PROFILE_ROWS.
+    requireProfilePermission(c, GLOBAL_TYPE_WILDCARD, "read");
     const { user, authEmail, accountHolderItemId } = await resolveOwnProfile(c);
     return c.json(buildProfile(user, authEmail, accountHolderItemId), 200);
   });
 
   router.openapi(updateProfileRoute, async (c) => {
+    // The parent, for the same reason and more sharply: this route writes
+    // `username`, which is the handle that namespaces published types, plus
+    // `bio` and `timezone`. None is a row the category names.
+    requireProfilePermission(c, GLOBAL_TYPE_WILDCARD, "write");
     const { user, accountHolderItemId } = await resolveOwnProfile(c);
     if (!storage.users) {
       // resolveOwnProfile already threw for this case; the redundant
@@ -548,6 +559,10 @@ export function profileRoutes(
   });
 
   router.openapi(setAvatarRoute, async (c) => {
+    // The one place a row grant is honest: this route touches the avatar and
+    // nothing else, so `profile.avatar:write` covers it exactly, and the
+    // parent covers it through the wildcard.
+    requireProfilePermission(c, "avatar", "write");
     const { user, accountHolderItemId } = await resolveOwnProfile(c);
     if (!storage.users) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Profile unavailable");
@@ -675,6 +690,7 @@ export function profileRoutes(
   });
 
   router.openapi(deleteAvatarRoute, async (c) => {
+    requireProfilePermission(c, "avatar", "write");
     const { user, accountHolderItemId } = await resolveOwnProfile(c);
     if (!storage.users) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Profile unavailable");

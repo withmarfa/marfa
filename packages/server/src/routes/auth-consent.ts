@@ -1630,6 +1630,19 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // and update" told somebody approving a read that they were granting a
   // write. The read/write split is already carried by the screen's own
   // grouping and by the toggle the row sits on.
+  // Category 2, Your profile. The possessive stays throughout this block
+  // under the rule the map's header states: it distinguishes rather than
+  // decorates, because an app's own name and the person's are both nameable
+  // on this screen and the reader has to be able to tell them apart.
+  //
+  // None of these states that the parent reaches rows added later — that is
+  // composed from `isOpenEnded`, which answers true for the bare `profile`
+  // form and false for a row, exactly as it does for a wildcard.
+  profile: "Your name, email address and avatar.",
+  "profile.name": "Your name.",
+  "profile.email": "Your email address.",
+  "profile.avatar": "Your avatar.",
+
   metadata: "Custom data types and relationship types.",
   "metadata.types": "Custom data types in your space.",
   "metadata.edge_types": "Custom relationship types in your space.",
@@ -1833,8 +1846,12 @@ function describeScope(scope: ParsedScope): string | undefined {
       );
     }
     case "metadata":
-      // No registry fallback, because a metadata sub-resource is not a
-      // registered type and nothing else holds copy for one.
+    case "profile":
+      // No registry fallback for either: a metadata sub-resource and a
+      // profile row are not registered types, and nothing else holds copy
+      // for one. Curated copy is the only possible source, which is also why
+      // the coverage guard treats a missing entry here as a defect rather
+      // than as a fallback working.
       return CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];
     case "type": {
       const curated = CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern];

@@ -1,12 +1,13 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import {
+  GLOBAL_TYPE_WILDCARD,
   MarfaError,
   ErrorCode,
   isValidHandle,
   isReservedHandle,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth } from "../middleware/auth.js";
+import { requireAuth, requireProfilePermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -181,12 +182,23 @@ export function userAuthRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Space not found");
     }
 
+    // The same category, reached through a different file — which is why
+    // T-960's own route table missed these two. `GET /users/me` answers the
+    // profile alongside the space, so a caller reading it is reading
+    // Category 2 whatever the path says.
+    requireProfilePermission(c, GLOBAL_TYPE_WILDCARD, "read");
     return c.json({ user, space }, 200);
   });
 
   // PUT /auth/me/handle — claim or change handle
   router.openapi(setHandleRoute, async (c) => {
     const apiKey = requireAuth(c);
+    // The parent, and this is the sharpest case in the category. A handle is
+    // the public identifier that namespaces published types as
+    // `<handle>.<type>`, so an unenforced write here hands an app the string
+    // the type grammar is built on. It is not one of the three rows the
+    // category enumerates, which is exactly why a row grant cannot gate it.
+    requireProfilePermission(c, GLOBAL_TYPE_WILDCARD, "write");
     const spaceId = apiKey.space_id;
     if (!spaceId) {
       throw new MarfaError(

@@ -340,6 +340,13 @@ export type EdgePermission = "read" | "write";
  */
 export type MetadataPermission = "read" | "write";
 
+/**
+ * A level on Category 2, Your profile. Levelled in the same sense as
+ * metadata: read is a level rather than a free baseline, because the
+ * category holds a person's name, email address and avatar.
+ */
+export type ProfilePermission = "read" | "write";
+
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
@@ -427,6 +434,16 @@ export interface ApiKey {
    * grant's `metadata.<subresource>:<verb>` scopes.
    */
   metadata_permissions?: Record<string, MetadataPermission>;
+  /**
+   * Category 2, Your profile. Keyed on the row (`name`, `email`, `avatar`)
+   * with the levelled parent keyed on `*`.
+   *
+   * Absent means the caller holds nothing on this category, which on a
+   * levelled category means it may not read it either. A first-party key
+   * bypasses the map through its role, exactly as it does for metadata; an
+   * OAuth token is `scope_enforced` and does not.
+   */
+  profile_permissions?: Record<string, ProfilePermission>;
   created_at: string;
   /**
    * Hard lifetime bound (ISO timestamp). A key past its `expires_at` is

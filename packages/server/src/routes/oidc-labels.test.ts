@@ -142,7 +142,21 @@ const COPY_FAMILIES = [
      * declaration rather than skipping the file is the whole point: a second
      * map of this copy appearing beside an excised one is still caught.
      */
-    excise: [] as string[],
+    excise: [
+      // Category 2 legitimately keys `profile` and `profile.email` in both
+      // consent copy maps, and neither is a second statement of the OIDC
+      // literals' copy. The strings collide and the scopes do not: the OIDC
+      // literal is the bare word `profile`, while Category 2's are
+      // `profile:read` and `profile.email:read`, and `parseScope` tells them
+      // apart on the colon. The design note that ruled this shape says so in
+      // terms.
+      //
+      // Cut by declaration rather than by file, which is the mechanism's
+      // point: a genuine second map of the OIDC copy appearing beside these
+      // in the same file is still caught.
+      "export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {",
+      "export const SCOPE_LABELS: Record<string, string> = {",
+    ] as string[],
   },
   {
     family: "the type, edge, metadata and wildcard scope descriptions",

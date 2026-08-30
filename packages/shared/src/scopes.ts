@@ -1,6 +1,10 @@
-import type { MetadataPermission, TypePermission } from "./types.js";
+import type {
+  MetadataPermission,
+  ProfilePermission,
+  TypePermission,
+} from "./types.js";
 import { isValidTypePattern, resolveTypePermission } from "./validation.js";
-import { CAPABILITY_ROOT, CONTENT_ROOT } from "./scope-roots.js";
+import { CAPABILITY_ROOT, CONTENT_ROOT, PROFILE_ROOT } from "./scope-roots.js";
 import { SYSTEM_TYPE_IDS } from "./type-registry.js";
 import {
   GLOBAL_TYPE_WILDCARD,
@@ -260,6 +264,7 @@ export function hasCapability(
  * members is the only reading with no second interpretation.
  */
 export { CONTENT_ROOT } from "./scope-roots.js";
+export { PROFILE_ROOT } from "./scope-roots.js";
 
 /**
  * A grant over the whole content category: every type a person would call
@@ -336,11 +341,25 @@ export interface ParsedScope {
    * whatever nobody has thought of yet, and on the item-type axis being
    * admitted means having a pattern matched against the live type registry.
    */
-  kind: "type" | "edge" | "metadata" | "oidc" | "capability" | "content";
+  kind:
+    | "type"
+    | "edge"
+    | "metadata"
+    | "oidc"
+    | "capability"
+    | "content"
+    | "profile";
   /** Present when kind === "edge"; the edge type id or "*". */
   edgeType?: string;
   /** Present when kind === "metadata" and the scope names a sub-resource (e.g. "types"). */
   subresource?: string;
+  /**
+   * Present when kind === "profile" and the scope names a single row of the
+   * category (`name`, `email`, `avatar`). Absent for the levelled parent,
+   * `profile:<verb>`, which reaches the whole category including rows added
+   * to it later.
+   */
+  profileRow?: string;
   /** Present when kind === "oidc"; one of the standard OIDC literals. */
   oidcScope?: OidcScope;
   /** Present when kind === "capability"; the administrative surface named. */
@@ -382,6 +401,15 @@ export function isTypeScope(parsed: ParsedScope): boolean {
     case "metadata":
     case "oidc":
     case "capability":
+      return false;
+    case "profile":
+      // Category 2 is its own axis. Rule 3 of the permission design says
+      // Your space is never covered by a parent grant, and the same holds
+      // here: the content category's parent reaches item types and does not
+      // reach this, because no projection puts a profile scope on the type
+      // axis. Admitting it would mint a `type_permissions` entry keyed on
+      // `profile`, which resolves no registered type — a grant that reads as
+      // one and confers nothing.
       return false;
     default: {
       // Compile-time exhaustiveness check. The runtime arm refuses too, so a
@@ -432,6 +460,23 @@ const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
 // `metadata` as a root is what stops a type ever occupying that namespace;
 // the literal still parses on the type axis.
 const METADATA_SUB_SCOPE_RE = /^metadata\.([a-z][a-z0-9_-]*):(read|write)$/;
+
+/**
+ * The rows Category 2 contains today. Closed rather than open, unlike the
+ * metadata sub-resource class it is otherwise a clone of, because this
+ * category is defined by enumeration in the permission design: your name,
+ * your email address and your avatar, and nothing else.
+ *
+ * **A row added here reaches a `profile:read` holder and does not reach a
+ * `profile.name:read` holder**, which falls out of the parent/row split
+ * without anybody writing that behaviour a second time. That property is the
+ * main argument for cloning `metadata` rather than inventing a shape.
+ */
+export const PROFILE_ROWS = ["name", "email", "avatar"] as const;
+
+const PROFILE_ROW_SCOPE_RE = new RegExp(
+  `^profile\\.(${PROFILE_ROWS.join("|")}):(read|write)$`,
+);
 
 /** Standard OIDC literals. Recognized by `parseScope` ahead of the
  *  `<type>:<verb>` matchers so they can't collide with future type names
@@ -496,6 +541,35 @@ export function parseScope(scope: string): ParsedScope | null {
       typePattern: CONTENT_ROOT,
       operation: scope === "content:write" ? "write" : "read",
       kind: "content",
+    };
+  }
+  // Category 2, `profile:<verb>` and `profile.<row>:<verb>`. Ahead of
+  // `SCOPE_RE` for the same reason the metadata and edge families are: the
+  // root is reserved, so no registered type can occupy it, and the family
+  // that owns the literal should be the one that reads it.
+  //
+  // **The OIDC `profile` literal never reaches here and cannot collide.** It
+  // carries no colon and is matched by the OIDC arm above; every literal in
+  // this family has one. The two are two doors onto one resource rather than
+  // two resources, and the union that makes them agree is enforced at the
+  // routes rather than in the grammar.
+  if (scope === `${PROFILE_ROOT}:read` || scope === `${PROFILE_ROOT}:write`) {
+    return {
+      typePattern: PROFILE_ROOT,
+      operation: scope.split(":")[1] as "read" | "write",
+      kind: "profile",
+    };
+  }
+  // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- same rationale
+  const profileRowMatch = scope.match(PROFILE_ROW_SCOPE_RE);
+  if (profileRowMatch) {
+    const profileRow = profileRowMatch[1] ?? "";
+    const operation = profileRowMatch[2] as "read" | "write";
+    return {
+      typePattern: `${PROFILE_ROOT}.${profileRow}`,
+      operation,
+      kind: "profile",
+      profileRow,
     };
   }
   if (scope === "metadata:read" || scope === "metadata:write") {
@@ -874,6 +948,59 @@ export function scopesToMetadataPermissions(
  * matches any sub-resource. `write` implies `read`. Used by route guards
  * such as the `POST /types` admission check.
  */
+/**
+ * Projects Category 2 scopes into a permission map keyed on the row, with the
+ * levelled parent keyed on `*`.
+ *
+ * A clone of {@link scopesToMetadataPermissions}, and deliberately so: the
+ * parent/row split, `write` implying `read`, and a row added later reaching a
+ * parent holder all fall out of the shape rather than being written twice.
+ */
+export function scopesToProfilePermissions(
+  scopes: readonly string[],
+): Record<string, ProfilePermission> {
+  const perms: Record<string, ProfilePermission> = {};
+  for (const scope of scopes) {
+    const parsed = parseScope(scope);
+    if (parsed?.kind !== "profile") continue;
+    // The profile parser path only emits "read" / "write"; the verb-less
+    // families are caught by the kind guard above.
+    if (parsed.operation === "none") continue;
+    const key = parsed.profileRow ?? "*";
+    const current = perms[key];
+    if (parsed.operation === "write" || current === undefined) {
+      perms[key] = parsed.operation;
+    }
+  }
+  return perms;
+}
+
+/**
+ * Checks whether a profile_permissions map covers the required verb on a row.
+ * The wildcard `*`, granted by a bare `profile:<verb>`, matches any row
+ * including one added to the category later. `write` implies `read`.
+ *
+ * **`read` is a level here rather than a baseline**, which is the difference
+ * from an item-type axis and the whole reason this category is levelled: a
+ * caller holding nothing on it may not read a name or an email address.
+ */
+export function profilePermissionCovers(
+  perms: Record<string, ProfilePermission> | undefined,
+  row: string,
+  requiredOp: "read" | "write",
+): boolean {
+  if (!perms) return false;
+  const specific = perms[row];
+  if (specific === "write" || (specific === "read" && requiredOp === "read")) {
+    return true;
+  }
+  const wildcard = perms["*"];
+  if (wildcard === "write" || (wildcard === "read" && requiredOp === "read")) {
+    return true;
+  }
+  return false;
+}
+
 export function metadataPermissionCovers(
   perms: Record<string, MetadataPermission> | undefined,
   subresource: string,
@@ -1105,6 +1232,20 @@ export function grantCoversScope(
         Object.keys(perms),
         (key) =>
           effectiveLevel((op) => metadataPermissionCovers(perms, key, op)),
+      );
+    }
+    case "profile": {
+      // A bare `profile:<verb>` requirement names no row and asks about the
+      // whole category, including rows added to it later. Rows are a closed
+      // dot-free set by grammar, so the category form is the only breadth
+      // this axis has — the same shape as metadata above.
+      const perms = scopesToProfilePermissions(held);
+      return grantCoversPattern(
+        need.profileRow ?? GLOBAL_TYPE_WILDCARD,
+        need.operation,
+        Object.keys(perms),
+        (key) =>
+          effectiveLevel((op) => profilePermissionCovers(perms, key, op)),
       );
     }
     default: {
