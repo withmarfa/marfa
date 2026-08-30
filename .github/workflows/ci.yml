@@ -91,7 +91,13 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
-          if echo "${changed}" | grep -qE '^packages/server/drizzle/sqlite/'; then
+          # A here-string rather than a pipe, and the reason is not style.
+          # `grep -q` exits on its first match, so the producer feeding it can
+          # be left writing into a closed pipe — and with `pipefail` set, that
+          # makes the whole pipeline non-zero even though grep matched. The
+          # `if` then takes the else branch and this guard reports false when
+          # the answer is true, silently and green.
+          if grep -qE '^packages/server/drizzle/sqlite/' <<< "${changed}"; then
             echo "sqlite_migrations=true" >> "$GITHUB_OUTPUT"
           else
             echo "sqlite_migrations=false" >> "$GITHUB_OUTPUT"
@@ -105,7 +111,8 @@ jobs:
           # instructions; keep the two in step.
           emit() {
             local name="$1" pattern="$2"
-            if echo "${changed}" | grep -qE "${pattern}"; then
+            # Here-string, for the reason given above the sqlite check.
+            if grep -qE "${pattern}" <<< "${changed}"; then
               echo "${name}=true" >> "$GITHUB_OUTPUT"
             else
               echo "${name}=false" >> "$GITHUB_OUTPUT"
