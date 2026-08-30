@@ -33,13 +33,36 @@ export function resolveIncomingProperties(
     : coerceNullProperties(typeId, properties, spaceId);
 }
 
-/** The properties the row ends up holding, given the resolved incoming set. */
+/**
+ * The properties the row ends up holding, given the resolved incoming set.
+ *
+ * `replace` is for a caller that means the incoming set to BE the row's
+ * properties rather than to be laid over them. The clearing behaviour is
+ * reachable without it — an owning integration's re-sync already has a null
+ * delete a key — but only by naming every field it wants gone, which means
+ * every call site keeping its own list of the fields it is not sending. Nine
+ * such lists is nine chances to miss one, and the tenth site written after
+ * them starts from nothing. Stating the intent once is the same rule that
+ * keeps any coherent state on one mechanism rather than on every caller
+ * remembering.
+ *
+ * A replace still validates: the resulting set has to satisfy the type, so
+ * dropping a required field is refused rather than written.
+ */
 export function mergeUpdateProperties(
   current: Record<string, unknown>,
   incoming: Record<string, unknown> | undefined,
   nullClears: boolean,
+  mode: "merge" | "replace" = "merge",
 ): Record<string, unknown> {
   if (incoming === undefined) return current;
+  if (mode === "replace") {
+    // A null still means "not present" rather than a stored null, so the
+    // two ways of asking for a key to be gone agree.
+    return Object.fromEntries(
+      Object.entries(incoming).filter(([, value]) => value !== null),
+    );
+  }
   const shallow = { ...current, ...incoming };
   if (!nullClears) return shallow;
   // Faithful-mirror re-sync: a key the upstream cleared is dropped rather

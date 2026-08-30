@@ -912,6 +912,123 @@ describe("GET /items", () => {
   });
 });
 
+describe("PATCH /items/:id — properties_mode", () => {
+  /**
+   * A caller that means the set it sends to BE the item's properties, rather
+   * than to be laid over them.
+   *
+   * The clearing itself was reachable before this, but only by naming every
+   * field to be removed — which puts the type's shape into every call site
+   * and leaves the next one written from scratch with nothing. Nine such
+   * lists were about to be hand-maintained across the integration estate,
+   * which is the every-caller-must-remember shape rather than one mechanism.
+   */
+  async function bookmark(ctx: TestContext): Promise<string> {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.bookmark",
+        properties: {
+          url: "https://example.com",
+          title: "Original",
+          description: "set by the family shape",
+        },
+      },
+    });
+    const { item } = (await created.json()) as { item: { id: string } };
+    return item.id;
+  }
+
+  it("replaces the property set, so an unnamed field is gone", async () => {
+    const id = await bookmark(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: {
+        properties_mode: "replace",
+        properties: { url: "https://example.com", title: "Mapped" },
+      },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    expect(data.item.properties.title).toBe("Mapped");
+    expect(data.item.properties).not.toHaveProperty("description");
+  });
+
+  it("still merges when nothing asks otherwise", async () => {
+    // The control. Without it a replace that had become the default would
+    // pass the case above and take every existing caller with it.
+    const id = await bookmark(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: { properties: { title: "Merged" } },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    expect(data.item.properties.title).toBe("Merged");
+    expect(data.item.properties.description).toBe("set by the family shape");
+  });
+
+  it("merges when asked to merge, which is the same thing said aloud", async () => {
+    const id = await bookmark(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: { properties_mode: "merge", properties: { title: "Merged" } },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    expect(data.item.properties.description).toBe("set by the family shape");
+  });
+
+  it("refuses a replace that drops a field the type requires", async () => {
+    // The property that makes this safe to hand an integration: a replace is
+    // validated like any other write, so it cannot quietly produce a row the
+    // type says is invalid. `core.entity` requires `name`, and this replace
+    // does not name it.
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.entity",
+        properties: { name: "Ada", kind: "person" },
+      },
+    });
+    const { item } = (await created.json()) as { item: { id: string } };
+
+    const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      key: ctx.adminKey,
+      body: { properties_mode: "replace", properties: { kind: "person" } },
+    });
+    expect(res.status).toBe(400);
+
+    const after = await request(ctx.app, "GET", `/items/${item.id}`, {
+      key: ctx.adminKey,
+    });
+    const data = (await after.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    // Refused rather than half-applied.
+    expect(data.item.properties.name).toBe("Ada");
+  });
+
+  it("keeps the version check, so a replace cannot skip a conflict", async () => {
+    const id = await bookmark(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: {
+        properties_mode: "replace",
+        version: 0,
+        properties: { url: "https://example.com", title: "Stale" },
+      },
+    });
+    expect(res.status).toBe(409);
+  });
+});
+
 describe("PATCH /items/:id", () => {
   it("updates properties and returns wrapped { item, metadata }", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
