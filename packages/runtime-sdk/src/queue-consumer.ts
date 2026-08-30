@@ -278,6 +278,23 @@ export function assessChainProgress(
   continuation: Continuation,
 ): string | null {
   if (inbound === undefined) return null;
+
+  // A slice that parked asking not to be resumed yet was refused by the
+  // provider rather than stalled by itself, and neither guard below can
+  // tell the difference. A fully throttled slice writes nothing and holds
+  // its watermark, so it reports the fingerprint the slice before it did;
+  // a sustained throttle returns to a position it has already reported.
+  // Both read as this function's two failure modes and neither is what
+  // happened.
+  //
+  // The outcome of abandoning was arguably right — stop hammering a
+  // provider that is refusing — but the explanation was not, and an
+  // operator told a sync is looping is being argued out of the one reading
+  // that would explain it. The chain stays bounded by the slice and
+  // wall-clock ceilings, which is the honest bound for a chain whose
+  // progress signal has nothing to say.
+  if (continuation.notBefore !== undefined) return null;
+
   const fingerprint = progressFingerprint(continuation);
   if (inbound.progress_fingerprint === fingerprint) {
     return `This sync stopped making progress: two slices in a row reported the same position (${fingerprint})`;
