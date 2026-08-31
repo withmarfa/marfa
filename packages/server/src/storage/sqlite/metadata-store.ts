@@ -1,5 +1,10 @@
 import { eq, inArray, sql } from "drizzle-orm";
-import { typePatternToSql, type Metadata } from "@withmarfa/shared";
+import {
+  typePatternToSql,
+  typeFilterTerms,
+  GLOBAL_TYPE_WILDCARD,
+  type Metadata,
+} from "@withmarfa/shared";
 import type { MetadataStore } from "../interface.js";
 import { metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -16,6 +21,7 @@ export class SqliteMetadataStore implements MetadataStore {
   async listTags(filters: {
     spaceId?: string;
     allowedTypes?: string[];
+    excludedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]> {
     const conditions: string[] = ["i.state != 'trashed'"];
     const params: unknown[] = [];
@@ -23,14 +29,23 @@ export class SqliteMetadataStore implements MetadataStore {
       conditions.push("i.space_id = ?");
       params.push(filters.spaceId);
     }
+    const excludedTypes = filters.excludedTypes ?? [];
     // An empty allow-list means "no readable types", not "no restriction",
     // and every other read surface reads it that way. Guarding on a non-empty
     // list dropped the clause and returned the whole space's tag vocabulary
     // with counts, which names what exists even when no item behind it is
     // readable.
-    if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
-      const typeClauses = filters.allowedTypes.map((pattern) => {
-        const { exact, descendantPattern } = typePatternToSql(pattern);
+    //
+    // **A global wildcard skips the clause only when nothing is excluded
+    // beside it** — see the sibling note in the Postgres store for what
+    // re-armed this and why it is two files from the change that did.
+    const unrestricted =
+      filters.allowedTypes?.includes(GLOBAL_TYPE_WILDCARD) === true &&
+      excludedTypes.length === 0;
+    if (filters.allowedTypes && !unrestricted) {
+      const clauseFor = (pattern: string): string => {
+        const { global, exact, descendantPattern } = typePatternToSql(pattern);
+        if (global) return "1=1";
         if (!exact) return "1=0";
         if (!descendantPattern) {
           params.push(exact);
@@ -38,6 +53,14 @@ export class SqliteMetadataStore implements MetadataStore {
         }
         params.push(exact, descendantPattern);
         return "(i.type = ? OR i.type LIKE ? ESCAPE '\\')";
+      };
+      const typeClauses = typeFilterTerms(
+        filters.allowedTypes,
+        excludedTypes,
+      ).map(({ pattern, minus }) => {
+        const granted = clauseFor(pattern);
+        if (minus.length === 0) return granted;
+        return `(${granted} AND NOT (${minus.map(clauseFor).join(" OR ")}))`;
       });
       conditions.push(
         typeClauses.length > 0 ? `(${typeClauses.join(" OR ")})` : "1=0",

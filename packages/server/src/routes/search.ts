@@ -144,7 +144,8 @@ export function searchRoutes(storage: Storage) {
 
     if (type) requireTypeAccess(c, type, "read");
 
-    const allowed_types = getTypeFilter(c);
+    const { allowed: allowed_types, excluded: excluded_types } =
+      getTypeFilter(c);
 
     const tierFilter: "library" | "feed" | undefined =
       tier === "library" ? "library" : tier === "feed" ? "feed" : undefined;
@@ -188,6 +189,7 @@ export function searchRoutes(storage: Storage) {
       tags: tagsFilter,
       filter,
       allowed_types,
+      excluded_types,
       limit,
       offset: offset > 0 ? offset : undefined,
     });

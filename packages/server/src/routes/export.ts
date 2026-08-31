@@ -286,7 +286,7 @@ export function exportRoutes(
     const until = query.until;
     const source = query.source;
 
-    const allowedTypes = getTypeFilter(c);
+    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
     const encoder = new TextEncoder();
 
     // Acquired before the response exists, so an exhausted pool answers a
@@ -315,6 +315,7 @@ export function exportRoutes(
                 since,
                 until,
                 allowed_types: allowedTypes,
+                excluded_types: excludedTypes,
                 source_filter: sourceFilter,
                 limit: 200,
                 cursor,
@@ -443,7 +444,7 @@ async function handleArchiveExport(
   const since = c.req.query("since");
   const until = c.req.query("until");
   const source = c.req.query("source");
-  const allowedTypes = getTypeFilter(c);
+  const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
 
   const rlsCtx = await acquireRlsOrRefuse(options, spaceId);
 
@@ -471,6 +472,7 @@ async function handleArchiveExport(
           since,
           until,
           allowed_types: allowedTypes,
+          excluded_types: excludedTypes,
           source_filter: sourceFilter,
           limit: 200,
           cursor,

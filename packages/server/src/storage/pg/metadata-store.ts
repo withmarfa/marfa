@@ -1,5 +1,10 @@
 import { eq, inArray, sql } from "drizzle-orm";
-import { typePatternToSql, type Metadata } from "@withmarfa/shared";
+import {
+  typePatternToSql,
+  typeFilterTerms,
+  GLOBAL_TYPE_WILDCARD,
+  type Metadata,
+} from "@withmarfa/shared";
 import type { MetadataStore } from "../interface.js";
 import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -16,32 +21,52 @@ export class PgMetadataStore implements MetadataStore {
   async listTags(filters: {
     spaceId?: string;
     allowedTypes?: string[];
+    excludedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]> {
     const spaceClause = filters.spaceId
       ? sql`AND i.space_id = ${filters.spaceId}`
       : sql``;
 
     let typesClause = sql``;
+    const excludedTypes = filters.excludedTypes ?? [];
     // An empty allow-list means "no readable types", not "no restriction",
     // and every other read surface reads it that way. Guarding on a non-empty
     // list dropped the clause and returned the whole space's tag vocabulary
     // with counts, which names what exists even when no item behind it is
     // readable.
-    if (filters.allowedTypes && !filters.allowedTypes.includes("*")) {
-      const decomposed = filters.allowedTypes.map(typePatternToSql);
-      // A subtree wildcard contributes its own root to the equality list as
-      // well as a prefix match, so `core.media.*` covers `core.media`. A
-      // descendant that declares its parent rather than inheriting the name
-      // joins the same list, since its identifier is already exact.
-      const exact = decomposed
-        .map((d) => d.exact)
-        .filter((v): v is string => v !== null);
-      const wildcards = decomposed
-        .map((d) => d.descendantPattern)
-        .filter((v): v is string => v !== null);
-      const parts: ReturnType<typeof sql>[] = [];
-      if (exact.length > 0) parts.push(sql`i.type IN ${exact}`);
-      for (const w of wildcards) parts.push(sql`i.type LIKE ${w} ESCAPE '\\'`);
+    //
+    // **A global wildcard skips the clause only when nothing is excluded
+    // beside it.** A grant of `{"*": "read", "system.credential": "none"}`
+    // carries both, and skipping there computes the vocabulary over every
+    // type in the space including the withheld one. That was unreachable
+    // while `computeTypeFilter` enumerated the wildcard into concrete ids
+    // before it arrived; the moment it stopped, this short-circuit became
+    // the fail-open path, two files away from the change that re-armed it.
+    const unrestricted =
+      filters.allowedTypes?.includes(GLOBAL_TYPE_WILDCARD) === true &&
+      excludedTypes.length === 0;
+    if (filters.allowedTypes && !unrestricted) {
+      // A subtree wildcard matches its own root as well as its descendants,
+      // so `core.media.*` covers `core.media`.
+      const clauseFor = (pattern: string): ReturnType<typeof sql> => {
+        const { global, exact, descendantPattern } = typePatternToSql(pattern);
+        if (global) return sql`true`;
+        if (!exact) return sql`false`;
+        if (!descendantPattern) return sql`i.type = ${exact}`;
+        return sql`(i.type = ${exact} OR i.type LIKE ${descendantPattern} ESCAPE '\\')`;
+      };
+      const parts = typeFilterTerms(filters.allowedTypes, excludedTypes).map(
+        ({ pattern, minus }) => {
+          const granted = clauseFor(pattern);
+          if (minus.length === 0) return granted;
+          const carved = minus
+            .map(clauseFor)
+            .reduce((acc, part, idx) =>
+              idx === 0 ? part : sql`${acc} OR ${part}`,
+            );
+          return sql`(${granted} AND NOT (${carved}))`;
+        },
+      );
       // The seed is what an empty allow-list resolves to: no clause at all
       // would widen the query back to every type.
       const joined = parts.reduce(

@@ -58,10 +58,11 @@ export function metadataRoutes(storage: Storage) {
   router.openapi(listTagsRoute, async (c) => {
     requireAuth(c);
     const spaceId = c.get("apiKey")?.space_id;
-    const allowedTypes = getTypeFilter(c);
+    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
     const tags = await storage.metadata.listTags({
       spaceId,
       allowedTypes,
+      excludedTypes,
     });
     return c.json({ tags }, 200);
   });

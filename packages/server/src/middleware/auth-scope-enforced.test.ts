@@ -36,8 +36,9 @@ describe("role bypass vs scope_enforced", () => {
     expect(() => {
       checkTypeAccess(key, "user.ticket", "read");
     }).not.toThrow();
-    // computeTypeFilter returns undefined = "no filter, all types visible".
-    expect(computeTypeFilter(key)).toBeUndefined();
+    // `allowed: undefined` = "no filter, all types visible". The pair is
+    // always returned; it is the `allowed` half that carries the bypass.
+    expect(computeTypeFilter(key).allowed).toBeUndefined();
   });
 
   it("an admin API key bypasses too", () => {
@@ -45,7 +46,7 @@ describe("role bypass vs scope_enforced", () => {
     expect(() => {
       checkTypeAccess(key, "user.ticket", "write");
     }).not.toThrow();
-    expect(computeTypeFilter(key)).toBeUndefined();
+    expect(computeTypeFilter(key).allowed).toBeUndefined();
   });
 
   it("a space_admin OAuth token (scope_enforced) does NOT bypass", () => {
@@ -61,7 +62,7 @@ describe("role bypass vs scope_enforced", () => {
       checkTypeAccess(key, "user.ticket", "read");
     }).toThrow();
     // Empty scopes → empty allowed_types → storage denies (no rows).
-    expect(computeTypeFilter(key)).toEqual([]);
+    expect(computeTypeFilter(key).allowed).toEqual([]);
   });
 
   it("a scope_enforced token with the global * wildcard reaches any type", () => {
@@ -80,7 +81,7 @@ describe("role bypass vs scope_enforced", () => {
       scope_enforced: true,
       type_permissions: { "*": "read" },
     });
-    expect(computeTypeFilter(readKey)).toEqual(["*"]);
+    expect(computeTypeFilter(readKey).allowed).toEqual(["*"]);
     // read granted, write denied
     expect(() => {
       checkTypeAccess(readKey, "user.ticket", "read");
@@ -103,6 +104,6 @@ describe("role bypass vs scope_enforced", () => {
     expect(() => {
       checkTypeAccess(key, "core.note", "write");
     }).toThrow();
-    expect(computeTypeFilter(key)).toEqual(["user.*"]);
+    expect(computeTypeFilter(key).allowed).toEqual(["user.*"]);
   });
 });

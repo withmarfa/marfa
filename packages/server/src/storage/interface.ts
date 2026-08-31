@@ -1,5 +1,6 @@
 import type {
   Item,
+  TypeFilter,
   CreateItemInput,
   UpdateItemInput,
   Metadata,
@@ -130,6 +131,12 @@ export interface ItemFilters {
   tags?: string[];
   filter?: string;
   allowed_types?: string[];
+  /** Patterns a `"none"` entry withholds, subtracted from `allowed_types`
+   *  under the specificity ranking `resolveTypePermission` uses. Distinct
+   *  from `exclude_system_types`, which is a fixed negative over one family
+   *  owned by the route layer; this one is fed by the permission map. Always
+   *  supplied together with `allowed_types` — see `computeTypeFilter`. */
+  excluded_types?: string[];
   sort?: ItemSortField;
   direction?: SortDirection;
   since?: string;
@@ -169,6 +176,8 @@ export interface SearchFilters {
   tags?: string[];
   filter?: string;
   allowed_types?: string[];
+  /** Mirrors `ItemFilters.excluded_types`. */
+  excluded_types?: string[];
   limit?: number;
   offset?: number;
 }
@@ -355,7 +364,7 @@ export interface ItemStore {
   countByType(type: string): Promise<number>;
   stats(
     spaceId?: string,
-    allowedTypes?: string[],
+    typeFilter?: TypeFilter,
     sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>>;
   /**
@@ -452,6 +461,9 @@ export interface MetadataStore {
   listTags(filters: {
     spaceId?: string;
     allowedTypes?: string[];
+    /** Mirrors `ItemFilters.excluded_types`, and travels with
+     *  `allowedTypes` for the same reason. */
+    excludedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]>;
   getExtensions(
     itemId: string,

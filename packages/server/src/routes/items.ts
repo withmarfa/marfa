@@ -1678,7 +1678,7 @@ export function itemRoutes(storage: Storage) {
     requireAuth(c);
     const callerKey = c.get("apiKey");
     const spaceId = callerKey?.space_id;
-    const allowedTypes = getTypeFilter(c);
+    const typeFilter = getTypeFilter(c);
     // These counts summarize the listing, so they narrow with it.
     const spaceConfig =
       spaceId && storage.spaces
@@ -1687,7 +1687,7 @@ export function itemRoutes(storage: Storage) {
     const enforcement = resolveEnforcement(spaceConfig, callerKey);
     const stats = await storage.items.stats(
       spaceId,
-      allowedTypes,
+      typeFilter,
       enforcement.source_filter,
     );
     return c.json(stats, 200);
@@ -1775,6 +1775,7 @@ export function itemRoutes(storage: Storage) {
       spaceConfigForRead,
       callerKeyForRead,
     );
+    const typeFilterForList = getTypeFilter(c);
     const result = await storage.items.list({
       spaceId: c.get("apiKey")?.space_id,
       type,
@@ -1789,7 +1790,8 @@ export function itemRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags,
       filter,
-      allowed_types: getTypeFilter(c),
+      allowed_types: typeFilterForList.allowed,
+      excluded_types: typeFilterForList.excluded,
       // The query schema's regex already constrains this to a system column or
       // `properties.<field>`; the storage layer re-validates via parseSortField.
       sort: (query.sort as ItemSortField | undefined) ?? undefined,
