@@ -1230,6 +1230,32 @@ export function itemRoutes(storage: Storage) {
         // The user deleted this. Reviving it would overturn that decision
         // silently, and refusing forever is the bug being fixed, so the
         // sync is acknowledged and nothing is written or published.
+        //
+        // **What the acknowledgement may disclose, stated rather than left
+        // to where this `return` sits.** The natural key bounds some axes
+        // and not others, and only the ones it bounds are safe to answer on:
+        //
+        //  - The row itself is disclosed, because every part of reaching it
+        //    is already the caller's own. `source` is stamped from the
+        //    credential and cannot be chosen, the lookup is fenced to the
+        //    caller's space, and the `source_id` came from this request.
+        //  - The extension namespaces are NOT, because that axis is not
+        //    bounded by the natural key. `extension_permissions` are per
+        //    credential, so a row can carry namespaces this caller holds
+        //    nothing on — written by a space admin, by another tool, or by a
+        //    sibling Connection sharing the `item_source` that resolved it.
+        //    Hence the same filter the other eleven sites in this file use.
+        //  - The type is NOT either, and that is a gate rather than a
+        //    filter. `item_source` is keyed on the manifest name and stable
+        //    across mints, so a manifest that narrows leaves rows reachable
+        //    whose type the credential has since lost. The update branch
+        //    below refuses those on the resolved row's type; refusing here
+        //    too is what makes the two branches agree about who may address
+        //    one row, instead of the answer depending on whether the user
+        //    happened to have trashed it.
+        //
+        // Gate before disclosing, so a refusal cannot be read off the body.
+        requireTypeAccess(c, existing.type, "write");
         const metadata = await storage.metadata.get(existing.id);
         return c.json(
           {
@@ -1241,7 +1267,7 @@ export function itemRoutes(storage: Storage) {
                 c.get("apiKey"),
               ),
             ),
-            metadata,
+            metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
             acknowledged: true,
           },
           200,
@@ -1280,6 +1306,16 @@ export function itemRoutes(storage: Storage) {
             ? { ...existing.properties, ...properties }
             : existing.properties,
         );
+        // **This cannot currently refuse, and is kept as depth rather than
+        // as an active gate.** `stampedSource` is `item_source ?? source`
+        // and the lookup above keys on it, so a row resolved here always
+        // carries this credential's own source and `permitsMirrorWrite`
+        // compares it with itself. It is reachable only if that lookup ever
+        // resolves a row by something other than the caller's own stamp,
+        // which is exactly when it would start mattering. Said here because
+        // a guard that cannot fire reads as tested coverage and is not:
+        // `routes/item-write-doors.test.ts` covers mirror protection on the
+        // doors that resolve by id, where a foreign row is reachable.
         requireMirrorProtection(credentialForUpdate, existing);
 
         // If the caller explicitly supplied `id` but it doesn't match the row
