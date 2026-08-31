@@ -102,4 +102,16 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
     // with parent-of, which the occurrence expansion reads.
     edge: { "parent-of": "write" },
   },
+  // Present because the manifest this copies declares it. It arrived
+  // there on 25 August and did not arrive here, and nothing was red for
+  // the week in between: this file is hand-maintained against a manifest
+  // in another repository, and the only thing holding the two together
+  // was somebody remembering.
+  //
+  // It is not decoration. `connection-mapping.ts` reads it to decide
+  // whether a mapping may be stored at all, and the upgrade pipeline
+  // reads it to decide whether a manifest change is safe to apply
+  // automatically — so a copy that says nothing describes an integration
+  // that refuses mappings, which this one does not.
+  supports_user_mappings: true,
 };
