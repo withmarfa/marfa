@@ -27,7 +27,7 @@ function validManifest(name: string): Record<string, unknown> {
   return {
     name,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "A scratch integration",
     direction: "read",
     triggers: [{ type: "schedule", config: { cron: "*/15 * * * *" } }],

@@ -28,7 +28,7 @@ function makeManifest(
   return {
     name: "acme/resolve-test",
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "manifest resolution test",
     direction: "read",
     triggers: [{ type: "manual" }],
@@ -145,7 +145,7 @@ describe("resolveConnectionManifest", () => {
         properties: {
           manifest_name: "acme/invalid-persisted",
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "read",
           manifest: { name: "broken", version: "missing fields" },
           registered_at: new Date().toISOString(),

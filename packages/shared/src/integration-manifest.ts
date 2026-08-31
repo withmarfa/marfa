@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   isValidIntegrationIdentifier,
+  isValidHandleGrammar,
   isValidTypeIdentifier,
 } from "./validation.js";
 
@@ -311,7 +312,27 @@ export const IntegrationManifestSchema = z
       .min(1, "display_name cannot be blank")
       .optional(),
     version: SemverSchema,
-    publisher: z.string().min(1, "publisher is required"),
+    /**
+     * Who stands behind the code, so who a deployment trusts by installing
+     * it — never the service the integration talks to. `google/calendar`
+     * is published by `marfa`.
+     *
+     * **The grammar without the reserved-root refusal, which is a
+     * decision rather than an oversight.** `marfa` is a reserved root, so
+     * `isValidHandle` refuses it; every first-party manifest declares it,
+     * because nobody may claim the platform's own name and the platform
+     * publishes under it anyway. Validating this as a claimable handle
+     * would take the field from wrong in five manifests to refused in
+     * sixteen. Registration already exempts platform credentials from the
+     * handle-ownership rule, so the carve-out is one the model has.
+     */
+    publisher: z
+      .string()
+      .min(1, "publisher is required")
+      .refine(isValidHandleGrammar, {
+        message:
+          "publisher must be a handle: lowercase letters, digits and single hyphens, 3-32 characters",
+      }),
     description: z.string().min(1, "description is required"),
     direction: z.enum(["read", "write", "both"]),
     triggers: z.array(TriggerSchema).min(1, "at least one trigger is required"),

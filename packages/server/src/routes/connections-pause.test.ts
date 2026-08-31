@@ -40,7 +40,7 @@ function manifest(name: string): IntegrationManifest {
   return {
     name,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "pause test",
     direction: "read",
     triggers: [{ type: "manual" }],
@@ -88,7 +88,7 @@ async function connectionIn(spaceId: string): Promise<string> {
       properties: {
         manifest_name: name,
         manifest_version: "1.0.0",
-        publisher: "Acme",
+        publisher: "acme",
         manifest: manifest(name),
         registered_at: new Date().toISOString(),
       },
@@ -269,7 +269,7 @@ describe("pause actually stops dispatch", () => {
         properties: {
           manifest_name: name,
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           manifest: m,
           registered_at: new Date().toISOString(),
         },

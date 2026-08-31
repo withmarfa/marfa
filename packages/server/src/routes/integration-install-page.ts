@@ -228,6 +228,24 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
     ? `Marfa integration ${display.identifier}`
     : "Marfa integration";
 
+  // The attribution the field existed for and nothing rendered. `publisher`
+  // has been on this interface and shown nowhere, so a person approving an
+  // integration was told what it does and never told whose it is.
+  //
+  // Rendered as a handle rather than a display name, with the `@` that says
+  // so. There is no second field carrying a human form of it, and inventing
+  // one would put a party's name somewhere free text can claim to be
+  // anybody — which is the hazard the identifier stays on this page for.
+  // A handle is a claim the platform arbitrates, and `marfa` is the one
+  // nobody but the platform can hold.
+  //
+  // Blank rather than absent, because a manifest that predates the
+  // validator can hold anything. An attribution that reads `by @` is worse
+  // than no attribution: it asserts the line exists and then says nothing.
+  const publisherHandle = params.publisher.trim();
+  const attribution =
+    publisherHandle.length > 0 ? `, by @${publisherHandle}` : "";
+
   // Type identifier(s): the raw, dotted identifiers from the manifest.
   const typeIdField =
     targetTypes.length > 0
@@ -250,7 +268,7 @@ export function renderInstallConsentScreen(params: ConsentParams): string {
       <span class="logo" aria-hidden="true">${escapeHtml(display.glyph)}</span>
       <div>
         <div class="row__title">${escapeHtml(display.name)}</div>
-        <div class="row__meta">${escapeHtml(metaLead)}, version ${escapeHtml(params.manifestVersion)}</div>
+        <div class="row__meta">${escapeHtml(metaLead)}, version ${escapeHtml(params.manifestVersion)}${escapeHtml(attribution)}</div>
       </div>
     </div>
     <p class="sub">${escapeHtml(params.summary)}</p>

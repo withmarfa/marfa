@@ -32,7 +32,7 @@ function manifest(): IntegrationManifest {
   return {
     name: INTEGRATION,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "bridge invalidation fixture",
     direction: "read",
     triggers: [{ type: "item-event" }],
@@ -59,7 +59,7 @@ describe("the live bridge honors pause and resume", () => {
         properties: {
           manifest_name: INTEGRATION,
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           manifest: manifest(),
           registered_at: new Date().toISOString(),
         },

@@ -25,7 +25,7 @@ const COMMITTED_JSON_SCHEMA_PATH = resolve(
 const VALID_MANIFEST = {
   name: "acme/calendar-sync",
   version: "1.2.3",
-  publisher: "Acme",
+  publisher: "acme",
   description: "Two-way Google Calendar sync",
   direction: "both" as const,
   triggers: [
@@ -616,5 +616,49 @@ describe("IntegrationManifestSchema — display_name", () => {
       display_name: "\u200b",
     });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("IntegrationManifestSchema — publisher", () => {
+  const withPublisher = (publisher: unknown): unknown => ({
+    ...VALID_MANIFEST,
+    publisher,
+  });
+
+  it("accepts the platform's own reserved name", () => {
+    // `marfa` is a reserved root, so `isValidHandle` refuses it and every
+    // first-party manifest declares it. A validator carrying the
+    // reserved-root check would refuse the whole shipped set, which is
+    // the reason this field is checked against the grammar alone.
+    expect(
+      IntegrationManifestSchema.safeParse(withPublisher("marfa")).success,
+    ).toBe(true);
+  });
+
+  it("refuses a display name wearing the field's clothes", () => {
+    // What the field held before anything checked it: the organisation
+    // name, title-cased, which is not a handle in any namespace.
+    expect(
+      IntegrationManifestSchema.safeParse(withPublisher("Acme")).success,
+    ).toBe(false);
+  });
+
+  it.each([
+    ["a leading hyphen", "-acme"],
+    ["a trailing hyphen", "acme-"],
+    ["consecutive hyphens", "ac--me"],
+    ["under three characters", "ac"],
+    ["a space", "acme corp"],
+    ["a slash, which is an identifier rather than a handle", "acme/notebook"],
+  ])("refuses %s", (_label, publisher) => {
+    expect(
+      IntegrationManifestSchema.safeParse(withPublisher(publisher)).success,
+    ).toBe(false);
+  });
+
+  it("still refuses an absent one", () => {
+    const without: Record<string, unknown> = { ...VALID_MANIFEST };
+    delete without.publisher;
+    expect(IntegrationManifestSchema.safeParse(without).success).toBe(false);
   });
 });

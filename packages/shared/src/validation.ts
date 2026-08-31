@@ -187,17 +187,34 @@ export function isValidEdgeTypeIdentifier(value: string): boolean {
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 /**
- * Returns true if the value is a valid handle: lowercase alphanumeric and
- * hyphens only, 3–32 characters, no leading/trailing hyphens, no consecutive
- * hyphens, not a reserved root. Comparison is case-insensitive — the
- * canonical form is lowercase; collision detection at the storage layer
- * also lowercases.
+ * The shape of a handle, with nothing said about whether it may be claimed:
+ * lowercase alphanumeric and hyphens, 3–32 characters, no leading, trailing
+ * or consecutive hyphens.
+ *
+ * **Separated from `isValidHandle` because two callers need the grammar
+ * without the reserved-root refusal**, and both had been open-coding it.
+ * `marfa` is a reserved root, so `isValidHandle("marfa")` is false — which
+ * is correct for a claim, since nobody may take the platform's own name,
+ * and wrong for every other question about the string. An integration
+ * identifier's first segment and a manifest's `publisher` are both that
+ * other question: the platform's own integrations live under `marfa/` and
+ * are published by `marfa`, so a validator carrying the reserved-root
+ * check would refuse the entire first-party set.
  */
-export function isValidHandle(value: string): boolean {
+export function isValidHandleGrammar(value: string): boolean {
   if (typeof value !== "string") return false;
   if (value.length < 3 || value.length > 32) return false;
   if (value.includes("--")) return false;
-  if (!HANDLE_RE.test(value)) return false;
+  return HANDLE_RE.test(value);
+}
+
+/**
+ * Returns true if the value is a valid handle: the grammar above, and not a
+ * reserved root. Comparison is case-insensitive — the canonical form is
+ * lowercase; collision detection at the storage layer also lowercases.
+ */
+export function isValidHandle(value: string): boolean {
+  if (!isValidHandleGrammar(value)) return false;
   if (isReservedHandle(value)) return false;
   return true;
 }
@@ -303,9 +320,10 @@ export function isValidIntegrationIdentifier(value: string): boolean {
   if (value.slice(slash + 1).includes("/")) return false;
   const handle = value.slice(0, slash);
   const name = value.slice(slash + 1);
-  if (handle.length < 3 || handle.length > 32) return false;
-  if (handle.includes("--")) return false;
-  if (!HANDLE_RE.test(handle)) return false;
+  // The grammar, deliberately without the reserved-root refusal — see
+  // `isValidHandleGrammar`. Written out here for years, which is how the
+  // rule came to have two copies free to disagree.
+  if (!isValidHandleGrammar(handle)) return false;
   return INTEGRATION_NAME.test(name);
 }
 

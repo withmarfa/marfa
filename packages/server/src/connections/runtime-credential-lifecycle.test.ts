@@ -57,7 +57,7 @@ function manifest(name: string): IntegrationManifest {
   return {
     name,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "Runtime credential lifecycle fixture",
     direction: "read",
     triggers: [{ type: "manual" }],

@@ -82,7 +82,7 @@ async function createActiveConnection(): Promise<string> {
       properties: {
         manifest_name: ACCEPTANCE_INTEGRATION,
         manifest_version: "1.0.0",
-        publisher: "Acme",
+        publisher: "acme",
         // Deliberately not a valid manifest body. The acceptance run
         // exercises the substrate contract, not permission projection,
         // and an unresolvable manifest projects the two substrate grants

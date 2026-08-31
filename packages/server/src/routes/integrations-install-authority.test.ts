@@ -48,7 +48,7 @@ function manifest(name: string) {
   return {
     name,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "Fixture manifest for the install authority gate.",
     direction: "read" as const,
     triggers: [{ type: "schedule" as const, config: { cron: "*/15 * * * *" } }],
