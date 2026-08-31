@@ -1487,10 +1487,26 @@ async function resolvePriorScopes(
  * plain, second-person, and one line each.
  *
  * Missing entries fall back to a registry `description` where a registry has
- * one, which is correct behavior for the types and edge types registered at
- * runtime via `POST /types`, where the operator controls the copy. For the
- * core and system types, and for every edge type this build ships, an entry
- * is curated below so the registry copy never reaches the screen.
+ * one. **That fallback has never served a type registered at runtime, and
+ * the claim that it did stood here while sixteen shipped types were the only
+ * population reaching it.** `POST /types` writes to a per-space overlay, and
+ * neither `TYPE_REGISTRY` nor `EDGE_TYPE_REGISTRY` exposes one — so a custom
+ * type cannot reach either lookup. It does not reach a row of its own
+ * either: `buildAllowedScopes` enumerates registry keys for the concrete
+ * scopes, so a space's own type is requestable only through its namespace
+ * wildcard, which is curated.
+ *
+ * What the type fallback does reach is a platform row this build no longer
+ * ships. `seedPlatformTypes` refills the registry at boot from the rows the
+ * instance holds, so an instance carrying a retired type resolves it here
+ * and no curated entry can exist for it — the build that shipped it is
+ * gone. That is the whole of the population, and it is why the fallback
+ * stays.
+ *
+ * The edge registry has no seed path at all, so its fallback reaches
+ * nothing while every shipped edge type stays curated. Both halves are
+ * held to that by a test, against `TYPE_REGISTRY` and `EDGE_TYPE_REGISTRY`
+ * rather than against a list kept beside them.
  *
  * Both halves of that sentence are held against `TYPE_REGISTRY` and
  * `EDGE_TYPE_REGISTRY` rather than against a list kept beside them, because
@@ -1594,6 +1610,53 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.media.film": "Films.",
   "core.media.series": "Ongoing series.",
   "core.media.song": "Songs.",
+
+  // Integration types: the sixteen this build ships through a connected
+  // service.
+  //
+  // These reached a person as the type registry's `description` until now,
+  // which is the only population that fallback ever served. Those are
+  // written for a developer reading API docs — 170 to 796 characters,
+  // backticks, field names, and in the worst case an argument about why
+  // `priority` is an integer here and an enum on `core.task`. A screen
+  // deciding whether to trust an application is the wrong place for it.
+  //
+  // **Each says where the data comes from, because the label already says
+  // what it is.** Every one of these has a curated entry in `SCOPE_LABELS`
+  // naming the service and the noun ("Todoist tasks"), so a sentence
+  // restating that spends the row on nothing. What a person cannot get from
+  // the label is which of their things the grant reaches — the calendars
+  // they own, the videos they liked — and that is what these answer.
+  //
+  // Held to the rest of the map's rules: a noun phrase rather than an act,
+  // no futurity clause, and the possessive kept only where it locates.
+  "google.calendar.event": "Events on your Google Calendars.",
+  "google.contacts.contact": "People in your Google Contacts.",
+  "google.drive.file": "Files in your Google Drive.",
+  "google.tasks.task": "Tasks on your Google Tasks lists.",
+  "google.youtube.channel":
+    "YouTube channels you subscribe to, and the ones behind videos you like.",
+  "google.youtube.playlist": "YouTube playlists you make.",
+  "google.youtube.video":
+    "YouTube videos you like, and the ones in your playlists.",
+  "marfa.captured_email":
+    "Emails sent to the address that captures mail into your space.",
+  "marfa.podcast.episode": "Episodes of the podcasts you follow.",
+  "marfa.podcast.show": "Podcasts you follow.",
+  "raindrop.collection":
+    "The collections your Raindrop bookmarks are filed in.",
+  "raindrop.raindrop": "Bookmarks you save to Raindrop.",
+  "readwise.book":
+    "The books, articles, and podcasts your Readwise highlights come from.",
+  "readwise.document":
+    "Articles and documents in your Readwise Reader library.",
+  // "with any notes you add" was the first draft and the futurity guard
+  // refused it: its vocabulary cannot tell a verb meaning "annotate" from
+  // one meaning "later", which is the same limit that keeps every futurity
+  // clause out of this map and composed by the renderers instead.
+  "readwise.highlight":
+    "Passages you highlight in Readwise, and the notes you write on them.",
+  "todoist.task": "Tasks on your Todoist projects.",
 
   // System
   "system.account_holder": "The entry that represents you in your space.",
@@ -1845,9 +1908,12 @@ function describeScope(scope: ParsedScope): string | undefined {
       // kind === "edge"; guard for the type-checker.
       const edgeType = scope.edgeType;
       if (!edgeType) return undefined;
-      // Curated user-facing copy wins. Falls back to the registry's
-      // engineering description for any edge type without a curated entry
-      // (custom edge types registered at runtime).
+      // Curated user-facing copy wins. The fallback below is a belt and
+      // reaches nothing today: `EDGE_TYPE_REGISTRY` is built once from the
+      // shipped set with no seed path, and every member of it is curated,
+      // which a test holds. It is emphatically NOT what serves an edge type
+      // registered at runtime — that lives in a per-space overlay this
+      // lookup never consults.
       return (
         CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern] ??
         EDGE_TYPE_REGISTRY.get(edgeType)?.description
