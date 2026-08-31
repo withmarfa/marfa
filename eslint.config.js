@@ -12,6 +12,10 @@ export default [
           allowDefaultProject: [
             "eslint.config.js",
             "vitest.config.ts",
+            // Imported by every package's vitest config for the shared test
+            // and hook budget. Not under any package's tsconfig, for the same
+            // reason the configs importing it are not.
+            "vitest.shared.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
             // The server's dispatch fixture is a nested workspace

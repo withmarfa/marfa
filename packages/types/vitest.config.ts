@@ -5,7 +5,7 @@ import { sharedTestBudget } from "../../vitest.shared.ts";
 export default defineConfig({
   test: {
     ...sharedTestBudget,
-    name: "@withmarfa/runtime-test",
+    name: "@withmarfa/types",
     include: ["src/**/*.test.ts"],
   },
 });
