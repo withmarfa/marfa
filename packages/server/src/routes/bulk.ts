@@ -29,8 +29,10 @@ import {
   isValidTimestamp,
   isValidTypeIdentifier,
   ITEM_STATES,
+  validateProperties,
 } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
+import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,
@@ -200,7 +202,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -211,6 +213,7 @@ const bulkRoute = createRoute({
             mode: z.enum(["upsert", "create_only"]).optional(),
             atomic: z.boolean().optional(),
             emit_events: z.boolean().optional(),
+            retype: z.boolean().optional(),
           }),
         },
       },
@@ -475,6 +478,21 @@ async function processBulkItem(
      */
     atomic: boolean;
     /**
+     * Opt-in re-typing on the update half of an upsert.
+     *
+     * Off by default, and deliberately not inferred from a differing
+     * type: the fleet declares a type on nearly every write, so inferring
+     * would move a corpus on somebody's ordinary sync bug. When on, an
+     * entry that resolves a row of another type moves that row instead of
+     * being refused — the operation `requireDeclaredTypeMatches` says a
+     * caller meaning to move a corpus has.
+     *
+     * Per batch rather than per entry, because the caller asking for it
+     * is answering one question about one corpus rather than making a
+     * judgment per record.
+     */
+    retype: boolean;
+    /**
      * Per-item write authorization. Mirrors the single-item `POST /items`
      * gate (`requireTypeAccess(c, type, "write")`): admin / space_admin
      * bypass; a member must hold write on the item's type. Throws
@@ -545,6 +563,7 @@ async function processBulkItem(
     spaceId,
     stampedSource,
     atomic,
+    retype,
     checkWrite,
     checkUpdate,
     checkEdgeWrite,
@@ -640,7 +659,18 @@ async function processBulkItem(
       // The runtime SDK's bulk helper sends `atomic: false` deliberately,
       // so the integrations that batch get a per-entry outcome and one
       // bad record does not hold a page of thousands hostage.
-      requireDeclaredTypeMatches(raw.type, existing);
+      if (!(retype && raw.type !== existing.type)) {
+        requireDeclaredTypeMatches(raw.type, existing);
+      }
+      // A re-type needs write on the type being entered as well as the
+      // one being left, and both are already held: `checkUpdate` above
+      // covers the row's own type, and every entry's declared type is
+      // authorized by the `checkWrite` at the top of this function,
+      // before resolution. Repeating it here read as belt and braces and
+      // was dead code — the door refuses `user.dest_log` to a caller
+      // without it whether or not the re-type arm asks again. The test
+      // pins the outcome rather than this call site, so the guarantee
+      // survives that gate moving.
     } catch (err) {
       if (err instanceof MarfaError) {
         return {
@@ -653,12 +683,52 @@ async function processBulkItem(
       throw err;
     }
 
-    // The resolved row's type decides, not the entry's claim.
-    assertTierApplicable(existing.type, raw.tier);
+    // The type the row ends up as. Without a re-type that is the
+    // resolved row's own, never the entry's claim; with one it is the
+    // entry's, and everything judged below has to be judged against the
+    // destination rather than the origin — validating a move against the
+    // type being left would admit one whose result the destination calls
+    // invalid, which is the whole hazard of moving a corpus.
+    const resultingType =
+      retype && raw.type !== existing.type ? raw.type : existing.type;
+    if (resultingType !== existing.type) {
+      // The one check the ordinary update path does not need and a move
+      // cannot go without: the destination may require fields the row has
+      // never carried, and its field types may not accept what the old
+      // properties hold. Judged on the properties the store is about to
+      // write, through the same helper it merges with, so this predicts
+      // the write rather than approximating it.
+      const merged = mergeUpdateProperties(
+        existing.properties,
+        raw.properties ?? {},
+        false,
+        "merge",
+      );
+      const validation = validateProperties(resultingType, merged, {
+        ...(spaceId === undefined ? {} : { spaceId }),
+      });
+      if (!validation.success) {
+        // Named, not counted, and not a reason to abandon the rest — the
+        // point of moving a corpus per item is that some of it cannot go.
+        return {
+          index,
+          outcome: "errored",
+          id: existing.id,
+          error: {
+            code: ErrorCode.INVALID_PROPERTIES,
+            message: `Cannot move item to "${resultingType}": ${validation.errors
+              .map((e) => `${e.field}: ${e.message}`)
+              .join("; ")}`,
+          },
+        };
+      }
+    }
+    assertTierApplicable(resultingType, raw.tier);
     const updated = await storage.items.update(
       existing.id,
       {
         properties: raw.properties,
+        ...(resultingType === existing.type ? {} : { type: resultingType }),
         tier: raw.tier,
         timestamp: raw.timestamp,
       },
@@ -811,6 +881,10 @@ export function bulkRoutes(storage: Storage) {
     const items = body.items;
     const mode = body.mode ?? "upsert";
     const atomic = body.atomic ?? true;
+    // Off unless asked for. Never inferred from a differing type: the
+    // fleet declares one on nearly every write, so inference would move a
+    // corpus on an ordinary sync bug.
+    const retype = body.retype === true;
     const emitEvents = body.emit_events ?? false;
 
     if (items.length > MAX_BULK_ITEMS) {
@@ -889,6 +963,7 @@ export function bulkRoutes(storage: Storage) {
           spaceId,
           stampedSource,
           atomic,
+          retype,
           checkWrite,
           checkUpdate,
           checkEdgeWrite,
