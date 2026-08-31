@@ -75,8 +75,10 @@ interface RegisterResponse {
   id: string;
   manifest_name: string;
   manifest_version: string;
+  display_name?: string;
   publisher: string;
   direction: "read" | "write" | "both";
+  installed_count: number;
   manifest: Record<string, unknown>;
   registered_at: string;
 }
@@ -215,6 +217,225 @@ describe("GET /integrations + /integrations/:id", () => {
     expect(get.status).toBe(200);
     const getBody = (await get.json()) as RegisterResponse;
     expect(getBody.manifest.name).toBe("acme/get-by-id");
+  });
+});
+
+describe("GET /integrations?latest=true (the catalog view)", () => {
+  /** Registers one manifest and hands back the row the registry stored. */
+  async function register(
+    overrides: Partial<IntegrationManifest>,
+  ): Promise<RegisterResponse> {
+    const res = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest(overrides) },
+    });
+    expect(res.status).toBe(201);
+    return (await res.json()) as RegisterResponse;
+  }
+
+  async function catalog(): Promise<RegisterResponse[]> {
+    const res = await request(ctx.app, "GET", "/integrations?latest=true", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+    return ((await res.json()) as ListResponse).data;
+  }
+
+  it("returns one row per integration, the newest version", async () => {
+    const name = "acme/catalog-versions";
+    await register({ name, version: "1.0.0" });
+    await register({ name, version: "1.2.0" });
+
+    const rows = (await catalog()).filter((r) => r.manifest_name === name);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.manifest_version).toBe("1.2.0");
+  });
+
+  it("honours a limit as a number of integrations, not of rows scanned", async () => {
+    // The reduction has to happen before the limit or the two mean
+    // different things: a caller asking for two integrations would
+    // otherwise get however many of two *version rows* survived, which on
+    // a registry holding several versions of one integration is one.
+    await register({ name: "acme/catalog-limit-a", version: "1.0.0" });
+    await register({ name: "acme/catalog-limit-a", version: "2.0.0" });
+    await register({ name: "acme/catalog-limit-b", version: "1.0.0" });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/integrations?latest=true&limit=1",
+      { key: ctx.adminKey },
+    );
+    const rows = ((await res.json()) as ListResponse).data;
+    expect(rows).toHaveLength(1);
+  });
+
+  it("orders versions numerically, so a tenth release beats a ninth", async () => {
+    // The failure a string sort produces, and it is the ordinary case
+    // rather than an edge one: lexically "10.0.0" sorts below "9.0.0", so
+    // an integration's tenth release would stop being the one a catalog
+    // offers and nothing about the response would say why.
+    const name = "acme/catalog-ten";
+    await register({ name, version: "9.0.0" });
+    await register({ name, version: "10.0.0" });
+
+    const rows = (await catalog()).filter((r) => r.manifest_name === name);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.manifest_version).toBe("10.0.0");
+  });
+
+  it("does not let a malformed stored version decide the catalog", async () => {
+    // Reachable without a bad actor: the version is read out of a stored
+    // row and nothing re-validates a stored manifest against the schema at
+    // read time, so a row written before a schema tightening is exactly
+    // this shape. It sorts last rather than throwing, so one malformed
+    // manifest cannot take the whole catalog down or win the row.
+    //
+    // Both orders, because the reduction compares each candidate against
+    // the one it is holding and the malformed row can be on either side.
+    // One order alone leaves the other branch of the comparison untested,
+    // and it is the branch a plausible edit inverts.
+    async function malformed(name: string): Promise<void> {
+      await ctx.storage.items.create(
+        {
+          type: "system.integration",
+          properties: {
+            manifest_name: name,
+            manifest_version: "not-a-version",
+            publisher: "Acme",
+            direction: "read",
+            manifest: { name, version: "not-a-version" },
+            registered_at: new Date().toISOString(),
+          },
+        },
+        undefined,
+      );
+    }
+
+    const first = "acme/catalog-malformed-first";
+    await malformed(first);
+    const goodAfter = await register({ name: first, version: "1.0.0" });
+
+    const last = "acme/catalog-malformed-last";
+    const goodBefore = await register({ name: last, version: "1.0.0" });
+    await malformed(last);
+
+    const rows = await catalog();
+    const firstRows = rows.filter((r) => r.manifest_name === first);
+    expect(firstRows).toHaveLength(1);
+    expect(firstRows[0]?.id).toBe(goodAfter.id);
+
+    const lastRows = rows.filter((r) => r.manifest_name === last);
+    expect(lastRows).toHaveLength(1);
+    expect(lastRows[0]?.id).toBe(goodBefore.id);
+  });
+
+  it("still returns every version when latest is not asked for", async () => {
+    // The default is unchanged, which is what makes this additive: the
+    // existing caller enumerating one integration's history keeps working.
+    const name = "acme/catalog-default";
+    await register({ name, version: "1.0.0" });
+    await register({ name, version: "1.1.0" });
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/integrations?manifest_name=${name}`,
+      { key: ctx.adminKey },
+    );
+    const rows = ((await res.json()) as ListResponse).data;
+    expect(rows).toHaveLength(2);
+  });
+
+  it("surfaces the readable name, and omits it when the manifest has none", async () => {
+    const named = await register({
+      name: "acme/catalog-named",
+      display_name: "Catalog Named",
+    });
+    expect(named.display_name).toBe("Catalog Named");
+
+    const bare = await register({ name: "acme/catalog-unnamed" });
+    expect(bare.display_name).toBeUndefined();
+  });
+
+  it("counts nothing before an install and one after", async () => {
+    const name = "acme/catalog-installed";
+    const registered = await register({ name });
+
+    const before = (await catalog()).find((r) => r.manifest_name === name);
+    expect(before?.installed_count).toBe(0);
+
+    await ctx.app.request(`/integrations/${registered.id}/install`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ decision: "approve" }).toString(),
+    });
+
+    const after = (await catalog()).find((r) => r.manifest_name === name);
+    expect(after?.installed_count).toBe(1);
+  });
+
+  it("counts by integration rather than by version", async () => {
+    // A space holding version 1 while version 2 is the newest is a space
+    // that has this integration. Counted per manifest row, the catalog's
+    // own row would say zero — which is the question a catalog is least
+    // interested in, answered in place of the one it asked.
+    const name = "acme/catalog-across-versions";
+    const v1 = await register({ name, version: "1.0.0" });
+    await ctx.app.request(`/integrations/${v1.id}/install`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ decision: "approve" }).toString(),
+    });
+    await register({ name, version: "2.0.0" });
+
+    const row = (await catalog()).find((r) => r.manifest_name === name);
+    expect(row?.manifest_version).toBe("2.0.0");
+    expect(row?.installed_count).toBe(1);
+  });
+
+  it("does not count a revoked connection", async () => {
+    // A grant that has been given up is not a connection the space is
+    // running, and offering "install" for it is the more useful answer.
+    const name = "acme/catalog-revoked";
+    const registered = await register({ name });
+    await ctx.app.request(`/integrations/${registered.id}/install`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ decision: "approve" }).toString(),
+    });
+
+    const connections = await ctx.storage.items.list({
+      type: "system.connection",
+      sort: "created_at",
+      direction: "desc",
+      limit: 20,
+    });
+    const installed = connections.data.find(
+      (i) =>
+        (i.properties as { integration_ref?: string }).integration_ref ===
+        registered.id,
+    );
+    if (installed === undefined) throw new Error("connection was not created");
+    await ctx.storage.items.update(
+      installed.id,
+      {
+        properties: { ...installed.properties, status: "revoked" },
+      },
+      undefined,
+    );
+
+    const row = (await catalog()).find((r) => r.manifest_name === name);
+    expect(row?.installed_count).toBe(0);
   });
 });
 
@@ -809,6 +1030,46 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     const html = await res.text();
     expect(html).toContain(`action="/integrations/${regBody.id}/install"`);
     expect(html).toContain('name="decision"');
+  });
+
+  it("counts an install of a platform-scoped manifest from inside the space", async () => {
+    // The ordinary hosted shape, and the one that reads as "nothing is
+    // installed" if the count is taken without widening: manifests ship
+    // with the platform and carry no space id, while the connection
+    // referring to one carries the installer's. A space-fenced lookup of
+    // the reference then finds nothing, and every row in the catalog says
+    // zero however many connections the space is running.
+    const reg = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: baseManifest({ name: "acme/t234-installed-count" }) },
+    });
+    const regBody = (await reg.json()) as RegisterResponse;
+
+    if (!ctx.storage.spaces) return;
+    const space = await ctx.storage.spaces.create("t234-space-count");
+    const installerKey = await mintKeyAtRank(space.id, "space_admin", {
+      "system.integration": "read",
+      "system.connection": "read",
+    });
+
+    await ctx.app.request(`/integrations/${regBody.id}/install`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${installerKey}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({ decision: "approve" }).toString(),
+    });
+
+    const res = await request(ctx.app, "GET", "/integrations?latest=true", {
+      key: installerKey,
+    });
+    expect(res.status).toBe(200);
+    const rows = ((await res.json()) as ListResponse).data;
+    const row = rows.find(
+      (r) => r.manifest_name === "acme/t234-installed-count",
+    );
+    expect(row?.installed_count).toBe(1);
   });
 
   it("POST /integrations/:id/install stamps the connection with the caller's space_id", async () => {

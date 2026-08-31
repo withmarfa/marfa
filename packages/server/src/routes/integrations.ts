@@ -49,10 +49,32 @@ const IntegrationItemSchema = z.object({
   id: z.string(),
   manifest_name: z.string(),
   manifest_version: z.string(),
+  /**
+   * The name a person reads, from the manifest.
+   *
+   * Lifted to the top level rather than left inside `manifest` because a
+   * catalog renders one line per integration and should not have to open a
+   * whole manifest to find out what to call it. Optional because a manifest
+   * may omit it, in which case the identifier is what there is.
+   */
+  display_name: z.string().optional(),
   publisher: z.string(),
   summary: z.string().optional(),
   direction: z.enum(["read", "write", "both"]),
   registered_at: z.string(),
+  /**
+   * How many connections this space already holds for this integration, by
+   * name rather than by version.
+   *
+   * A count rather than a boolean, and by name rather than by manifest id,
+   * because both of the obvious simplifications say something false. Some
+   * integrations are installed more than once on purpose — one connection
+   * per feed — so "installed: true" hides the shape of what is there. And a
+   * space holding version 1 while version 2 is the newest would read as not
+   * installed if the count were per manifest row, which is the question a
+   * catalog is least interested in.
+   */
+  installed_count: z.number().int().nonnegative(),
   manifest: z.record(z.string(), z.unknown()),
 });
 
@@ -127,7 +149,7 @@ const listRoute = createRoute({
   tags: ["Integrations"],
   summary: "List integrations",
   description:
-    "Returns every registered integration manifest. Filter by `manifest_name` to enumerate the registered versions of one integration.",
+    "Returns every registered integration manifest, with the number of connections this space already holds for each. Pass `latest=true` for the catalog view, one row per integration. Filter by `manifest_name` to enumerate the registered versions of one integration.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -135,6 +157,12 @@ const listRoute = createRoute({
         .string()
         .optional()
         .describe("Filter to versions of a single integration by name."),
+      latest: z
+        .enum(["true", "false"])
+        .optional()
+        .describe(
+          "Return only the newest registered version of each integration. This is what a catalog wants; the default returns every version, which is what enumerating one integration's history wants.",
+        ),
       limit: z.coerce
         .number()
         .int()
@@ -210,21 +238,146 @@ interface IntegrationProperties {
   registered_at: string;
 }
 
-function toResponse(item: {
-  id: string;
-  properties: Record<string, unknown>;
-}): z.infer<typeof IntegrationItemSchema> {
+function toResponse(
+  item: {
+    id: string;
+    properties: Record<string, unknown>;
+  },
+  installedCount = 0,
+): z.infer<typeof IntegrationItemSchema> {
   const props = item.properties as unknown as IntegrationProperties;
+  const displayName = props.manifest.display_name;
   return {
     id: item.id,
     manifest_name: props.manifest_name,
     manifest_version: props.manifest_version,
+    display_name: typeof displayName === "string" ? displayName : undefined,
     publisher: props.publisher,
     summary: props.summary,
     direction: props.direction,
     registered_at: props.registered_at,
+    installed_count: installedCount,
     manifest: props.manifest,
   };
+}
+
+/**
+ * The two manifest fields the catalog reduction reads off a stored row.
+ *
+ * A stored row is `Record<string, unknown>`, so every read needs a cast, and
+ * doing it at each use spreads one assumption over six places. Both return
+ * the empty string for a row that does not carry the field: such a row is
+ * excluded from the reduction rather than crashing it.
+ */
+function manifestNameOf(item: { properties: Record<string, unknown> }): string {
+  const name = item.properties.manifest_name;
+  return typeof name === "string" ? name : "";
+}
+
+function manifestVersionOf(item: {
+  properties: Record<string, unknown>;
+}): string {
+  const version = item.properties.manifest_version;
+  return typeof version === "string" ? version : "";
+}
+
+/**
+ * Orders two manifest versions, newest first.
+ *
+ * Local rather than shared: one caller, and promoting it would widen a
+ * published package's surface for the benefit of nothing else.
+ *
+ * A string sort is what this replaces, and it is wrong in the ordinary case
+ * rather than an edge one: lexically `"10.0.0" < "9.0.0"`, so an
+ * integration's tenth release would quietly stop being the one a catalog
+ * offers. Nothing about the response would say why.
+ *
+ * No pre-release handling, because the manifest schema refuses one — a
+ * version is `MAJOR.MINOR.PATCH` and nothing else. The unparseable branch
+ * is not the same thing and is reachable: this reads a version out of a
+ * stored row, and nothing re-validates a stored manifest against the
+ * schema at read time. Such a row sorts last rather than throwing, so one
+ * malformed manifest cannot decide what the whole catalog offers.
+ */
+function newestFirst(a: string, b: string): number {
+  const parse = (v: string): [number, number, number] | null => {
+    const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(v);
+    return match === null
+      ? null
+      : [Number(match[1]), Number(match[2]), Number(match[3])];
+  };
+  const left = parse(a);
+  const right = parse(b);
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  for (let i = 0; i < 3; i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return r - l;
+  }
+  return 0;
+}
+
+/**
+ * How many connections this space holds for each integration, by name.
+ *
+ * A connection records the manifest *item* it was installed against, not
+ * the integration's name, so the refs are resolved back to names here. That
+ * indirection is the reason this is a function rather than a filter: the
+ * question a catalog asks is about the integration, and the connection only
+ * answers a question about the version.
+ *
+ * A revoked connection does not count. It is a grant that has been given up
+ * rather than one that is running, and offering "install" for something the
+ * space is still holding a dead grant for is the more useful answer.
+ */
+async function installedCountsByName(
+  storage: Storage,
+  spaceId: string | undefined,
+): Promise<Map<string, number>> {
+  const connections = await storage.items.list({
+    spaceId,
+    type: "system.connection",
+    filter: 'properties.kind eq "integration"',
+    limit: 500,
+  });
+
+  const refs = new Set<string>();
+  const live: string[] = [];
+  for (const connection of connections.data) {
+    const props = connection.properties as {
+      integration_ref?: unknown;
+      status?: unknown;
+    };
+    if (props.status === "revoked") continue;
+    if (typeof props.integration_ref !== "string") continue;
+    refs.add(props.integration_ref);
+    live.push(props.integration_ref);
+  }
+  if (refs.size === 0) return new Map();
+
+  // Platform-scoped manifests carry no space id, so the same widening the
+  // read routes use is needed here or every count comes back zero on a
+  // deployment whose integrations all ship with the platform.
+  const manifests = await storage.items.getMany([...refs], spaceId);
+  const platformScoped = [...refs].filter((ref) => !manifests.has(ref));
+  for (const ref of platformScoped) {
+    const item = await storage.items.get(ref, spaceId, {
+      includePlatformScoped: true,
+    });
+    if (item !== null) manifests.set(ref, item);
+  }
+
+  const counts = new Map<string, number>();
+  for (const ref of live) {
+    const manifest = manifests.get(ref);
+    if (manifest === undefined) continue;
+    const name = manifestNameOf(manifest);
+    if (name === "") continue;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return counts;
 }
 
 export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
@@ -293,14 +446,51 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
       ? `properties.manifest_name eq "${query.manifest_name}"`
       : undefined;
     // Platform-scoped manifests (space_id IS NULL) are invisible to in-space callers without this flag.
+    // The limit is applied after the newest-per-integration reduction, not
+    // by the query, because the two mean different things: a caller asking
+    // for ten integrations would otherwise get however many of ten rows
+    // survived the reduction, which on a registry holding several versions
+    // of one integration can be one.
     const items = await storage.items.list({
       spaceId: apiKey.space_id,
       includePlatformScoped: true,
       type: "system.integration",
       filter,
-      limit: query.limit ?? 50,
+      limit: query.latest === "true" ? 500 : (query.limit ?? 50),
     });
-    return c.json({ data: items.data.map((i) => toResponse(i)) }, 200);
+
+    let rows = items.data;
+    if (query.latest === "true") {
+      const newest = new Map<string, (typeof rows)[number]>();
+      for (const item of rows) {
+        const name = manifestNameOf(item);
+        if (name === "") continue;
+        const held = newest.get(name);
+        if (
+          held === undefined ||
+          newestFirst(manifestVersionOf(item), manifestVersionOf(held)) < 0
+        ) {
+          newest.set(name, item);
+        }
+      }
+      rows = [...newest.values()]
+        .sort((a, b) => {
+          const an = manifestNameOf(a);
+          const bn = manifestNameOf(b);
+          return an < bn ? -1 : an > bn ? 1 : 0;
+        })
+        .slice(0, query.limit ?? 50);
+    }
+
+    const counts = await installedCountsByName(storage, apiKey.space_id);
+    return c.json(
+      {
+        data: rows.map((i) =>
+          toResponse(i, counts.get(manifestNameOf(i)) ?? 0),
+        ),
+      },
+      200,
+    );
   });
 
   apiRouter.openapi(getRoute, async (c) => {
@@ -316,7 +506,8 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
         "Integration not found",
       );
     }
-    return c.json(toResponse(item), 200);
+    const counts = await installedCountsByName(storage, apiKey.space_id);
+    return c.json(toResponse(item, counts.get(manifestNameOf(item)) ?? 0), 200);
   });
 
   // ---------------------------------------------------------------------
