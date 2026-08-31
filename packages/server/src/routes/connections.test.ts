@@ -38,7 +38,7 @@ function manifest(name: string): IntegrationManifest {
   return {
     name,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "uninstall route test",
     direction: "both",
     triggers: [{ type: "manual" }],
@@ -77,7 +77,7 @@ async function installFresh(): Promise<{
       properties: {
         manifest_name: integrationName,
         manifest_version: "1.0.0",
-        publisher: "Acme",
+        publisher: "acme",
         direction: "both",
         manifest: manifest(integrationName),
         registered_at: new Date().toISOString(),
@@ -149,7 +149,7 @@ async function createIntegration(): Promise<{
       properties: {
         manifest_name: integrationName,
         manifest_version: "1.0.0",
-        publisher: "Acme",
+        publisher: "acme",
         direction: "both",
         manifest: manifest(integrationName),
         registered_at: new Date().toISOString(),
@@ -484,7 +484,7 @@ function manifestWithItemEventTrigger(name: string): IntegrationManifest {
   return {
     name,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "preview-event route test",
     direction: "both",
     triggers: [{ type: "item-event" }], // buildEntryForConnection returns null without this trigger
@@ -516,7 +516,7 @@ async function installItemEventConnection(): Promise<{
       properties: {
         manifest_name: integrationName,
         manifest_version: "1.0.0",
-        publisher: "Acme",
+        publisher: "acme",
         direction: "both",
         manifest: manifestWithItemEventTrigger(integrationName),
         registered_at: new Date().toISOString(),

@@ -44,7 +44,7 @@ afterAll(async () => {
 const VALID_MANIFEST = {
   name: "acme/calendar-sync",
   version: "1.0.0",
-  publisher: "Acme",
+  publisher: "acme",
   description: "Calendar sync",
   direction: "both" as const,
   triggers: [{ type: "webhook" as const }],

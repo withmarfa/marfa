@@ -44,7 +44,7 @@ interface ItemResponse {
 const VALID_MANIFEST = {
   name: "acme/integration",
   version: "1.0.0",
-  publisher: "Acme",
+  publisher: "acme",
   description: "Demo integration",
   direction: "both" as const,
   triggers: [{ type: "webhook" as const }],

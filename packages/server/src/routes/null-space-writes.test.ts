@@ -48,7 +48,7 @@ function manifest(name: string): IntegrationManifest {
   return {
     name,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "Null-space guard fixture",
     direction: "read",
     triggers: [{ type: "manual" }],

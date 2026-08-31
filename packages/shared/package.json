@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/shared",
-  "version": "6.10.0",
+  "version": "6.11.0",
   "license": "Apache-2.0",
   "type": "module",
   "publishConfig": {

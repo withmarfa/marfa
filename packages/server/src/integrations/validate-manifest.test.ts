@@ -4,7 +4,7 @@ import { validateManifest } from "./validate-manifest.js";
 const VALID_MANIFEST = {
   name: "acme/calendar-sync",
   version: "1.2.3",
-  publisher: "Acme",
+  publisher: "acme",
   description: "Two-way Google Calendar sync",
   direction: "both",
   triggers: [

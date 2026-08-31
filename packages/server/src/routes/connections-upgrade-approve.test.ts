@@ -44,7 +44,7 @@ function manifest(
     name,
     version: "1.0.0",
     manifest_schema_version: "2.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "approve test",
     direction: "read",
     triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],

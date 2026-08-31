@@ -28,7 +28,7 @@ afterAll(async () => {
 const MANIFEST: IntegrationManifest = {
   name: "acme/readopt",
   version: "1.0.0",
-  publisher: "Acme",
+  publisher: "acme",
   description: "reinstall adoption test",
   direction: "read",
   triggers: [{ type: "manual" }],

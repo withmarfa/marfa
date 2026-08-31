@@ -27,7 +27,7 @@ function manifest(): IntegrationManifest {
   return {
     name: "acme/install-pipeline-direct",
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "direct install test",
     direction: "both",
     triggers: [{ type: "manual" }],
@@ -106,7 +106,7 @@ describe("performInstall — happy path", () => {
         properties: {
           manifest_name: "acme/install-pipeline-direct",
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "both",
           manifest: manifest(),
           registered_at: new Date().toISOString(),
@@ -145,7 +145,7 @@ describe("performInstall — happy path", () => {
         properties: {
           manifest_name: "acme/install-pipeline-no-credential",
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "both",
           manifest: manifest(),
           registered_at: new Date().toISOString(),
@@ -482,7 +482,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
         properties: {
           manifest_name: "acme/install-pipeline-direct",
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "both",
           manifest: manifest(),
           registered_at: new Date().toISOString(),
@@ -711,7 +711,7 @@ describe("performInstall — the state a rolled-back install leaves", () => {
         properties: {
           manifest_name: `acme.rollback-${stamp}`,
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "both",
           manifest: manifest(),
           registered_at: new Date().toISOString(),
@@ -778,7 +778,7 @@ describe("performInstall — an unaudited install does not stand", () => {
         properties: {
           manifest_name: `acme.audit-${stamp}`,
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "both",
           manifest: manifest(),
           registered_at: new Date().toISOString(),

@@ -31,7 +31,7 @@ function manifest(): IntegrationManifest {
   return {
     name: "acme/uninstall-direct",
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "uninstall test",
     direction: "both",
     triggers: [{ type: "manual" }],
@@ -64,7 +64,7 @@ async function installFresh(): Promise<{
       properties: {
         manifest_name: `acme.uninstall-direct-${Date.now().toString()}`,
         manifest_version: "1.0.0",
-        publisher: "Acme",
+        publisher: "acme",
         direction: "both",
         manifest: manifest(),
         registered_at: new Date().toISOString(),
@@ -365,7 +365,7 @@ async function installWithCredential(credentialRef: string): Promise<{
       properties: {
         manifest_name: `acme.upstream-${stamp}`,
         manifest_version: "1.0.0",
-        publisher: "Acme",
+        publisher: "acme",
         direction: "both",
         manifest: manifest(),
         registered_at: new Date().toISOString(),
@@ -567,7 +567,7 @@ describe("performUninstall — a connection inside a space", () => {
         properties: {
           manifest_name: `acme.hosted-${stamp}`,
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "both",
           manifest: manifest(),
           registered_at: new Date().toISOString(),

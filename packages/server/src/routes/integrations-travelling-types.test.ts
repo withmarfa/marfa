@@ -33,7 +33,7 @@ function manifest(overrides: Record<string, unknown>): Record<string, unknown> {
   return {
     name: "acme/travelling",
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "Ships its own types",
     direction: "read",
     triggers: [{ type: "manual" }],

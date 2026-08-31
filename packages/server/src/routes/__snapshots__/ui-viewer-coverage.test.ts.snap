@@ -3762,7 +3762,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
       <span class="logo" aria-hidden="true">G</span>
       <div>
         <div class="row__title">google/calendar</div>
-        <div class="row__meta">Marfa integration, version 1.4.0</div>
+        <div class="row__meta">Marfa integration, version 1.4.0, by @Marfa</div>
       </div>
     </div>
     <p class="sub">Two-way sync between Google Calendar and your events.</p>
@@ -3820,7 +3820,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
       <span class="logo" aria-hidden="true">M</span>
       <div>
         <div class="row__title">marfa/rss-watcher</div>
-        <div class="row__meta">Marfa integration, version 1.0.0</div>
+        <div class="row__meta">Marfa integration, version 1.0.0, by @Marfa</div>
       </div>
     </div>
     <p class="sub">Polls a feed and lands new entries as bookmarks.</p>
@@ -3878,7 +3878,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
       <span class="logo" aria-hidden="true">M</span>
       <div>
         <div class="row__title">marfa/rss-watcher</div>
-        <div class="row__meta">Marfa integration, version 1.0.0</div>
+        <div class="row__meta">Marfa integration, version 1.0.0, by @Marfa</div>
       </div>
     </div>
     <p class="sub">Polls a feed and lands new entries as bookmarks.</p>
@@ -3936,7 +3936,7 @@ exports[`every gallery variant renders > renders 'connections/install-consent/co
       <span class="logo" aria-hidden="true">A</span>
       <div>
         <div class="row__title">Acme Calendar Sync</div>
-        <div class="row__meta">Marfa integration acme/calendar-sync, version 2.1.0</div>
+        <div class="row__meta">Marfa integration acme/calendar-sync, version 2.1.0, by @Acme</div>
       </div>
     </div>
     <p class="sub">Two-way sync between Acme Calendar and your events.</p>

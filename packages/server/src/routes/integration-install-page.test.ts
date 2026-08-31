@@ -88,7 +88,7 @@ describe("renderInstallConsentScreen — the retired label field", () => {
   // the upgrade-consent flow exists precisely because a later one can ask
   // for more. The version is text now rather than an editable field.
   it("still names the version being approved", () => {
-    expect(html).toContain("Marfa integration, version 1.0.0");
+    expect(html).toContain("Marfa integration, version 1.0.0, by @marfa");
   });
 
   it("renders no label input", () => {
@@ -289,7 +289,7 @@ describe("renderInstallConsentScreen — display name", () => {
       manifest: { ...BASE_MANIFEST, display_name: "Calendar Sync" },
     });
     expect(html).toContain(
-      `<div class="row__meta">Marfa integration acme/calendar-sync, version 1.0.0</div>`,
+      `<div class="row__meta">Marfa integration acme/calendar-sync, version 1.0.0, by @marfa</div>`,
     );
   });
 
@@ -309,7 +309,7 @@ describe("renderInstallConsentScreen — display name", () => {
     });
     expect(html).toContain(`<div class="row__title">google/calendar</div>`);
     expect(html).toContain(
-      `<div class="row__meta">Marfa integration mallory/sync, version 1.0.0</div>`,
+      `<div class="row__meta">Marfa integration mallory/sync, version 1.0.0, by @marfa</div>`,
     );
   });
 
@@ -329,7 +329,7 @@ describe("renderInstallConsentScreen — display name", () => {
   it("leaves the meta line exactly as it was when no display_name is declared", () => {
     const html = renderInstallConsentScreen(IDENTIFIER_PARAMS);
     expect(html).toContain(
-      `<div class="row__meta">Marfa integration, version 1.0.0</div>`,
+      `<div class="row__meta">Marfa integration, version 1.0.0, by @marfa</div>`,
     );
     // The exact match above is the "not twice" check: with no label there
     // is nothing to tell apart, so the identifier stays out of this line.
@@ -370,5 +370,46 @@ describe("renderInstallConsentScreen — display name", () => {
     expect(html).toContain(
       `<span class="logo" aria-hidden="true">${expected}</span>`,
     );
+  });
+});
+
+describe("who published it", () => {
+  const PARAMS = {
+    ...BASE_PARAMS,
+    manifestName: "acme/calendar-sync",
+  };
+
+  it("attributes the integration to its publisher", () => {
+    // The field has been on this interface and rendered nowhere, so a
+    // person approving an integration was told what it does and never
+    // told whose it is.
+    const html = renderInstallConsentScreen({
+      ...PARAMS,
+      publisher: "acme",
+    });
+    expect(html).toContain("by @acme");
+  });
+
+  it("attributes a first-party integration to the platform's own handle", () => {
+    const html = renderInstallConsentScreen({ ...PARAMS, publisher: "marfa" });
+    expect(html).toContain("by @marfa");
+  });
+
+  it("says nothing rather than saying `by @` when the field is empty", () => {
+    // A manifest predating the validator can hold anything. An attribution
+    // that reads `by @` is worse than none: it asserts the line exists and
+    // then says nothing, which reads as a rendering fault on the one screen
+    // that must not look broken.
+    const html = renderInstallConsentScreen({ ...PARAMS, publisher: "   " });
+    expect(html).toContain("version 1.0.0</div>");
+    expect(html).not.toContain("by @");
+  });
+
+  it("escapes a publisher that predates the validator", () => {
+    const html = renderInstallConsentScreen({
+      ...PARAMS,
+      publisher: "<script>alert(1)</script>",
+    });
+    expect(html).not.toContain("<script>alert(1)</script>");
   });
 });

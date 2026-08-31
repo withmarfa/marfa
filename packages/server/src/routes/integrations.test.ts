@@ -46,7 +46,7 @@ function baseManifest(
   return {
     name: "acme/calendar-sync",
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "Sync calendar events into Marfa",
     direction: "read",
     triggers: [
@@ -109,7 +109,7 @@ describe("POST /integrations (registry)", () => {
     const body = (await res.json()) as RegisterResponse;
     expect(body.manifest_name).toBe("acme/test-register");
     expect(body.manifest_version).toBe("1.0.0");
-    expect(body.publisher).toBe("Acme");
+    expect(body.publisher).toBe("acme");
     expect(body.direction).toBe("read");
     expect(body.id).toMatch(/^[0-9a-f-]+$/);
 
@@ -302,7 +302,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
           properties: {
             manifest_name: name,
             manifest_version: "not-a-version",
-            publisher: "Acme",
+            publisher: "acme",
             direction: "read",
             manifest: { name, version: "not-a-version" },
             registered_at: new Date().toISOString(),
@@ -857,7 +857,7 @@ describe("GET /integrations — catalog visibility", () => {
         properties: {
           manifest_name: "acme/space-a-private",
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           summary: "Space-A-only manifest fixture",
           direction: "read" as const,
           registered_at: new Date().toISOString(),
@@ -1157,7 +1157,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
         properties: {
           manifest_name: "acme/t234-space-a-only",
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           direction: "read" as const,
           registered_at: new Date().toISOString(),
           manifest: { name: "acme/t234-space-a-only", version: "1.0.0" },

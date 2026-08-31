@@ -43,7 +43,7 @@ beforeAll(async () => {
   const manifest: IntegrationManifest = {
     name: "acme-state-doors",
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "State-door agreement fixture",
     direction: "read",
     triggers: [{ type: "manual" }],

@@ -674,7 +674,7 @@ describe("the configuration surface answers a browser session", () => {
     return {
       name,
       version: "1.0.0",
-      publisher: "Acme",
+      publisher: "acme",
       description: "configurable test integration",
       direction: "read",
       triggers: [{ type: "manual" }],

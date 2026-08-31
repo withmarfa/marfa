@@ -35,7 +35,7 @@ function manifest(): IntegrationManifest {
   return {
     name: INTEGRATION,
     version: "1.0.0",
-    publisher: "Acme",
+    publisher: "acme",
     description: "bridge delete fixture",
     direction: "both",
     triggers: [{ type: "item-event" }],
@@ -64,7 +64,7 @@ describe("the live bridge fans out deletes", () => {
         properties: {
           manifest_name: INTEGRATION,
           manifest_version: "1.0.0",
-          publisher: "Acme",
+          publisher: "acme",
           manifest: manifest(),
           registered_at: new Date().toISOString(),
         },
