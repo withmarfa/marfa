@@ -23,6 +23,11 @@
           },
           "mapping": {
             "nullable": true
+          },
+          "reapply_until": {
+            "type": "string",
+            "nullable": true,
+            "description": "While this instant is in the future, the connection's runs bring items already stored onto the type this mapping names. Null when no answer stands."
           }
         },
         "required": [
@@ -18418,7 +18423,7 @@
           "Connections"
         ],
         "summary": "Set a connection's user mapping",
-        "description": "Stores the user's routing for this connection: conditions on the incoming record choose the target type, and fields are assigned onto that type's schema. The document is validated wholesale — target types must resolve in the space (reserved namespaces refused), every assigned field must exist on its target, and required target fields must be covered. Shipped write families stay the default for records no rule matches.",
+        "description": "Stores the user's routing for this connection: conditions on the incoming record choose the target type, and fields are assigned onto that type's schema. The document is validated wholesale — target types must resolve in the space (reserved namespaces refused), every assigned field must exist on its target, and required target fields must be covered. Shipped write families stay the default for records no rule matches.\n\nA mapping applies to what arrives next. `reapply=true` also brings the items already stored: the connection's next runs re-type the rows they resolve onto the type the mapping now names, instead of being refused as a type mismatch. Both answers are correct — declining leaves the older items where they are, which is a legitimate end state.\n\n**It re-types what the connection re-syncs, not the whole corpus.** A mapping's conditions read the upstream record, which is not stored anywhere, so nothing can replay a mapping against items already written; the items brought along are the ones the next runs fetch again. A record the upstream no longer returns keeps its old type.\n\nThe answer expires — see `reapply_until` in the response — rather than persisting until something clears it. A sweep that parks and never resumes, or a connection paused mid-run, would otherwise leave every future run re-typing a corpus nobody asked it to.",
         "security": [
           {
             "bearerAuth": []
@@ -18435,6 +18440,20 @@
             "description": "Connection item id",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Bring the items already stored onto the type this mapping names. Omitted or `false` clears any answer still standing."
+            },
+            "required": false,
+            "description": "Bring the items already stored onto the type this mapping names. Omitted or `false` clears any answer still standing.",
+            "name": "reapply",
+            "in": "query"
           }
         ],
         "requestBody": {

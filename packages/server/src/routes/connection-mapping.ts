@@ -23,6 +23,16 @@ import { closeMappingBreaks } from "../connections/mapping-health.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
+/**
+ * How long a "yes, bring the existing items" answer stays true.
+ *
+ * Twenty-four hours is generous against a corpus that takes several
+ * scheduled runs to drain — an hourly sweep moving a slice per chain
+ * clears a few thousand items well inside it — and short enough that an
+ * answer nobody followed through on expires by itself.
+ */
+const REAPPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 const ConnectionIdParam = z.object({
   id: z.string().min(1).openapi({ description: "Connection item id" }),
 });
@@ -42,6 +52,18 @@ const MappingResponseSchema = z
   .object({
     connection_id: z.string(),
     mapping: z.unknown().nullable(),
+    /**
+     * Reported rather than assumed, because "the corpus is being brought
+     * along" and "it was, and that has now lapsed" are different states
+     * and a caller cannot tell them apart from the mapping alone.
+     */
+    reapply_until: z
+      .string()
+      .nullable()
+      .optional()
+      .describe(
+        "While this instant is in the future, the connection's runs bring items already stored onto the type this mapping names. Null when no answer stands.",
+      ),
   })
   .openapi("ConnectionMappingResponse");
 
@@ -84,10 +106,18 @@ const putMappingRoute = createRoute({
   tags: ["Connections"],
   summary: "Set a connection's user mapping",
   description:
-    "Stores the user's routing for this connection: conditions on the incoming record choose the target type, and fields are assigned onto that type's schema. The document is validated wholesale — target types must resolve in the space (reserved namespaces refused), every assigned field must exist on its target, and required target fields must be covered. Shipped write families stay the default for records no rule matches.",
+    "Stores the user's routing for this connection: conditions on the incoming record choose the target type, and fields are assigned onto that type's schema. The document is validated wholesale — target types must resolve in the space (reserved namespaces refused), every assigned field must exist on its target, and required target fields must be covered. Shipped write families stay the default for records no rule matches.\n\nA mapping applies to what arrives next. `reapply=true` also brings the items already stored: the connection's next runs re-type the rows they resolve onto the type the mapping now names, instead of being refused as a type mismatch. Both answers are correct — declining leaves the older items where they are, which is a legitimate end state.\n\n**It re-types what the connection re-syncs, not the whole corpus.** A mapping's conditions read the upstream record, which is not stored anywhere, so nothing can replay a mapping against items already written; the items brought along are the ones the next runs fetch again. A record the upstream no longer returns keeps its old type.\n\nThe answer expires — see `reapply_until` in the response — rather than persisting until something clears it. A sweep that parks and never resumes, or a connection paused mid-run, would otherwise leave every future run re-typing a corpus nobody asked it to.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
+    query: z.object({
+      reapply: z
+        .enum(["true", "false"])
+        .optional()
+        .describe(
+          "Bring the items already stored onto the type this mapping names. Omitted or `false` clears any answer still standing.",
+        ),
+    }),
     body: {
       content: { "application/json": { schema: MappingBodySchema } },
       required: true,
@@ -183,9 +213,32 @@ export function connectionMappingRoutes(storage: Storage) {
       );
     }
 
+    // How long an answered "yes" stays true. A deadline rather than a
+    // flag cleared on success, because a state that can only be left
+    // through the happy path is a state that can be entered and never
+    // left: a sweep that parks and never resumes, or a connection paused
+    // mid-run, would leave every future run re-typing rows nobody asked
+    // it to. It also answers the question a person will actually ask —
+    // why is this still on — with a time rather than a hunt through run
+    // history.
+    const reapplyUntil =
+      c.req.valid("query").reapply === "true"
+        ? new Date(Date.now() + REAPPLY_WINDOW_MS).toISOString()
+        : null;
+
     await storage.items.update(
       id,
-      { properties: { ...item.properties, mapping: validated.mapping } },
+      {
+        properties: {
+          ...item.properties,
+          mapping: validated.mapping,
+          mapping_reapply_until: reapplyUntil,
+        },
+        // The answer is a fresh one every time a mapping is saved, so a
+        // "no" has to clear a "yes" still standing rather than leave it
+        // in place. A shallow merge cannot express that without this.
+        null_clears: true,
+      },
       apiKey.space_id,
     );
     // A mapping that validates answers whatever break was reported against
@@ -197,9 +250,20 @@ export function connectionMappingRoutes(storage: Storage) {
       resource_type: "system.connection",
       resource_id: id,
       client_ip: c.var.clientIp,
-      details: { rules: validated.mapping.rules.length, breaks_closed: closed },
+      details: {
+        rules: validated.mapping.rules.length,
+        breaks_closed: closed,
+        reapply: reapplyUntil !== null,
+      },
     });
-    return c.json({ connection_id: id, mapping: validated.mapping }, 200);
+    return c.json(
+      {
+        connection_id: id,
+        mapping: validated.mapping,
+        reapply_until: reapplyUntil,
+      },
+      200,
+    );
   });
 
   router.openapi(deleteMappingRoute, async (c) => {
@@ -211,7 +275,14 @@ export function connectionMappingRoutes(storage: Storage) {
     // the key would leave the stored value in place.
     await storage.items.update(
       id,
-      { properties: { mapping: null }, null_clears: true },
+      {
+        // The answer goes with the question. A standing "bring the corpus
+        // along" against a mapping that no longer exists could only move
+        // rows towards whatever the write family writes, which is not
+        // what anybody agreed to.
+        properties: { mapping: null, mapping_reapply_until: null },
+        null_clears: true,
+      },
       apiKey.space_id,
     );
     // Clearing the mapping answers the break as surely as repairing it:

@@ -80,6 +80,22 @@ export function createMappingResolver(
       return null;
     }
     loaded = true;
+    // The connection is already in hand, so the re-apply answer costs no
+    // extra round trip. Judged here rather than by the handler: the
+    // deadline is the server's, and a handler is offered no way to ask
+    // for re-typing on its own.
+    const until = (
+      connection?.properties as { mapping_reapply_until?: unknown } | undefined
+    )?.mapping_reapply_until;
+    if (typeof until === "string") {
+      const deadline = Date.parse(until);
+      // An unparseable stamp is not an answer. Treating it as one would
+      // turn a corrupt field into a standing instruction to move a
+      // corpus, which is the direction that cannot be undone by noticing.
+      if (Number.isFinite(deadline) && deadline > Date.now()) {
+        client.enableRetypeWrites();
+      }
+    }
     const raw = (connection?.properties as { mapping?: unknown } | undefined)
       ?.mapping;
     if (raw === undefined || raw === null) {

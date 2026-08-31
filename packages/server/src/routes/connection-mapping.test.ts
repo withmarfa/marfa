@@ -178,3 +178,93 @@ describe("connection mapping surface", () => {
     expect(body.error.message).toContain("does not consult user mappings");
   });
 });
+
+describe("bringing the items already there", () => {
+  const readConnection = async (
+    id: string,
+  ): Promise<Record<string, unknown>> => {
+    const item = await ctx.storage.items.get(id);
+    return item?.properties ?? {};
+  };
+
+  it("records an answer that expires rather than one that stands", async () => {
+    const res = await request(
+      ctx.app,
+      "PUT",
+      `/connections/${mappedConnectionId}/mapping?reapply=true`,
+      { key: ctx.adminKey, body: VALID_MAPPING },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reapply_until: string | null };
+    expect(body.reapply_until).not.toBeNull();
+
+    // A deadline, not a flag: a sweep that parks and never resumes cannot
+    // leave this standing, and a person asking why it is still on gets a
+    // time rather than a hunt through run history.
+    const until = Date.parse(body.reapply_until!);
+    const hours = (until - Date.now()) / 3_600_000;
+    expect(hours).toBeGreaterThan(20);
+    expect(hours).toBeLessThanOrEqual(24);
+    expect(await readConnection(mappedConnectionId)).toMatchObject({
+      mapping_reapply_until: body.reapply_until,
+    });
+  });
+
+  it("does not record one when the answer is no", async () => {
+    const res = await request(
+      ctx.app,
+      "PUT",
+      `/connections/${mappedConnectionId}/mapping`,
+      { key: ctx.adminKey, body: VALID_MAPPING },
+    );
+    expect(res.status).toBe(200);
+    expect(
+      ((await res.json()) as { reapply_until: string | null }).reapply_until,
+    ).toBeNull();
+  });
+
+  it("lets a later no clear an earlier yes", async () => {
+    // The question is asked afresh on every save, so the previous answer
+    // must not survive one. A shallow property merge would have left it.
+    await request(
+      ctx.app,
+      "PUT",
+      `/connections/${mappedConnectionId}/mapping?reapply=true`,
+      { key: ctx.adminKey, body: VALID_MAPPING },
+    );
+    expect(
+      (await readConnection(mappedConnectionId)).mapping_reapply_until,
+    ).toEqual(expect.any(String));
+
+    await request(
+      ctx.app,
+      "PUT",
+      `/connections/${mappedConnectionId}/mapping?reapply=false`,
+      { key: ctx.adminKey, body: VALID_MAPPING },
+    );
+    expect(
+      (await readConnection(mappedConnectionId)).mapping_reapply_until ?? null,
+    ).toBeNull();
+  });
+
+  it("takes the answer away with the mapping it was about", async () => {
+    await request(
+      ctx.app,
+      "PUT",
+      `/connections/${mappedConnectionId}/mapping?reapply=true`,
+      { key: ctx.adminKey, body: VALID_MAPPING },
+    );
+    await request(
+      ctx.app,
+      "DELETE",
+      `/connections/${mappedConnectionId}/mapping`,
+      { key: ctx.adminKey },
+    );
+    const props = await readConnection(mappedConnectionId);
+    expect(props.mapping ?? null).toBeNull();
+    // A standing "bring the corpus along" against a mapping that no
+    // longer exists could only move rows towards the write family, which
+    // is not what anybody agreed to.
+    expect(props.mapping_reapply_until ?? null).toBeNull();
+  });
+});

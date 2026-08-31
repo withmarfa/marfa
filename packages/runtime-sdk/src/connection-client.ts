@@ -264,6 +264,17 @@ export class ConnectionClient {
    * `ItemEventMessage`.
    */
   private readonly cycleParent: CycleMetadata | null;
+  /**
+   * Whether this run is bringing already-stored items onto the type the
+   * connection's mapping now names.
+   *
+   * Off unless the mapping resolver turns it on, which it does only for a
+   * connection whose stored answer has not yet expired. It lives on the
+   * client because the client is what writes: a handler batches records
+   * it has already routed, so the decision has to travel with the write
+   * rather than with each record.
+   */
+  private retypeWrites = false;
 
   constructor(opts: ConnectionClientOptions) {
     this.credential = opts.credential;
@@ -272,6 +283,17 @@ export class ConnectionClient {
     this.fetchImpl = opts.fetch ?? globalThis.fetch.bind(globalThis);
     this.outboundSignal = opts.signal;
     this.cycleParent = opts.cycleParent ?? null;
+  }
+
+  /**
+   * Turn re-typing on for the rest of this dispatch.
+   *
+   * Called by the mapping resolver when it loads a connection carrying a
+   * live answer, and by nothing else — the deadline is the server's to
+   * judge and a handler is not offered a way to ask for this.
+   */
+  enableRetypeWrites(): void {
+    this.retypeWrites = true;
   }
 
   async createItem(input: CreateItemInput): Promise<ItemResource> {
@@ -346,6 +368,11 @@ export class ConnectionClient {
       mode: "upsert",
       atomic: false,
       emit_events: options.announce ?? true,
+      // Only ever sent while a mapping re-apply is live. Without it the
+      // server refuses an entry that resolves a row of another type, and
+      // that refusal is what stops an ordinary sync bug from moving a
+      // corpus — so it stays the default and this is the exception.
+      ...(this.retypeWrites ? { retype: true } : {}),
     });
   }
 

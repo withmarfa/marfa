@@ -985,7 +985,7 @@ const systemConnection: TypeSchema = {
   id: "system.connection",
   label: "Connection",
   description: "An approved relationship between this Marfa space and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
-  version: 2,
+  version: 3,
   fields: {
     kind: { type: "enum", description: "Discriminator for connection variant", required: true, enum_values: ["app", "integration"] },
     client_id: { type: "string", description: "OAuth client identifier (for kind: app)" },
@@ -1006,6 +1006,7 @@ const systemConnection: TypeSchema = {
     last_error_at: { type: "datetime", description: "For kind: integration — most recent failure timestamp (cleared on next success)" },
     feed_activity: { type: "boolean", description: "For kind: integration — when true, system.activity items emitted by this integration are server-stamped tier:'feed' (otherwise tier is omitted, as for all other system.* writes)" },
     mapping: { type: "object", description: "Per-connection user mapping: conditions on the incoming record choose the target type and fields are assigned onto its schema. Platform-validated as a whole document at PUT /connections/{id}/mapping; shape and semantics live with the shared mapping module, not this schema." },
+    mapping_reapply_until: { type: "datetime", description: "For kind: integration — while this instant is in the future, the runtime brings items already stored onto the type the mapping now names rather than being refused as a type mismatch. Set when a mapping is saved and the person answers yes to bringing the existing corpus along. A deadline rather than a boolean, so the state cannot outlive the intent that set it: a sweep that parks and never resumes, or a connection paused mid-run, would otherwise leave every future sweep re-typing a corpus nobody asked it to. Cleared when a mapping is saved and the answer is no." },
   },
 };
 

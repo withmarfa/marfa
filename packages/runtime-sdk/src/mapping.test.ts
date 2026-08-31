@@ -15,17 +15,29 @@ const MAPPING = {
   otherwise: "skip",
 };
 
-function clientWith(mapping: unknown): {
+function clientWith(
+  mapping: unknown,
+  extraProperties: Record<string, unknown> = {},
+): {
   client: ConnectionClient;
   getItem: ReturnType<typeof vi.fn>;
+  enableRetypeWrites: ReturnType<typeof vi.fn>;
 } {
   const getItem = vi.fn().mockResolvedValue({
     id: "conn-1",
     type: "system.connection",
-    properties: { kind: "integration", mapping },
+    properties: { kind: "integration", mapping, ...extraProperties },
   });
-  return { client: { getItem } as unknown as ConnectionClient, getItem };
+  const enableRetypeWrites = vi.fn();
+  return {
+    client: { getItem, enableRetypeWrites } as unknown as ConnectionClient,
+    getItem,
+    enableRetypeWrites,
+  };
 }
+
+const hoursFromNow = (h: number): string =>
+  new Date(Date.now() + h * 60 * 60 * 1000).toISOString();
 
 function sink(): { emitted: unknown[]; activity: ActivitySink } {
   const emitted: unknown[] = [];
@@ -209,5 +221,54 @@ describe("createMappingResolver — when the mapping does not apply", () => {
     const second = sink();
     await resolver.flushSkipSummary(second.activity);
     expect(second.emitted).toEqual([]);
+  });
+});
+
+describe("bringing the items already stored along", () => {
+  it("turns re-typing on while the connection's answer stands", async () => {
+    const { client, enableRetypeWrites } = clientWith(MAPPING, {
+      mapping_reapply_until: hoursFromNow(4),
+    });
+    await createMappingResolver(client, "conn-1").resolve({
+      kind: "article",
+      title: "A",
+    });
+    expect(enableRetypeWrites).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves it off once the answer has expired", async () => {
+    // The property that makes the deadline worth having: nobody has to
+    // clear this, and a run that never finished cannot leave it standing.
+    const { client, enableRetypeWrites } = clientWith(MAPPING, {
+      mapping_reapply_until: hoursFromNow(-1),
+    });
+    await createMappingResolver(client, "conn-1").resolve({
+      kind: "article",
+      title: "A",
+    });
+    expect(enableRetypeWrites).not.toHaveBeenCalled();
+  });
+
+  it("leaves it off when no answer was ever given", async () => {
+    const { client, enableRetypeWrites } = clientWith(MAPPING);
+    await createMappingResolver(client, "conn-1").resolve({
+      kind: "article",
+      title: "A",
+    });
+    expect(enableRetypeWrites).not.toHaveBeenCalled();
+  });
+
+  it("refuses to read an unparseable stamp as an answer", async () => {
+    // The asymmetry decides this. Reading a corrupt field as "no" costs a
+    // re-apply somebody can ask for again; reading it as "yes" moves a
+    // corpus, and noticing afterwards does not undo it.
+    const { client, enableRetypeWrites } = clientWith(MAPPING, {
+      mapping_reapply_until: "whenever",
+    });
+    await createMappingResolver(client, "conn-1").resolve({
+      kind: "article",
+      title: "A",
+    });
+    expect(enableRetypeWrites).not.toHaveBeenCalled();
   });
 });
