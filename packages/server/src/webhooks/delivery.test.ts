@@ -14,6 +14,7 @@ import {
   type EdgeEventWithId,
 } from "../pubsub.js";
 import {
+  WEBHOOK_POLL_INTERVAL_MS,
   WebhookConsumer,
   WebhookPoller,
   deliverWebhookAttempt,
@@ -549,8 +550,18 @@ describe("deliverWebhookAttempt (direct fast path)", () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(markedSuccess).toBe(true);
-    // Sub-second on the happy path — the whole point of direct dispatch.
-    expect(Date.now() - t0).toBeLessThan(500);
+    // Derived from the poll interval rather than picked, because the only
+    // regression this can see is direct dispatch not happening — and the
+    // fallback is the poller, which costs at least one whole interval. Half of
+    // it separates the two with room to spare in both directions.
+    //
+    // It was a flat 500 ms, justified as "sub-second on the happy path". That
+    // is an aspiration rather than a discriminator: thirty microtask turns and
+    // a 50 ms timer can exceed it on a machine running three other suites, and
+    // a genuine fallback to the poller would blow any bound here — so the tight
+    // number reported on the runner and not on the code. This one cannot drift
+    // from the thing it is about.
+    expect(Date.now() - t0).toBeLessThan(WEBHOOK_POLL_INTERVAL_MS / 2);
   });
 
   it("direct path produces byte-identical signatures to the poller path", async () => {
