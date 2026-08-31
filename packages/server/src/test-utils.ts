@@ -139,6 +139,43 @@ export async function createPgTestStorage(options?: {
 }
 
 /**
+ * Close a file's accumulated test contexts without the teardown cost growing
+ * linearly with the number of tests.
+ *
+ * **Why this exists rather than a `for` loop.** Each `cleanup()` races
+ * `storage.close()` against a five-second bound before dropping the clone, and
+ * that bound is reached whenever the machine is busy — a pool close waits on
+ * in-flight work. Closed serially, a file holding N contexts therefore spends
+ * up to `N * 5s` in its `afterAll`, against Vitest's 120-second default. At 38
+ * contexts that is 190 seconds of budget for a hook allowed 120, and the file
+ * failed twice in one evening on a loaded machine while every assertion in the
+ * run passed.
+ *
+ * **Bounded rather than unbounded, and the bound is not arbitrary.** Closing
+ * all of them at once would put N pool closes and N `DROP DATABASE ... WITH
+ * (FORCE)` statements against one Postgres simultaneously, which trades a slow
+ * teardown for a contended one. Eight at a time is what `conformance`'s own
+ * cleanup settled on for the same question.
+ *
+ * **Concurrency is across contexts, never inside one.** `cleanup()` sequences
+ * its own close before its own drop deliberately: running those two in
+ * parallel raced the FORCE against the drain and killed a tracked write
+ * mid-socket, which surfaces as an unhandled rejection in whichever test is
+ * running. That ordering is untouched here — each context still closes then
+ * drops, and only different contexts overlap.
+ */
+export async function closeTestContexts(
+  contexts: readonly { cleanup: () => Promise<void> }[],
+): Promise<void> {
+  const CONCURRENCY = 8;
+  for (let i = 0; i < contexts.length; i += CONCURRENCY) {
+    await Promise.all(
+      contexts.slice(i, i + CONCURRENCY).map((ctx) => ctx.cleanup()),
+    );
+  }
+}
+
+/**
  * Seed an OAuth-bearer token end-to-end for tests that need the bearer
  * middleware to resolve an OAuth-issued token. Writes into the
  * @better-auth/oauth-provider plugin's tables (`auth_oauth_client`,
