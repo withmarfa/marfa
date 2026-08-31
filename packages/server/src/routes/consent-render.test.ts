@@ -1725,9 +1725,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // `INTEGRATION_TYPE_IDS` rather than a literal, so a seventeenth is
     // covered without anybody remembering to add it here.
     expect(INTEGRATION_TYPE_IDS.size).toBeGreaterThan(0);
-    expect(shipped).toEqual(
-      expect.arrayContaining([...INTEGRATION_TYPE_IDS]),
-    );
+    expect(shipped).toEqual(expect.arrayContaining([...INTEGRATION_TYPE_IDS]));
     const out = buildScopeDescriptions(
       shipped.map((id) => parse(`${id}:read`)),
     );
@@ -1834,7 +1832,8 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
         id: "acme.retired_widget",
         version: 1,
         fields: {},
-        description: "A widget shape a previous build shipped and this one does not.",
+        description:
+          "A widget shape a previous build shipped and this one does not.",
       },
       family: "integration" as const,
     };

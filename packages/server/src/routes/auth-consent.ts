@@ -1643,11 +1643,13 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
     "Emails sent to the address that captures mail into your space.",
   "marfa.podcast.episode": "Episodes of the podcasts you follow.",
   "marfa.podcast.show": "Podcasts you follow.",
-  "raindrop.collection": "The collections your Raindrop bookmarks are filed in.",
+  "raindrop.collection":
+    "The collections your Raindrop bookmarks are filed in.",
   "raindrop.raindrop": "Bookmarks you save to Raindrop.",
   "readwise.book":
     "The books, articles, and podcasts your Readwise highlights come from.",
-  "readwise.document": "Articles and documents in your Readwise Reader library.",
+  "readwise.document":
+    "Articles and documents in your Readwise Reader library.",
   // "with any notes you add" was the first draft and the futurity guard
   // refused it: its vocabulary cannot tell a verb meaning "annotate" from
   // one meaning "later", which is the same limit that keeps every futurity
