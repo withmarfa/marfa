@@ -132,24 +132,46 @@ interface ConsentParams {
 
 /** A rendered soft-tile group: a bundle's scopes, or a fallback bucket for
  *  scopes outside every bundle. */
-interface ScopeGroup {
-  label: string;
-  desc: string;
-  scopes: ParsedScope[];
+/**
+ * One toggle row: a scope, and whether it starts ticked.
+ *
+ * **`defaultOn` belongs to the row rather than to the group, and moving it
+ * here is what unblocks the density work.** It used to sit on `ScopeGroup`,
+ * read off the owning bundle's `default_on`, with the re-consent diff
+ * overriding the whole group to `true` for the standing grant. That made two
+ * stacks of tiles impossible to combine: one group would hold an added
+ * off-by-default scope beside a kept one, and a single flag has no answer
+ * that is not destructive in one direction. On, and a scope nobody agreed to
+ * rides in ticked. Off, and an untouched Continue submits a narrowing, which
+ * the decision route reads as a promise that the removed access stops
+ * working and acts on by revoking the client's live tokens.
+ *
+ * Per row there is no such conflict: a kept scope is `true` because it is
+ * being shown rather than offered, and an added one keeps its bundle's
+ * answer, in the same group.
+ */
+interface ScopeRow {
+  scope: ParsedScope;
   /**
-   * Whether the group's toggles start ticked, from the owning bundle's
-   * `default_on`.
+   * Whether this toggle starts ticked.
    *
+   * From the owning bundle's `default_on` where the scope is being offered.
    * An off-by-default bundle is the shape a bundle needs when it carries
    * something a person should have to reach for rather than merely leave
    * alone, and it is also what lets an already-registered client be offered
    * something new without every client having to re-register to get it.
    *
-   * Read only where a scope is being offered. The re-consent diff sets it
-   * `true` for scopes the user has already granted, since the question the
-   * flag answers does not arise a second time.
+   * Forced `true` for a scope the user has already granted, because the
+   * question the flag answers does not arise a second time: that scope is
+   * being shown, not offered.
    */
   defaultOn: boolean;
+}
+
+interface ScopeGroup {
+  label: string;
+  desc: string;
+  rows: ScopeRow[];
 }
 
 /**
@@ -163,6 +185,25 @@ interface ScopeGroup {
 function buildGroups(
   scopes: ParsedScope[],
   bundles: PermissionBundle[],
+  /**
+   * Force every row ticked, for the standing grant on the re-consent diff.
+   *
+   * `default_on` answers "should this start ticked the first time it is
+   * offered", and a scope the user granted on a previous visit is not being
+   * offered. Asking the flag about it is asking the wrong question, and the
+   * answer it gives is destructive: the "Already allowed" section is
+   * collapsed, so an off-by-default scope rendered unticked there is
+   * invisible, an untouched Continue submits without it, and the decision
+   * route reads a narrowing rather than a no-op. A narrowing is treated as a
+   * promise that the removed access stops working, so it revokes the
+   * client's live tokens. The user is shown nothing and a working
+   * integration dies.
+   *
+   * A parameter here rather than a post-hoc rewrite of the built groups,
+   * which is what it was: that rewrite could only speak at group
+   * granularity, and this one is per row.
+   */
+  forceDefaultOn = false,
 ): ScopeGroup[] {
   // A scope may appear in more than one bundle, and the two readers of that
   // overlap have to resolve it the same way or the same configuration means
@@ -203,13 +244,14 @@ function buildGroups(
     }
   }
   const byBundle = new Map<string, ScopeGroup>();
+  const bundleDefaultOn = new Map<string, boolean>();
   for (const bundle of bundles) {
     byBundle.set(bundle.id, {
       label: bundle.label,
       desc: bundle.description,
-      scopes: [],
-      defaultOn: bundle.default_on,
+      rows: [],
     });
+    bundleDefaultOn.set(bundle.id, bundle.default_on);
   }
   // The fallback buckets stay ticked. They hold what an app named explicitly
   // and no bundle claims, so there is no declaration to honor: `default_on`
@@ -218,14 +260,12 @@ function buildGroups(
   const otherRead: ScopeGroup = {
     label: "Other read access",
     desc: "Additional things this app asked to read.",
-    scopes: [],
-    defaultOn: true,
+    rows: [],
   };
   const otherWrite: ScopeGroup = {
     label: "Other write access",
     desc: "Additional things this app asked to change.",
-    scopes: [],
-    defaultOn: true,
+    rows: [],
   };
   // A capability needs a bucket of its own, and the reason is the heading
   // rather than the tidiness. The read/write split is decided on
@@ -246,25 +286,31 @@ function buildGroups(
   const otherCapability: ScopeGroup = {
     label: "Administrative access",
     desc: "Parts of your space this app asked to manage.",
-    scopes: [],
-    defaultOn: false,
+    rows: [],
   };
   for (const scope of scopes) {
+    // `forceDefaultOn` is the standing grant's answer and outranks every
+    // rule below, because a scope already granted is being shown rather than
+    // offered. Applied per row, so one group may hold a forced row beside an
+    // ordinary one — which is the whole point of the move.
     const bundle = literalToBundle.get(scopeLiteralFor(scope));
     if (bundle) {
-      byBundle.get(bundle.id)?.scopes.push(scope);
+      byBundle.get(bundle.id)?.rows.push({
+        scope,
+        defaultOn: forceDefaultOn || (bundleDefaultOn.get(bundle.id) ?? true),
+      });
     } else if (scope.kind === "capability") {
-      otherCapability.scopes.push(scope);
+      otherCapability.rows.push({ scope, defaultOn: forceDefaultOn });
     } else if (scope.kind !== "oidc" && scope.operation === "write") {
-      otherWrite.scopes.push(scope);
+      otherWrite.rows.push({ scope, defaultOn: true });
     } else {
-      otherRead.scopes.push(scope);
+      otherRead.rows.push({ scope, defaultOn: true });
     }
   }
   // Administrative access last: it is the widest thing on the screen, and a
   // reader scanning downward should not meet it between two content groups.
   return [...byBundle.values(), otherRead, otherWrite, otherCapability]
-    .filter((g) => g.scopes.length > 0)
+    .filter((g) => g.rows.length > 0)
     .map((g) => ({ ...g, desc: summarize(g) }));
 }
 
@@ -310,7 +356,8 @@ function summarize(group: ScopeGroup): string {
   // below drops and the ones no chain finds a word for: a group reaching
   // things that do not exist yet does so whether or not this sentence ends
   // up naming the scope that reaches them.
-  const openEnded = group.scopes.some((scope) => isOpenEnded(scope));
+  const groupScopes = group.rows.map((r) => r.scope);
+  const openEnded = groupScopes.some((scope) => isOpenEnded(scope));
   // **A pattern the group holds at both operations is stated once, in the
   // write form.** A write grant confers read, so "Notes (read and write)" is
   // the whole truth where "Notes (read only), Notes (read and write)" is one
@@ -365,11 +412,11 @@ function summarize(group: ScopeGroup): string {
   const foldKey = (scope: ParsedScope): string =>
     `${scope.kind}:${scope.typePattern}`;
   const writable = new Set(
-    group.scopes
+    groupScopes
       .filter((scope) => scopeOperation(scope) === "write")
       .map(foldKey),
   );
-  const stated = group.scopes.filter(
+  const stated = groupScopes.filter(
     (scope) =>
       !(scopeOperation(scope) === "read" && writable.has(foldKey(scope))),
   );
@@ -806,7 +853,7 @@ export function renderConsentScreen(params: ConsentParams): string {
   /** One collapsed soft-tile group: a master toggle in the summary, per-type
    *  toggles in the body. */
   const group = (g: ScopeGroup): string => {
-    if (g.scopes.length === 0) return "";
+    if (g.rows.length === 0) return "";
     // **Keyed on the literal, never on the rendered label.** T-997's fix
     // makes a read-and-write pair render two rows that differ only in their
     // operation, and both resolve the same name — so a `seen` set keyed on
@@ -820,20 +867,26 @@ export function renderConsentScreen(params: ConsentParams): string {
     // whatever a caller hands it; the device screen has carried the same set
     // one file over since before either surface had a parse to rely on.
     const seen = new Set<string>();
-    const rows = g.scopes
-      .filter((s) => {
-        const literal = scopeLiteralFor(s);
+    const rows = g.rows
+      .filter((r) => {
+        const literal = scopeLiteralFor(r.scope);
         if (seen.has(literal)) return false;
         seen.add(literal);
         return true;
       })
-      .map((s) => subRow(s, g.defaultOn))
+      .map((r) => subRow(r.scope, r.defaultOn))
       .join("");
     // The master carries no `name`, so it submits nothing and is purely the
     // control that drives its members. It still starts in the group's state,
     // or an off-by-default group would open showing a ticked master over
     // unticked rows.
-    const masterChecked = g.defaultOn ? " checked" : "";
+    // **Every row, not the group's own flag, which no longer exists.** The
+    // master drives its members and submits nothing itself, so the only
+    // honest starting state is the one its members already have: ticked when
+    // they all are. A group holding one off-by-default row among ticked ones
+    // opens with an unticked master over mostly-ticked rows, which reads
+    // correctly — the master is not yet true of everything under it.
+    const masterChecked = g.rows.every((r) => r.defaultOn) ? " checked" : "";
     return `<details class="grp">
       <summary>
         <span class="gmain">
@@ -853,24 +906,12 @@ export function renderConsentScreen(params: ConsentParams): string {
   const groupedTiles = (
     scopes: ParsedScope[],
     /**
-     * Whether these scopes are already granted, which overrides the bundle's
-     * `default_on`.
-     *
-     * `default_on` answers "should this start ticked the first time it is
-     * offered". A scope the user granted on a previous visit is not being
-     * offered, it is being shown, so asking the flag about it is asking the
-     * wrong question and the answer it gives is destructive. The "Already
-     * allowed" tile is collapsed and sits below "New", so an off-by-default
-     * scope rendered unticked there is invisible; an untouched Continue then
-     * submits without it, and the decision route reads a narrowing rather
-     * than a no-op. A narrowing is treated as a promise that the removed
-     * access stops working, so it revokes the client's live tokens. The user
-     * is shown nothing and a working integration dies.
+     * Whether these scopes are already granted. Threaded into `buildGroups`
+     * so it lands on each row; the reasoning is at that parameter.
      */
     alreadyGranted = false,
   ): string => {
-    const tiles = buildGroups(scopes, bundles)
-      .map((g) => (alreadyGranted ? { ...g, defaultOn: true } : g))
+    const tiles = buildGroups(scopes, bundles, alreadyGranted)
       .map(group)
       .join("");
     return `<div class="t-soft">${tiles}</div>`;
