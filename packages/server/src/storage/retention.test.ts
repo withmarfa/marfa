@@ -4,6 +4,7 @@ import type { TestContext } from "../test-utils.js";
 import {
   TrashPurger,
   ActivityPurger,
+  RevokedGrantPurger,
   RevokedKeyReaper,
   AuthSessionCleaner,
   DcrClientCleaner,
@@ -1411,5 +1412,133 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
       FIXED_NOW.toISOString(),
     );
     expect(counts.total).toBe(1);
+  });
+});
+
+describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
+  /**
+   * A grant revoked through the user-facing path, which is the row this sweep
+   * exists for. **`state` stays `active` deliberately** — the revoke writes
+   * the status onto the properties and leaves the lifecycle alone so the
+   * record survives as a record, which is exactly why neither the trash purge
+   * nor the activity purge can reach it.
+   */
+  async function seedTombstone(revokedAt: string, kind = "app") {
+    const item = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind,
+          status: "revoked",
+          granted_at: "2019-01-01T00:00:00.000Z",
+          revoked_at: revokedAt,
+          client_id: `client-${revokedAt}-${kind}`,
+        },
+      },
+      undefined,
+    );
+    return item.id;
+  }
+
+  const OLD = "2020-01-01T00:00:00.000Z";
+  const RECENT = new Date(Date.now() - 60_000).toISOString();
+  const CUTOFF = "2021-01-01T00:00:00.000Z";
+
+  it("removes an app tombstone revoked before the window", async () => {
+    const id = await seedTombstone(OLD);
+    const deleted =
+      await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    expect(deleted).toBe(1);
+    await expect(ctx.storage.items.get(id)).resolves.toBeNull();
+  });
+
+  it("keeps one revoked inside the window", async () => {
+    const id = await seedTombstone(RECENT);
+    await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    expect(await ctx.storage.items.get(id)).not.toBeNull();
+  });
+
+  it("leaves an integration's revoked connection alone", async () => {
+    // **Demonstrated rather than assumed**, which the ticket asks for by name.
+    // An uninstall writes the same `revoked` status as a matter of routine
+    // onto a row somebody may reinstall against. Widening the predicate to
+    // every revoked connection reddens this and nothing else.
+    const integration = await seedTombstone(OLD, "integration");
+    const app = await seedTombstone(OLD, "app");
+    const deleted =
+      await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    expect(deleted).toBe(1);
+    expect(await ctx.storage.items.get(integration)).not.toBeNull();
+    await expect(ctx.storage.items.get(app)).resolves.toBeNull();
+  });
+
+  it("leaves a live grant alone, whatever its age", async () => {
+    const live = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: "2019-01-01T00:00:00.000Z",
+          client_id: "live",
+        },
+      },
+      undefined,
+    );
+    await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    expect(await ctx.storage.items.get(live.id)).not.toBeNull();
+  });
+
+  it("is a no-op at retentionDays 0, like every other job here", async () => {
+    const id = await seedTombstone(OLD);
+    const purger = new RevokedGrantPurger(ctx.storage.items, 0, 3_600_000);
+    expect(await purger.runOnce()).toBe(0);
+    expect(await ctx.storage.items.get(id)).not.toBeNull();
+  });
+
+  it("sweeps through the purger at its configured window", async () => {
+    const id = await seedTombstone(OLD);
+    const purger = new RevokedGrantPurger(ctx.storage.items, 90, 3_600_000);
+    expect(await purger.runOnce()).toBe(1);
+    await expect(ctx.storage.items.get(id)).resolves.toBeNull();
+  });
+
+  it("keeps an active grant that still carries an old revoked_at", async () => {
+    // **This case exists because the mutation check found the suite passing
+    // for the wrong reason.** Removing the `status = 'revoked'` predicate
+    // reddened nothing, because the other live-grant case has no `revoked_at`
+    // at all and so fails the date comparison regardless — it was testing the
+    // date predicate twice and the status predicate never.
+    //
+    // A re-consent clears `revoked_at` when it flips the status back, so this
+    // shape should not occur. That is the argument for pinning it rather than
+    // against: if it ever does occur, the row is a LIVE grant and sweeping it
+    // deletes an app's access with no revocation behind it.
+    const resurrected = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: "2019-01-01T00:00:00.000Z",
+          revoked_at: OLD,
+          client_id: "revoked-then-reapproved",
+        },
+      },
+      undefined,
+    );
+    const deleted =
+      await ctx.storage.items.purgeRevokedAppGrantsOlderThan(CUTOFF);
+    expect(deleted).toBe(0);
+    expect(await ctx.storage.items.get(resurrected.id)).not.toBeNull();
+  });
+
+  it("cannot be reached by the sweep that owns trash", async () => {
+    // The correction this ticket needed: a predicate keyed on the item's
+    // `state` the way the trash purge is matches none of these, because an
+    // ordinarily-revoked grant sits at `state: "active"`.
+    const id = await seedTombstone(OLD);
+    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await ctx.storage.items.get(id)).not.toBeNull();
   });
 });

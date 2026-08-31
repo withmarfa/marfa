@@ -992,6 +992,41 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
+  async purgeRevokedAppGrantsOlderThan(
+    beforeDate: string,
+    spaceId?: string | null,
+  ): Promise<number> {
+    // The PG copy carries the reasoning: a grant revoked through the
+    // user-facing path keeps `state: "active"`, so this asks `properties`
+    // rather than the lifecycle, and `kind = 'app'` keeps an integration
+    // uninstall's routine `revoked` row out of a tombstone sweep.
+    const where = and(
+      eq(items.type, "system.connection"),
+      sql`json_extract(${items.properties}, '$.kind') = 'app'`,
+      sql`json_extract(${items.properties}, '$.status') = 'revoked'`,
+      sql`json_extract(${items.properties}, '$.revoked_at') < ${beforeDate}`,
+      spaceCondition(items.space_id, spaceId),
+    );
+
+    return await this.db.transaction(async (tx) => {
+      const idRows = await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(where)
+        .all();
+      if (idRows.length === 0) return 0;
+
+      const ids = idRows.map((row) => row.id);
+      for (const id of ids) {
+        await this.searchStore.remove(id);
+      }
+      await tx.delete(edges).where(inArray(edges.source_id, ids)).run();
+      await tx.delete(edges).where(inArray(edges.target_id, ids)).run();
+      await tx.delete(items).where(inArray(items.id, ids)).run();
+      return ids.length;
+    });
+  }
+
   async restore(id: string, spaceId?: string): Promise<Item> {
     const row = await this.getRaw(id, spaceId);
     if (!row) {

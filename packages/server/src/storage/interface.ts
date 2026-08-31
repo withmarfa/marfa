@@ -403,6 +403,37 @@ export interface ItemStore {
     beforeDate: string,
     spaceId?: string | null,
   ): Promise<number>;
+  /**
+   * Hard-delete every revoked **application** grant tombstone whose
+   * `properties.revoked_at` is strictly older than `beforeDate`. Returns the
+   * number of rows deleted.
+   *
+   * **Predicated on `properties.status`, not on the item's `state`, and that
+   * is the whole reason this could not reuse either sibling.** A grant revoked
+   * through the ordinary user-facing path keeps `state: "active"` — the revoke
+   * writes `status: "revoked"` and `revoked_at` and deliberately leaves the
+   * lifecycle alone, so the record survives as a record. A sweep keyed on
+   * `state` the way the trash purge is would match none of them.
+   *
+   * **`kind = 'app'` is load-bearing rather than tidiness.** An integration
+   * uninstall writes the same `revoked` status onto a `system.connection` row
+   * as a matter of routine, and that row is not a tombstone — it is a
+   * connection somebody may reinstall. It is separately distinguishable
+   * because the uninstall path also transitions the item to `state:
+   * "revoked"`, but this predicate does not rely on that: it asks the question
+   * it means.
+   *
+   * Filters on `revoked_at` rather than `updated_at`, on the same reasoning
+   * `purgeActivityOlderThan` gives for `created_at`: `updated_at` moves on any
+   * write, and the window here means "how long we keep the record of a
+   * withdrawn grant".
+   *
+   * `spaceId` semantics match the two above.
+   */
+  purgeRevokedAppGrantsOlderThan(
+    beforeDate: string,
+    spaceId?: string | null,
+  ): Promise<number>;
 }
 
 export interface MetadataStore {

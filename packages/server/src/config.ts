@@ -152,6 +152,20 @@ export interface AppConfig {
    *  a sensible default would churn every one of them to say what the
    *  default already says. */
   activityRetentionDays?: number;
+  /** Days a revoked application-grant tombstone survives before the purger
+   *  drops it. Default 90; env override `MARFA_REVOKED_GRANT_RETENTION_DAYS`.
+   *  `0` disables the job.
+   *
+   *  **Ninety rather than a number of its own, and matching
+   *  `AUDIT_RETENTION_DAYS` on purpose.** The tombstone and the audit row that
+   *  recorded the revocation are the same fact written twice, so keeping them
+   *  for different lengths would let the two disagree about whether a
+   *  revocation is still visible.
+   *
+   *  They accumulate because the grant lookup skips a revoked row, which makes
+   *  a soft-delete permanent rather than reusable: every revoke-then-reconnect
+   *  cycle leaves one behind and nothing swept them. */
+  revokedGrantRetentionDays?: number;
   /** Cadence (ms) for the activity purger. Default 3_600_000 (1h);
    *  env override `MARFA_ACTIVITY_PURGE_INTERVAL_MS`. */
   activityPurgeIntervalMs?: number;
@@ -879,6 +893,10 @@ export function loadConfig(): AppConfig {
     // undefined regardless of this flag.
     rlsEnforce: process.env.MARFA_RLS_ENFORCE !== "false",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
+    revokedGrantRetentionDays: envNumber(
+      process.env.MARFA_REVOKED_GRANT_RETENTION_DAYS,
+      90,
+    ),
     activityRetentionDays: envNumber(
       process.env.MARFA_ACTIVITY_RETENTION_DAYS,
       14,

@@ -31,6 +31,7 @@ import { HeartbeatPinger } from "./heartbeat.js";
 import { VersionThinner } from "./storage/version-thinner.js";
 import {
   ActivityPurger,
+  RevokedGrantPurger,
   RevokedKeyReaper,
   TrashPurger,
   AuthSessionCleaner,
@@ -496,6 +497,36 @@ async function main() {
           activityFanout,
         )
       : undefined;
+  // Revoked application-grant tombstones. No fan-out: unlike trash and
+  // activity there is no per-space override for this window, because the
+  // reason for its length is instance-wide — it tracks the audit retention so
+  // the tombstone and the audit row that recorded the revocation cannot
+  // disagree about whether a revocation is still visible.
+  const revokedGrantPurgeIntervalMs = activityPurgeIntervalMs;
+  const revokedGrantPurger =
+    revokedGrantPurgeIntervalMs > 0
+      ? new RevokedGrantPurger(
+          storage.items,
+          config.revokedGrantRetentionDays ?? 90,
+          revokedGrantPurgeIntervalMs,
+          undefined,
+          storage.coordination,
+        )
+      : undefined;
+  if (revokedGrantPurger) {
+    scheduleJob(
+      {
+        name: "revoked-grant-purge",
+        logName: "Revoked grant purge",
+        intervalMs: revokedGrantPurgeIntervalMs,
+        firstRunDelaySeconds: 35,
+        runOnce: () => revokedGrantPurger.runScheduled(),
+      },
+      () => {
+        revokedGrantPurger.stop();
+      },
+    );
+  }
   if (activityPurger) {
     scheduleJob(
       {

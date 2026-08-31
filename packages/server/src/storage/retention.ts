@@ -178,6 +178,93 @@ export class TrashPurger {
  * one costs a transaction, a quota reservation, an index update and a
  * published event whether it is purged an hour later or a fortnight.
  */
+/**
+ * Hard-deletes revoked application-grant tombstones once they are older than
+ * the configured window.
+ *
+ * **The row it sweeps is not trash and is not in a terminal lifecycle state.**
+ * A grant revoked through the user-facing path keeps `state: "active"` — the
+ * revoke writes `status: "revoked"` and `revoked_at` onto the properties and
+ * leaves the item alone, so the record survives as a record. Neither sibling
+ * above can reach it: the trash purge asks about `state` and the activity
+ * purge asks about `type`.
+ *
+ * **Why they accumulate at all.** The grant lookup skips a row whose status is
+ * revoked, so an operator soft-delete is permanent rather than reusable, and
+ * each revoke-then-reconnect cycle leaves one behind. Nothing swept them.
+ *
+ * **The window is the audit window and that is deliberate.** A tombstone and
+ * the audit row that recorded the revocation are the same fact written twice,
+ * so keeping them for different lengths of time would let the two disagree
+ * about whether a revocation is still visible. Ninety days, matching
+ * `AUDIT_RETENTION_DAYS`, and `0` disables the job as it does for the others.
+ *
+ * **An integration's revoked connection is not a tombstone and is not swept.**
+ * The uninstall path writes the same `revoked` status as a matter of routine,
+ * onto a row somebody may reinstall against. The store predicate asks
+ * `kind = 'app'`.
+ */
+export class RevokedGrantPurger {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
+
+  constructor(
+    private items: ItemStore,
+    private retentionDays: number,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.stopped = false;
+    this.startupTimeout = setTimeout(() => void this.poll(), 20_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  async runOnce(): Promise<number> {
+    if (this.retentionDays <= 0) return 0;
+    const cutoff = new Date(
+      this.nowFn().getTime() - this.retentionDays * MS_PER_DAY,
+    ).toISOString();
+    return this.items.purgeRevokedAppGrantsOlderThan(cutoff);
+  }
+
+  /** Scheduler entry point: the same locked, logged tick the timer drives. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
+  private async poll(): Promise<void> {
+    if (this.stopped) return;
+    try {
+      const deleted = this.coordination
+        ? await this.coordination.withJobLock("revoked-grant-purge", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (deleted !== undefined && deleted > 0) {
+        log("info", "Revoked grant tombstones purged", { deleted });
+      }
+    } catch (err) {
+      logJobTickFailure("Revoked grant purge", err, this.stopped);
+    }
+  }
+}
+
 export class ActivityPurger {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;

@@ -612,40 +612,32 @@ describe("revocation reaches outstanding device codes", () => {
 
     const grant = await onlyGrant(c);
 
-    // A second device login, parked between the grant write and the flip
-    // that binds the code to it. That is the window the sweep cannot close
-    // and the reason the guard is worth having on its own: the projection
-    // write runs under the consent lock and `approveDeviceCode` runs after
-    // the lock is released, so a revoke can land its whole cascade in
-    // between and pass over a code that is not bound to the grant yet.
+    // A second device code, bound to the grant AFTER the revoke.
+    //
+    // **This used to park a request inside `approveDeviceCode` and revoke
+    // while it waited.** That worked because the binding ran outside the
+    // consent lock, which is the window T-1005 closed: the binding now runs
+    // inside the lock, so a parked approval holds it and the revoke below
+    // would block on it forever. The old fixture deadlocks against the fix,
+    // which is the fix being real rather than a problem with it.
+    //
+    // **The guard this test is about is unaffected and still worth having.**
+    // It refuses at poll time on the grant's own state, and it now defends a
+    // state the approval path can no longer produce — which is what defence
+    // in depth means, not a reason to delete it. A grant revoked while a code
+    // was outstanding, a row restored from a backup taken mid-flight, or a
+    // future path that binds somewhere else all arrive here.
+    //
+    // So the state is constructed through the store rather than raced into
+    // existence. The revoke still goes through the route, because the sweep
+    // lives in `revokeProjectedGrant` and a store write would skip it: the
+    // code is bound after the sweep has run and found nothing, which is
+    // precisely the shape the guard exists for.
     const second = await initiateDeviceFlow(
       c,
       clientId,
       "core.note:read offline_access",
     );
-    const flipDeviceCode = c.storage.oauth.approveDeviceCode.bind(
-      c.storage.oauth,
-    );
-    let reachedFlip!: () => void;
-    const reached = new Promise<void>((resolve) => {
-      reachedFlip = resolve;
-    });
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let parked = false;
-    c.storage.oauth.approveDeviceCode = async (id, connectionItemId) => {
-      if (!parked) {
-        parked = true;
-        reachedFlip();
-        await gate;
-      }
-      return flipDeviceCode(id, connectionItemId);
-    };
-
-    const approving = approveDeviceFlow(c, second.user_code, cookie);
-    await reached;
 
     const revoked = await request(
       c.app,
@@ -656,8 +648,14 @@ describe("revocation reaches outstanding device codes", () => {
     expect(revoked.headers.get("location") ?? "").toContain(
       "notice=grant_revoked",
     );
-    release();
-    expect((await approving).status).toBe(200);
+
+    const pending = await c.storage.oauth.findDeviceCodeByHash(
+      deviceCodeHash(second.device_code),
+    );
+    expect(pending?.status).toBe("pending");
+    expect(await c.storage.oauth.approveDeviceCode(pending!.id, grant.id)).toBe(
+      true,
+    );
 
     // The code the poll is about to present: bound to the revoked grant,
     // still approved, and provably unexpired. The expiry check sits ABOVE
