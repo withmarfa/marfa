@@ -982,7 +982,16 @@ describe("PATCH /items/:id — retype", () => {
       key: ctx.adminKey,
       body: { retype: true, properties: { name: "Ada" } },
     });
+    // The code as well as the status. Five sites in this handler answer
+    // 400, so a bare status assertion passes whichever one fired — and a
+    // refusal produced by a guard other than the one under test is a
+    // green that covers nothing.
     expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toContain("retype");
   });
 
   it("refuses a move into a type the credential cannot write", async () => {
@@ -1014,13 +1023,52 @@ describe("PATCH /items/:id — retype", () => {
         properties: { url: "https://example.com", title: "Ada" },
       },
     });
+    // The type gate refusing, rather than the key failing to authenticate
+    // — a mistyped fixture answers 401 and looks like a pass from here.
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("type_not_permitted");
 
     const after = await request(ctx.app, "GET", `/items/${id}`, {
       key: ctx.adminKey,
     });
     const read = (await after.json()) as { item: { type: string } };
     expect(read.item.type).toBe("core.entity");
+  });
+
+  it("admits a move by a credential that may write both types", async () => {
+    // The permissive direction, which no mutation can reach. A check that
+    // refused every caller would satisfy the refusal case beside this one
+    // and break the door completely, and removing code only ever makes a
+    // guard more permissive — so the only thing that catches an
+    // over-broad guard is asserting what must still be allowed.
+    const id = await entity(ctx);
+    const scopedRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "both-types",
+        source: "both-types",
+        role: "member",
+        type_permissions: {
+          "core.entity": "write",
+          "core.bookmark": "write",
+        },
+      },
+    });
+    const scoped = (await scopedRes.json()) as { key: string };
+
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: scoped.key,
+      body: {
+        retype: true,
+        type: "core.bookmark",
+        properties_mode: "replace",
+        properties: { url: "https://example.com", title: "Ada" },
+      },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { item: { type: string } };
+    expect(data.item.type).toBe("core.bookmark");
   });
 
   it("refuses a move whose result the destination calls invalid", async () => {
@@ -1037,7 +1085,11 @@ describe("PATCH /items/:id — retype", () => {
         properties: { name: "Ada" },
       },
     });
+    // `invalid_properties` specifically: this has to be the destination
+    // type refusing the shape, not the body failing an earlier check.
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_properties");
 
     const after = await request(ctx.app, "GET", `/items/${id}`, {
       key: ctx.adminKey,
@@ -1139,7 +1191,11 @@ describe("PATCH /items/:id — properties_mode", () => {
       key: ctx.adminKey,
       body: { properties_mode: "replace", properties: { kind: "person" } },
     });
+    // The type refusing the resulting shape, rather than any of the other
+    // four guards in this handler that also answer 400.
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("invalid_properties");
 
     const after = await request(ctx.app, "GET", `/items/${item.id}`, {
       key: ctx.adminKey,
