@@ -308,6 +308,22 @@ The cost that justified the exclusion also moved: it was billed minutes on hoste
 
 **Dispatching it is not free.** Unlike a `ci.yml` dispatch, a `Server image` dispatch always runs the full amd64 build. That is the point of having it — it is how a Dockerfile change gets checked before it merges — but it is billed hosted minutes rather than pool time.
 
+### The pool canary
+
+`Pool canary` (`.github/workflows/pool-canary.yml`) says, hourly, whether the self-hosted pool can run a job at all. One trivial job on the pool, one hosted notifier reporting its outcome.
+
+**It exists because a pool that fails every job produced the same bytes as a pool with no work.** Every job landing on the pool once failed at `Set up runner`, before a single step executed, for nineteen hours across four repositories, and nobody noticed. Every notifier in the estate is correctly shaped to survive the pool dying — hosted sibling job, `needs`, `if: always()` — and every one of them reports _its own workflow's_ outcome. Nothing observed the pool itself, and a quiet weekend is the more common explanation for silence. This workflow manufactures the work so silence stops being ambiguous.
+
+**The probe reads `self-hosted` literally and must never read `vars.CI_RUNNER`.** It is the one job here that is deliberately not routable: routed through the variable it would run on whatever the estate's default happens to be and report the pool healthy from a hosted runner, which is the check answering a different question than the one it is named for. `ci/pool-canary.test.ts` holds it there, along with every other property that can be undone without producing an error — a notifier moved onto the pool, a verdict that calls a cancellation healthy, an alert key composed per run so nothing ever resolves.
+
+**`cancel-in-progress: true` is load-bearing rather than hygiene.** A job waiting for a self-hosted runner is not failed by GitHub until its queue limit expires a day later, so "no runner ever picked it up" would otherwise be reported a day after it started. Cancelling a still-running probe when the next hourly one starts brings that back to an hour, and the notifier treats `cancelled` as an alert precisely so it arrives as one.
+
+**Queue age was the alternative and does not detect what happened.** Those jobs were picked up promptly and then failed; the queue was never long. It also inherits the original problem, because it can only report when there is work — and a quiet weekend is exactly when nothing else is watching.
+
+**Not built into RunPool**, by agreement with the session that owns it: restoring the pool must not wait on detectability, and a checker living on the machine it checks cannot report that machine being wrong.
+
+**The cost is one trivial job an hour**, which keeps the pool awake roughly two minutes in sixty. That is a three per cent duty cycle on a machine that is also a development box, against a nineteen-hour outage nobody saw.
+
 ### The integrations pin
 
 `Integrations pin drift` (`.github/workflows/integrations-pin-drift.yml`) says when `packages/server/integrations-ref.txt` has fallen behind something the image would ship. Daily at 07:42 UTC, plus dispatch. Hosted, with its own `notify` job.
