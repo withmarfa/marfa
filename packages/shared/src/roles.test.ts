@@ -14,8 +14,8 @@ describe("ROLE_RANK", () => {
     }
   });
 
-  it("orders admin above space_admin above member", () => {
-    expect(ROLE_RANK.admin).toBeGreaterThan(ROLE_RANK.space_admin);
+  it("orders instance_admin above space_admin above member", () => {
+    expect(ROLE_RANK.instance_admin).toBeGreaterThan(ROLE_RANK.space_admin);
     expect(ROLE_RANK.space_admin).toBeGreaterThan(ROLE_RANK.member);
   });
 
@@ -27,17 +27,17 @@ describe("ROLE_RANK", () => {
 
 describe("canGrantRole", () => {
   it("permits granting a role at or below the granter's own", () => {
-    expect(canGrantRole("admin", "admin")).toBe(true);
-    expect(canGrantRole("admin", "space_admin")).toBe(true);
-    expect(canGrantRole("admin", "member")).toBe(true);
+    expect(canGrantRole("instance_admin", "instance_admin")).toBe(true);
+    expect(canGrantRole("instance_admin", "space_admin")).toBe(true);
+    expect(canGrantRole("instance_admin", "member")).toBe(true);
     expect(canGrantRole("space_admin", "space_admin")).toBe(true);
     expect(canGrantRole("space_admin", "member")).toBe(true);
     expect(canGrantRole("member", "member")).toBe(true);
   });
 
   it("refuses granting a role above the granter's own", () => {
-    expect(canGrantRole("space_admin", "admin")).toBe(false);
-    expect(canGrantRole("member", "admin")).toBe(false);
+    expect(canGrantRole("space_admin", "instance_admin")).toBe(false);
+    expect(canGrantRole("member", "instance_admin")).toBe(false);
     expect(canGrantRole("member", "space_admin")).toBe(false);
   });
 });
@@ -56,6 +56,14 @@ describe("isMarfaRole", () => {
     // them survived a rename and locked every account holder out.
     expect(isMarfaRole("tenant_admin")).toBe(false);
     expect(isMarfaRole("workspace_admin")).toBe(false);
+  });
+
+  it("refuses the value the current rename is retiring", () => {
+    // The guard stays a guard during the transition. `admin` resolves
+    // forward through `resolveStoredRole`, which is a different question
+    // from whether it is a role — and answering yes here would let it
+    // reach `ROLE_RANK` as a key that does not exist.
+    expect(isMarfaRole("admin")).toBe(false);
   });
 
   it("refuses values that are not strings at all", () => {

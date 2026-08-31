@@ -33,7 +33,7 @@ afterEach(async () => {
 });
 
 /**
- * A `role: "admin"` credential bound to one space.
+ * A `role: "instance_admin"` credential bound to one space.
  *
  * The distinction this exists to test: it authenticates, so a request
  * carrying it never reaches the 401 an unauthenticated one gets. Only the
@@ -48,7 +48,7 @@ async function mintSpaceBoundAdmin(ctx: TestContext): Promise<string> {
     {
       label: `space-admin-${suffix}`,
       source: `space-admin-${suffix}`,
-      role: "admin",
+      role: "instance_admin",
       default_tier: "library",
       type_permissions: {},
       is_platform: false,

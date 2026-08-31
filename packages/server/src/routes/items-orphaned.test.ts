@@ -184,7 +184,7 @@ async function mintSpaceKey(spaceId: string, label: string): Promise<string> {
     {
       label,
       source: `orphan-space-${suffix}`,
-      role: "admin",
+      role: "instance_admin",
       type_permissions: {},
       default_tier: "library",
     },
@@ -231,7 +231,9 @@ beforeAll(async () => {
   // The default bootstrap leaves the event log unwired, and the replay half
   // of the stream contract needs `publish()` to append something to replay.
   initEventLog(ctx.storage.eventLog);
-  const admin = (await ctx.storage.keys.list()).find((k) => k.role === "admin");
+  const admin = (await ctx.storage.keys.list()).find(
+    (k) => k.role === "instance_admin",
+  );
   if (!admin) throw new Error("admin key not found in test ctx");
   adminKeyId = admin.id;
 
@@ -763,7 +765,7 @@ describe("the remaining write paths that echo an item back", () => {
       {
         label: "integration:acme/orphan-gone",
         source: "integration:acme/orphan-gone",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: {},
         default_tier: "library",
       },
@@ -1033,7 +1035,7 @@ describe("the single-space self-host shape", () => {
 
   it("answers for space-less rows against space-less connections", async () => {
     const admin = (await selfHost.storage.keys.list()).find(
-      (k) => k.role === "admin",
+      (k) => k.role === "instance_admin",
     );
     if (!admin) throw new Error("admin key not found");
 

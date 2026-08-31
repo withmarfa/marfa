@@ -54,7 +54,7 @@ function fakeKey(
 
 describe("checkSpaceAdmin (unit)", () => {
   it("admits admin", () => {
-    const key = fakeKey("admin");
+    const key = fakeKey("instance_admin");
     expect(checkSpaceAdmin(key)).toBe(key);
   });
 

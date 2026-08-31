@@ -31,7 +31,7 @@ function keyFor(spaceId: string | undefined): ApiKey {
     id: `key_${spaceId ?? "platform"}`,
     name: "events scoping",
     key_hash: "unused",
-    role: spaceId ? "space_admin" : "admin",
+    role: spaceId ? "space_admin" : "instance_admin",
     space_id: spaceId,
     type_permissions: {},
     extension_permissions: {},

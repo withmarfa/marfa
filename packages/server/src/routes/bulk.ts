@@ -1212,7 +1212,7 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   // deliberately unscoped, so this is the only fence, and a purge job
   // carries no space at all.
   if (hasPlatformAuthority(apiKey)) return;
-  if (apiKey.role === "admin") {
+  if (apiKey.role === "instance_admin") {
     if (apiKey.space_id === job.space_id) return;
     // Cloaked as absent rather than refused, so a cross-space probe
     // cannot enumerate job ids. Matches the treatment of `/keys/:id`.

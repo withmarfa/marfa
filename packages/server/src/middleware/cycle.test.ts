@@ -44,7 +44,7 @@ function apiKey(overrides: Partial<ApiKey> = {}): ApiKey {
     id: "key_test",
     label: "test",
     source: "test",
-    role: "admin",
+    role: "instance_admin",
     default_tier: "library",
     is_platform: false,
     type_permissions: {},

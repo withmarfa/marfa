@@ -40,7 +40,7 @@ let unboundPlainAdmin: string;
 
 async function mintKey(opts: {
   label: string;
-  role: "admin" | "space_admin" | "member";
+  role: "instance_admin" | "space_admin" | "member";
   spaceId?: string;
   isPlatform?: boolean;
 }): Promise<string> {
@@ -83,12 +83,12 @@ beforeAll(async () => {
   ctx = await createTestContext();
   boundAdminA = await mintKey({
     label: "bound-admin-a",
-    role: "admin",
+    role: "instance_admin",
     spaceId: spaceA,
   });
   boundAdminB = await mintKey({
     label: "bound-admin-b",
-    role: "admin",
+    role: "instance_admin",
     spaceId: spaceB,
   });
   memberB = await mintKey({
@@ -100,7 +100,7 @@ beforeAll(async () => {
   // `is_platform` instead of the space binding fails this suite.
   unboundPlainAdmin = await mintKey({
     label: "unbound-plain-admin",
-    role: "admin",
+    role: "instance_admin",
   });
 });
 

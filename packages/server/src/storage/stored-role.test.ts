@@ -23,10 +23,39 @@ afterEach(() => {
 describe("storedRole", () => {
   it("passes every recognized role through untouched and says nothing", () => {
     const spy = vi.spyOn(logger, "log").mockReturnValue(undefined);
-    for (const role of ["admin", "space_admin", "member"] as const) {
+    for (const role of ["instance_admin", "space_admin", "member"] as const) {
       expect(storedRole(role, { table: "users", id: "u1" })).toBe(role);
     }
     expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("resolves a value the pending migration has not reached", () => {
+    vi.spyOn(logger, "log").mockReturnValue(undefined);
+    // The tolerant half of the rename. Falling back here instead would
+    // project a migrated estate to the least authority available, which is
+    // the outage this ordering exists to avoid.
+    expect(storedRole("admin", { table: "users", id: "u1" })).toBe(
+      "instance_admin",
+    );
+  });
+
+  it("says so out loud, naming the row, when it resolves one forward", () => {
+    const spy = vi.spyOn(logger, "log").mockReturnValue(undefined);
+    storedRole("admin", { table: "api_keys", id: "k1" });
+
+    // The hazard of a transitional mapping is precisely that it works. A row
+    // still logging this after the migration ran is a row the migration
+    // missed — the exact failure that went a whole rename cycle unnoticed —
+    // so silence here would leave nothing to notice it by.
+    expect(spy).toHaveBeenCalledTimes(1);
+    const [level, , details] = spy.mock.calls[0] ?? [];
+    expect(level).toBe("warn");
+    expect(details).toMatchObject({
+      table: "api_keys",
+      row_id: "k1",
+      stored_role: "admin",
+      resolved_as: "instance_admin",
+    });
   });
 
   it("narrows a retired role to the least authority rather than translating it", () => {

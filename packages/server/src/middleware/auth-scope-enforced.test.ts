@@ -41,7 +41,7 @@ describe("role bypass vs scope_enforced", () => {
   });
 
   it("an admin API key bypasses too", () => {
-    const key = fakeKey({ role: "admin", type_permissions: {} });
+    const key = fakeKey({ role: "instance_admin", type_permissions: {} });
     expect(() => {
       checkTypeAccess(key, "user.ticket", "write");
     }).not.toThrow();

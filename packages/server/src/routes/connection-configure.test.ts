@@ -581,7 +581,7 @@ describe("GET /connections/:id/configure", () => {
         id: "test-admin",
         label: "test-admin",
         source: "test-admin",
-        role: "admin",
+        role: "instance_admin",
         is_platform: true,
         default_tier: "library",
         type_permissions: { "*": "write" },

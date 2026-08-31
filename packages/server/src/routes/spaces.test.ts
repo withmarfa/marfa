@@ -104,7 +104,7 @@ async function createHostedContext(): Promise<HostedContext> {
     {
       label: "platform-quotas-admin",
       source: `platform-quotas-${suffix}`,
-      role: "admin",
+      role: "instance_admin",
       is_platform: true,
       type_permissions: {},
       default_tier: "feed",
@@ -116,7 +116,7 @@ async function createHostedContext(): Promise<HostedContext> {
     {
       label: "space-cfg-admin",
       source: `space-cfg-${suffix}`,
-      role: "admin",
+      role: "instance_admin",
       type_permissions: {},
       default_tier: "feed",
     },

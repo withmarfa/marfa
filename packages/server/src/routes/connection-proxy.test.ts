@@ -664,7 +664,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
       {
         label: `t235-admin-a-${suffix}`,
         source: `t235-admin-a-${suffix}`,
-        role: "admin",
+        role: "instance_admin",
         default_tier: "library",
         is_platform: false,
       },

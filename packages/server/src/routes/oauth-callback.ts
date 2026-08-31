@@ -429,7 +429,7 @@ export function oauthStartRoutes(
     // Fenced on the caller's space. Rank alone does not confer
     // cross-space reach: a credential carrying a `space_id` is confined
     // to it whatever its role, and `POST /admin/spaces/{id}/keys` mints
-    // exactly that shape at `role: "admin"`. An unfenced lookup here
+    // exactly that shape at `role: "instance_admin"`. An unfenced lookup here
     // would let such a key start an OAuth flow against another space's
     // connection, and the signed state binds the connection id — so the
     // callback would persist the resulting tokens onto that connection.

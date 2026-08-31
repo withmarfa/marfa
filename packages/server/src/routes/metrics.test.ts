@@ -159,7 +159,7 @@ describe("GET /metrics", () => {
       {
         label: "space-a-admin",
         source: `space-a-${raw.slice(-8)}`,
-        role: "admin",
+        role: "instance_admin",
         type_permissions: {},
         default_tier: "feed",
       },

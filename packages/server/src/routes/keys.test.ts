@@ -133,7 +133,7 @@ describe("PATCH /keys/{id}", () => {
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
       key: ctx.adminKey,
-      body: { role: "admin" },
+      body: { role: "instance_admin" },
     });
     expect(res.status).toBe(400);
     const err = (await res.json()) as { error: { message: string } };
@@ -244,7 +244,7 @@ describe("bootstrap sentinel", () => {
       expect(res.status).toBe(201);
       const body = (await res.json()) as { role: string; id: string };
       // Bootstrap key is coerced to admin regardless of requested role.
-      expect(body.role).toBe("admin");
+      expect(body.role).toBe("instance_admin");
       // Sentinel must now be stamped.
       const stamped = await storage.settings.get("bootstrapped");
       expect(stamped).toBe("true");
@@ -430,7 +430,7 @@ describe("bootstrap sentinel", () => {
       // Only one key persisted in the store.
       const keys = await storage.keys.list();
       expect(keys.length).toBe(1);
-      expect(keys[0]?.role).toBe("admin");
+      expect(keys[0]?.role).toBe("instance_admin");
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -576,7 +576,7 @@ describe("POST /keys — OAuth caller block", () => {
 
   it("rejects an OAuth token (admin user) from minting a key", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
-      userRole: "admin",
+      userRole: "instance_admin",
       spaceId,
     });
     const res = await request(hostedCtx.app, "POST", "/keys", {
@@ -628,7 +628,7 @@ describe("POST /keys — space binding", () => {
   //
   // `member` is not refused: it is this route's default role, the only
   // way to express "platform reach, narrowed by type_permissions", and a
-  // caller denied it can ask for `role: "admin"` here for strictly more
+  // caller denied it can ask for `role: "instance_admin"` here for strictly more
   // authority. The tests below pin both halves of that split.
   let hostedCtx: TestContext;
   let spaceId: string;
@@ -641,6 +641,79 @@ describe("POST /keys — space binding", () => {
 
   afterAll(async () => {
     await hostedCtx.cleanup();
+  });
+
+  // The tolerant half of the role rename. Clients that mint credentials are
+  // separate deployments on their own release cadence, so a request naming
+  // the old word outlives the server that renamed it.
+  it("accepts the retiring role name and stores the new one", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
+      body: {
+        label: `legacy-role-${suffix}`,
+        source: `legacy-role-${suffix}`,
+        role: "admin",
+      },
+    });
+
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as { role: string };
+    // Accepted at the door, normalized before anything stores it. A row
+    // written under the old spelling would be one the migration has already
+    // passed, and nothing would ever come back for it.
+    expect(body.role).toBe("instance_admin");
+  });
+
+  it("does not let the retiring name carry a mint past the role ceiling", async () => {
+    // The hazard a tolerance introduces. A caller that cannot ask for
+    // `instance_admin` must not get there by spelling it the old way, which
+    // is what an implementation that admitted the word and skipped the
+    // comparison would allow.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const raw = "marfa_k1_esc_" + suffix;
+    await hostedCtx.storage.keys.create(
+      {
+        label: `esc-key-${suffix}`,
+        source: `esc-key-${suffix}`,
+        role: "space_admin",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      spaceId,
+    );
+
+    // Precondition: this credential can mint at all, so a 403 below is the
+    // ceiling refusing and not the door refusing it for some other reason.
+    const permitted = await request(hostedCtx.app, "POST", "/keys", {
+      key: raw,
+      body: {
+        label: `esc-ok-${suffix}`,
+        source: `esc-ok-${suffix}`,
+        role: "member",
+      },
+    });
+    expect(permitted.status).toBe(201);
+
+    const spaceAdminRes = await request(hostedCtx.app, "POST", "/keys", {
+      key: raw,
+      body: {
+        label: `escalate-${suffix}`,
+        source: `escalate-${suffix}`,
+        role: "admin",
+      },
+    });
+
+    expect(spaceAdminRes.status).toBe(403);
+    const err = (await spaceAdminRes.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(err.error.code).toBe("forbidden");
+    // The refusal names the role it resolved to, not the word that was
+    // sent, so a reader is not left thinking two different roles exist.
+    expect(err.error.message).toMatch(/instance_admin/);
   });
 
   it("rejects a space_admin mint from a platform admin with no space", async () => {
@@ -663,7 +736,7 @@ describe("POST /keys — space binding", () => {
   });
 
   it("still lets a platform admin mint a space-less member key", async () => {
-    // Refusing this would push the caller to `role: "admin"`, the only
+    // Refusing this would push the caller to `role: "instance_admin"`, the only
     // other thing a space-less credential can mint here, which reads
     // everything a member key would and ignores `type_permissions` on top.
     // A guard that trades a narrow credential for a wide one is not a
@@ -704,7 +777,7 @@ describe("POST /keys — space binding", () => {
       body: {
         label: `harness-${suffix}`,
         source: `harness-${suffix}`,
-        role: "admin",
+        role: "instance_admin",
         is_platform: true,
         type_permissions: { "*": "write" },
       },
@@ -735,13 +808,13 @@ describe("POST /keys — space binding", () => {
       body: {
         label: `platform-${suffix}`,
         source: `platform-${suffix}`,
-        role: "admin",
+        role: "instance_admin",
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.role).toBe("admin");
+    expect(stored?.role).toBe("instance_admin");
     expect(stored?.space_id ?? null).toBeNull();
   });
 
@@ -782,7 +855,7 @@ describe("POST /keys — space binding", () => {
       body: {
         label: `body-space-${suffix}`,
         source: `body-space-${suffix}`,
-        role: "admin",
+        role: "instance_admin",
         space_id: spaceId,
       },
     });

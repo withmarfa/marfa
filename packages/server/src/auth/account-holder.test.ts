@@ -59,7 +59,7 @@ async function signUp(
 async function mintKey(
   storage: Storage,
   spaceId: string,
-  role: "admin" | "member",
+  role: "instance_admin" | "member",
 ): Promise<string> {
   const raw = `marfa_k1_test_${Math.random().toString(36).slice(2, 14)}`;
   await storage.keys.create(
@@ -183,7 +183,7 @@ describe("account-holder provisioning", () => {
       authAllowSignup: true,
     });
     const { spaceId } = await signUp(ctx, "holder-profile@example.com");
-    const key = await mintKey(ctx.storage, spaceId, "admin");
+    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
 
     const res = await request(ctx.app, "GET", "/profile/me", { key });
     expect(res.status).toBe(200);
@@ -204,7 +204,7 @@ describe("account-holder edges", () => {
       authAllowSignup: true,
     });
     const { spaceId } = await signUp(ctx, "holder-edge@example.com");
-    const key = await mintKey(ctx.storage, spaceId, "admin");
+    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -265,7 +265,7 @@ describe("account-holder edges", () => {
       authAllowSignup: true,
     });
     const { spaceId } = await signUp(ctx, "holder-unfixed@example.com");
-    const key = await mintKey(ctx.storage, spaceId, "admin");
+    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -364,7 +364,7 @@ describe("account-holder lifecycle", () => {
       ctx,
       "holder-delete@example.com",
     );
-    const key = await mintKey(ctx.storage, spaceId, "admin");
+    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })

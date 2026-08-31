@@ -42,7 +42,7 @@ describe("bearer middleware role projection (OAuth)", () => {
       ctx.storage,
       // No data-plane scopes needed — /keys is gated on role, not scopes.
       [],
-      { spaceId: space.id, userRole: "admin" },
+      { spaceId: space.id, userRole: "instance_admin" },
     );
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
@@ -114,7 +114,7 @@ describe("bearer middleware role projection (OAuth)", () => {
     const space = await spaces().create("platform-ceiling-space");
     const { token } = await seedOauthBearer(ctx.storage, [], {
       spaceId: space.id,
-      userRole: "admin",
+      userRole: "instance_admin",
     });
 
     // The role projection lets an admin OAuth token READ keys (above), but

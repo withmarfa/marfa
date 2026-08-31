@@ -131,7 +131,7 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
           {
             label: `${space}-admin`,
             source: `${space}-source-${suffix}`,
-            role: "admin",
+            role: "instance_admin",
             // space_admin would also pass; admin (with space_id
             // set) is the simplest path.
             type_permissions: { "*": "write" },

@@ -83,7 +83,7 @@ async function buildCtx(): Promise<Ctx> {
     {
       label: "rl-admin",
       source: `rl-admin-${suffix}`,
-      role: "admin",
+      role: "instance_admin",
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },
@@ -294,7 +294,7 @@ async function buildAggCtx(): Promise<Ctx> {
     {
       label: "rl-agg-admin",
       source: `rl-agg-admin-${suffix}`,
-      role: "admin",
+      role: "instance_admin",
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },
