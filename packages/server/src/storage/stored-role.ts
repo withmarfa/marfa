@@ -17,11 +17,7 @@
  * notice, since nothing further down the call chain can tell a fallback
  * from a genuine `member`.
  */
-import {
-  isMarfaRole,
-  resolveStoredRole,
-  type MarfaRole,
-} from "@withmarfa/shared";
+import { isMarfaRole, type MarfaRole } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -37,23 +33,6 @@ export function storedRole(
   source: { table: "users" | "api_keys"; id: string },
 ): MarfaRole {
   if (isMarfaRole(value)) return value;
-  // A value a pending migration has not reached yet. It resolves rather than
-  // falling back, because the alternative is projecting a migrated estate to
-  // the least authority available — but it is said out loud, at `warn`,
-  // because the whole hazard of a transitional mapping is that it works. A
-  // row still logging this after the migration ran is a row the migration
-  // missed, which is the exact shape of the failure that went a full rename
-  // cycle unnoticed.
-  const transitional = resolveStoredRole(value);
-  if (transitional) {
-    log("warn", "stored role predates the rename and was resolved forward", {
-      table: source.table,
-      row_id: source.id,
-      stored_role: value,
-      resolved_as: transitional,
-    });
-    return transitional;
-  }
   // `error` for a user, `warn` for a credential. No route writes
   // `users.role`, so a value outside the union there can only come from a
   // migration that did not run or a restore of an older shape, and the

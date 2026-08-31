@@ -12776,8 +12776,7 @@
                     "enum": [
                       "instance_admin",
                       "space_admin",
-                      "member",
-                      "admin"
+                      "member"
                     ]
                   },
                   "default_tier": {
@@ -23070,8 +23069,7 @@
                     "enum": [
                       "instance_admin",
                       "space_admin",
-                      "member",
-                      "admin"
+                      "member"
                     ]
                   },
                   "default_tier": {

@@ -58,11 +58,11 @@ describe("isMarfaRole", () => {
     expect(isMarfaRole("workspace_admin")).toBe(false);
   });
 
-  it("refuses the value the current rename is retiring", () => {
-    // The guard stays a guard during the transition. `admin` resolves
-    // forward through `resolveStoredRole`, which is a different question
-    // from whether it is a role — and answering yes here would let it
-    // reach `ROLE_RANK` as a key that does not exist.
+  it("refuses the role this rename retired", () => {
+    // `admin` was the top role. It was read forward for one release while
+    // the migration had not yet reached the stored rows, and that tolerance
+    // came out with the migration — so it joins the two above rather than
+    // being a special case.
     expect(isMarfaRole("admin")).toBe(false);
   });
 

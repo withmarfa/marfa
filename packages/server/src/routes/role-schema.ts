@@ -16,24 +16,20 @@ export const RoleResponseSchema = z.enum([
 /**
  * The role a request may name.
  *
- * **Carries the retiring value, and comes out with the migration.** The
- * clients that mint credentials are separate deployments on their own release
- * cadence, so a request naming the old word outlives the server that renamed
- * it. Refusing it here would break every one of them at the moment the server
- * deployed, which is the failure the tolerant-first ordering exists to avoid.
+ * Identical to the response schema today, and kept separate anyway. The two
+ * answer different questions, and a rename needs them to diverge for exactly
+ * one release: the request side carries the retiring word while the clients
+ * that mint credentials catch up on their own cadence, and the response side
+ * never does. Collapsing them into one constant is how that release ends up
+ * having to reintroduce the split under time pressure.
  *
- * It is in the published schema deliberately rather than accepted quietly. A
- * value the API takes and does not document is one nobody can find when the
- * time comes to remove it.
- *
- * Handlers put the result through `parseMarfaRole`, so nothing downstream ever
- * sees the old spelling. The alternative — a Zod `transform` — would take the
- * normalization out of the published schema, which is where a reader looks to
- * find out what the endpoint actually accepts.
+ * A transitional value belongs in the published schema rather than accepted
+ * quietly, so it can be found when the time comes to remove it, and handlers
+ * put the result through `parseMarfaRole` so nothing downstream sees an old
+ * spelling.
  */
 export const RoleRequestSchema = z.enum([
   "instance_admin",
   "space_admin",
   "member",
-  "admin",
 ]);

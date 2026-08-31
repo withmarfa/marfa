@@ -643,77 +643,35 @@ describe("POST /keys — space binding", () => {
     await hostedCtx.cleanup();
   });
 
-  // The tolerant half of the role rename. Clients that mint credentials are
-  // separate deployments on their own release cadence, so a request naming
-  // the old word outlives the server that renamed it.
-  it("accepts the retiring role name and stores the new one", async () => {
+  it("refuses the role name this rename retired", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+
+    // Precondition: the same shape with the current word is accepted, so the
+    // 400 below is the enum refusing the retired value and not the request
+    // failing for an unrelated reason.
+    const permitted = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.adminKey,
       body: {
-        label: `legacy-role-${suffix}`,
-        source: `legacy-role-${suffix}`,
-        role: "admin",
-      },
-    });
-
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { role: string };
-    // Accepted at the door, normalized before anything stores it. A row
-    // written under the old spelling would be one the migration has already
-    // passed, and nothing would ever come back for it.
-    expect(body.role).toBe("instance_admin");
-  });
-
-  it("does not let the retiring name carry a mint past the role ceiling", async () => {
-    // The hazard a tolerance introduces. A caller that cannot ask for
-    // `instance_admin` must not get there by spelling it the old way, which
-    // is what an implementation that admitted the word and skipped the
-    // comparison would allow.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = "marfa_k1_esc_" + suffix;
-    await hostedCtx.storage.keys.create(
-      {
-        label: `esc-key-${suffix}`,
-        source: `esc-key-${suffix}`,
-        role: "space_admin",
-        type_permissions: {},
-        default_tier: "library",
-        is_platform: false,
-      },
-      hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
-    );
-
-    // Precondition: this credential can mint at all, so a 403 below is the
-    // ceiling refusing and not the door refusing it for some other reason.
-    const permitted = await request(hostedCtx.app, "POST", "/keys", {
-      key: raw,
-      body: {
-        label: `esc-ok-${suffix}`,
-        source: `esc-ok-${suffix}`,
-        role: "member",
+        label: `retired-ok-${suffix}`,
+        source: `retired-ok-${suffix}`,
+        role: "instance_admin",
       },
     });
     expect(permitted.status).toBe(201);
 
-    const spaceAdminRes = await request(hostedCtx.app, "POST", "/keys", {
-      key: raw,
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.adminKey,
       body: {
-        label: `escalate-${suffix}`,
-        source: `escalate-${suffix}`,
+        label: `retired-${suffix}`,
+        source: `retired-${suffix}`,
         role: "admin",
       },
     });
 
-    expect(spaceAdminRes.status).toBe(403);
-    const err = (await spaceAdminRes.json()) as {
-      error: { code: string; message: string };
-    };
-    expect(err.error.code).toBe("forbidden");
-    // The refusal names the role it resolved to, not the word that was
-    // sent, so a reader is not left thinking two different roles exist.
-    expect(err.error.message).toMatch(/instance_admin/);
+    // Accepted for one release while the clients that mint credentials caught
+    // up, then removed with the migration. A request still sending it is a
+    // client nobody updated, and telling it so is the point.
+    expect(res.status).toBe(400);
   });
 
   it("rejects a space_admin mint from a platform admin with no space", async () => {
