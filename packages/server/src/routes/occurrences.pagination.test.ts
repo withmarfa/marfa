@@ -423,7 +423,7 @@ function appOver(
   app.use("*", async (c, next) => {
     c.set("apiKey", {
       id: "key-under-test",
-      role: "admin",
+      role: "instance_admin",
       is_platform: true,
       space_id: undefined,
     } as never);

@@ -47,7 +47,7 @@ const MANIFEST: IntegrationManifest = {
 async function install(): Promise<string> {
   const adminKey = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.role === "admin"));
+    .then((keys) => keys.find((k) => k.role === "instance_admin"));
   if (!adminKey) throw new Error("admin key not found in test ctx");
   const integration = await ctx.storage.items.create(
     {
@@ -104,7 +104,7 @@ describe("install refuses configuration outside the declared contract", () => {
   ): Promise<unknown> {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
     const integration = await ctx.storage.items.create(
       {
@@ -192,7 +192,7 @@ describe("reinstall adopts what the integration already synced", () => {
 
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
     await performUninstall(ctx.storage, {
       apiKeyId: adminKey.id,

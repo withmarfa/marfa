@@ -262,7 +262,7 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
         const space = await ctx.storage.spaces.create("proj-space");
         const { token } = await seedOauthBearer(ctx.storage, [], {
           spaceId: space.id,
-          userRole: "admin",
+          userRole: "instance_admin",
         });
 
         // GET /keys is admin-role-gated. It resolves only if the bearer

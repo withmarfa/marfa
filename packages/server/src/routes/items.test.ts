@@ -262,7 +262,7 @@ describe("POST /items", () => {
       body: {
         label: "alt-source",
         source: "alt-source",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: {},
       },
     });
@@ -564,7 +564,7 @@ describe("POST /items — platform-credential gate", () => {
       {
         label: "space-admin-non-platform",
         source: "space-admin-non-platform",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: { "system.connection": "write" },
         default_tier: "library",
         is_platform: false,
@@ -808,7 +808,7 @@ describe("POST /items — platform-credential gate", () => {
       {
         label: "space-reader",
         source: "space-reader",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: { "system.connection": "read" },
         default_tier: "library",
         is_platform: false,
@@ -1574,7 +1574,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
       body: {
         label: "alt-source-rename",
         source: "alt-source-rename",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: {},
       },
     });

@@ -261,7 +261,7 @@ export async function grandfatherProfilesT074(
         {
           label: "admin",
           source: "admin",
-          role: "admin",
+          role: "instance_admin",
           type_permissions: { "*": "write" },
         },
         hashApiKey(rawKey, apiKeySalt),

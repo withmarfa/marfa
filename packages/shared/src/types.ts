@@ -47,9 +47,11 @@ export function isTier(value: unknown): value is Tier {
  * the bearer middleware projects this onto the synthetic principal regardless
  * of credential type.
  *
- * - `admin` — platform admin (full instance authority). Bypasses every
+ * - `instance_admin` — full authority over the instance. Bypasses every
  *   permission map. Used for system config, cross-space ops, minting platform
- *   credentials.
+ *   credentials. Named for what it governs, like the role below it: read
+ *   beside `space_admin`, a bare `admin` looks like the smaller of the two
+ *   when it is the larger.
  * - `space_admin` — space-bounded admin. Full admin authority within the
  *   calling principal's `space_id`: own keys, webhooks, types, connections,
  *   extensions. Cannot cross-space read/write (RLS-enforced), cannot mint
@@ -57,11 +59,45 @@ export function isTier(value: unknown): value is Tier {
  * - `member` — non-admin credential. Bound by `type_permissions` /
  *   `edge_permissions` / `extension_permissions` / `metadata_permissions`.
  */
-export type MarfaRole = "admin" | "space_admin" | "member";
+export type MarfaRole = "instance_admin" | "space_admin" | "member";
+
+/**
+ * Stored values this build still answers to, and what each becomes.
+ *
+ * **Transitional, and it comes out with the migration that realigns the rows.**
+ * The tolerant side of a rename ships before the migration, because the
+ * migration runs while the previous build is still serving: a build that does
+ * not recognize the new value projects every migrated row to the least
+ * authority it has, which is how an entire estate of account holders lost
+ * their own admin surfaces for a day.
+ *
+ * This is not the translation table `parseMarfaRole` refuses. That objection
+ * is to a permanent one, which keeps a retired word working forever and hides
+ * a database nobody migrated. This one is temporary and, more to the point,
+ * **audible**: `storedRole` says so when it fires, so a row still carrying the
+ * old value is visible rather than silently working.
+ */
+export const TRANSITIONAL_ROLE_VALUES: Readonly<Record<string, MarfaRole>> = {
+  admin: "instance_admin",
+};
+
+/**
+ * The role a stored value means, including one a pending migration has not
+ * reached yet. `undefined` for a value this build cannot place at all.
+ *
+ * Separate from `isMarfaRole` because that is a type guard and must not claim
+ * a string outside the union is inside it. This answers a different question:
+ * not "is this a role" but "what did whoever wrote this row mean".
+ */
+export function resolveStoredRole(value: unknown): MarfaRole | undefined {
+  if (isMarfaRole(value)) return value;
+  if (typeof value !== "string") return undefined;
+  return TRANSITIONAL_ROLE_VALUES[value];
+}
 
 /** Valid role values as a readonly array, in descending authority order. */
 export const MARFA_ROLES: readonly MarfaRole[] = [
-  "admin",
+  "instance_admin",
   "space_admin",
   "member",
 ] as const;
@@ -90,10 +126,13 @@ export function isMarfaRole(value: unknown): value is MarfaRole {
 /**
  * Narrows an untrusted role to the union, falling back rather than throwing.
  *
- * Deliberately does not translate historical values forward. A rename is
- * finished by the migration that realigns the stored rows; a translation
- * table in live code would keep a retired word working indefinitely and
- * hide the fact that a database was never migrated.
+ * Accepts a value a pending migration has not reached, via
+ * `TRANSITIONAL_ROLE_VALUES`, and nothing beyond that. The distinction the
+ * original wording was defending still holds: a rename is finished by the
+ * migration that realigns the stored rows, and a *permanent* translation
+ * table would keep a retired word working indefinitely and hide a database
+ * nobody migrated. A transitional one that is removed with the migration, and
+ * that `storedRole` logs when it fires, does neither.
  *
  * Falls back because the callers are row projections. A parse that threw
  * would take out every list query touching one bad row, turning a single
@@ -105,7 +144,7 @@ export function parseMarfaRole(
   value: unknown,
   fallback: MarfaRole = "member",
 ): MarfaRole {
-  return isMarfaRole(value) ? value : fallback;
+  return resolveStoredRole(value) ?? fallback;
 }
 
 /**
@@ -121,7 +160,7 @@ export function parseMarfaRole(
  * carrying a `space_id` is confined to that space whatever its rank).
  */
 export const ROLE_RANK: Readonly<Record<MarfaRole, number>> = {
-  admin: 3,
+  instance_admin: 3,
   space_admin: 2,
   member: 1,
 };

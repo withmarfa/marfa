@@ -206,7 +206,7 @@ export async function seedOauthBearer(
     clientName?: string;
     spaceId?: string;
     authUserId?: string;
-    userRole?: "admin" | "space_admin" | "member";
+    userRole?: "instance_admin" | "space_admin" | "member";
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
   if (
@@ -650,7 +650,7 @@ async function buildTestContext(
     {
       label: "test-admin",
       source: `test-admin-${suffix}`,
-      role: "admin",
+      role: "instance_admin",
       type_permissions: {},
       default_tier: "library",
       // Tests need to register helper types and exercise system.* paths.

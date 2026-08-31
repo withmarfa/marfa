@@ -159,7 +159,7 @@ const DOORS: MintDoor[] = [
       // Over the ceiling: a space_admin asking for admin rank.
       const escalate = await request(ctx.app, "POST", "/keys", {
         key: spaceAdmin,
-        body: { label: "up", source: "mint-up", role: "admin" },
+        body: { label: "up", source: "mint-up", role: "instance_admin" },
       });
       expect(escalate.status).toBeGreaterThanOrEqual(400);
 
@@ -240,7 +240,7 @@ const DOORS: MintDoor[] = [
           body: {
             label: "space-scoped",
             source: `mint-adm-${Math.random().toString(36).slice(2, 8)}`,
-            role: "admin",
+            role: "instance_admin",
             is_platform: true,
           },
         },

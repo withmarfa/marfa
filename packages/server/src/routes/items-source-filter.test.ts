@@ -38,7 +38,7 @@ async function mintSpaceKey(source: string): Promise<string> {
     {
       label: `source-filter-${source}`,
       source,
-      role: "admin",
+      role: "instance_admin",
       type_permissions: {},
       default_tier: "library",
     },

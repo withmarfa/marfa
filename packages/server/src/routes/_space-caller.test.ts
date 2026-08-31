@@ -116,7 +116,7 @@ describe("resolveSpaceAdminCaller — the session branch", () => {
   });
 
   it("admits a platform admin", async () => {
-    const caller = await resolve(fakeUser({ role: "admin" }));
+    const caller = await resolve(fakeUser({ role: "instance_admin" }));
     expect(caller).toMatchObject({ spaceId: "space-1" });
   });
 

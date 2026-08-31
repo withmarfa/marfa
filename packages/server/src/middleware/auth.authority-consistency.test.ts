@@ -4,14 +4,14 @@
  *
  * The platform-admin gate was redefined as the `admin` role AND the
  * absence of a space binding, because `POST /admin/spaces/{id}/keys`
- * legitimately mints a space-bound credential at `role: "admin"` whose
+ * legitimately mints a space-bound credential at `role: "instance_admin"` whose
  * reach is deliberately one space. Every route that spelled the gate as
- * a bare `role === "admin"` kept the old meaning and now disagrees with
+ * a bare `role === "instance_admin"` kept the old meaning and now disagrees with
  * `checkAdmin` — readmitting exactly the credential the gate exists to
  * exclude, on surfaces whose lookups are unfenced.
  *
  * The same shape runs the other way on the permission-map bypass: routes
- * spelling it as `role === "admin"` skip the `scope_enforced` carve-out
+ * spelling it as `role === "instance_admin"` skip the `scope_enforced` carve-out
  * that holds an OAuth app to its granted scopes, and withhold the bypass
  * from the `space_admin` every hosted sign-up is provisioned as.
  *
@@ -63,13 +63,13 @@ function fakeKey(
 
 describe("hasPlatformAuthority", () => {
   it("admits an unbound admin", () => {
-    expect(hasPlatformAuthority(fakeKey("admin"))).toBe(true);
+    expect(hasPlatformAuthority(fakeKey("instance_admin"))).toBe(true);
   });
 
   it("refuses a space-bound admin — the shape the escalation fix named", () => {
-    expect(hasPlatformAuthority(fakeKey("admin", { space_id: "t-a" }))).toBe(
-      false,
-    );
+    expect(
+      hasPlatformAuthority(fakeKey("instance_admin", { space_id: "t-a" })),
+    ).toBe(false);
   });
 
   it("refuses space_admin and member", () => {
@@ -80,10 +80,10 @@ describe("hasPlatformAuthority", () => {
 
 describe("hasSpaceAdminAuthority", () => {
   it("admits admin and space_admin, bound or not", () => {
-    expect(hasSpaceAdminAuthority(fakeKey("admin"))).toBe(true);
-    expect(hasSpaceAdminAuthority(fakeKey("admin", { space_id: "t-a" }))).toBe(
-      true,
-    );
+    expect(hasSpaceAdminAuthority(fakeKey("instance_admin"))).toBe(true);
+    expect(
+      hasSpaceAdminAuthority(fakeKey("instance_admin", { space_id: "t-a" })),
+    ).toBe(true);
     expect(hasSpaceAdminAuthority(fakeKey("space_admin"))).toBe(true);
   });
 
@@ -94,7 +94,7 @@ describe("hasSpaceAdminAuthority", () => {
 
 describe("roleBypassesPermissionMaps", () => {
   it("admits admin and space_admin", () => {
-    expect(roleBypassesPermissionMaps(fakeKey("admin"))).toBe(true);
+    expect(roleBypassesPermissionMaps(fakeKey("instance_admin"))).toBe(true);
     expect(roleBypassesPermissionMaps(fakeKey("space_admin"))).toBe(true);
   });
 
@@ -103,7 +103,9 @@ describe("roleBypassesPermissionMaps", () => {
     // An admin signing into a third-party app must not hand that app the
     // full surface — the grant is the ceiling, not the role.
     expect(
-      roleBypassesPermissionMaps(fakeKey("admin", { scope_enforced: true })),
+      roleBypassesPermissionMaps(
+        fakeKey("instance_admin", { scope_enforced: true }),
+      ),
     ).toBe(false);
   });
 
@@ -210,7 +212,10 @@ describe("POST /connections/:id/oauth/start — space fence on the connection lo
     // Exactly what `POST /admin/spaces/{id}/keys` mints: role admin,
     // bound to one space. The old gate tested the role alone and the
     // lookup passed no space, so this reached space B's connection.
-    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
+    const boundAdmin = await mintKey({
+      role: "instance_admin",
+      spaceId: spaceA.id,
+    });
 
     // Guard the fixture: a mistyped id would make the 404 below pass for
     // the wrong reason, hiding a live cross-space read.
@@ -275,7 +280,10 @@ describe("/keys — the space fence keys on the binding, not the role", () => {
       spaceId: spaceB.id,
       label: "space-b-secret-key",
     });
-    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
+    const boundAdmin = await mintKey({
+      role: "instance_admin",
+      spaceId: spaceA.id,
+    });
 
     const res = await request(ctx.app, "GET", "/keys", { key: boundAdmin });
     expect(res.status).toBe(200);
@@ -300,7 +308,10 @@ describe("/keys — the space fence keys on the binding, not the role", () => {
       (k) => k.label === "victim-revoke",
     );
     if (!victim) throw new Error("seed key not found");
-    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
+    const boundAdmin = await mintKey({
+      role: "instance_admin",
+      spaceId: spaceA.id,
+    });
 
     const res = await request(ctx.app, "DELETE", `/keys/${victim.id}`, {
       key: boundAdmin,
@@ -325,7 +336,10 @@ describe("/keys — the space fence keys on the binding, not the role", () => {
       (k) => k.label === "victim-update",
     );
     if (!victim) throw new Error("seed key not found");
-    const boundAdmin = await mintKey({ role: "admin", spaceId: spaceA.id });
+    const boundAdmin = await mintKey({
+      role: "instance_admin",
+      spaceId: spaceA.id,
+    });
 
     const res = await request(ctx.app, "PATCH", `/keys/${victim.id}`, {
       key: boundAdmin,
@@ -432,7 +446,10 @@ describe("extensions — the bypass follows the shared predicate", () => {
 
   it("refuses a space-bound admin writing a reserved namespace", async () => {
     const space = await spaceStore().create("authority-ext-reserved");
-    const boundAdmin = await mintKey({ role: "admin", spaceId: space.id });
+    const boundAdmin = await mintKey({
+      role: "instance_admin",
+      spaceId: space.id,
+    });
     const item = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "reserved-host" } },
       space.id,

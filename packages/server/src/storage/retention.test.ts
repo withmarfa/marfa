@@ -931,7 +931,7 @@ describe("RuntimeCredentialReaper.runOnce — legacy NULL-expiry drain", () => {
         {
           label: "human",
           source: "human",
-          role: "admin",
+          role: "instance_admin",
           type_permissions: { "*": "write" },
           default_tier: "library",
           is_platform: false,
@@ -1011,7 +1011,7 @@ describe("KeyStore.countRuntimeCredentials — operator visibility", () => {
       {
         label: "human-count",
         source: "human-count",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_platform: false,
@@ -1174,7 +1174,7 @@ describe("KeyStore.list / count — expired credentials are not live", () => {
       {
         label: "human-live",
         source: "human-live",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: { "*": "write" },
         default_tier: "library",
         is_platform: false,

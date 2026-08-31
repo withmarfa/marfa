@@ -60,7 +60,7 @@ async function main(): Promise<void> {
     {
       label: "b",
       source: "b",
-      role: "admin",
+      role: "instance_admin",
       type_permissions: {},
       default_tier: "library",
     },

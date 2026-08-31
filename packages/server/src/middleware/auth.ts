@@ -523,7 +523,7 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
  * Platform authority is authority that is NOT confined to a space, so the
  * gate tests two things: the `admin` role AND the absence of a space
  * binding. Role alone is not sufficient. A credential can legitimately
- * carry `role: "admin"` while bound to a single space — `POST
+ * carry `role: "instance_admin"` while bound to a single space — `POST
  * /admin/spaces/{id}/keys` mints exactly that, and describes the result as
  * a credential "whose authority is confined to id". Admitting it here would
  * hand a space-scoped principal the cross-space surface, contradicting
@@ -547,12 +547,12 @@ export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
  * need the answer as a boolean rather than a throw (they combine it with
  * an integration-credential branch, or use it to widen a space filter).
  *
- * Exported so no callsite re-derives it. A hand-rolled `role === "admin"`
+ * Exported so no callsite re-derives it. A hand-rolled `role === "instance_admin"`
  * silently readmits the space-bound admin this gate exists to exclude,
  * and the two definitions then drift apart with nothing to catch it.
  */
 export function hasPlatformAuthority(key: ApiKey): boolean {
-  return key.role === "admin" && !key.space_id;
+  return key.role === "instance_admin" && !key.space_id;
 }
 
 /**
@@ -562,7 +562,7 @@ export function hasPlatformAuthority(key: ApiKey): boolean {
  * call, exactly as `checkSpaceAdmin` documents.
  */
 export function hasSpaceAdminAuthority(key: ApiKey): boolean {
-  return key.role === "admin" || key.role === "space_admin";
+  return key.role === "instance_admin" || key.role === "space_admin";
 }
 
 /**
@@ -608,7 +608,7 @@ export function checkSpaceAdmin(apiKey: ApiKey | undefined): ApiKey {
  *
  * Exported because the extension-permission surface (`extension_permissions`,
  * which has no `require*` helper of its own) makes the same decision inline.
- * A hand-rolled `role === "admin"` there is wrong twice over: it hands an
+ * A hand-rolled `role === "instance_admin"` there is wrong twice over: it hands an
  * OAuth app the full extension surface whenever the signed-in user happens
  * to be an admin, and it withholds it from the space_admin every hosted
  * sign-up is provisioned as.
@@ -619,7 +619,7 @@ export function checkSpaceAdmin(apiKey: ApiKey | undefined): ApiKey {
 export function roleBypassesPermissionMaps(key: ApiKey | undefined): boolean {
   if (!key) return false;
   if (key.scope_enforced) return false;
-  return key.role === "admin" || key.role === "space_admin";
+  return key.role === "instance_admin" || key.role === "space_admin";
 }
 
 export function checkTypeAccess(

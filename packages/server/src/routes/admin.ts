@@ -32,7 +32,12 @@
  */
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MarfaError, SPACE_STATUSES } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  MarfaError,
+  parseMarfaRole,
+  SPACE_STATUSES,
+} from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAdmin } from "../middleware/auth.js";
@@ -41,6 +46,7 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { evictSpaceStatus } from "../middleware/space-suspension.js";
 import { PendingDeletePurger } from "../storage/retention.js";
+import { RoleRequestSchema, RoleResponseSchema } from "./role-schema.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -125,7 +131,7 @@ const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "space_admin", "member"]),
+  role: RoleResponseSchema,
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -143,7 +149,7 @@ const KeyResponseSchema = z.object({
 const CreateSpaceKeyBodySchema = z.object({
   label: z.string().min(1, "label is required"),
   source: z.string().min(1, "source display name is required").max(200),
-  role: z.enum(["admin", "space_admin", "member"]).optional(),
+  role: RoleRequestSchema.optional(),
   default_tier: z.enum(["library", "feed"]).optional(),
   type_permissions: z
     .record(z.string(), z.enum(["read", "write", "none"]))
@@ -992,7 +998,9 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       {
         label: body.label.trim(),
         source: body.source.trim(),
-        role: body.role ?? "member",
+        // The request schema still accepts the retiring word; the stored
+        // row must not.
+        role: parseMarfaRole(body.role, "member"),
         default_tier: body.default_tier,
         // This route deliberately cannot create platform credentials. Its
         // purpose is issuing a credential whose authority is confined to id.

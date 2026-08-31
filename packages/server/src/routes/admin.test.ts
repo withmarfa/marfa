@@ -239,7 +239,11 @@ describe("admin happy paths", () => {
       `/admin/spaces/${t.id}/keys`,
       {
         key: ctx.adminKey,
-        body: { label: "bound admin", source: "bound-admin", role: "admin" },
+        body: {
+          label: "bound admin",
+          source: "bound-admin",
+          role: "instance_admin",
+        },
       },
     );
     expect(keyRes.status).toBe(201);

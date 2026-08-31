@@ -75,7 +75,12 @@ describe("GET /export", () => {
     const mintKey = async (source: string): Promise<string> => {
       const res = await request(ctx.app, "POST", "/keys", {
         key: ctx.adminKey,
-        body: { label: source, source, role: "admin", type_permissions: {} },
+        body: {
+          label: source,
+          source,
+          role: "instance_admin",
+          type_permissions: {},
+        },
       });
       return ((await res.json()) as { key: string }).key;
     };

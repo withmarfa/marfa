@@ -85,7 +85,9 @@ async function integrationItem(name: string): Promise<string> {
 }
 
 async function adminKeyId(): Promise<string> {
-  const admin = (await ctx.storage.keys.list()).find((k) => k.role === "admin");
+  const admin = (await ctx.storage.keys.list()).find(
+    (k) => k.role === "instance_admin",
+  );
   if (!admin) throw new Error("admin key not found in test ctx");
   return admin.id;
 }

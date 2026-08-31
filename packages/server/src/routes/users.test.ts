@@ -167,7 +167,7 @@ async function mintUser(
     {
       label: "admin",
       source: "admin",
-      role: "admin",
+      role: "instance_admin",
       type_permissions: { "*": "write" },
     },
     hashApiKey(rawKey, SALT),

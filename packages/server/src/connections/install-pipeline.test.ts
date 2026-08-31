@@ -97,7 +97,7 @@ describe("performInstall — happy path", () => {
   it("creates connection + activity and returns their ids", async () => {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const integration = await ctx.storage.items.create(
@@ -136,7 +136,7 @@ describe("performInstall — happy path", () => {
   it("mints no credential", async () => {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const integration = await ctx.storage.items.create(
@@ -518,7 +518,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   it("stamps credential_ref onto the connection when supplied", async () => {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const integrationId = await setupIntegrationItem();
@@ -567,7 +567,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   it("rejects when credential_ref does not resolve", async () => {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const integrationId = await setupIntegrationItem();
@@ -587,7 +587,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   it("rejects when credential_ref points to a kind the install pipeline doesn't accept (api_key)", async () => {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const integrationId = await setupIntegrationItem();
@@ -614,7 +614,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   it("accepts credential_ref pointing at a system.credential of kind 'api_token'", async () => {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const integrationId = await setupIntegrationItem();
@@ -650,7 +650,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   it("connection has no credential_ref when credentialRef is omitted", async () => {
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const integrationId = await setupIntegrationItem();
@@ -701,7 +701,7 @@ describe("performInstall — the state a rolled-back install leaves", () => {
     // what the space admin sees.
     const adminKey = await hosted.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -768,7 +768,7 @@ describe("performInstall — an unaudited install does not stand", () => {
     // an id for a connection nothing recorded.
     const adminKey = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "admin"));
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;

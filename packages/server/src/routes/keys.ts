@@ -5,7 +5,9 @@ import {
   ErrorCode,
   isValidId,
   canGrantRole,
+  parseMarfaRole,
 } from "@withmarfa/shared";
+import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireSpaceAdmin,
@@ -14,6 +16,7 @@ import {
   RESERVED_CREDENTIAL_SOURCE_PREFIXES,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { RoleRequestSchema, RoleResponseSchema } from "./role-schema.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -61,7 +64,7 @@ const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "space_admin", "member"]),
+  role: RoleResponseSchema,
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -132,7 +135,7 @@ const createKeyRoute = createRoute({
               .string()
               .min(1, "source display name is required")
               .max(200),
-            role: z.enum(["admin", "space_admin", "member"]).optional(),
+            role: RoleRequestSchema.optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
             is_platform: z.boolean().optional(),
             // Passthrough so the handler can reject it explicitly. The
@@ -288,7 +291,7 @@ const KeyDetailSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.enum(["admin", "space_admin", "member"]),
+  role: RoleResponseSchema,
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
@@ -436,7 +439,12 @@ export function keyRoutes(storage: Storage, salt: string) {
     // one it presented, and the role gates guarding every other route would
     // be decorative. Bootstrap is exempted: it seeds the first admin on a
     // server that has no credential to compare against.
-    const role = isBootstrap ? "admin" : (body.role ?? "member");
+    // `parseMarfaRole` rather than the raw body value: the request schema
+    // still accepts the word this rename is retiring, and nothing past this
+    // line should ever see it.
+    const role: MarfaRole = isBootstrap
+      ? "instance_admin"
+      : parseMarfaRole(body.role, "member");
     if (!isBootstrap) {
       const callerRole = c.get("apiKey")?.role;
       if (!callerRole || !canGrantRole(callerRole, role)) {
@@ -485,19 +493,20 @@ export function keyRoutes(storage: Storage, salt: string) {
     // `member` is deliberately not caught, despite inheriting the same NULL
     // space. It is this route's default role and the only shape expressing
     // "platform reach, narrowed by `type_permissions`" (`admin` ignores those
-    // outright), and a caller refused it can ask for `role: "admin"` here
+    // outright), and a caller refused it can ask for `role: "instance_admin"` here
     // instead, for strictly more authority. Blocking it would move callers to
     // a wider credential, not a narrower one; the audit row below marks the
     // tier instead.
     //
-    // Safe under bootstrap only because `role` is hard-forced to "admin"
+    // Safe under bootstrap only because `role` is hard-forced to
+    // "instance_admin"
     // above. Were bootstrap ever to honor `body.role`, the first
     // unauthenticated request to a fresh instance could ask for
     // `space_admin`, and this check would be all that stood in front of it.
     if (!newKeySpaceId && role === "space_admin") {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        'Cannot mint a `space_admin` key from a credential that has no space: the new key would inherit no space either, so its authority would not stop at the boundary its role names. Use `POST /admin/spaces/{id}/keys` to bind the key to a specific space, or ask for `role: "admin"` if a platform-tier key is what you want.',
+        'Cannot mint a `space_admin` key from a credential that has no space: the new key would inherit no space either, so its authority would not stop at the boundary its role names. Use `POST /admin/spaces/{id}/keys` to bind the key to a specific space, or ask for `role: "instance_admin"` if a platform-tier key is what you want.',
       );
     }
 

@@ -65,7 +65,7 @@ describe("a revoked OAuth access token", () => {
     const space = await spaces().create("revoked-token-space");
     const { token, clientId } = await seedOauthBearer(ctx.storage, [], {
       spaceId: space.id,
-      userRole: "admin",
+      userRole: "instance_admin",
     });
 
     // The token is live: an hour of expiry left, and it authenticates.
@@ -85,7 +85,7 @@ describe("a revoked OAuth access token", () => {
     const space = await spaces().create("revoked-store-space");
     const { token, clientId } = await seedOauthBearer(ctx.storage, [], {
       spaceId: space.id,
-      userRole: "admin",
+      userRole: "instance_admin",
     });
 
     const { hashApiKey } = await import("../middleware/auth.js");

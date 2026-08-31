@@ -174,7 +174,7 @@ async function provisionUser(
     {
       label: "test-admin",
       source: "test-admin",
-      role: "admin",
+      role: "instance_admin",
       type_permissions: {},
     },
     hashApiKey(rawKey, SALT),

@@ -67,7 +67,7 @@ async function installFresh(): Promise<{
 }> {
   const adminKey = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.role === "admin"));
+    .then((keys) => keys.find((k) => k.role === "instance_admin"));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
   const integrationName = `acme/uninstall-route-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -506,7 +506,7 @@ async function installItemEventConnection(): Promise<{
 }> {
   const adminKey = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.role === "admin"));
+    .then((keys) => keys.find((k) => k.role === "instance_admin"));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
   const integrationName = `acme/preview-event-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;

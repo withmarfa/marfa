@@ -11,7 +11,7 @@
  *    never grant a role that outranks its own.
  *
  * 2. `checkAdmin` tested the role alone. A credential carrying
- *    `role: "admin"` but bound to a space passed every `requireAdmin`
+ *    `role: "instance_admin"` but bound to a space passed every `requireAdmin`
  *    gate, including the cross-space `/admin/spaces` surface. Platform
  *    authority is authority that is NOT confined to a space, so the gate
  *    now requires an unbound credential.
@@ -61,12 +61,12 @@ function fakeKey(
 
 describe("checkAdmin (unit)", () => {
   it("admits an unbound admin — the platform operator credential", () => {
-    const key = fakeKey("admin");
+    const key = fakeKey("instance_admin");
     expect(checkAdmin(key)).toBe(key);
   });
 
   it("rejects a space-bound admin with FORBIDDEN", () => {
-    const key = fakeKey("admin", { space_id: "space-a" });
+    const key = fakeKey("instance_admin", { space_id: "space-a" });
     expect(() => checkAdmin(key)).toThrow(MarfaError);
     try {
       checkAdmin(key);
@@ -152,7 +152,7 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
       body: {
         label: "escalated",
         source: "escalated",
-        role: "admin",
+        role: "instance_admin",
         default_tier: "library",
       },
     });
@@ -190,11 +190,11 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
     ctx = await createTestContext();
     const platform = await mintKey(ctx, {
       label: "platform-admin",
-      role: "admin",
+      role: "instance_admin",
       is_platform: true,
     });
 
-    for (const role of ["admin", "member"] as const) {
+    for (const role of ["instance_admin", "member"] as const) {
       const res = await request(ctx.app, "POST", "/keys", {
         key: platform,
         body: {
@@ -233,7 +233,7 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
     const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const boundAdmin = await mintKey(ctx, {
       label: "bound-admin",
-      role: "admin",
+      role: "instance_admin",
       spaceId: spaceA,
     });
 
@@ -242,7 +242,7 @@ describe("role lattice — a caller cannot grant above its own authority", () =>
       body: {
         label: "child-admin",
         source: "child-admin",
-        role: "admin",
+        role: "instance_admin",
         default_tier: "library",
       },
     });
@@ -271,7 +271,7 @@ describe("platform gate — a space-bound admin has no cross-space authority", (
     const attacker = (await spaceStore(ctx).create("Attacker Space")).id;
     const boundAdmin = await mintKey(ctx, {
       label: "bound-admin",
-      role: "admin",
+      role: "instance_admin",
       spaceId: attacker,
     });
     return { boundAdmin, victim };
@@ -340,7 +340,7 @@ describe("platform gate — a space-bound admin has no cross-space authority", (
     const victim = (await spaceStore(ctx).create("Victim Space")).id;
     const platform = await mintKey(ctx, {
       label: "platform-admin",
-      role: "admin",
+      role: "instance_admin",
       is_platform: true,
     });
 

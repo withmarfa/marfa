@@ -318,7 +318,7 @@ describe("GET /audit", () => {
       {
         label: "space-a-admin",
         source: "space-a-admin",
-        role: "admin",
+        role: "instance_admin",
         type_permissions: {},
         default_tier: "library",
         is_platform: false,

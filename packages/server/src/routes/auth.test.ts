@@ -92,7 +92,7 @@ describe("bootstrap mode", () => {
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as Record<string, unknown>;
-    expect(data.role).toBe("admin");
+    expect(data.role).toBe("instance_admin");
     expect(data).toHaveProperty("key");
 
     await storage.close();
