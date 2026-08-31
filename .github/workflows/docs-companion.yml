@@ -36,6 +36,7 @@ jobs:
     # trade inverts: the job runs in about twelve seconds but bills a whole
     # minute on every pull-request push, whereas the runner slot it borrows is
     # returned before the matrix needs it.
+    timeout-minutes: 10
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read

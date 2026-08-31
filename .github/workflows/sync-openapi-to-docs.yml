@@ -31,6 +31,7 @@ env:
 jobs:
   sync:
     name: Sync openapi.json to withmarfa/docs
+    timeout-minutes: 10
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
       contents: read
@@ -147,6 +148,7 @@ jobs:
     needs: [sync]
     # Skipped when no alert destination is configured, so a fork sends nothing.
     if: always() && vars.ALERT_WEBHOOK_URL != ''
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - name: Report outcome

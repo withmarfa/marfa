@@ -44,6 +44,7 @@ jobs:
   # the project already owns.
   changes:
     name: Detect changed paths
+    timeout-minutes: 10
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     outputs:
       code: ${{ steps.filter.outputs.code }}
@@ -159,6 +160,7 @@ jobs:
     # Manual dispatch still runs it: `changes` reports an unknowable base as
     # every trigger path touched, which is the conservative answer.
     if: needs.changes.outputs.types_src == 'true'
+    timeout-minutes: 15
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -245,6 +247,7 @@ jobs:
     name: OpenAPI spec freshness
     needs: changes
     if: needs.changes.outputs.openapi_src == 'true'
+    timeout-minutes: 15
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -290,6 +293,7 @@ jobs:
     name: SCHEMA_SQL generator freshness
     needs: changes
     if: needs.changes.outputs.schema_sql_src == 'true'
+    timeout-minutes: 15
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -349,6 +353,7 @@ jobs:
     name: SQLite migrations — statement-breakpoint lint
     needs: changes
     if: needs.changes.outputs.sqlite_migrations == 'true'
+    timeout-minutes: 10
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -383,6 +388,7 @@ jobs:
     name: CI (SQLite)
     needs: changes
     if: github.event_name != 'workflow_dispatch'
+    timeout-minutes: 60
     runs-on: ${{ github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -455,6 +461,7 @@ jobs:
     name: CI (Postgres)
     needs: changes
     if: github.event_name != 'workflow_dispatch'
+    timeout-minutes: 60
     runs-on: ${{ github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -555,6 +562,7 @@ jobs:
     name: CI (Fresh migrate, SQLite)
     needs: changes
     if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
+    timeout-minutes: 25
     runs-on: ${{ vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -596,6 +604,7 @@ jobs:
     name: CI (Fresh migrate, Postgres)
     needs: changes
     if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
+    timeout-minutes: 25
     runs-on: ${{ vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -687,6 +696,7 @@ jobs:
       always() && !cancelled()
       && github.event_name == 'push' && github.ref == 'refs/heads/main'
       && vars.ALERT_WEBHOOK_URL != ''
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     permissions:
       # Reads this run's own jobs and their steps. Nothing else.
@@ -730,11 +740,13 @@ jobs:
             #
             # One other shape satisfies this and is not an abandonment: a job
             # killed by a timeout reports `failure` with the running step
-            # `cancelled`. No job here sets `timeout-minutes`, so that means
-            # the 360-minute default, it has never happened in sixty failed
-            # runs, and the advice the alert gives — re-run, and look at the
-            # runner host — is the right advice for a six-hour hang on a
-            # shared pool anyway.
+            # `cancelled`. Every job here now sets `timeout-minutes`, each at
+            # least three times its observed duration, so this shape has
+            # become reachable in minutes rather than in six hours — and it
+            # is still the right thing to report, because a job that runs
+            # three times as long as it has ever run is not a slow job. The
+            # advice the alert gives — re-run, and look at the runner host —
+            # is the advice a contended pool calls for.
             ABANDONED=$(gh api "/repos/$REPO/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
               --jq '[.jobs[]
                      | select(.conclusion == "failure")
