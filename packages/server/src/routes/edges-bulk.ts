@@ -10,9 +10,10 @@
  * migration.
  *
  * One aggregate audit row per call (never N per edge). `emit_events`
- * defaults off and fires `edge.created` for newly-created edges only —
- * upsert-updates to existing edge properties emit nothing because there is
- * no `edge.updated` event in the current pubsub enum.
+ * defaults off and fires `edge.created` for newly-created edges and
+ * `edge.updated` for upsert-updates to existing edge properties. The
+ * update half was silent while the pubsub enum had no `edge_updated`
+ * variant; it does now, and a bulk edit propagates like a single one.
  *
  * Authorization mirrors single-edge `POST /edges`: the caller needs write
  * on the source item's type AND write on the edge type (admin /
@@ -201,7 +202,7 @@ async function processBulkEdge(
      */
     checkEdgeWrite: (sourceType: string | null, edgeType: string) => void;
   },
-): Promise<{ result: BulkEdgeResult; created?: Edge }> {
+): Promise<{ result: BulkEdgeResult; created?: Edge; updated?: Edge }> {
   const { mode, spaceId, existingByTriple, checkEdgeWrite } = options;
 
   if (!isValidId(raw.source_id)) {
@@ -278,6 +279,7 @@ async function processBulkEdge(
     );
     return {
       result: { index, outcome: "updated", id: updated.id },
+      updated,
     };
   }
 
@@ -427,16 +429,23 @@ export function edgesBulkRoutes(storage: Storage) {
     const run = async (): Promise<{
       results: BulkEdgeResult[];
       createdEdges: Edge[];
+      updatedEdges: Edge[];
     }> => {
       const results: BulkEdgeResult[] = [];
       const createdEdges: Edge[] = [];
+      const updatedEdges: Edge[] = [];
       for (const [i, raw] of rawEdges.entries()) {
-        const { result, created } = await processBulkEdge(storage, raw, i, {
-          mode,
-          spaceId,
-          existingByTriple,
-          checkEdgeWrite,
-        });
+        const { result, created, updated } = await processBulkEdge(
+          storage,
+          raw,
+          i,
+          {
+            mode,
+            spaceId,
+            existingByTriple,
+            checkEdgeWrite,
+          },
+        );
         if (atomic && result.outcome === "errored") {
           throw new MarfaError(
             ErrorCode.BULK_ATOMIC_ROLLBACK,
@@ -450,27 +459,30 @@ export function edgesBulkRoutes(storage: Storage) {
         }
         results.push(result);
         if (created) createdEdges.push(created);
+        if (updated) updatedEdges.push(updated);
       }
-      return { results, createdEdges };
+      return { results, createdEdges, updatedEdges };
     };
 
-    const { results, createdEdges } = atomic
+    const { results, createdEdges, updatedEdges } = atomic
       ? await storage.runInTransaction(run)
       : await run();
 
     const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
     for (const r of results) counts[r.outcome] += 1;
 
-    // Fire edge.created events only for newly-created edges. Upsert
-    // property-replace outcomes do not emit — the pubsub enum has no
-    // edge_updated variant and adding one is out of scope for this PR.
+    // Both outcomes emit. An upsert that replaces an existing edge's
+    // properties is an edit, and a subscriber has no way to tell it apart
+    // from one made through `PATCH /edges/:id` — so emitting for one and
+    // not the other would make propagation depend on which route the
+    // writer happened to use. `skipped` and `errored` wrote nothing and
+    // emit nothing.
     if (emitEvents) {
       for (const edge of createdEdges) {
-        await publishEdge({
-          type: "edge_created",
-          edge,
-          spaceId,
-        });
+        await publishEdge({ type: "edge_created", edge, spaceId });
+      }
+      for (const edge of updatedEdges) {
+        await publishEdge({ type: "edge_updated", edge, spaceId });
       }
     }
 

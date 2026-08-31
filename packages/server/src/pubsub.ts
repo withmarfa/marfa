@@ -81,7 +81,7 @@ export interface ItemEvent extends CycleMetadata {
 }
 
 export interface EdgeEvent extends CycleMetadata {
-  type: "edge_created" | "edge_deleted";
+  type: "edge_created" | "edge_updated" | "edge_deleted";
   edge: Edge;
   spaceId?: string;
 }
@@ -301,7 +301,7 @@ export function defaultCycleDetectionWiring(
  *     state_changed)
  *   metadata.changed (bare, not namespaced) for metadata mutations —
  *     a deliberate exception because it describes a metadata-layer change
- *   edge.created / edge.deleted for edge lifecycle events
+ *   edge.created / edge.updated / edge.deleted for edge lifecycle events
  *
  * Mirrored by routes/events.ts, webhooks/delivery.ts, and
  * routes/webhooks.ts so SSE wire, webhook payloads, and subscription
@@ -310,6 +310,7 @@ export function defaultCycleDetectionWiring(
 export function wireEventName(type: PubsubEvent["type"]): string {
   if (type === "metadata_changed") return "metadata.changed";
   if (type === "edge_created") return "edge.created";
+  if (type === "edge_updated") return "edge.updated";
   if (type === "edge_deleted") return "edge.deleted";
   return `item.${type}`;
 }
@@ -502,7 +503,13 @@ function logRemoteNotifyFailure(eventId: bigint, err: unknown): void {
  * event on every rolling deploy.
  */
 export function emitWake(event: PubsubEventWithId): void {
-  if (event.type === "edge_created" || event.type === "edge_deleted") {
+  // `isEdgeEvent` rather than a list of edge type names. Both this and
+  // `emitReplicated` enumerated the two that existed, so adding a third
+  // meant remembering two sites that mention neither edges nor events in
+  // their names — and an event routed to the wrong emitter is delivered to
+  // nobody rather than failing. The discriminant is the payload shape,
+  // which cannot fall behind the union.
+  if (isEdgeEvent(event)) {
     emitter.emit("EDGE_CHANGED", event);
   } else {
     emitter.emit("ITEM_CHANGED", event);
@@ -518,7 +525,8 @@ export function emitWake(event: PubsubEventWithId): void {
  */
 export function emitReplicated(event: PubsubEventWithId): void {
   const marked = { ...event, remote: true };
-  if (event.type === "edge_created" || event.type === "edge_deleted") {
+  // Shape, not a name list — see `emitWake`.
+  if (isEdgeEvent(event)) {
     emitter.emit("EDGE_CHANGED", marked);
   } else {
     emitter.emit("ITEM_CHANGED", marked);

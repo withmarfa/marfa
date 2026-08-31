@@ -53,7 +53,7 @@ export interface MarfaItemEvent {
 
 /** An edge lifecycle event. */
 export interface MarfaEdgeEvent {
-  type: "edge.created" | "edge.deleted";
+  type: "edge.created" | "edge.updated" | "edge.deleted";
   edge: Edge;
 }
 
