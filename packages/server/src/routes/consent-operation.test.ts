@@ -418,27 +418,28 @@ describe("an open-ended group keeps saying it is open-ended", () => {
   });
 
   /**
-   * **Where the clause actually dies, pinned as the threshold rather than
-   * as one case.** The collapse raised this from two own roots to four; it
-   * did not decouple the count from the clause, so past four names an
-   * open-ended group still stops saying it is open-ended. Both halves are
-   * asserted together so that a change to the truncation cannot move the
-   * threshold without one of them reddening, and so that whoever comes to
-   * decouple them has the current behaviour written down rather than
-   * inferred from a group that was never open-ended.
+   * **The count and the clause no longer share a slot, pinned at the
+   * threshold rather than as one case.** Past four names the sentence used
+   * to say how many were left INSTEAD of saying the grant reaches things
+   * nobody has created yet — so it stopped stating the open-endedness
+   * exactly as the grant got wide enough to need truncating.
+   *
+   * Both sides are asserted together so a change to the truncation cannot
+   * move the threshold without one of them reddening.
    */
-  it("still loses the clause once an open-ended group is truncated", () => {
+  it("keeps the clause once an open-ended group is truncated", () => {
     // Four names, all of them under one open-ended grant: the clause is the
     // last thing the sentence says.
     expect(customSummary(["acme", "frob", "quux"])).toBe(
       "Your custom types, Acme (all), Frob (all) and Quux (all), and " +
         "anything else of that kind. Read and write.",
     );
-    // One more root, and the count takes the slot the clause was in. The
-    // group is no less open-ended and the sentence no longer says so.
+    // One more root. The count arrives and the clause survives beside it —
+    // "plus" rather than a second "and", which would read as a list item
+    // rather than as a second clause.
     expect(customSummary(["acme", "frob", "quux", "zed"])).toBe(
       "Your custom types, Acme (all), Frob (all) and Quux (all), and 1 " +
-        "more. Read and write.",
+        "more, plus anything else of that kind. Read and write.",
     );
   });
 

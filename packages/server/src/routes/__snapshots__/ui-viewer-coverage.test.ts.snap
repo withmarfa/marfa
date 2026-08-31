@@ -68,7 +68,7 @@ exports[`every gallery variant renders > renders 'auth/consent/all-scope-kinds' 
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">Other read access</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
-          <span class="gdesc">Authored-by, References, Everything and Your content, and 2 more. Read only.</span>
+          <span class="gdesc">Authored-by, References, Everything and Your content, and 2 more, plus anything else of that kind. Read only.</span>
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Other read access"><span class="tk" aria-hidden="true"></span></label>
       </summary>

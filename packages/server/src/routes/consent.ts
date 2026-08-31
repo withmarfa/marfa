@@ -456,6 +456,7 @@ function summarize(group: ScopeGroup): string {
     const label =
       capabilityShort(scope.typePattern) ??
       oidcShort(scope.oidcScope ?? scope.typePattern) ??
+      scopeShort(scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
     if (!label) continue;
@@ -478,8 +479,24 @@ function summarize(group: ScopeGroup): string {
     const last = listed[listed.length - 1] ?? "";
     list = `${listed.slice(0, -1).join(", ")} and ${last}`;
   }
-  if (remainder > 0) list += `, and ${String(remainder)} more`;
-  else if (openEnded) list += ", and anything else of that kind";
+  // **The count and the clause need separate room, and used to share one
+  // slot.** Past four names the sentence said how many were left INSTEAD of
+  // saying the grant reaches things nobody has created yet — so it stopped
+  // stating the open-endedness exactly as the grant got wide enough to need
+  // truncating, which is the point at which that fact matters most. Each row
+  // still carries its own futurity line, so nothing was lost outright; but
+  // the groups are collapsed by default, so this sentence is what most
+  // people act on.
+  //
+  // "plus" rather than a second "and", which is the whole reason the two
+  // branches are not one string: "and 3 more, and anything else of that
+  // kind" reads as a list item rather than as a second clause.
+  if (remainder > 0) {
+    list += `, and ${String(remainder)} more`;
+    if (openEnded) list += ", plus anything else of that kind";
+  } else if (openEnded) {
+    list += ", and anything else of that kind";
+  }
 
   // The labels are written for a toggle row, where each one starts a line of
   // its own and a capital is right. Joined into a sentence they carry that
@@ -614,7 +631,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "system.integration": "Available integrations",
   "system.device": "Devices",
   "system.webhook": "Webhooks",
-  "system.activity": "Activity",
+  "system.activity": "Activity and notifications",
   profile: "Profile",
   "profile.name": "Name",
   "profile.email": "Email address",
@@ -635,6 +652,45 @@ export const SCOPE_LABELS: Record<string, string> = {
   // in `summarize` as two list items.
   content: "Your content",
 };
+
+/**
+ * Inline-list forms for type-axis scopes, for a sentence naming several at
+ * once.
+ *
+ * Lower case and free of anything that reads as an item boundary, because
+ * {@link summarize} joins these into a list. That is the same contract
+ * `CAPABILITY_SHORT` and `OIDC_SHORT` carry, and this is the third and last
+ * family in that chain to get one — type scopes were the one branch of
+ * `summarize`'s resolution with no short form, so a label was doing both
+ * jobs and could only ever be good at the harder one.
+ *
+ * **Sparse on purpose. An entry here is for a pattern whose toggle label
+ * needs to say more than a list item may.** Everything else resolves through
+ * `SCOPE_LABELS` exactly as before, so this is not a second name for every
+ * scope — which is what the duplicate-copy guard exists to stop.
+ *
+ * The separator guard over `SCOPE_LABELS` is what makes the split
+ * load-bearing rather than decorative: a label carrying a conjunction is
+ * refused UNLESS the pattern has an entry here to be summarized through.
+ */
+export const SCOPE_SHORT: Record<string, string> = {
+  // The label reads "Activity and notifications", and the notifications half
+  // is the one a reader cares about — it is the difference between a log
+  // nobody looks at and something that reaches them. It could not be said
+  // before this map existed: the conjunction that says it is exactly what a
+  // joined list breaks on, so "Notes, Activity and notifications and Files"
+  // was the sentence a label carrying both halves produced.
+  //
+  // The short form names the thing rather than both halves, which is what a
+  // list item can be. The row is where the reader gets the rest.
+  "system.activity": "activity",
+};
+
+/** The inline-list form for a type pattern, or undefined where its toggle
+ *  label is already fit to be joined into a list. */
+export function scopeShort(typePattern: string): string | undefined {
+  return SCOPE_SHORT[typePattern];
+}
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 

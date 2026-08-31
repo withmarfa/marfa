@@ -1,7 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
-import { renderConsentScreen, SCOPE_LABELS, humanizeType } from "./consent.js";
+import {
+  renderConsentScreen,
+  SCOPE_LABELS,
+  SCOPE_SHORT,
+  scopeShort,
+  humanizeType,
+} from "./consent.js";
 import { OIDC_LABELS, OIDC_SHORT } from "./oidc-labels.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 import {
@@ -975,14 +981,52 @@ describe("a grant that reaches things not yet created says so", () => {
     // and would have rendered as "Bookmarks, Files & folders and
     // Organizations", which is the exact sentence this case exists to stop.
     // Lowercased, so a capitalized "And" is caught too.
+    //
+    // **The rule is now conditional, and the condition is the whole of what
+    // `SCOPE_SHORT` bought.** A label reaches the summary only where no short
+    // form answers for its pattern, so a pattern WITH one is free to carry a
+    // conjunction on its row: `system.activity` reads "Activity and
+    // notifications" there, where the notifications half is the one a reader
+    // cares about, and summarizes as "activity". That is the same split
+    // `CAPABILITY_SHORT` has always had, arriving on the third and last
+    // family in the chain.
     const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
     for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
+      if (scopeShort(pattern) !== undefined) continue;
       for (const separator of SEPARATORS) {
         expect(
           label.toLowerCase(),
-          `${pattern} carries ${JSON.stringify(separator)}, which reads as an item boundary once the summary joins it into a list`,
+          `${pattern} carries ${JSON.stringify(separator)}, which reads as an item boundary once the summary joins it into a list. Give it a SCOPE_SHORT entry if the label genuinely needs it`,
         ).not.toContain(separator);
       }
+    }
+  });
+
+  it("holds every short form to what a list item may be", () => {
+    // The other half of the exemption above, and it has to exist or the
+    // exemption is a hole: a pattern gets to skip the separator check by
+    // having a short form, so the short form is what actually reaches the
+    // joined sentence and is what the rule was always about.
+    //
+    // Lower case too, which the labels are not. A label sits alone above a
+    // switch and is capitalized; joined mid-sentence that capital lands in
+    // the middle of a clause, which is the defect `OIDC_SHORT` was built for
+    // and read as "Your name and Your email address".
+    const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
+    expect(Object.keys(SCOPE_SHORT).length).toBeGreaterThan(0);
+    for (const [pattern, short] of Object.entries(SCOPE_SHORT)) {
+      for (const separator of SEPARATORS) {
+        expect(short, `${pattern}'s short form`).not.toContain(separator);
+      }
+      expect(short[0], `${pattern}'s short form starts lowercase`).toBe(
+        short[0]?.toLowerCase(),
+      );
+      // An entry that names no scope is a name nothing resolves, and the
+      // label it was exempting is then reaching the summary unchecked.
+      expect(
+        SCOPE_LABELS[pattern],
+        `${pattern} has a short form and no toggle label`,
+      ).toBeDefined();
     }
   });
 
