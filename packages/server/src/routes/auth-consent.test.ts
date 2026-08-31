@@ -1728,3 +1728,89 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// A literal named twice
+//
+// The rendering half is in `consent-operation.test.ts`, against the renderer.
+// This is the half that made the ticket worth more than a tidy-up: the
+// duplicate did not stop at the screen. `formScopes` kept both copies,
+// `projectGrantOnConsent` wrote them verbatim into `properties.scopes` on the
+// `system.connection` item, and every surface that later reads or diffs that
+// list inherited the duplicate.
+// ---------------------------------------------------------------------------
+
+describe("a scope named twice is stored once", () => {
+  it("writes one copy when the request names the literal twice", async () => {
+    ctx = await createTestContext();
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "dupe-request@example.com");
+    const oauthQuery = await buildSignedOauthQuery(
+      clientId,
+      "core.note:read core.note:read core.task:read",
+    );
+
+    // The precondition, and it is the rendering fix stated end to end: the
+    // screen a person is actually served emits one checkbox for the repeated
+    // literal, so an honest browser cannot submit it twice.
+    const page = await request(
+      ctx.app,
+      "GET",
+      `/auth/authorize?${oauthQuery}`,
+      {
+        headers: { cookie, origin: ORIGIN },
+      },
+    );
+    expect(page.status).toBe(200);
+    const html = await page.text();
+    const noteInputs = (html.match(/value="core\.note:read"/g) ?? []).length;
+    expect(noteInputs).toBe(1);
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        scopes: ["core.note:read", "core.task:read"],
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(res.status).toBe(302);
+
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    const granted = items.data[0]!.properties.scopes as string[];
+    expect(granted).toEqual(["core.note:read", "core.task:read"]);
+  });
+
+  it("writes one copy when the form posts the literal twice", async () => {
+    // The second source, and the reason deduplicating at the parse is not
+    // enough on its own. A form is client-controlled: `getAll` returns
+    // whatever was posted, and `signedScopes` is a `Set`, so both copies of
+    // a hand-crafted duplicate pass the membership test regardless of what
+    // the screen rendered.
+    ctx = await createTestContext();
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "dupe-form@example.com");
+    const oauthQuery = await buildSignedOauthQuery(clientId, "core.note:read");
+
+    const res = await request(ctx.app, "POST", "/auth/authorize/decision", {
+      form: {
+        accept: "true",
+        oauth_query: oauthQuery,
+        scopes: ["core.note:read", "core.note:read"],
+      },
+      headers: { cookie, origin: ORIGIN },
+    });
+    expect(res.status).toBe(302);
+
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    expect(items.data[0]!.properties.scopes).toEqual(["core.note:read"]);
+  });
+});

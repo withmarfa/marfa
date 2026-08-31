@@ -331,7 +331,20 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // one step later rather than published. The three sites that DO write are
     // `buildAllowedScopes`, `bundlePublishedScopes` and the self-serve key
     // mint, and all three consult `isWithheldFromAllowlist`.
-    const scopeLiterals = scopeParam.split(/\s+/).filter(Boolean);
+    // Deduplicated, order preserved. A client may name the same literal
+    // twice and nothing upstream stops it, which produced two identical
+    // toggles carrying one checkbox value: unticking the row in front of you
+    // reliably did nothing, because the decision handler takes the union of
+    // what was submitted. The device screen has always deduplicated, so one
+    // request rendered coherently on one surface and incoherently on the
+    // other.
+    //
+    // Done here rather than only at the render because the duplicate did not
+    // stop at the screen. It survived into `formScopes`, through
+    // `projectGrantOnConsent`, and was written verbatim into
+    // `properties.scopes` on the `system.connection` item, where every
+    // surface that later reads or diffs that list inherited it.
+    const scopeLiterals = [...new Set(scopeParam.split(/\s+/).filter(Boolean))];
     const parsed: ParsedScope[] = [];
     for (const literal of scopeLiterals) {
       if (!isValidScope(literal)) {
@@ -664,10 +677,22 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     // Validate they're a subset of the signed scopes (the consent UI
     // can only narrow, not widen). Anything outside the signed set is
     // a hostile or buggy form — drop and continue with the signed set.
-    const formScopes = form
-      .getAll("scopes")
-      .filter((v): v is string => typeof v === "string")
-      .filter((s) => signedScopes.has(s));
+    //
+    // Deduplicated, and this is a second source rather than the same one
+    // twice. The render now emits one row per literal, so an honest browser
+    // cannot submit a duplicate — but this is a form, and `getAll` returns
+    // whatever was posted. A hand-crafted POST naming one literal twice
+    // passes the membership test on both copies, because `signedScopes` is a
+    // `Set`, and writes the duplicate into the stored grant no matter what
+    // the screen rendered.
+    const formScopes = [
+      ...new Set(
+        form
+          .getAll("scopes")
+          .filter((v): v is string => typeof v === "string")
+          .filter((s) => signedScopes.has(s)),
+      ),
+    ];
 
     // Zero-scopes accept = deny. If the user submits `accept=true` with
     // no checkboxes ticked, the plugin would default to the full originally-

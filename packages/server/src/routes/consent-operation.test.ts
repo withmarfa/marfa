@@ -466,3 +466,58 @@ describe("an open-ended group keeps saying it is open-ended", () => {
     expect(summary).toContain(", and 1 more.");
   });
 });
+
+describe("one literal named twice is one row", () => {
+  /**
+   * The measurement from the ticket, reproduced here as the fixture:
+   *
+   *   input:  core.note:read, core.note:read, core.task:read
+   *   before: ["Notes (read only)", "Notes (read only)", "Tasks (read only)"]
+   *
+   * Two rows carried the same checkbox `value`, and the decision handler
+   * takes the union of what was submitted — so unticking the row in front of
+   * you reliably did nothing and granted the scope anyway. Deterministic,
+   * and worse for a reader than a coin toss, because the screen showed a
+   * choice it did not have.
+   */
+  const DUPLICATED = ["core.note:read", "core.note:read", "core.task:read"];
+
+  it("renders one row per literal, not one per mention", () => {
+    const rows = rowLabels(authorize(DUPLICATED.map(parse)));
+    expect(rows).toEqual(["Notes (read only)", "Tasks (read only)"]);
+  });
+
+  it("keeps a read-and-write pair as two rows", () => {
+    // The constraint the fix has to respect, and the reason the `seen` set
+    // is keyed on the literal rather than on the rendered label. Both of
+    // these resolve the name "Notes", so a label-keyed set would collapse
+    // them and take the write half off the screen — which is the defect
+    // T-997 closed, arriving from the other direction.
+    const rows = rowLabels(
+      authorize(["core.note:read", "core.note:write"].map(parse)),
+    );
+    expect(rows).toEqual(["Notes (read only)", "Notes (read and write)"]);
+  });
+
+  it("agrees with the summary above it about how many things are asked for", () => {
+    // `summarize` always deduplicated, reading the same array the rows read.
+    // So the sentence said two things while the list below showed three, and
+    // neither was marked as the authority. Asserted as agreement rather than
+    // as two separate expected values, because the defect was the two
+    // disagreeing.
+    const html = authorize(DUPLICATED.map(parse));
+    const [summary] = summaries(html);
+    expect(summary).toBe("Notes and Tasks. Read only.");
+    expect(rowLabels(html)).toHaveLength(2);
+  });
+
+  it("still matches the device screen, which never had the defect", () => {
+    // The surface that got it right all along, kept in the same case so a
+    // fix that made the authorize screen consistent with itself but not with
+    // its sibling still fails.
+    expect(deviceLines(device(DUPLICATED.map(parse)))).toEqual([
+      "Notes. Read only.",
+      "Tasks and to-dos. Read only.",
+    ]);
+  });
+});

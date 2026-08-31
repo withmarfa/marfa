@@ -807,7 +807,28 @@ export function renderConsentScreen(params: ConsentParams): string {
    *  toggles in the body. */
   const group = (g: ScopeGroup): string => {
     if (g.scopes.length === 0) return "";
-    const rows = g.scopes.map((s) => subRow(s, g.defaultOn)).join("");
+    // **Keyed on the literal, never on the rendered label.** T-997's fix
+    // makes a read-and-write pair render two rows that differ only in their
+    // operation, and both resolve the same name — so a `seen` set keyed on
+    // what the row says would collapse the pair and take the write half off
+    // the screen, which is the defect this file already carries a docstring
+    // about avoiding. `scopeLiteralFor` is what the checkbox submits, so two
+    // rows share a key exactly when they are the same grant.
+    //
+    // The parse deduplicates too, and this is not that check repeated.
+    // `renderConsentScreen` is exported and its `scopes` parameter is
+    // whatever a caller hands it; the device screen has carried the same set
+    // one file over since before either surface had a parse to rely on.
+    const seen = new Set<string>();
+    const rows = g.scopes
+      .filter((s) => {
+        const literal = scopeLiteralFor(s);
+        if (seen.has(literal)) return false;
+        seen.add(literal);
+        return true;
+      })
+      .map((s) => subRow(s, g.defaultOn))
+      .join("");
     // The master carries no `name`, so it submits nothing and is purely the
     // control that drives its members. It still starts in the group's state,
     // or an off-by-default group would open showing a ticked master over
