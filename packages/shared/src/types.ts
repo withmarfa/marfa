@@ -250,6 +250,22 @@ export interface UpdateItemInput {
    * required field is refused rather than written.
    */
   properties_mode?: "merge" | "replace";
+  /**
+   * Move the item to this type.
+   *
+   * Absent on every ordinary write, and the doors above this refuse a
+   * type that disagrees with the row rather than passing one down. It is
+   * set only where a caller has explicitly asked to re-type, which exists
+   * for one job: bringing a corpus written under one shape onto the shape
+   * a person's mapping now names. Without it, a mapping applies to what
+   * arrives next and the items already there are stranded under the old
+   * type forever.
+   *
+   * The resulting properties are validated against this type, not the
+   * one being left, so a move that would produce a row the target type
+   * calls invalid is refused rather than written.
+   */
+  type?: string;
   version?: number;
   /** Force a version snapshot for this update, bypassing the
    *  snapshot-interval throttle in version gating. */
