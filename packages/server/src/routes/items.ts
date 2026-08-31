@@ -517,7 +517,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped.",
+    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -546,6 +546,21 @@ const updateItemRoute = createRoute({
              *  replace dropping a required field is refused rather than
              *  written. */
             properties_mode: z.enum(["merge", "replace"]).optional(),
+            /** Move the item to the `type` named above.
+             *
+             *  An explicit opt-in rather than an inference from `type`
+             *  differing, because the fleet sends a type on nearly every
+             *  reactive update: a route that re-typed whenever the two
+             *  disagreed would move a corpus on somebody's ordinary sync
+             *  bug. Without this the disagreement is refused, which stays
+             *  the default and is what a caller who has not thought about
+             *  it gets.
+             *
+             *  Exists for one job: bringing items written under one shape
+             *  onto the shape a person's mapping now names. Otherwise a
+             *  mapping applies only to what arrives next and everything
+             *  already there is stranded under the old type. */
+            retype: z.boolean().optional(),
             version: z.number().int().min(0).optional(),
             force_snapshot: z.boolean().optional(),
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
@@ -2022,11 +2037,12 @@ export function itemRoutes(storage: Storage) {
       !hasEdges &&
       !hasTier &&
       !hasTimestamp &&
-      !hasSourceId
+      !hasSourceId &&
+      body.retype !== true
     ) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "At least one of `properties`, `edges`, `tier`, `timestamp`, or `source_id` is required.",
+        "At least one of `properties`, `edges`, `tier`, `timestamp`, `source_id`, or `retype` is required.",
       );
     }
     if (body.timestamp !== undefined && !isValidTimestamp(body.timestamp)) {
@@ -2063,7 +2079,25 @@ export function itemRoutes(storage: Storage) {
     // perform. Refusing any `type` at all would have been tidier to
     // describe and would have failed most reactive syncs in the fleet on
     // their first request.
-    if (body.type !== undefined) requireDeclaredTypeMatches(body.type, item);
+    if (body.retype === true && body.type === undefined) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "`retype` needs the `type` to move the item to",
+      );
+    }
+    // Captured rather than re-derived, so the narrowing survives: a
+    // boolean does not tell the compiler that `body.type` is a string at
+    // the three sites below that need it to be one.
+    const retypeTo = body.retype === true ? body.type : undefined;
+    const retyping = retypeTo !== undefined;
+    if (retyping) {
+      // Write on the type being left is already required above; this is
+      // write on the one being entered. A caller may not move a row into
+      // a type it could not have created the row under.
+      requireTypeAccess(c, retypeTo, "write");
+    } else if (body.type !== undefined) {
+      requireDeclaredTypeMatches(body.type, item);
+    }
 
     // Same rule the create door applies, judged on the resolved row's
     // type. The claim above is held to that type rather than replacing
@@ -2145,14 +2179,19 @@ export function itemRoutes(storage: Storage) {
       // ask for a replace: it would have validated the merged set while the
       // store wrote the replaced one, so a write dropping a required field
       // passed validation on the strength of the value it was removing.
+      // The type the row ends up as, which is what the resulting
+      // properties have to satisfy. Validating against the type being left
+      // would admit a move whose result the destination calls invalid,
+      // which is the whole hazard of moving a corpus.
+      const resultingType = retypeTo ?? item.type;
       const merged = mergeUpdateProperties(
         item.properties,
-        resolveIncomingProperties(item.type, body.properties, false, tid),
+        resolveIncomingProperties(resultingType, body.properties, false, tid),
         false,
         body.properties_mode ?? "merge",
       );
-      if (getTypeSchema(item.type, tid)) {
-        const validation = validateProperties(item.type, merged, {
+      if (getTypeSchema(resultingType, tid)) {
+        const validation = validateProperties(resultingType, merged, {
           spaceId: tid,
         });
         if (!validation.success) {
@@ -2220,6 +2259,7 @@ export function itemRoutes(storage: Storage) {
                 ...(body.properties_mode !== undefined && {
                   properties_mode: body.properties_mode,
                 }),
+                ...(retypeTo !== undefined && { type: retypeTo }),
                 version: body.version,
                 force_snapshot: body.force_snapshot === true ? true : undefined,
                 tier: hasTier ? body.tier : undefined,

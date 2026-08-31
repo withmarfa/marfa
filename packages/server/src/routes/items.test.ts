@@ -912,6 +912,142 @@ describe("GET /items", () => {
   });
 });
 
+describe("PATCH /items/:id — retype", () => {
+  /**
+   * Moving an item between types, which every other write door refuses.
+   *
+   * It exists for one job: bringing a corpus written under one shape onto
+   * the shape a person's mapping now names. Without it a mapping applies
+   * to what arrives next and everything already there is stranded under
+   * the old type, which no amount of re-syncing repairs.
+   */
+  async function entity(ctx: TestContext): Promise<string> {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.entity",
+        properties: { name: "Ada", kind: "person" },
+      },
+    });
+    const { item } = (await created.json()) as { item: { id: string } };
+    return item.id;
+  }
+
+  it("moves the item to the type asked for", async () => {
+    const id = await entity(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: {
+        retype: true,
+        type: "core.bookmark",
+        properties_mode: "replace",
+        properties: { url: "https://example.com", title: "Ada" },
+      },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { item: { type: string } };
+    expect(data.item.type).toBe("core.bookmark");
+
+    // And it reads back as the new type rather than only reporting it.
+    const after = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const read = (await after.json()) as {
+      item: { type: string; properties: Record<string, unknown> };
+    };
+    expect(read.item.type).toBe("core.bookmark");
+    expect(read.item.properties).not.toHaveProperty("name");
+  });
+
+  it("still refuses a differing type when nobody asked to re-type", async () => {
+    // The control, and the one that matters most. The fleet sends a type
+    // on nearly every reactive update, so a route that re-typed whenever
+    // the two disagreed would move a corpus on an ordinary sync bug.
+    const id = await entity(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: { type: "core.bookmark", properties: { title: "Ada" } },
+    });
+    expect(res.status).toBe(409);
+    const after = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const read = (await after.json()) as { item: { type: string } };
+    expect(read.item.type).toBe("core.entity");
+  });
+
+  it("refuses a re-type that names no destination", async () => {
+    const id = await entity(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: { retype: true, properties: { name: "Ada" } },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses a move into a type the credential cannot write", async () => {
+    // Write on the type being LEFT is not enough. A member key that may
+    // write entities and not bookmarks must not be able to turn one into
+    // the other, or the type map stops bounding what it can produce.
+    //
+    // An admin key would prove nothing here: it bypasses the type map
+    // entirely, so every other case in this block is silent about the
+    // permission the route checks.
+    const id = await entity(ctx);
+    const scopedRes = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: "entities-only",
+        source: "entities-only",
+        role: "member",
+        type_permissions: { "core.entity": "write" },
+      },
+    });
+    const scoped = (await scopedRes.json()) as { key: string };
+
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: scoped.key,
+      body: {
+        retype: true,
+        type: "core.bookmark",
+        properties_mode: "replace",
+        properties: { url: "https://example.com", title: "Ada" },
+      },
+    });
+    expect(res.status).toBe(403);
+
+    const after = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const read = (await after.json()) as { item: { type: string } };
+    expect(read.item.type).toBe("core.entity");
+  });
+
+  it("refuses a move whose result the destination calls invalid", async () => {
+    // Validated against the type being entered rather than the one being
+    // left, which is the whole hazard of moving a corpus: `core.file`
+    // requires fields `core.entity` knows nothing about.
+    const id = await entity(ctx);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      body: {
+        retype: true,
+        type: "core.file",
+        properties_mode: "replace",
+        properties: { name: "Ada" },
+      },
+    });
+    expect(res.status).toBe(400);
+
+    const after = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    const read = (await after.json()) as { item: { type: string } };
+    // Refused rather than half-applied: the type did not move either.
+    expect(read.item.type).toBe("core.entity");
+  });
+});
+
 describe("PATCH /items/:id — properties_mode", () => {
   /**
    * A caller that means the set it sends to BE the item's properties, rather

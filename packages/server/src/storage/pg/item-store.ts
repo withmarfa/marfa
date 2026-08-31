@@ -720,6 +720,10 @@ export class PgItemStore implements ItemStore {
             ...(input.source_id !== undefined && {
               source_id: input.source_id,
             }),
+            // Only where a caller explicitly asked to re-type. Every other
+            // door refuses a type that disagrees with the row rather than
+            // passing one down here.
+            ...(input.type !== undefined && { type: input.type }),
           };
 
           try {
@@ -739,7 +743,12 @@ export class PgItemStore implements ItemStore {
           }
 
           await this.searchStore.remove(id);
-          await this.searchStore.index(id, merged, row.type, spaceId);
+          await this.searchStore.index(
+            id,
+            merged,
+            input.type ?? row.type,
+            spaceId,
+          );
 
           return rowToItem({
             ...row,
@@ -750,6 +759,11 @@ export class PgItemStore implements ItemStore {
             ...(input.source_id !== undefined && {
               source_id: input.source_id,
             }),
+            // Carried onto the response as well as into the row. Built from
+            // the pre-update snapshot, this reported the type the item had
+            // stopped being — a write that landed and answered with the old
+            // value, which reads as the re-type having silently done nothing.
+            ...(input.type !== undefined && { type: input.type }),
           });
         }
 
