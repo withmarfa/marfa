@@ -1,5 +1,10 @@
-import { classifyNamespace, isReservedRoot } from "@withmarfa/shared";
-import { subtreeWildcardRoot } from "@withmarfa/shared";
+import {
+  classifyNamespace,
+  isReservedRoot,
+  subtreeWildcardRoot,
+} from "@withmarfa/shared";
+
+const EDGE_PREFIX = "edge.";
 
 /**
  * The consent sentence a namespace wildcard gets, derived from its root.
@@ -15,7 +20,7 @@ import { subtreeWildcardRoot } from "@withmarfa/shared";
  * That is not the same argument the curated map makes for the seven entries
  * it keeps. `*`, `core.*`, `user.*`, `app.*` and the three `edge.` forms
  * beside them are a closed, structural set, and each says something a
- * derivation cannot: "All standard content types" carries a judgement about
+ * derivation cannot: "All standard content types" carries a judgment about
  * what "standard" means. Curated copy wins wherever it exists — {@link
  * describeScope} reads the map first — so this answers only what the map
  * deliberately does not.
@@ -64,8 +69,6 @@ export function deriveWildcardDescription(
     : `Everything ${name} saves in your space.`;
 }
 
-const EDGE_PREFIX = "edge.";
-
 /**
  * A root as a person should read it: `readwise` becomes "Readwise",
  * `acme-corp` becomes "Acme Corp".
@@ -73,11 +76,16 @@ const EDGE_PREFIX = "edge.";
  * **The friendly rendering is deliberate and was ruled on.** The proposal
  * once went the other way — render the handle verbatim, so a space claiming
  * `google-drive` could not have a brand supplied for it by this transform.
- * That was rejected in favour of the reader, and the vector it guarded
- * against was closed from the other side instead: the half-protection that
- * reserved `google` while admitting `google-drive` is gone, and the shipped
- * publisher roots are reserved as handles, so the name this builds is not a
- * brand somebody walked around a list to obtain.
+ * That was rejected for the reader's sake, and the vector it guarded against
+ * was closed from the other side: the half-protection that reserved `google`
+ * while admitting `google-drive` was deleted outright rather than widened,
+ * so this transform is no longer the way around a partial list.
+ *
+ * **A shipped publisher root is still claimable as a handle, deliberately**
+ * — `isReservedHandle` says so and gives the reasoning. What answers the
+ * collision is the seed refusing to overwrite a registration it did not
+ * write, which protects the namespace always, where a name list protects it
+ * only while the list stays current.
  *
  * A space's own root also renders its member types beside the row —
  * `resolveWildcardExpansions` enumerates what the space actually registered
