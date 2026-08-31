@@ -58,6 +58,7 @@ concurrency:
 
 jobs:
   build-push:
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     outputs:
       image: ${{ steps.meta.outputs.image }}
@@ -123,6 +124,7 @@ jobs:
 
   deploy:
     needs: build-push
+    timeout-minutes: 15
     runs-on: self-hosted
     steps:
       - uses: actions/checkout@v7
@@ -265,6 +267,7 @@ jobs:
     needs: [build-push, deploy]
     # Skipped when no alert destination is configured, so a fork sends nothing.
     if: always() && vars.ALERT_WEBHOOK_URL != ''
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - name: Report outcome

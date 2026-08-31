@@ -99,6 +99,7 @@ jobs:
     # nothing. The gate is on the variable rather than on the token because
     # `secrets` is not available in an `if:` at any level, while `vars` is.
     if: always() && vars.ALERT_WEBHOOK_URL != ''
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - name: Report outcome
