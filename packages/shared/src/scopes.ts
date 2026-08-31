@@ -432,18 +432,36 @@ const SCOPE_RE = /^(\*|[a-z][a-z0-9_.*-]*):(read|write)$/;
 // `edge.<type>:<verb>` — type can be kebab-case (parent-of, in-thread) or
 // namespaced (karakeep.list-member).
 //
-// **This class still admits a second wildcard, and that is the remaining half
-// of the edge-grammar work rather than an oversight.** `edge.*.*` parses here
-// where `isValidTypePattern` refuses `core.*.*`, because the type axis routes
-// a wildcard's root through `TYPE_ID_PREFIX` and this has no equivalent.
-// Narrowing it is a one-line change and its consequences are not: the merge
-// and intersect paths reason about STORED grants, so a literal that stops
-// parsing stops being reasoned about, and eleven cases in
-// `device-scope-merge.test.ts` pin what happens to a malformed key today.
-// Closing it means deciding what those paths owe a key a validator can refuse
-// but a stored grant may already carry, which is a separate piece of work
-// from the registration door below.
-const EDGE_SCOPE_RE = /^edge\.([a-z0-9_*][a-z0-9_.\-*]*):(read|write)$/;
+// **One wildcard, and only as the last segment.** This class used to admit a
+// second — `edge.*.*` parsed here where `isValidTypePattern` refuses
+// `core.*.*`, because the type axis routes a wildcard's root through
+// `TYPE_ID_PREFIX` and this had no equivalent. `isValidScope` is
+// `parseScope(...) !== null`, so this regex is the whole authority on the
+// edge axis and the hole was reachable through any operator-configured
+// permission bundle.
+//
+// **What made it worse than a grammar untidiness** is that the extra
+// asterisk answered for something. `subtreeWildcardRoot("*.*")` is `"*"`,
+// which matches the GLOBAL key while matching no concrete edge type, so a
+// stored `edge.*.*:write` looked redundant-with-nothing at the key level and
+// the prune deleted the `edge.*:write` beside it — a live grant over every
+// edge type on the instance. `subtreeWildcardRoot("user.*.*")` is `"user.*"`
+// and does the same to `edge.user.*`, which `resolveEdgePermission` says is
+// the only expression reaching a space's runtime-registered relation edges
+// short of the global wildcard.
+//
+// **Narrowing was held up on what the merge owes a literal a validator
+// refuses but a stored grant still carries, and that question already had an
+// answer.** `device-scope-merge.ts` sorts every scope into `resolvableScopes`
+// or `membershipScopes`, and an unparseable literal goes to the second: it is
+// carried, unioned, never pruned, and never enters the map a candidate is
+// measured against. So a stored `edge.*.*:write` does not stop being reasoned
+// about when it stops parsing — it moves to the branch that cannot draw a
+// wrong conclusion from it, which is strictly safer than the one it was on.
+// The two regressions in `device-scope-merge.test.ts` keep their subjects and
+// only their preconditions move.
+const EDGE_SCOPE_RE =
+  /^edge\.(\*|[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*(?:\.\*)?):(read|write)$/;
 // `metadata.<subresource>:<verb>` — sub-resource is a single dot-free
 // segment (`types`, future siblings).
 //
