@@ -1306,17 +1306,24 @@ export function itemRoutes(storage: Storage) {
             ? { ...existing.properties, ...properties }
             : existing.properties,
         );
-        // **This cannot currently refuse, and is kept as depth rather than
-        // as an active gate.** `stampedSource` is `item_source ?? source`
-        // and the lookup above keys on it, so a row resolved here always
-        // carries this credential's own source and `permitsMirrorWrite`
-        // compares it with itself. It is reachable only if that lookup ever
-        // resolves a row by something other than the caller's own stamp,
-        // which is exactly when it would start mattering. Said here because
-        // a guard that cannot fire reads as tested coverage and is not:
-        // `routes/item-write-doors.test.ts` covers mirror protection on the
-        // doors that resolve by id, where a foreign row is reachable.
-        requireMirrorProtection(credentialForUpdate, existing);
+        // **No mirror check here, and its absence is the honest shape.**
+        // Every other door that resolves a row calls
+        // `requireMirrorProtection`; this one cannot be reached by another
+        // integration's mirror at all, so a call would be a guard that can
+        // never refuse — which reads as protection while making no claim.
+        //
+        // The lookup is what provides the property. `stampedSource` is
+        // `item_source ?? source` and `findBySourceIdIncludingTrashed` keys
+        // on it, so a row resolved here carries this credential's own
+        // source by construction. A runtime credential then satisfies
+        // `permitsMirrorWrite`'s owner arm by comparing that value with
+        // itself, and any other credential satisfies its first arm, because
+        // `isReservedCredentialSource` refuses an `integration:` source at
+        // every mint. Both arms are decided before the row is read.
+        //
+        // **A lookup that ever resolves a row by something other than the
+        // caller's own stamp owes a mirror check here.** That is the change
+        // this note is for.
 
         // If the caller explicitly supplied `id` but it doesn't match the row
         // resolved by (source, source_id), reject rather than silently winning
