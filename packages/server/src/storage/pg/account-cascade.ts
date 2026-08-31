@@ -67,6 +67,8 @@
 import { eq, sql } from "drizzle-orm";
 import type { Storage } from "../interface.js";
 import {
+  customTypes,
+  customEdgeTypes,
   apiKeys,
   auth_user,
   auth_verification,
@@ -160,6 +162,19 @@ export async function pgPurgeSpaceScopedRows(
     .delete(outboundWebhooks)
     .where(eq(outboundWebhooks.space_id, spaceId));
   await tx.delete(spaceQuotas).where(eq(spaceQuotas.space_id, spaceId));
+  // The space's own type vocabulary. Omitted until now, in both dialects, so
+  // every space deletion left its registrations behind — addressable only
+  // through a credential scoped to a space that no longer exists, and
+  // re-registered into the in-memory overlay on every subsequent boot.
+  //
+  // Both tables, because both are space-scoped registrations and a teardown
+  // that took one would leave the other in exactly the state this fixes.
+  //
+  // Platform rows are untouched by construction: they carry `space_id = ''`,
+  // which no real space id matches, so the shipped vocabulary cannot be swept
+  // by a space deletion.
+  await tx.delete(customTypes).where(eq(customTypes.space_id, spaceId));
+  await tx.delete(customEdgeTypes).where(eq(customEdgeTypes.space_id, spaceId));
 }
 
 /**

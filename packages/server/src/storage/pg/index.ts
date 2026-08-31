@@ -39,6 +39,7 @@ import { PgBulkActionJobStore } from "./bulk-action-job-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { pgDeleteAccountCascade, pgDeleteSpace } from "./account-cascade.js";
 import { pgRequestContext } from "./request-context.js";
+import { reportSeedCollisions } from "../seed-collisions.js";
 import { projectPlatformRows } from "../platform-family.js";
 import { reportReservedRootRows } from "../reserved-root-rows.js";
 import { computePlatformDrift, setPlatformDrift } from "../platform-drift.js";
@@ -90,7 +91,12 @@ export async function createPgStorage(
   // in-memory registry from what the rows actually say. A type added by a seed
   // alone therefore resolves without a redeploy, and an instance never
   // resolves something its own rows do not carry.
-  await typeStore.seedPlatformTypes(shippedPlatformTypes());
+  // The seed leaves a colliding registration alone and answers with its id;
+  // reporting it is the whole of the handling, and the reasoning for that is
+  // at the reporter.
+  reportSeedCollisions(
+    await typeStore.seedPlatformTypes(shippedPlatformTypes()),
+  );
   const loadedTypes = await typeStore.loadCustomTypes();
   // A platform row whose family this build cannot read is placed at the
   // restrictive end rather than defaulted to `core`, which was the

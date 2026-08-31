@@ -7,7 +7,7 @@ import {
   ErrorCode,
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { spaceBucketCondition } from "../space-condition.js";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
@@ -117,12 +117,20 @@ export class SqliteTypeStore implements TypeStore {
 
   async seedPlatformTypes(
     seeded: readonly SeededPlatformType[],
-  ): Promise<void> {
+  ): Promise<string[]> {
     const now = new Date().toISOString();
     for (const { schema, family } of seeded) {
       // Upsert rather than insert-if-absent: a redeploy carrying a changed
       // shipped schema has to move the row, or the instance keeps resolving
       // whatever it was first seeded with.
+      //
+      // **The `WHERE` is the guard, and this is the dialect where it matters
+      // most.** A self-host runs `AUTH_MODE=keys`, so a credential carries no
+      // space and `POST /types` stores the registration at `space_id = ''` —
+      // the same bucket this writes to. Without it, a build that starts
+      // shipping an identifier somebody already registered rewrote their
+      // schema unattended on the next boot. The PG copy carries the full
+      // reasoning.
       await this.db.run(sql`
         INSERT INTO custom_types (id, space_id, schema, origin, family, owner_integration, created_at, updated_at)
         VALUES (${schema.id}, '', ${JSON.stringify(schema)}, 'platform', ${family}, NULL, ${now}, ${now})
@@ -131,8 +139,27 @@ export class SqliteTypeStore implements TypeStore {
           origin = 'platform',
           family = excluded.family,
           updated_at = ${now}
+        WHERE custom_types.origin = 'platform'
       `);
     }
+    const rows = await this.db
+      .select({ id: customTypes.id })
+      .from(customTypes)
+      .where(
+        and(
+          // The platform bucket, addressed through the shared helper rather
+          // than spelled inline — the stores came to disagree about what an
+          // absent space means precisely by spelling it.
+          spaceBucketCondition(customTypes.space_id, ""),
+          ne(customTypes.origin, "platform"),
+          inArray(
+            customTypes.id,
+            seeded.map(({ schema }) => schema.id),
+          ),
+        ),
+      )
+      .all();
+    return rows.map((r) => r.id);
   }
 
   async deletePlatformType(id: string): Promise<boolean> {

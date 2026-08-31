@@ -24,6 +24,8 @@
 import { eq, sql } from "drizzle-orm";
 import type { Storage } from "../interface.js";
 import {
+  customTypes,
+  customEdgeTypes,
   apiKeys,
   auth_user,
   auth_verification,
@@ -96,6 +98,16 @@ export async function sqlitePurgeSpaceScopedRows(
     .where(eq(outboundWebhooks.space_id, spaceId))
     .run();
   await tx.delete(spaceQuotas).where(eq(spaceQuotas.space_id, spaceId)).run();
+  // The PG copy carries the reasoning: the space's own type vocabulary was
+  // omitted from both dialects, so every space deletion left its
+  // registrations behind. Both tables, because both are space-scoped, and
+  // platform rows are untouched by construction since they carry
+  // `space_id = ''`.
+  await tx.delete(customTypes).where(eq(customTypes.space_id, spaceId)).run();
+  await tx
+    .delete(customEdgeTypes)
+    .where(eq(customEdgeTypes.space_id, spaceId))
+    .run();
 }
 
 /**

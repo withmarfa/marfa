@@ -572,18 +572,17 @@ export interface TypeStore {
    *  into the right space overlay. */
   loadCustomTypes(): Promise<LoadedType[]>;
   /**
-   * Write the shipped platform vocabulary into rows, idempotently.
+   * Install the shipped vocabulary, and answer with any shipped id that
+   * collided with a registration this seed did not write.
    *
-   * Called at every boot rather than by a migration. A migration would have
-   * to embed a copy of several dozen JSON schemas, which nothing regenerates
-   * and which would drift from the files the codegen reads the first time a
-   * field changed. Seeding from the build keeps the repo's JSON canonical and
-   * makes the row a projection of it.
-   *
-   * Existing rows are updated in place, so a redeploy carrying a changed
-   * schema moves the instance forward without a second mechanism.
+   * **The return value is the whole of the collision handling.** A self-host
+   * stores its own registrations in the same `space_id = ''` bucket the seed
+   * writes to, so a build that starts shipping an identifier somebody already
+   * registered would otherwise rewrite their schema unattended on the next
+   * boot. The seed leaves such a row alone; deciding what to do about it
+   * belongs to a person, not to a boot path that runs on every instance.
    */
-  seedPlatformTypes(seeded: readonly SeededPlatformType[]): Promise<void>;
+  seedPlatformTypes(seeded: readonly SeededPlatformType[]): Promise<string[]>;
   /**
    * Remove one platform row the build no longer ships. Answers whether a
    * row was actually deleted.
