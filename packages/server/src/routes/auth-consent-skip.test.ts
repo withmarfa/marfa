@@ -1468,3 +1468,87 @@ describe("GET /auth/authorize (consent skip) — concurrent grant changes", () =
     expect(after!.properties.status).toBe("revoked");
   });
 });
+
+// ---------------------------------------------------------------------------
+// A literal named twice, on the path with no form
+//
+// The decision route deduplicates what a form posts, and the parse
+// deduplicates what the screen renders. Neither covers this: the skip is a
+// GET, there is no form, and the route proxies `scopeLiterals` straight to
+// the plugin's `/oauth2/consent` and hands the same array to
+// `projectGrantOnConsent` as `requestedScopes`. So the parse is the ONLY
+// thing standing between a repeated literal and two storage writes carrying
+// it — the plugin's own `auth_oauth_consent.scopes`, which it rewrites to the
+// requested set on every accept, and `properties.scopes` on the projection.
+//
+// Found by mutation: removing the parse deduplication reddened nothing,
+// because the other two sites masked it on every path the tests then
+// covered. The fix was load-bearing and the tests were not.
+// ---------------------------------------------------------------------------
+
+describe("a scope named twice is stored once on the skip path", () => {
+  it("writes one copy when a covered request repeats a literal", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "skip-dupe@example.com");
+
+    // A WILDCARD first, which is what makes this reach Marfa's skip at all.
+    // The plugin has its own already-consented check and it is exact
+    // membership, so granting `core.note:read` and asking for it again is
+    // answered one level up and never touches this route. A standing
+    // `core.*:read` fails that membership test and passes
+    // `grantCoversScope`, which is the documented difference between the two
+    // skips.
+    await grantFirstConsent(ctx, clientId, cookie, "openid core.*:read", [
+      "openid",
+      "core.*:read",
+    ]);
+
+    const second = await beginAuthorize(
+      ctx,
+      clientId,
+      "openid core.note:read core.note:read",
+      cookie,
+    );
+    expect(second.status).toBe(302);
+    // The precondition, and it is the one this case got wrong first time:
+    // the plugin must hand the request to the consent page rather than
+    // answering it. A redirect straight to the callback means the plugin
+    // skipped, this route never ran, and everything below would pass
+    // proving nothing.
+    expect(second.headers.get("location") ?? "").toContain("/auth/authorize?");
+
+    const res = await landOnConsentPage(ctx, signedQueryOf(second), {
+      cookie,
+      referer: `${ORIGIN}/auth/sign-in`,
+    });
+    expectCodeRedirect(res);
+    expect(res.headers.get("content-type") ?? "").not.toContain("text/html");
+
+    // **The projection is deliberately untouched on a skip** — no scope
+    // rewrite, no `granted_at` bump — because nobody agreed to give anything
+    // up, and the plugin's own consent row is restored to the standing set
+    // afterwards. So the stored grant is not where a duplicate would land
+    // here, and asserting on it would pass whatever the parse did.
+    const items = await ctx.storage.items.list({
+      type: "system.connection",
+      state: "active",
+    });
+    expect(items.data.length).toBe(1);
+    expect(items.data[0]!.properties.scopes).toEqual(["openid", "core.*:read"]);
+
+    // What the skip does record is the audit row, and `details.scopes` is
+    // what the client asked for on this request — taken straight from the
+    // parsed literals. That is the one surface on this path where a repeated
+    // literal persists, and it is the operator's record of what was
+    // re-authorized without anybody being asked.
+    const reused = await ctx.storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 20,
+    });
+    expect(reused.data.length).toBe(1);
+    const asked = (reused.data[0]!.details as { scopes: string[] }).scopes;
+    expect(asked).toEqual([...new Set(asked)]);
+    expect(asked.filter((v) => v === "core.note:read")).toHaveLength(1);
+  });
+});
