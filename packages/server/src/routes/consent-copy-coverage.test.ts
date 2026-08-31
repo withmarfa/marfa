@@ -320,89 +320,6 @@ const KNOWN_UNCOVERED: readonly UncoveredPattern[] = [
       "The relationship half of a boot-installed publisher root. Same " +
       "reason as the pattern above.",
   },
-
-  // ---------------------------------------------------------------------
-  // SHIPPING CONCRETE TYPES, of which there are sixteen. Types this build
-  // ships through an integration. These do have
-  // a registry description, which is why they read as covered and are not:
-  // the descriptions are written for a developer reading API docs and run
-  // from 170 to 796 characters, several of them carrying backticks. They
-  // reach the device approval screen whole, which is the same failure
-  // `edge.in-collection` produced on the same screen.
-  //
-  // Distinct from the wildcards above in what would fix them. A registry
-  // fallback is right for a type registered at runtime through `POST
-  // /types`, where the operator wrote the description and nobody here can
-  // curate one. These are not that: they ship in this build's type set, so
-  // a curated sentence is writable, and the fallback is reached only
-  // because nobody wrote one.
-  // ---------------------------------------------------------------------
-  {
-    pattern: "google.calendar.event",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "google.contacts.contact",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "google.drive.file",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "google.tasks.task",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "google.youtube.channel",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "google.youtube.playlist",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "google.youtube.video",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "marfa.captured_email",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "marfa.podcast.episode",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "marfa.podcast.show",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "raindrop.collection",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "raindrop.raindrop",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "readwise.book",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "readwise.document",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "readwise.highlight",
-    because: "Ships in the type set; falls through to registry prose.",
-  },
-  {
-    pattern: "todoist.task",
-    because:
-      "Ships in the type set; falls through to 796 characters of Sync API " +
-      "rationale, the longest of them.",
-  },
 ];
 
 const KNOWN_UNCOVERED_PATTERNS = new Set(KNOWN_UNCOVERED.map((u) => u.pattern));
@@ -509,12 +426,12 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // the case this bound is actually for.
     const wildcards = KNOWN_UNCOVERED.filter((u) => u.pattern.endsWith(".*"));
     const synthetic = KNOWN_UNCOVERED.filter((u) => u.synthetic === true);
-    expect(KNOWN_UNCOVERED).toHaveLength(29);
+    expect(KNOWN_UNCOVERED).toHaveLength(13);
     expect(wildcards.filter((u) => !u.synthetic)).toHaveLength(11);
     expect(synthetic).toHaveLength(2);
     expect(
       KNOWN_UNCOVERED.filter((u) => !u.pattern.endsWith(".*")),
-    ).toHaveLength(16);
+    ).toHaveLength(0);
     // Every synthetic entry is a wildcard, so the three counts partition the
     // list and no entry can be added to one bucket by leaving another.
     expect(synthetic.every((u) => u.pattern.endsWith(".*"))).toBe(true);

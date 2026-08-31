@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
 import { renderConsentScreen, SCOPE_LABELS, humanizeType } from "./consent.js";
@@ -14,7 +14,10 @@ import {
   EDGE_TYPE_REGISTRY,
   GLOBAL_TYPE_WILDCARD,
   grantCoversScope,
+  INTEGRATION_TYPE_IDS,
   scopesToMetadataPermissions,
+  seedPlatformTypes,
+  shippedPlatformTypes,
   subtreeWildcardRoot,
   TYPE_REGISTRY,
 } from "@withmarfa/shared";
@@ -29,6 +32,12 @@ import {
   OPEN_ENDED_SENTENCE,
 } from "./scope-openness.js";
 import { buildAllowedScopes } from "../auth/oauth-provider.js";
+
+afterEach(() => {
+  // `TYPE_REGISTRY` is a module-level binding every suite in this process
+  // shares, and one case below seeds a retired platform row into it.
+  seedPlatformTypes(shippedPlatformTypes());
+});
 
 /**
  * Shape-asserting smoke for `renderConsentScreen`. Covers:
@@ -1689,19 +1698,36 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     }
   });
 
-  it("describes every core and system type without reaching the registry", () => {
+  it("describes every type it ships without reaching the registry", () => {
     // The other half of the claim the map's docstring makes, asked of
     // `TYPE_REGISTRY` rather than read off the map. One sentence covered
     // both axes and was false on the edge one, so this half is pinned rather
     // than trusted.
     //
-    // Integration namespaces are deliberately outside it: `google.*` and its
-    // neighbours fall back to the registry by design, and the fallback has
-    // its own test below.
-    const shipped = [...TYPE_REGISTRY.keys()].filter(
-      (id) => id.startsWith("core.") || id.startsWith("system."),
-    );
+    // **This used to exempt the integration namespaces, and the exemption
+    // was the defect.** It read that they "fall back to the registry by
+    // design" — but nobody designed that, and the sixteen types it excused
+    // were reaching a person as up to 796 characters of schema rationale on
+    // the screen where they decide whether to trust an application. An
+    // exemption is what let them accumulate unseen, so the filter is gone
+    // and this asks the whole registry.
+    //
+    // Which makes it the check that stops the next sixteen: a type added to
+    // the shipped set with no curated sentence fails here, and it cannot be
+    // waved through from `consent-copy-coverage.test.ts`, because that
+    // file's known-uncovered list is not read here.
+    const shipped = [...TYPE_REGISTRY.keys()];
     expect(shipped.length).toBeGreaterThan(20);
+    // The precondition that matters, because the defect was an exemption
+    // rather than an absence. Re-introduce a filter on the line above and
+    // every assertion below still passes on whatever survived it, which is
+    // exactly how sixteen types sat outside this check. Named against
+    // `INTEGRATION_TYPE_IDS` rather than a literal, so a seventeenth is
+    // covered without anybody remembering to add it here.
+    expect(INTEGRATION_TYPE_IDS.size).toBeGreaterThan(0);
+    expect(shipped).toEqual(
+      expect.arrayContaining([...INTEGRATION_TYPE_IDS]),
+    );
     const out = buildScopeDescriptions(
       shipped.map((id) => parse(`${id}:read`)),
     );
@@ -1787,7 +1813,41 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
   });
 
   it("prefers curated copy to the registry's, and falls back to it", () => {
-    const out = describeAll("core.note:read", "google.calendar.event:read");
+    // **The fixture used to be `google.calendar.event`, and the comment
+    // beside it said the fallback serves a type registered at runtime.**
+    // Neither half survived a check. A runtime registration goes to a
+    // per-space overlay that `TYPE_REGISTRY` does not expose, so it cannot
+    // reach this lookup at all; and a custom type is not requestable as a
+    // row of its own anyway, only through its namespace wildcard. The
+    // fallback's entire population was shipped types nobody had curated,
+    // which is what the sixteen integration entries just closed — so a
+    // fixture drawn from the shipped set now proves the opposite of what it
+    // was written to prove.
+    //
+    // The population that remains is a platform row this build no longer
+    // ships. `seedPlatformTypes` refills the registry at boot from the rows
+    // the instance holds, so an instance carrying a retired type resolves
+    // it here, and no curated sentence can ever exist for it. That is what
+    // this seeds.
+    const retired = {
+      schema: {
+        id: "acme.retired_widget",
+        version: 1,
+        fields: {},
+        description: "A widget shape a previous build shipped and this one does not.",
+      },
+      family: "integration" as const,
+    };
+    seedPlatformTypes([...shippedPlatformTypes(), retired]);
+
+    // Preconditions, because every assertion below passes vacuously without
+    // them: the seed has to have taken, and the row has to be uncurated.
+    expect(TYPE_REGISTRY.get(retired.schema.id)?.description).toBe(
+      retired.schema.description,
+    );
+    expect(CONSENT_SCOPE_DESCRIPTIONS[retired.schema.id]).toBeUndefined();
+
+    const out = describeAll("core.note:read", `${retired.schema.id}:read`);
     // The registry's own sentence is written for a developer reading API
     // docs. Both screens show the curated one now; the device screen used to
     // show this.
@@ -1795,13 +1855,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     expect(out["core.note"]).not.toBe(
       TYPE_REGISTRY.get("core.note")?.description,
     );
-    // The fallback is what serves a type registered at runtime, where the
-    // operator wrote the description and nobody curated one here.
-    expect(CONSENT_SCOPE_DESCRIPTIONS["google.calendar.event"]).toBeUndefined();
-    expect(out["google.calendar.event"]).toBe(
-      TYPE_REGISTRY.get("google.calendar.event")?.description,
-    );
-    expect(out["google.calendar.event"]).toMatch(/\S/);
+    expect(out[retired.schema.id]).toBe(retired.schema.description);
   });
 
   it("does not let one kind read another kind's copy off the flat map", () => {
