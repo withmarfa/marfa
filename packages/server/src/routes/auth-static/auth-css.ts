@@ -1180,8 +1180,37 @@ details.disclosure[open] > summary .disclosure__chevron {
   transition: transform 0.18s var(--ease);
   flex: none;
 }
-.grp[open] .gchev {
+.grp[open] .gchev,
+.ksec[open] .gchev {
   transform: rotate(90deg);
+}
+
+/* The standing grant on the re-consent screen, collapsed to its heading.
+   It was a second full stack of tiles below "New", and most of the height
+   between the reader and the buttons — on a screen whose whole job is being
+   read to the end. Deliberately not a .grp: the tiles inside it are, and a
+   tile holding tiles reads as a nesting that means nothing.
+
+   Its controls stay in the DOM while it is shut, which is load-bearing
+   rather than incidental. They are the standing grant, they are ticked, and
+   a closed details element still submits them, so an untouched Continue is
+   the no-op it looks like. Swap this for anything that removes or disables them
+   and the same Continue submits a narrowing, which the decision route reads
+   as a promise that the removed access stops working. */
+.ksec > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  margin: 18px 0 10px;
+}
+.ksec > summary::-webkit-details-marker {
+  display: none;
+}
+.kcount {
+  font-size: 13px;
+  color: var(--fg-muted);
 }
 .gdesc {
   margin-top: 3px;

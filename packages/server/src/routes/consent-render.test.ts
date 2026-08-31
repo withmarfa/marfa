@@ -1,7 +1,13 @@
 import { describe, it, expect, afterEach } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import { parseScope } from "@withmarfa/shared";
-import { renderConsentScreen, SCOPE_LABELS, humanizeType } from "./consent.js";
+import {
+  renderConsentScreen,
+  SCOPE_LABELS,
+  SCOPE_SHORT,
+  scopeShort,
+  humanizeType,
+} from "./consent.js";
 import { OIDC_LABELS, OIDC_SHORT } from "./oidc-labels.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 import {
@@ -341,6 +347,55 @@ describe("renderConsentScreen — re-consent diff", () => {
     expect(html).toMatch(/>New<[\s\S]*?value="core\.note:write"/);
     expect(html).toMatch(/>New<[\s\S]*?value="core\.task:read"/);
     expect(html).toMatch(/>Already allowed<[\s\S]*?value="core\.note:read"/);
+  });
+
+  it("collapses the standing grant to one line, counting it", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read"],
+    });
+    // Collapsed rather than merged into "New". Merging is the other way to
+    // buy the height and it erases new-versus-kept, which is the distinction
+    // the diff exists to draw.
+    expect(html).toContain('<details class="ksec">');
+    expect(html).toContain(">Already allowed<");
+    expect(html).toContain(">1 permission, unchanged<");
+    // Counted on distinct literals, and singular where it is one. A count
+    // that says "1 permissions" is the kind of thing a person notices on the
+    // screen where they are deciding whether to trust the software.
+    const many = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read", "core.note:write"],
+    });
+    expect(many).toContain(">2 permissions, unchanged<");
+  });
+
+  it("keeps the standing grant's rows ticked inside the closed section", () => {
+    // **The property the collapse must not break.** A closed `details` still
+    // submits its controls, so an untouched Continue carries the standing
+    // grant exactly as it did when the section was a full stack of tiles.
+    // Remove or disable these rows to save the height and the same Continue
+    // becomes a narrowing, which the decision route treats as a promise that
+    // the removed access stops working and acts on by revoking the client's
+    // live tokens — the user having been shown nothing.
+    //
+    // Asserted on the markup rather than through a browser because that is
+    // where the mistake would be made: nothing here renders, so a `hidden`
+    // attribute or a dropped row would pass every other case in this file.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read"],
+    });
+    const section = html.slice(html.indexOf('<details class="ksec">'));
+    const row =
+      /<input type="checkbox" name="scopes" value="core\.note:read"([^>]*)>/.exec(
+        section,
+      );
+    expect(row, "the kept row is inside the collapsed section").not.toBeNull();
+    expect(row?.[1] ?? "").toContain("checked");
+    expect(row?.[1] ?? "").not.toContain("disabled");
+    // And the section itself is shut: an `open` attribute would buy no height.
+    expect(section.startsWith('<details class="ksec">')).toBe(true);
   });
 
   it("lists no-longer-needed scopes by label, with no toggle", () => {
@@ -926,14 +981,52 @@ describe("a grant that reaches things not yet created says so", () => {
     // and would have rendered as "Bookmarks, Files & folders and
     // Organizations", which is the exact sentence this case exists to stop.
     // Lowercased, so a capitalized "And" is caught too.
+    //
+    // **The rule is now conditional, and the condition is the whole of what
+    // `SCOPE_SHORT` bought.** A label reaches the summary only where no short
+    // form answers for its pattern, so a pattern WITH one is free to carry a
+    // conjunction on its row: `system.activity` reads "Activity and
+    // notifications" there, where the notifications half is the one a reader
+    // cares about, and summarizes as "activity". That is the same split
+    // `CAPABILITY_SHORT` has always had, arriving on the third and last
+    // family in the chain.
     const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
     for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
+      if (scopeShort(pattern) !== undefined) continue;
       for (const separator of SEPARATORS) {
         expect(
           label.toLowerCase(),
-          `${pattern} carries ${JSON.stringify(separator)}, which reads as an item boundary once the summary joins it into a list`,
+          `${pattern} carries ${JSON.stringify(separator)}, which reads as an item boundary once the summary joins it into a list. Give it a SCOPE_SHORT entry if the label genuinely needs it`,
         ).not.toContain(separator);
       }
+    }
+  });
+
+  it("holds every short form to what a list item may be", () => {
+    // The other half of the exemption above, and it has to exist or the
+    // exemption is a hole: a pattern gets to skip the separator check by
+    // having a short form, so the short form is what actually reaches the
+    // joined sentence and is what the rule was always about.
+    //
+    // Lower case too, which the labels are not. A label sits alone above a
+    // switch and is capitalized; joined mid-sentence that capital lands in
+    // the middle of a clause, which is the defect `OIDC_SHORT` was built for
+    // and read as "Your name and Your email address".
+    const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
+    expect(Object.keys(SCOPE_SHORT).length).toBeGreaterThan(0);
+    for (const [pattern, short] of Object.entries(SCOPE_SHORT)) {
+      for (const separator of SEPARATORS) {
+        expect(short, `${pattern}'s short form`).not.toContain(separator);
+      }
+      expect(short[0], `${pattern}'s short form starts lowercase`).toBe(
+        short[0]?.toLowerCase(),
+      );
+      // An entry that names no scope is a name nothing resolves, and the
+      // label it was exempting is then reaching the summary unchecked.
+      expect(
+        SCOPE_LABELS[pattern],
+        `${pattern} has a short form and no toggle label`,
+      ).toBeDefined();
     }
   });
 

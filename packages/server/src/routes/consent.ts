@@ -132,24 +132,46 @@ interface ConsentParams {
 
 /** A rendered soft-tile group: a bundle's scopes, or a fallback bucket for
  *  scopes outside every bundle. */
-interface ScopeGroup {
-  label: string;
-  desc: string;
-  scopes: ParsedScope[];
+/**
+ * One toggle row: a scope, and whether it starts ticked.
+ *
+ * **`defaultOn` belongs to the row rather than to the group, and moving it
+ * here is what unblocks the density work.** It used to sit on `ScopeGroup`,
+ * read off the owning bundle's `default_on`, with the re-consent diff
+ * overriding the whole group to `true` for the standing grant. That made two
+ * stacks of tiles impossible to combine: one group would hold an added
+ * off-by-default scope beside a kept one, and a single flag has no answer
+ * that is not destructive in one direction. On, and a scope nobody agreed to
+ * rides in ticked. Off, and an untouched Continue submits a narrowing, which
+ * the decision route reads as a promise that the removed access stops
+ * working and acts on by revoking the client's live tokens.
+ *
+ * Per row there is no such conflict: a kept scope is `true` because it is
+ * being shown rather than offered, and an added one keeps its bundle's
+ * answer, in the same group.
+ */
+interface ScopeRow {
+  scope: ParsedScope;
   /**
-   * Whether the group's toggles start ticked, from the owning bundle's
-   * `default_on`.
+   * Whether this toggle starts ticked.
    *
+   * From the owning bundle's `default_on` where the scope is being offered.
    * An off-by-default bundle is the shape a bundle needs when it carries
    * something a person should have to reach for rather than merely leave
    * alone, and it is also what lets an already-registered client be offered
    * something new without every client having to re-register to get it.
    *
-   * Read only where a scope is being offered. The re-consent diff sets it
-   * `true` for scopes the user has already granted, since the question the
-   * flag answers does not arise a second time.
+   * Forced `true` for a scope the user has already granted, because the
+   * question the flag answers does not arise a second time: that scope is
+   * being shown, not offered.
    */
   defaultOn: boolean;
+}
+
+interface ScopeGroup {
+  label: string;
+  desc: string;
+  rows: ScopeRow[];
 }
 
 /**
@@ -163,6 +185,25 @@ interface ScopeGroup {
 function buildGroups(
   scopes: ParsedScope[],
   bundles: PermissionBundle[],
+  /**
+   * Force every row ticked, for the standing grant on the re-consent diff.
+   *
+   * `default_on` answers "should this start ticked the first time it is
+   * offered", and a scope the user granted on a previous visit is not being
+   * offered. Asking the flag about it is asking the wrong question, and the
+   * answer it gives is destructive: the "Already allowed" section is
+   * collapsed, so an off-by-default scope rendered unticked there is
+   * invisible, an untouched Continue submits without it, and the decision
+   * route reads a narrowing rather than a no-op. A narrowing is treated as a
+   * promise that the removed access stops working, so it revokes the
+   * client's live tokens. The user is shown nothing and a working
+   * integration dies.
+   *
+   * A parameter here rather than a post-hoc rewrite of the built groups,
+   * which is what it was: that rewrite could only speak at group
+   * granularity, and this one is per row.
+   */
+  forceDefaultOn = false,
 ): ScopeGroup[] {
   // A scope may appear in more than one bundle, and the two readers of that
   // overlap have to resolve it the same way or the same configuration means
@@ -203,13 +244,14 @@ function buildGroups(
     }
   }
   const byBundle = new Map<string, ScopeGroup>();
+  const bundleDefaultOn = new Map<string, boolean>();
   for (const bundle of bundles) {
     byBundle.set(bundle.id, {
       label: bundle.label,
       desc: bundle.description,
-      scopes: [],
-      defaultOn: bundle.default_on,
+      rows: [],
     });
+    bundleDefaultOn.set(bundle.id, bundle.default_on);
   }
   // The fallback buckets stay ticked. They hold what an app named explicitly
   // and no bundle claims, so there is no declaration to honor: `default_on`
@@ -218,14 +260,12 @@ function buildGroups(
   const otherRead: ScopeGroup = {
     label: "Other read access",
     desc: "Additional things this app asked to read.",
-    scopes: [],
-    defaultOn: true,
+    rows: [],
   };
   const otherWrite: ScopeGroup = {
     label: "Other write access",
     desc: "Additional things this app asked to change.",
-    scopes: [],
-    defaultOn: true,
+    rows: [],
   };
   // A capability needs a bucket of its own, and the reason is the heading
   // rather than the tidiness. The read/write split is decided on
@@ -246,25 +286,31 @@ function buildGroups(
   const otherCapability: ScopeGroup = {
     label: "Administrative access",
     desc: "Parts of your space this app asked to manage.",
-    scopes: [],
-    defaultOn: false,
+    rows: [],
   };
   for (const scope of scopes) {
+    // `forceDefaultOn` is the standing grant's answer and outranks every
+    // rule below, because a scope already granted is being shown rather than
+    // offered. Applied per row, so one group may hold a forced row beside an
+    // ordinary one — which is the whole point of the move.
     const bundle = literalToBundle.get(scopeLiteralFor(scope));
     if (bundle) {
-      byBundle.get(bundle.id)?.scopes.push(scope);
+      byBundle.get(bundle.id)?.rows.push({
+        scope,
+        defaultOn: forceDefaultOn || (bundleDefaultOn.get(bundle.id) ?? true),
+      });
     } else if (scope.kind === "capability") {
-      otherCapability.scopes.push(scope);
+      otherCapability.rows.push({ scope, defaultOn: forceDefaultOn });
     } else if (scope.kind !== "oidc" && scope.operation === "write") {
-      otherWrite.scopes.push(scope);
+      otherWrite.rows.push({ scope, defaultOn: true });
     } else {
-      otherRead.scopes.push(scope);
+      otherRead.rows.push({ scope, defaultOn: true });
     }
   }
   // Administrative access last: it is the widest thing on the screen, and a
   // reader scanning downward should not meet it between two content groups.
   return [...byBundle.values(), otherRead, otherWrite, otherCapability]
-    .filter((g) => g.scopes.length > 0)
+    .filter((g) => g.rows.length > 0)
     .map((g) => ({ ...g, desc: summarize(g) }));
 }
 
@@ -310,7 +356,8 @@ function summarize(group: ScopeGroup): string {
   // below drops and the ones no chain finds a word for: a group reaching
   // things that do not exist yet does so whether or not this sentence ends
   // up naming the scope that reaches them.
-  const openEnded = group.scopes.some((scope) => isOpenEnded(scope));
+  const groupScopes = group.rows.map((r) => r.scope);
+  const openEnded = groupScopes.some((scope) => isOpenEnded(scope));
   // **A pattern the group holds at both operations is stated once, in the
   // write form.** A write grant confers read, so "Notes (read and write)" is
   // the whole truth where "Notes (read only), Notes (read and write)" is one
@@ -365,11 +412,11 @@ function summarize(group: ScopeGroup): string {
   const foldKey = (scope: ParsedScope): string =>
     `${scope.kind}:${scope.typePattern}`;
   const writable = new Set(
-    group.scopes
+    groupScopes
       .filter((scope) => scopeOperation(scope) === "write")
       .map(foldKey),
   );
-  const stated = group.scopes.filter(
+  const stated = groupScopes.filter(
     (scope) =>
       !(scopeOperation(scope) === "read" && writable.has(foldKey(scope))),
   );
@@ -409,6 +456,7 @@ function summarize(group: ScopeGroup): string {
     const label =
       capabilityShort(scope.typePattern) ??
       oidcShort(scope.oidcScope ?? scope.typePattern) ??
+      scopeShort(scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
     if (!label) continue;
@@ -431,8 +479,24 @@ function summarize(group: ScopeGroup): string {
     const last = listed[listed.length - 1] ?? "";
     list = `${listed.slice(0, -1).join(", ")} and ${last}`;
   }
-  if (remainder > 0) list += `, and ${String(remainder)} more`;
-  else if (openEnded) list += ", and anything else of that kind";
+  // **The count and the clause need separate room, and used to share one
+  // slot.** Past four names the sentence said how many were left INSTEAD of
+  // saying the grant reaches things nobody has created yet — so it stopped
+  // stating the open-endedness exactly as the grant got wide enough to need
+  // truncating, which is the point at which that fact matters most. Each row
+  // still carries its own futurity line, so nothing was lost outright; but
+  // the groups are collapsed by default, so this sentence is what most
+  // people act on.
+  //
+  // "plus" rather than a second "and", which is the whole reason the two
+  // branches are not one string: "and 3 more, and anything else of that
+  // kind" reads as a list item rather than as a second clause.
+  if (remainder > 0) {
+    list += `, and ${String(remainder)} more`;
+    if (openEnded) list += ", plus anything else of that kind";
+  } else if (openEnded) {
+    list += ", and anything else of that kind";
+  }
 
   // The labels are written for a toggle row, where each one starts a line of
   // its own and a capital is right. Joined into a sentence they carry that
@@ -567,7 +631,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   "system.integration": "Available integrations",
   "system.device": "Devices",
   "system.webhook": "Webhooks",
-  "system.activity": "Activity",
+  "system.activity": "Activity and notifications",
   profile: "Profile",
   "profile.name": "Name",
   "profile.email": "Email address",
@@ -588,6 +652,45 @@ export const SCOPE_LABELS: Record<string, string> = {
   // in `summarize` as two list items.
   content: "Your content",
 };
+
+/**
+ * Inline-list forms for type-axis scopes, for a sentence naming several at
+ * once.
+ *
+ * Lower case and free of anything that reads as an item boundary, because
+ * {@link summarize} joins these into a list. That is the same contract
+ * `CAPABILITY_SHORT` and `OIDC_SHORT` carry, and this is the third and last
+ * family in that chain to get one — type scopes were the one branch of
+ * `summarize`'s resolution with no short form, so a label was doing both
+ * jobs and could only ever be good at the harder one.
+ *
+ * **Sparse on purpose. An entry here is for a pattern whose toggle label
+ * needs to say more than a list item may.** Everything else resolves through
+ * `SCOPE_LABELS` exactly as before, so this is not a second name for every
+ * scope — which is what the duplicate-copy guard exists to stop.
+ *
+ * The separator guard over `SCOPE_LABELS` is what makes the split
+ * load-bearing rather than decorative: a label carrying a conjunction is
+ * refused UNLESS the pattern has an entry here to be summarized through.
+ */
+export const SCOPE_SHORT: Record<string, string> = {
+  // The label reads "Activity and notifications", and the notifications half
+  // is the one a reader cares about — it is the difference between a log
+  // nobody looks at and something that reaches them. It could not be said
+  // before this map existed: the conjunction that says it is exactly what a
+  // joined list breaks on, so "Notes, Activity and notifications and Files"
+  // was the sentence a label carrying both halves produced.
+  //
+  // The short form names the thing rather than both halves, which is what a
+  // list item can be. The row is where the reader gets the rest.
+  "system.activity": "activity",
+};
+
+/** The inline-list form for a type pattern, or undefined where its toggle
+ *  label is already fit to be joined into a list. */
+export function scopeShort(typePattern: string): string | undefined {
+  return SCOPE_SHORT[typePattern];
+}
 
 const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
 
@@ -806,13 +909,40 @@ export function renderConsentScreen(params: ConsentParams): string {
   /** One collapsed soft-tile group: a master toggle in the summary, per-type
    *  toggles in the body. */
   const group = (g: ScopeGroup): string => {
-    if (g.scopes.length === 0) return "";
-    const rows = g.scopes.map((s) => subRow(s, g.defaultOn)).join("");
+    if (g.rows.length === 0) return "";
+    // **Keyed on the literal, never on the rendered label.** T-997's fix
+    // makes a read-and-write pair render two rows that differ only in their
+    // operation, and both resolve the same name — so a `seen` set keyed on
+    // what the row says would collapse the pair and take the write half off
+    // the screen, which is the defect this file already carries a docstring
+    // about avoiding. `scopeLiteralFor` is what the checkbox submits, so two
+    // rows share a key exactly when they are the same grant.
+    //
+    // The parse deduplicates too, and this is not that check repeated.
+    // `renderConsentScreen` is exported and its `scopes` parameter is
+    // whatever a caller hands it; the device screen has carried the same set
+    // one file over since before either surface had a parse to rely on.
+    const seen = new Set<string>();
+    const rows = g.rows
+      .filter((r) => {
+        const literal = scopeLiteralFor(r.scope);
+        if (seen.has(literal)) return false;
+        seen.add(literal);
+        return true;
+      })
+      .map((r) => subRow(r.scope, r.defaultOn))
+      .join("");
     // The master carries no `name`, so it submits nothing and is purely the
     // control that drives its members. It still starts in the group's state,
     // or an off-by-default group would open showing a ticked master over
     // unticked rows.
-    const masterChecked = g.defaultOn ? " checked" : "";
+    // **Every row, not the group's own flag, which no longer exists.** The
+    // master drives its members and submits nothing itself, so the only
+    // honest starting state is the one its members already have: ticked when
+    // they all are. A group holding one off-by-default row among ticked ones
+    // opens with an unticked master over mostly-ticked rows, which reads
+    // correctly — the master is not yet true of everything under it.
+    const masterChecked = g.rows.every((r) => r.defaultOn) ? " checked" : "";
     return `<details class="grp">
       <summary>
         <span class="gmain">
@@ -832,24 +962,12 @@ export function renderConsentScreen(params: ConsentParams): string {
   const groupedTiles = (
     scopes: ParsedScope[],
     /**
-     * Whether these scopes are already granted, which overrides the bundle's
-     * `default_on`.
-     *
-     * `default_on` answers "should this start ticked the first time it is
-     * offered". A scope the user granted on a previous visit is not being
-     * offered, it is being shown, so asking the flag about it is asking the
-     * wrong question and the answer it gives is destructive. The "Already
-     * allowed" tile is collapsed and sits below "New", so an off-by-default
-     * scope rendered unticked there is invisible; an untouched Continue then
-     * submits without it, and the decision route reads a narrowing rather
-     * than a no-op. A narrowing is treated as a promise that the removed
-     * access stops working, so it revokes the client's live tokens. The user
-     * is shown nothing and a working integration dies.
+     * Whether these scopes are already granted. Threaded into `buildGroups`
+     * so it lands on each row; the reasoning is at that parameter.
      */
     alreadyGranted = false,
   ): string => {
-    const tiles = buildGroups(scopes, bundles)
-      .map((g) => (alreadyGranted ? { ...g, defaultOn: true } : g))
+    const tiles = buildGroups(scopes, bundles, alreadyGranted)
       .map(group)
       .join("");
     return `<div class="t-soft">${tiles}</div>`;
@@ -874,38 +992,37 @@ export function renderConsentScreen(params: ConsentParams): string {
         ? `<p class="lsec" style="margin-top:8px">New</p>${groupedTiles(addedVisible)}`
         : "";
     // The standing grant keeps the same partition the new request uses, and
-    // it costs something real: "Other read access" and "Other write access"
-    // render in both sections, covering different scopes each time, and the
-    // second stack is most of the height between the reader and the buttons.
+    // it renders collapsed rather than as a second full stack of tiles. That
+    // stack was most of the height between the reader and the buttons, on a
+    // screen whose entire job is being read to the end.
     //
-    // **One of the two things that blocked collapsing it is now gone.** The
-    // read and write halves of a grant were told apart by their bundle
-    // headings and by nothing else, because `labelFor` resolved a row from
-    // `typePattern` alone and `core.note:read` and `core.note:write` were
-    // both the word "Notes": merged into one body they became two identical
-    // rows, which `summarize` then de-duplicated into one. `withOperation`
-    // now carries the operation on the row itself and into the summary's
-    // de-duplication key, so a merged section keeps the distinction and
-    // `consent-operation.test.ts` is what holds it there.
+    // **Collapsed, not merged into "New".** Merging is the other way to buy
+    // the height and it erases new-versus-kept, which is the distinction
+    // this whole diff exists to draw — a person returning to a consent
+    // screen is being asked about what changed, and a screen that cannot say
+    // which rows are new has answered a different question.
     //
-    // **The other one is `groupedTiles`'s `alreadyGranted` parameter, and it
-    // is still here.** `defaultOn` is a property of a group rather than of a
-    // row, and that parameter forces it true for everything built from kept
-    // scopes. Merge the two stacks and one group can hold an added
-    // off-by-default scope beside a kept one,
-    // where either setting is destructive in one direction: on, and a scope
-    // the person never agreed to rides in ticked; off, and an untouched
-    // Continue submits a narrowing, which the decision route treats as a
-    // promise that the removed access stops working and revokes the client's
-    // live tokens. That parameter's own docstring spells the second one out.
-    // Collapsing also erases new-versus-kept, which is the distinction this
-    // whole diff exists to draw.
+    // Both things that made this unsafe are now gone. The read and write
+    // halves of a grant were told apart by their bundle headings and by
+    // nothing else, until `withOperation` put the operation on the row
+    // itself; and `defaultOn` was a property of a group, so the standing
+    // grant's forced-on could only be stated for a whole group at a time.
+    // It is per row now, which is what lets a kept scope be shown ticked
+    // beside an offered one that is not.
     //
-    // So this stays whole until `defaultOn` moves from the group to the row.
-    // Not a density decision yet.
+    // **The rows stay in the DOM while it is shut.** A closed `<details>`
+    // still submits its controls, so an untouched Continue carries the
+    // standing grant exactly as it did when the section was open. That is
+    // the property to preserve: anything that removes or disables these
+    // rows turns the same Continue into a narrowing, which the decision
+    // route treats as a promise that the removed access stops working and
+    // acts on by revoking the client's live tokens.
+    const keptCount = new Set(keptVisible.map(scopeLiteralFor)).size;
     const keptSection =
       keptVisible.length > 0
-        ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible, true)}`
+        ? `<details class="ksec"><summary><span class="glabel">Already allowed</span><span class="kcount">${escapeHtml(
+            `${String(keptCount)} permission${keptCount === 1 ? "" : "s"}, unchanged`,
+          )}</span>${CHEVRON}</summary>${groupedTiles(keptVisible, true)}</details>`
         : "";
     // Removed scopes are being dropped, not re-granted, so their group names
     // render as a quiet line with no toggles.

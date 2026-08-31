@@ -418,27 +418,28 @@ describe("an open-ended group keeps saying it is open-ended", () => {
   });
 
   /**
-   * **Where the clause actually dies, pinned as the threshold rather than
-   * as one case.** The collapse raised this from two own roots to four; it
-   * did not decouple the count from the clause, so past four names an
-   * open-ended group still stops saying it is open-ended. Both halves are
-   * asserted together so that a change to the truncation cannot move the
-   * threshold without one of them reddening, and so that whoever comes to
-   * decouple them has the current behaviour written down rather than
-   * inferred from a group that was never open-ended.
+   * **The count and the clause no longer share a slot, pinned at the
+   * threshold rather than as one case.** Past four names the sentence used
+   * to say how many were left INSTEAD of saying the grant reaches things
+   * nobody has created yet — so it stopped stating the open-endedness
+   * exactly as the grant got wide enough to need truncating.
+   *
+   * Both sides are asserted together so a change to the truncation cannot
+   * move the threshold without one of them reddening.
    */
-  it("still loses the clause once an open-ended group is truncated", () => {
+  it("keeps the clause once an open-ended group is truncated", () => {
     // Four names, all of them under one open-ended grant: the clause is the
     // last thing the sentence says.
     expect(customSummary(["acme", "frob", "quux"])).toBe(
       "Your custom types, Acme (all), Frob (all) and Quux (all), and " +
         "anything else of that kind. Read and write.",
     );
-    // One more root, and the count takes the slot the clause was in. The
-    // group is no less open-ended and the sentence no longer says so.
+    // One more root. The count arrives and the clause survives beside it —
+    // "plus" rather than a second "and", which would read as a list item
+    // rather than as a second clause.
     expect(customSummary(["acme", "frob", "quux", "zed"])).toBe(
       "Your custom types, Acme (all), Frob (all) and Quux (all), and 1 " +
-        "more. Read and write.",
+        "more, plus anything else of that kind. Read and write.",
     );
   });
 
@@ -464,5 +465,104 @@ describe("an open-ended group keeps saying it is open-ended", () => {
     ];
     const [summary] = summaries(authorize(scopes.map(parse), { bundles }));
     expect(summary).toContain(", and 1 more.");
+  });
+});
+
+describe("one literal named twice is one row", () => {
+  /**
+   * The measurement from the ticket, reproduced here as the fixture:
+   *
+   *   input:  core.note:read, core.note:read, core.task:read
+   *   before: ["Notes (read only)", "Notes (read only)", "Tasks (read only)"]
+   *
+   * Two rows carried the same checkbox `value`, and the decision handler
+   * takes the union of what was submitted — so unticking the row in front of
+   * you reliably did nothing and granted the scope anyway. Deterministic,
+   * and worse for a reader than a coin toss, because the screen showed a
+   * choice it did not have.
+   */
+  const DUPLICATED = ["core.note:read", "core.note:read", "core.task:read"];
+
+  it("renders one row per literal, not one per mention", () => {
+    const rows = rowLabels(authorize(DUPLICATED.map(parse)));
+    expect(rows).toEqual(["Notes (read only)", "Tasks (read only)"]);
+  });
+
+  it("keeps a read-and-write pair as two rows", () => {
+    // The constraint the fix has to respect, and the reason the `seen` set
+    // is keyed on the literal rather than on the rendered label. Both of
+    // these resolve the name "Notes", so a label-keyed set would collapse
+    // them and take the write half off the screen — which is the defect
+    // T-997 closed, arriving from the other direction.
+    const rows = rowLabels(
+      authorize(["core.note:read", "core.note:write"].map(parse)),
+    );
+    expect(rows).toEqual(["Notes (read only)", "Notes (read and write)"]);
+  });
+
+  it("agrees with the summary above it about how many things are asked for", () => {
+    // `summarize` always deduplicated, reading the same array the rows read.
+    // So the sentence said two things while the list below showed three, and
+    // neither was marked as the authority. Asserted as agreement rather than
+    // as two separate expected values, because the defect was the two
+    // disagreeing.
+    const html = authorize(DUPLICATED.map(parse));
+    const [summary] = summaries(html);
+    expect(summary).toBe("Notes and Tasks. Read only.");
+    expect(rowLabels(html)).toHaveLength(2);
+  });
+
+  it("still matches the device screen, which never had the defect", () => {
+    // The surface that got it right all along, kept in the same case so a
+    // fix that made the authorize screen consistent with itself but not with
+    // its sibling still fails.
+    expect(deviceLines(device(DUPLICATED.map(parse)))).toEqual([
+      "Notes. Read only.",
+      "Tasks and to-dos. Read only.",
+    ]);
+  });
+});
+
+describe("a fallback bucket says what is in it", () => {
+  /**
+   * **The residue T-808 asks about, settled rather than removed.** "Other
+   * read access" and "Other write access" can each render twice on the
+   * incremental screen, because `buildGroups` runs once per section and a
+   * scope outside every bundle lands in a fallback bucket either way. The
+   * original complaint was that one label meant two things on one screen.
+   *
+   * Two things answer it. The heading is no longer all a reader gets: every
+   * group's description is overwritten with `summarize(g)`, so each instance
+   * names the scopes actually in it and the two are not identical text under
+   * one label. And the standing grant is collapsed now, so by default only
+   * one of them is on the screen at all.
+   *
+   * The static `desc` strings survive as the floor for a bucket where
+   * nothing resolves a name, which is the only case that can still print
+   * them.
+   */
+  const CUSTOM = ["user.recipes:read", "user.recipes:write"];
+  const NARROW: PermissionBundle[] = [
+    {
+      id: "notes",
+      label: "Your notes",
+      description: "Notes only.",
+      scopes: ["core.note:read"],
+      default_on: true,
+    },
+  ];
+
+  it("names its members rather than printing its static description", () => {
+    const scopes = ["core.note:read", ...CUSTOM].map(parse);
+    const html = authorize(scopes, { bundles: NARROW });
+    const said = summaries(html);
+    // The precondition: the fallback buckets have to have been reached, or
+    // this passes on a screen that never built one.
+    expect(html).toContain(">Other read access<");
+    expect(html).toContain(">Other write access<");
+    // What a reader gets is the generated sentence, not the placeholder.
+    expect(said).not.toContain("Additional things this app asked to read.");
+    expect(said).not.toContain("Additional things this app asked to change.");
+    expect(said.join(" ")).toContain("Recipes");
   });
 });

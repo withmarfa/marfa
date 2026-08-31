@@ -68,7 +68,7 @@ exports[`every gallery variant renders > renders 'auth/consent/all-scope-kinds' 
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">Other read access</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
-          <span class="gdesc">Authored-by, References, Everything and Your content, and 2 more. Read only.</span>
+          <span class="gdesc">Authored-by, References, Everything and Your content, and 2 more, plus anything else of that kind. Read only.</span>
         </span>
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Other read access"><span class="tk" aria-hidden="true"></span></label>
       </summary>
@@ -232,7 +232,7 @@ exports[`every gallery variant renders > renders 'auth/consent/re-consent' 1`] =
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Your profile"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub"><div class="subrow"><span>Your name and picture</span><label class="sw"><input type="checkbox" name="scopes" value="profile" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Your email address</span><label class="sw"><input type="checkbox" name="scopes" value="email" checked><span class="tk" aria-hidden="true"></span></label></div></div>
-    </details></div><p class="lsec" style="margin-top:24px">Already allowed</p><div class="t-soft"><details class="grp">
+    </details></div><details class="ksec"><summary><span class="glabel">Already allowed</span><span class="kcount">2 permissions, unchanged</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></summary><div class="t-soft"><details class="grp">
       <summary>
         <span class="gmain">
           <span class="gtop"><span class="glabel">Read your content</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
@@ -241,7 +241,7 @@ exports[`every gallery variant renders > renders 'auth/consent/re-consent' 1`] =
         <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" checked aria-label="Read your content"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub"><div class="subrow"><span>Notes (read only)</span><label class="sw"><input type="checkbox" name="scopes" value="core.note:read" checked><span class="tk" aria-hidden="true"></span></label></div><div class="subrow"><span>Tasks (read only)</span><label class="sw"><input type="checkbox" name="scopes" value="core.task:read" checked><span class="tk" aria-hidden="true"></span></label></div></div>
-    </details></div><p class="lsec" style="margin-top:24px">No longer needed</p><p class="rmeta" style="padding-top:2px">Calendar (read only)</p><input type="checkbox" name="scopes" value="openid" checked hidden>
+    </details></div></details><p class="lsec" style="margin-top:24px">No longer needed</p><p class="rmeta" style="padding-top:2px">Calendar (read only)</p><input type="checkbox" name="scopes" value="openid" checked hidden>
       <div class="actions">
         <button type="submit" name="accept" value="true" class="btn btn--primary" data-loading-label="Continue...">Continue</button>
         <button type="submit" name="accept" value="false" class="btn btn--ghost">Deny</button>
