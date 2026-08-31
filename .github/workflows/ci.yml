@@ -390,6 +390,58 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     timeout-minutes: 60
     runs-on: ${{ github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Both suite jobs below share one concurrency group, so only one of them
+    # runs at a time across every ref in this repository.
+    #
+    # The resource is the machine, not the database. Each of these jobs runs
+    # vitest's `forks` pool at its default `cpus - 1`, which is thirteen child
+    # processes on the fourteen-core box that hosts the pool — one job alone
+    # is already the whole machine. The pool has four runners, so before this
+    # nothing stopped four of these starting at once: fifty-two forked test
+    # processes, and up to four Postgres clusters and PgBouncers beside them,
+    # because `scripts/test-pg.sh` boots a container per run rather than
+    # sharing one.
+    #
+    # What that produced was not slowness, it was wrong answers. On 31 August
+    # two of these overlapped for four minutes and the second reported twenty
+    # failures across ten files, every one of them a timeout, none of them in
+    # code the branch touched. It failed in *more* files on its second attempt
+    # than its first, which a defect does not do. The same suite passed
+    # locally on the same commit. Two sessions hit it independently within an
+    # hour and both first read it as a defect in their own branch.
+    #
+    # Raising the budgets is the tempting answer and is the wrong one: these
+    # are already 60s and 120s, chosen rather than inherited, and raising them
+    # makes every real failure slower to arrive in exchange for hiding this
+    # one. Adding runners is worse — it multiplies the callers of something
+    # the machine serializes anyway.
+    #
+    # `queue: max` rather than the default. The default keeps at most one
+    # pending entry per group and CANCELS the previous one when a new job
+    # arrives, which would trade a false red for a silently cancelled check —
+    # strictly worse, because a cancelled required check blocks a merge with
+    # nothing to read. `max` queues up to a hundred, FIFO, and cannot be
+    # combined with `cancel-in-progress: true`.
+    #
+    # The ref-scoped group on the workflow above is untouched and still
+    # cancels a superseded run on the same branch, which is what keeps this
+    # queue bounded by the number of live branches rather than by the number
+    # of pushes.
+    #
+    # Two things this deliberately does not do. It does not serialize against
+    # other repositories on the same pool: a concurrency group is scoped to
+    # one repository, so a name shared with another repository's workflow is
+    # two independent groups. That needs a single-slot runner label, which is
+    # pool configuration rather than anything expressible here. And it does
+    # not name the runner: these two jobs are on the pool by a standing
+    # decision, and writing the `runs-on` chain out a third time to make the
+    # group conditional would add the drift this file already polices in
+    # `ci/cache-rule.test.ts`. If they ever move to a hosted runner the group
+    # costs wall clock and never correctness, and pending jobs say so.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -463,6 +515,14 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     timeout-minutes: 60
     runs-on: ${{ github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Shares `ci-sqlite`'s concurrency group, and the reasoning is written out
+    # there. In short: one job is already thirteen forked processes on a
+    # fourteen-core machine, so two of these at once manufactures timeouts in
+    # files the branch never touched.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
