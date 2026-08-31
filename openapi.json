@@ -10329,10 +10329,51 @@
                         "fields",
                         "version"
                       ]
+                    },
+                    "broken_mappings": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "connection_id": {
+                            "type": "string"
+                          },
+                          "integration_ref": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "issues": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "message"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "connection_id",
+                          "integration_ref",
+                          "issues"
+                        ]
+                      },
+                      "description": "Stored connection mappings this change left invalid. Each is also reported as an `action_required` system.activity row on its connection. An empty array means the check ran and found none; `null` means the check could not run, which is not the same answer."
                     }
                   },
                   "required": [
-                    "type"
+                    "type",
+                    "broken_mappings"
                   ]
                 }
               }
@@ -10469,10 +10510,51 @@
                       "enum": [
                         true
                       ]
+                    },
+                    "broken_mappings": {
+                      "type": "array",
+                      "nullable": true,
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "connection_id": {
+                            "type": "string"
+                          },
+                          "integration_ref": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "issues": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "field": {
+                                  "type": "string"
+                                },
+                                "message": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "field",
+                                "message"
+                              ]
+                            }
+                          }
+                        },
+                        "required": [
+                          "connection_id",
+                          "integration_ref",
+                          "issues"
+                        ]
+                      },
+                      "description": "Stored connection mappings this change left invalid. Each is also reported as an `action_required` system.activity row on its connection. An empty array means the check ran and found none; `null` means the check could not run, which is not the same answer."
                     }
                   },
                   "required": [
-                    "ok"
+                    "ok",
+                    "broken_mappings"
                   ]
                 }
               }

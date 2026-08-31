@@ -19,6 +19,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import { requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { closeMappingBreaks } from "../connections/mapping-health.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -187,12 +188,16 @@ export function connectionMappingRoutes(storage: Storage) {
       { properties: { ...item.properties, mapping: validated.mapping } },
       apiKey.space_id,
     );
+    // A mapping that validates answers whatever break was reported against
+    // it, so the row leaves the Repairs inbox rather than sitting in it as
+    // a permanent complaint about a document that is now correct.
+    const closed = await closeMappingBreaks(storage, id, apiKey.space_id);
     void storage.audit.log({
       action: "connection.mapping_set",
       resource_type: "system.connection",
       resource_id: id,
       client_ip: c.var.clientIp,
-      details: { rules: validated.mapping.rules.length },
+      details: { rules: validated.mapping.rules.length, breaks_closed: closed },
     });
     return c.json({ connection_id: id, mapping: validated.mapping }, 200);
   });
@@ -209,12 +214,15 @@ export function connectionMappingRoutes(storage: Storage) {
       { properties: { mapping: null }, null_clears: true },
       apiKey.space_id,
     );
+    // Clearing the mapping answers the break as surely as repairing it:
+    // there is no longer a document naming a type that does not resolve.
+    const closed = await closeMappingBreaks(storage, id, apiKey.space_id);
     void storage.audit.log({
       action: "connection.mapping_cleared",
       resource_type: "system.connection",
       resource_id: id,
       client_ip: c.var.clientIp,
-      details: {},
+      details: { breaks_closed: closed },
     });
     return c.json({ connection_id: id, mapping: null }, 200);
   });
