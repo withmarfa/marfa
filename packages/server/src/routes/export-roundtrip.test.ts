@@ -19,7 +19,11 @@ import { createGunzip, createGzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { describe, expect, it, afterAll } from "vitest";
 import * as tar from "tar-stream";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  closeTestContexts,
+  createTestContext,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
@@ -84,9 +88,7 @@ async function newContext(): Promise<TestContext> {
 }
 
 afterAll(async () => {
-  for (const ctx of contexts) {
-    await ctx.cleanup();
-  }
+  await closeTestContexts(contexts);
 });
 
 describe("export → restore round trip", () => {
