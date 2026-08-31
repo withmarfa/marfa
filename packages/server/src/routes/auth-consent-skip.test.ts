@@ -1542,10 +1542,17 @@ describe("a scope named twice is stored once on the skip path", () => {
     // parsed literals. That is the one surface on this path where a repeated
     // literal persists, and it is the operator's record of what was
     // re-authorized without anybody being asked.
-    const reused = await ctx.storage.audit.list({
-      action: "auth.grant.reused",
-      limit: 20,
-    });
+    // **Polled, not read once.** `auditGrantReused` is dispatched with `void`
+    // and deliberately so — a best-effort audit write must never block the
+    // redirect. On SQLite it lands before the response is even read; on
+    // Postgres it is two async lookups and a pool round-trip behind, so a
+    // bare read races it and fails on that dialect alone. `waitForAudit` is
+    // the helper this file already uses for the same action a few cases up.
+    const storage = ctx.storage;
+    const reused = await waitForAudit(
+      () => storage.audit.list({ action: "auth.grant.reused", limit: 20 }),
+      (result) => result.data.length >= 1,
+    );
     expect(reused.data.length).toBe(1);
     const asked = (reused.data[0]!.details as { scopes: string[] }).scopes;
     expect(asked).toEqual([...new Set(asked)]);
