@@ -21,6 +21,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
 import {
+  SYSTEM_DEFAULT_STATE,
+  validateTransition,
   MarfaError,
   ErrorCode,
   generateId,
@@ -705,6 +707,29 @@ async function processBulkItem(
   // is ignored on the wire (preserves /import non-forgeability contract).
   try {
     assertTierApplicable(raw.type, raw.tier);
+    // The same question `POST /items` asks, and it has to be asked here for
+    // the same reason: a create is not a transition, so it reaches none of
+    // the graph, and a membership test against the universal state list is
+    // weaker than the one that matters. `trashed` is a valid state and is not
+    // in the `system.*` lifecycle at all, so a platform credential could
+    // create a `system.connection` directly in `trashed` — a state no
+    // transition can produce and none can leave — through this door while the
+    // single-item door beside it refused.
+    //
+    // In the route rather than in `storage.items.create`, matching the
+    // sibling: the store's `create` is also the archive restore's writer, and
+    // an archive is a faithful record of rows written before this rule
+    // existed. Tightening the store would make those unrestorable.
+    if (raw.state && raw.state !== SYSTEM_DEFAULT_STATE) {
+      const stateError = validateTransition(
+        raw.type,
+        SYSTEM_DEFAULT_STATE,
+        raw.state,
+      );
+      if (stateError) {
+        throw new MarfaError(ErrorCode.VALIDATION_ERROR, stateError);
+      }
+    }
     const createInput: CreateInput = {
       type: raw.type,
       properties: raw.properties ?? {},

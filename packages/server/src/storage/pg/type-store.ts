@@ -14,8 +14,9 @@ import {
   ErrorCode,
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
+import { spaceBucketCondition } from "../space-condition.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -149,11 +150,29 @@ export class PgTypeStore implements TypeStore {
 
   async seedPlatformTypes(
     seeded: readonly SeededPlatformType[],
-  ): Promise<void> {
+  ): Promise<string[]> {
     const now = new Date().toISOString();
     // Upsert rather than insert-if-absent: a redeploy carrying a changed
     // shipped schema has to move the row, or the instance keeps resolving
     // whatever it was first seeded with.
+    //
+    // **But only over a row this seed wrote.** `POST /types` stores a
+    // registration at `space_id: spaceId ?? ""`, and under `AUTH_MODE=keys` —
+    // every self-host — a credential carries no space, so a self-hoster's own
+    // type lands in the same primary-key bucket the seed writes to. Without
+    // the `setWhere`, a build that starts shipping an identifier somebody
+    // already registered rewrote their schema on the next boot, flipped
+    // `origin` from `user` to `platform` and stamped a family — unattended,
+    // and with every mechanism that would surface it disabled by the same
+    // write: `listCustom` filters `origin != 'platform'` so it left their
+    // registrations and their archive export, `isLockedPlatformType` then
+    // refused both `PUT` and `DELETE`, and `computePlatformDrift` could never
+    // report it because the row genuinely matched a shipped id afterwards.
+    //
+    // A collision is left alone and reported rather than resolved here. The
+    // seed runs unattended on every boot of every instance, which is the one
+    // place that must not make an irreversible choice about somebody's data.
+    const collided: string[] = [];
     for (const { schema, family } of seeded) {
       await this.db
         .insert(customTypes)
@@ -175,9 +194,31 @@ export class PgTypeStore implements TypeStore {
             family,
             updated_at: now,
           },
+          setWhere: eq(customTypes.origin, "platform"),
         })
         .execute();
     }
+    // Anything the guard above declined to overwrite: a shipped id sitting on
+    // a row this seed did not write.
+    const rows = await this.db
+      .select({ id: customTypes.id })
+      .from(customTypes)
+      .where(
+        and(
+          // The platform bucket, addressed through the shared helper rather
+          // than spelled inline — the stores came to disagree about what an
+          // absent space means precisely by spelling it.
+          spaceBucketCondition(customTypes.space_id, ""),
+          ne(customTypes.origin, "platform"),
+          inArray(
+            customTypes.id,
+            seeded.map(({ schema }) => schema.id),
+          ),
+        ),
+      )
+      .execute();
+    collided.push(...rows.map((r) => r.id));
+    return collided;
   }
 
   async deletePlatformType(id: string): Promise<boolean> {

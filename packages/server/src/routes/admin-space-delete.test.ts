@@ -77,6 +77,71 @@ describe("POST /admin/spaces/:id/delete", () => {
     expect(res.status).toBe(404);
   });
 
+  it("takes the space's own type vocabulary with it", async () => {
+    // The sweep listed nine kinds of row and not this one, in both dialects,
+    // so every space deletion left its registrations behind — addressable
+    // only through a credential scoped to a space that no longer exists, and
+    // re-registered into the in-memory overlay on every subsequent boot.
+    //
+    // Registered through the routes rather than written to the store, because
+    // registration is what a space actually does and a hand-written row would
+    // test a fiction of it.
+    ctx = await createTestContext();
+    const spaceId = await seedAccountlessSpace(ctx);
+    const keyRes = await request(
+      ctx.app,
+      "POST",
+      `/admin/spaces/${spaceId}/keys`,
+      {
+        key: ctx.adminKey,
+        body: {
+          label: "types",
+          source: "types",
+          role: "space_admin",
+          metadata_permissions: { "*": "write" },
+        },
+      },
+    );
+    expect(keyRes.status).toBe(201);
+    const spaceKey = ((await keyRes.json()) as { key: string }).key;
+
+    const typeRes = await request(ctx.app, "POST", "/types", {
+      key: spaceKey,
+      body: {
+        id: "user.doomed",
+        label: "Doomed",
+        fields: { note: { type: "string" } },
+      },
+    });
+    expect(typeRes.status).toBe(201);
+
+    const edgeRes = await request(ctx.app, "POST", "/edge-types", {
+      key: spaceKey,
+      body: {
+        id: "doomed-link",
+        label: "Doomed link",
+        cardinality: "many-to-many",
+      },
+    });
+    expect(edgeRes.status).toBe(201);
+
+    // Present before, or the assertion after proves nothing.
+    expect(
+      (await ctx.storage.types.listCustom(spaceId)).map((t) => t.id),
+    ).toContain("user.doomed");
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/admin/spaces/${spaceId}/delete`,
+      { key: ctx.adminKey, body: { confirm: spaceId } },
+    );
+    expect(res.status).toBe(200);
+
+    expect(await ctx.storage.types.listCustom(spaceId)).toEqual([]);
+    expect(await ctx.storage.edgeTypes.list(spaceId)).toEqual([]);
+  });
+
   it("deletes the space and everything scoped to it", async () => {
     ctx = await createTestContext();
     const spaceId = await seedAccountlessSpace(ctx);
