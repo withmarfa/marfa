@@ -329,8 +329,7 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
 
       await supWeb.enqueue(envelopeFor(connection.id));
 
-      const deadline = Date.now() + 20_000;
-      while (seenByWorker.length === 0 && Date.now() < deadline) {
+      while (seenByWorker.length === 0) {
         await new Promise((r) => setTimeout(r, 200));
       }
       expect(seenByWorker).toEqual([connection.id]);
@@ -372,8 +371,7 @@ describe.skipIf(!isPg)("bulk wake over pg_notify", () => {
       await (ctx.storage.pgDb as PgDb).execute(
         sql`SELECT pg_notify(${BULK_JOB_WAKE_CHANNEL}, '')`,
       );
-      const deadline = Date.now() + 10_000;
-      while (wakes === 0 && Date.now() < deadline) {
+      while (wakes === 0) {
         await new Promise((r) => setTimeout(r, 50));
       }
       expect(wakes).toBeGreaterThanOrEqual(1);

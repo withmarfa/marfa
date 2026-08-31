@@ -196,11 +196,10 @@ describe("cycle multi-hop A→B→A→… loop", () => {
     // deadline is a failure bound, not a pause: the happy path returns on the
     // first pass, and a tight one would only mean a busy machine reports a
     // missing row that was on its way.
-    const deadline = Date.now() + 10_000;
     let matched:
       | Awaited<ReturnType<typeof ctx.storage.items.list>>["data"][number]
       | undefined;
-    while (!matched && Date.now() < deadline) {
+    while (!matched) {
       const activities = await ctx.storage.items.list({
         type: "system.activity",
         limit: 50,
@@ -212,13 +211,14 @@ describe("cycle multi-hop A→B→A→… loop", () => {
       );
       if (!matched) await new Promise((r) => setTimeout(r, 25));
     }
-    expect(matched).toBeDefined();
+    // No `toBeDefined()` guard: the loop above exits only once `matched` is
+    // set, so asserting it here would assert nothing.
     expect(
-      (matched?.properties.detail as { hop_count?: number } | undefined)
+      (matched.properties.detail as { hop_count?: number } | undefined)
         ?.hop_count,
     ).toBe(overflowHop);
     expect(
-      (matched?.properties.detail as { budget?: number } | undefined)?.budget,
+      (matched.properties.detail as { budget?: number } | undefined)?.budget,
     ).toBe(DEFAULT_HOP_BUDGET);
   });
 });

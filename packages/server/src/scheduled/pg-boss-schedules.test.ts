@@ -55,8 +55,7 @@ describe.skipIf(!isPg)("pg-boss scheduled-job chains", () => {
           },
         };
         await startPgBossSchedules(boss, [job], FAST);
-        const deadline = Date.now() + 20_000;
-        while (ticks < 2 && Date.now() < deadline) {
+        while (ticks < 2) {
           await sleep(250);
         }
         // Two ticks proves the chain: the first came from the seed, the
@@ -89,8 +88,7 @@ describe.skipIf(!isPg)("pg-boss scheduled-job chains", () => {
           },
         };
         await startPgBossSchedules(boss, [job], FAST);
-        const deadline = Date.now() + 20_000;
-        while (ticks < 2 && Date.now() < deadline) {
+        while (ticks < 2) {
           await sleep(250);
         }
         // The second tick only happens if the throwing first tick still
@@ -166,9 +164,8 @@ describe.skipIf(!isPg)("pg-boss scheduled-job chains", () => {
         // Kill the chain the way a failed successor send would: delete
         // the queued job outright, leaving both stately slots empty.
         const queue = queueNameFor(job.name);
-        const deadline = Date.now() + 10_000;
         let killed = false;
-        while (!killed && Date.now() < deadline) {
+        while (!killed) {
           const queued = await boss.fetch(queue, {
             batchSize: 1,
             ignoreStartAfter: true,
@@ -193,8 +190,7 @@ describe.skipIf(!isPg)("pg-boss scheduled-job chains", () => {
         // dead chain comes back: the re-seed is accepted into the empty
         // slots and the tick runs.
         await repairSchedules(boss, [job], 1);
-        const tickDeadline = Date.now() + 15_000;
-        while (ticks <= ticksBeforeRepair && Date.now() < tickDeadline) {
+        while (ticks <= ticksBeforeRepair) {
           await sleep(250);
         }
         expect(ticks).toBeGreaterThan(ticksBeforeRepair);

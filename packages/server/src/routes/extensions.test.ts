@@ -66,9 +66,8 @@ async function waitForAuditEntry(filter: {
   action: string;
   resource_id: string;
 }): Promise<{ data: AuditRow[] }> {
-  const deadline = Date.now() + 2000;
   let result = await ctx.storage.audit.list(filter);
-  while (result.data.length === 0 && Date.now() < deadline) {
+  while (result.data.length === 0) {
     await new Promise((r) => setTimeout(r, 25));
     result = await ctx.storage.audit.list(filter);
   }

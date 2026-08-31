@@ -81,8 +81,7 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
       // Generous relative to a healthy notify round trip because this
       // machine also hosts the CI pool; the 30s test timeout stays the
       // hard stop.
-      const deadline = Date.now() + 15_000;
-      while (received.length === 0 && Date.now() < deadline) {
+      while (received.length === 0) {
         await sleep(50);
       }
       expect(received.length).toBe(1);

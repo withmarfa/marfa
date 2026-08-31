@@ -101,8 +101,7 @@ async function collect(app: Hono<AppEnv>, fire: () => void): Promise<string> {
     fire();
     // The marker event is emitted last by every caller, so reading up
     // to it proves everything fired before it was or was not delivered.
-    const deadline = Date.now() + 10_000;
-    while (!received.includes("scope-marker") && Date.now() < deadline) {
+    while (!received.includes("scope-marker")) {
       const chunk = await Promise.race([
         reader.read(),
         new Promise<{ value?: Uint8Array; done: boolean }>((r) =>
