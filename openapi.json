@@ -14382,6 +14382,9 @@
                     "manifest_version": {
                       "type": "string"
                     },
+                    "display_name": {
+                      "type": "string"
+                    },
                     "publisher": {
                       "type": "string"
                     },
@@ -14399,6 +14402,10 @@
                     "registered_at": {
                       "type": "string"
                     },
+                    "installed_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
                     "manifest": {
                       "type": "object",
                       "additionalProperties": {
@@ -14413,6 +14420,7 @@
                     "publisher",
                     "direction",
                     "registered_at",
+                    "installed_count",
                     "manifest"
                   ]
                 }
@@ -14584,7 +14592,7 @@
           "Integrations"
         ],
         "summary": "List integrations",
-        "description": "Returns every registered integration manifest. Filter by `manifest_name` to enumerate the registered versions of one integration.",
+        "description": "Returns every registered integration manifest, with the number of connections this space already holds for each. Pass `latest=true` for the catalog view, one row per integration. Filter by `manifest_name` to enumerate the registered versions of one integration.",
         "security": [
           {
             "bearerAuth": []
@@ -14599,6 +14607,20 @@
             "required": false,
             "description": "Filter to versions of a single integration by name.",
             "name": "manifest_name",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Return only the newest registered version of each integration. This is what a catalog wants; the default returns every version, which is what enumerating one integration's history wants."
+            },
+            "required": false,
+            "description": "Return only the newest registered version of each integration. This is what a catalog wants; the default returns every version, which is what enumerating one integration's history wants.",
+            "name": "latest",
             "in": "query"
           },
           {
@@ -14636,6 +14658,9 @@
                           "manifest_version": {
                             "type": "string"
                           },
+                          "display_name": {
+                            "type": "string"
+                          },
                           "publisher": {
                             "type": "string"
                           },
@@ -14653,6 +14678,10 @@
                           "registered_at": {
                             "type": "string"
                           },
+                          "installed_count": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
                           "manifest": {
                             "type": "object",
                             "additionalProperties": {
@@ -14667,6 +14696,7 @@
                           "publisher",
                           "direction",
                           "registered_at",
+                          "installed_count",
                           "manifest"
                         ]
                       }
@@ -14764,6 +14794,9 @@
                     "manifest_version": {
                       "type": "string"
                     },
+                    "display_name": {
+                      "type": "string"
+                    },
                     "publisher": {
                       "type": "string"
                     },
@@ -14781,6 +14814,10 @@
                     "registered_at": {
                       "type": "string"
                     },
+                    "installed_count": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
                     "manifest": {
                       "type": "object",
                       "additionalProperties": {
@@ -14795,6 +14832,7 @@
                     "publisher",
                     "direction",
                     "registered_at",
+                    "installed_count",
                     "manifest"
                   ]
                 }
