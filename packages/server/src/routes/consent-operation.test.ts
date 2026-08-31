@@ -522,3 +522,47 @@ describe("one literal named twice is one row", () => {
     ]);
   });
 });
+
+describe("a fallback bucket says what is in it", () => {
+  /**
+   * **The residue T-808 asks about, settled rather than removed.** "Other
+   * read access" and "Other write access" can each render twice on the
+   * incremental screen, because `buildGroups` runs once per section and a
+   * scope outside every bundle lands in a fallback bucket either way. The
+   * original complaint was that one label meant two things on one screen.
+   *
+   * Two things answer it. The heading is no longer all a reader gets: every
+   * group's description is overwritten with `summarize(g)`, so each instance
+   * names the scopes actually in it and the two are not identical text under
+   * one label. And the standing grant is collapsed now, so by default only
+   * one of them is on the screen at all.
+   *
+   * The static `desc` strings survive as the floor for a bucket where
+   * nothing resolves a name, which is the only case that can still print
+   * them.
+   */
+  const CUSTOM = ["user.recipes:read", "user.recipes:write"];
+  const NARROW: PermissionBundle[] = [
+    {
+      id: "notes",
+      label: "Your notes",
+      description: "Notes only.",
+      scopes: ["core.note:read"],
+      default_on: true,
+    },
+  ];
+
+  it("names its members rather than printing its static description", () => {
+    const scopes = ["core.note:read", ...CUSTOM].map(parse);
+    const html = authorize(scopes, { bundles: NARROW });
+    const said = summaries(html);
+    // The precondition: the fallback buckets have to have been reached, or
+    // this passes on a screen that never built one.
+    expect(html).toContain(">Other read access<");
+    expect(html).toContain(">Other write access<");
+    // What a reader gets is the generated sentence, not the placeholder.
+    expect(said).not.toContain("Additional things this app asked to read.");
+    expect(said).not.toContain("Additional things this app asked to change.");
+    expect(said.join(" ")).toContain("Recipes");
+  });
+});
