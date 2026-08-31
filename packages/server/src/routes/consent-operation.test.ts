@@ -386,16 +386,34 @@ describe("an open-ended group keeps saying it is open-ended", () => {
 
   it("still offers both halves as separately tickable rows", () => {
     // The collapse is the summary's alone. Each literal is its own grant and
-    // its own checkbox, and the form submits what is ticked.
+    // its own checkbox, and the form submits what is ticked. Six rows is the
+    // subject here; what they are called is not.
+    //
+    // **The two forms below are one screen's two shapes, not a
+    // disagreement.** `user.*` has a curated `SCOPE_LABELS` name, so it
+    // takes the parenthesis form a name is written for. A publisher root has
+    // no name and now has a derived description, so `labelFor` resolves the
+    // sentence and appends the operation as a sentence — the split
+    // `labelFor` documents, and the reason a description never carries a
+    // bracket stranded past its period.
+    //
+    // These read "Acme (all) (read only)" until the derivation landed: the
+    // humanized floor, a title-cased fragment of the pattern, which is the
+    // raw-literal experience the derivation exists to end.
+    //
+    // The summary above these rows still says "Acme (all)", because
+    // `summarize` omits the description map by design. That divergence
+    // predates this and is recorded at `consent.ts`; the derivation widens
+    // the population it applies to rather than introducing it.
     const { scopes, bundles } = customBundleAt(["acme", "zed"]);
     const html = authorize(scopes, { bundles });
     expect(rowLabels(html)).toEqual([
       "Your custom types (read only)",
       "Your custom types (read and write)",
-      "Acme (all) (read only)",
-      "Acme (all) (read and write)",
-      "Zed (all) (read only)",
-      "Zed (all) (read and write)",
+      "Everything Acme saves in your space. Read only.",
+      "Everything Acme saves in your space. Read and write.",
+      "Everything Zed saves in your space. Read only.",
+      "Everything Zed saves in your space. Read and write.",
     ]);
   });
 

@@ -206,121 +206,33 @@ interface UncoveredPattern {
 /**
  * Patterns a client can request today that no curated copy answers for.
  *
- * **This list is a debt, not a policy.** Every entry is a scope somebody can
- * be asked to approve while being shown either a raw literal or a paragraph
- * of schema rationale. It is written down rather than filtered out because
- * the alternative shapes are both worse: narrowing the derived set puts the
- * fixture problem back one level up, and writing copy to make a test green
- * lands user-facing words in a change nobody reviews as words. Copy is
- * reviewed as copy or it is not reviewed.
+ * **Empty, and the mechanism stays.** Every entry was a scope somebody could
+ * be asked to approve while being shown a raw literal or a paragraph of
+ * schema rationale. The last of them closed in two changes: sixteen shipped
+ * integration types got curated sentences, and the eleven namespace
+ * wildcards got a rule deriving one from their root.
  *
- * **Emptying it is the point, and the test below holds both halves of
- * that.** One half is that the list cannot outlive a gap: an entry whose
- * pattern has since been given copy is refused. The other half is that it
- * cannot be fed a new one, which needs a count rather than a per-entry
- * check, because every conceivable new entry is individually well-formed.
- * Without the count the escape hatch is a paste: delete a curated sentence,
- * add a plausible line here, and the surface has quietly shrunk again in
- * exactly the way this file exists to stop one level down.
+ * It is written down rather than filtered out because the alternative shapes
+ * are both worse: narrowing the derived set puts the fixture problem back one
+ * level up, and writing copy to make a test green lands user-facing words in
+ * a change nobody reviews as words. Copy is reviewed as copy or it is not
+ * reviewed.
  *
- * Three families, and they need different fixes. The first two are counted
- * separately because only one of them is work anybody can do.
+ * **An empty list is a stronger guard than a short one, not a spent one.**
+ * The count below is held to equality, so the next gap cannot be pasted in
+ * quietly: it is a digit somebody had to change from zero, in the diff, in
+ * front of a reviewer. Re-populating this is not forbidden — a genuinely
+ * undescribable pattern belongs here with its reason — but it stops being
+ * something a change can do on its way past.
+ *
+ * The synthetic pair went the way it had to. Two entries named a publisher
+ * root this file injects rather than anything the build ships, and no
+ * sentence anybody wrote could ever have closed them; they were the instance
+ * proving the shape, because a root arriving from the database at boot is
+ * unknowable when copy is written. They are gone because a derivation
+ * reaches them, which is what said the fix was a rule rather than a table.
  */
-const KNOWN_UNCOVERED: readonly UncoveredPattern[] = [
-  // ---------------------------------------------------------------------
-  // SHIPPING NAMESPACE WILDCARDS, of which there are eleven. The registry
-  // cannot close these at all: a wildcard matches at check time and reaches
-  // types nobody has registered yet, so there is nothing for a map keyed on
-  // concrete ids to return. Four are curated (`*`, `core.*`, `user.*`,
-  // `app.*`) and the rest never were — the curated map predates the
-  // wildcards being publishable.
-  //
-  // A per-wildcard entry closes today's set and reopens on the next
-  // integration, so the fix is a rule that derives a wildcard's sentence
-  // from its root, with the curated four kept where they say something a
-  // rule cannot.
-  // ---------------------------------------------------------------------
-  {
-    pattern: "edge.*",
-    because:
-      "The wildcard over every relationship type, explicitly published as " +
-      "requestable and never described on either screen. The widest edge " +
-      "grant expressible, rendered as its own literal.",
-  },
-  {
-    pattern: "edge.user.*",
-    because:
-      "The relationship half of a space's own runtime types. `user.*` is " +
-      "curated and its edge counterpart was not.",
-  },
-  {
-    pattern: "edge.app.*",
-    because:
-      "The relationship half of the types an app defines for itself. " +
-      "`app.*` is curated and its edge counterpart was not.",
-  },
-  {
-    pattern: "google.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.google.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-  {
-    pattern: "raindrop.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.raindrop.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-  {
-    pattern: "readwise.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.readwise.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-  {
-    pattern: "todoist.*",
-    because: "Integration namespace wildcard, never described.",
-  },
-  {
-    pattern: "edge.todoist.*",
-    because: "Integration namespace edge wildcard, never described.",
-  },
-
-  // ---------------------------------------------------------------------
-  // SYNTHETIC. The injected publisher root's pair, and the only two entries
-  // here that name nothing this build ships. They are marked and counted
-  // apart because a reader tallying the wildcard gaps wants ELEVEN, not
-  // thirteen: `acme` is this file's fixture, so no sentence anybody writes
-  // can close these, and a ticket that lists them is asking for work that
-  // does not exist.
-  //
-  // They are still carried rather than filtered, because they are the one
-  // instance proving the shape: the root arrives from the database at boot,
-  // so no list written at authoring time can name it and only a derivation
-  // rule reaches it. Whatever closes the eleven above has to close these
-  // too, and if it cannot then it was a table rather than a rule.
-  // ---------------------------------------------------------------------
-  {
-    pattern: `${RUNTIME_PUBLISHER_ROOT}.*`,
-    synthetic: true,
-    because:
-      "A publisher root installed at boot. Unknowable when copy is " +
-      "written, so only a derivation can describe it.",
-  },
-  {
-    pattern: `edge.${RUNTIME_PUBLISHER_ROOT}.*`,
-    synthetic: true,
-    because:
-      "The relationship half of a boot-installed publisher root. Same " +
-      "reason as the pattern above.",
-  },
-];
+const KNOWN_UNCOVERED: readonly UncoveredPattern[] = [];
 
 const KNOWN_UNCOVERED_PATTERNS = new Set(KNOWN_UNCOVERED.map((u) => u.pattern));
 
@@ -382,7 +294,9 @@ describe("the consent copy guard derives the scopes it checks", () => {
 
     // Collected rather than thrown on the first failure. This is the list
     // whoever closes the gap works from, and a message naming one pattern
-    // out of thirteen makes the work look thirteen times smaller than it is.
+    // out of the set makes the work look smaller than it is. It reported
+    // sixteen concrete types and then eleven wildcards, in that order,
+    // which is how both were sized before either was written.
     const failures: string[] = [];
     for (const scope of patterns) {
       const because = uncoveredBecause(scope, descriptions);
@@ -411,24 +325,28 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // swap is the same silent narrowing wearing a stable number.
     //
     // So growth is a digit somebody had to change, which puts it in the
-    // diff and in front of a reviewer. **Lowering these numbers is the
-    // work**: closing the wildcards takes the first to zero, and writing
-    // consent copy for the integration types takes the third to zero. The
-    // synthetic pair goes when a derivation rule reaches it, and never by
-    // anybody writing a sentence.
+    // diff and in front of a reviewer. **Lowering these numbers was the
+    // work and it is done**: the wildcards went to zero when a derivation
+    // rule reached them, taking the synthetic pair with them, and the
+    // integration types went to zero when somebody wrote their sentences.
     //
-    // Nothing today depends on this bound being right rather than merely
-    // present, and that is luck rather than design. The description-map
-    // tests in `consent-render.test.ts` hold the whole of both registries,
-    // so every core, system and edge pattern is independently guarded and a
-    // paste naming one would fail there instead. An integration shipping a
-    // type outside `core.` and `system.` sits outside their reach, and is
-    // the case this bound is actually for.
+    // At zero the bound does more rather than less. Every count below is an
+    // equality against zero, so re-populating this list is a deliberate
+    // edit rather than something a change can do on its way past — which is
+    // the property that was doing the work all along, and the reason the
+    // three separate counts stay rather than collapsing into one.
+    //
+    // The description-map tests in `consent-render.test.ts` hold the whole
+    // of both registries, so every shipped type and edge pattern is
+    // independently guarded and a paste naming one fails there too. The
+    // wildcards are the family that sits outside their reach — a registry
+    // keyed on exact ids cannot answer for a pattern — and are what this
+    // bound is actually for.
     const wildcards = KNOWN_UNCOVERED.filter((u) => u.pattern.endsWith(".*"));
     const synthetic = KNOWN_UNCOVERED.filter((u) => u.synthetic === true);
-    expect(KNOWN_UNCOVERED).toHaveLength(13);
-    expect(wildcards.filter((u) => !u.synthetic)).toHaveLength(11);
-    expect(synthetic).toHaveLength(2);
+    expect(KNOWN_UNCOVERED).toHaveLength(0);
+    expect(wildcards.filter((u) => !u.synthetic)).toHaveLength(0);
+    expect(synthetic).toHaveLength(0);
     expect(
       KNOWN_UNCOVERED.filter((u) => !u.pattern.endsWith(".*")),
     ).toHaveLength(0);
