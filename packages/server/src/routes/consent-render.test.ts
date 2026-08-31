@@ -343,6 +343,55 @@ describe("renderConsentScreen — re-consent diff", () => {
     expect(html).toMatch(/>Already allowed<[\s\S]*?value="core\.note:read"/);
   });
 
+  it("collapses the standing grant to one line, counting it", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read"],
+    });
+    // Collapsed rather than merged into "New". Merging is the other way to
+    // buy the height and it erases new-versus-kept, which is the distinction
+    // the diff exists to draw.
+    expect(html).toContain('<details class="ksec">');
+    expect(html).toContain(">Already allowed<");
+    expect(html).toContain(">1 permission, unchanged<");
+    // Counted on distinct literals, and singular where it is one. A count
+    // that says "1 permissions" is the kind of thing a person notices on the
+    // screen where they are deciding whether to trust the software.
+    const many = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read", "core.note:write"],
+    });
+    expect(many).toContain(">2 permissions, unchanged<");
+  });
+
+  it("keeps the standing grant's rows ticked inside the closed section", () => {
+    // **The property the collapse must not break.** A closed `details` still
+    // submits its controls, so an untouched Continue carries the standing
+    // grant exactly as it did when the section was a full stack of tiles.
+    // Remove or disable these rows to save the height and the same Continue
+    // becomes a narrowing, which the decision route treats as a promise that
+    // the removed access stops working and acts on by revoking the client's
+    // live tokens — the user having been shown nothing.
+    //
+    // Asserted on the markup rather than through a browser because that is
+    // where the mistake would be made: nothing here renders, so a `hidden`
+    // attribute or a dropped row would pass every other case in this file.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: ["core.note:read"],
+    });
+    const section = html.slice(html.indexOf('<details class="ksec">'));
+    const row =
+      /<input type="checkbox" name="scopes" value="core\.note:read"([^>]*)>/.exec(
+        section,
+      );
+    expect(row, "the kept row is inside the collapsed section").not.toBeNull();
+    expect(row?.[1] ?? "").toContain("checked");
+    expect(row?.[1] ?? "").not.toContain("disabled");
+    // And the section itself is shut: an `open` attribute would buy no height.
+    expect(section.startsWith('<details class="ksec">')).toBe(true);
+  });
+
   it("lists no-longer-needed scopes by label, with no toggle", () => {
     const html = renderConsentScreen({
       ...PARAMS,

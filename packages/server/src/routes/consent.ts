@@ -936,38 +936,37 @@ export function renderConsentScreen(params: ConsentParams): string {
         ? `<p class="lsec" style="margin-top:8px">New</p>${groupedTiles(addedVisible)}`
         : "";
     // The standing grant keeps the same partition the new request uses, and
-    // it costs something real: "Other read access" and "Other write access"
-    // render in both sections, covering different scopes each time, and the
-    // second stack is most of the height between the reader and the buttons.
+    // it renders collapsed rather than as a second full stack of tiles. That
+    // stack was most of the height between the reader and the buttons, on a
+    // screen whose entire job is being read to the end.
     //
-    // **One of the two things that blocked collapsing it is now gone.** The
-    // read and write halves of a grant were told apart by their bundle
-    // headings and by nothing else, because `labelFor` resolved a row from
-    // `typePattern` alone and `core.note:read` and `core.note:write` were
-    // both the word "Notes": merged into one body they became two identical
-    // rows, which `summarize` then de-duplicated into one. `withOperation`
-    // now carries the operation on the row itself and into the summary's
-    // de-duplication key, so a merged section keeps the distinction and
-    // `consent-operation.test.ts` is what holds it there.
+    // **Collapsed, not merged into "New".** Merging is the other way to buy
+    // the height and it erases new-versus-kept, which is the distinction
+    // this whole diff exists to draw — a person returning to a consent
+    // screen is being asked about what changed, and a screen that cannot say
+    // which rows are new has answered a different question.
     //
-    // **The other one is `groupedTiles`'s `alreadyGranted` parameter, and it
-    // is still here.** `defaultOn` is a property of a group rather than of a
-    // row, and that parameter forces it true for everything built from kept
-    // scopes. Merge the two stacks and one group can hold an added
-    // off-by-default scope beside a kept one,
-    // where either setting is destructive in one direction: on, and a scope
-    // the person never agreed to rides in ticked; off, and an untouched
-    // Continue submits a narrowing, which the decision route treats as a
-    // promise that the removed access stops working and revokes the client's
-    // live tokens. That parameter's own docstring spells the second one out.
-    // Collapsing also erases new-versus-kept, which is the distinction this
-    // whole diff exists to draw.
+    // Both things that made this unsafe are now gone. The read and write
+    // halves of a grant were told apart by their bundle headings and by
+    // nothing else, until `withOperation` put the operation on the row
+    // itself; and `defaultOn` was a property of a group, so the standing
+    // grant's forced-on could only be stated for a whole group at a time.
+    // It is per row now, which is what lets a kept scope be shown ticked
+    // beside an offered one that is not.
     //
-    // So this stays whole until `defaultOn` moves from the group to the row.
-    // Not a density decision yet.
+    // **The rows stay in the DOM while it is shut.** A closed `<details>`
+    // still submits its controls, so an untouched Continue carries the
+    // standing grant exactly as it did when the section was open. That is
+    // the property to preserve: anything that removes or disables these
+    // rows turns the same Continue into a narrowing, which the decision
+    // route treats as a promise that the removed access stops working and
+    // acts on by revoking the client's live tokens.
+    const keptCount = new Set(keptVisible.map(scopeLiteralFor)).size;
     const keptSection =
       keptVisible.length > 0
-        ? `<p class="lsec" style="margin-top:24px">Already allowed</p>${groupedTiles(keptVisible, true)}`
+        ? `<details class="ksec"><summary><span class="glabel">Already allowed</span><span class="kcount">${escapeHtml(
+            `${String(keptCount)} permission${keptCount === 1 ? "" : "s"}, unchanged`,
+          )}</span>${CHEVRON}</summary>${groupedTiles(keptVisible, true)}</details>`
         : "";
     // Removed scopes are being dropped, not re-granted, so their group names
     // render as a quiet line with no toggles.
