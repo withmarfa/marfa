@@ -101,6 +101,7 @@ import {
   resolveRuntimeCustomNamespaces,
 } from "../auth/default-bundles.js";
 import { renderConsentScreen } from "./consent.js";
+import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
 import type { AuthorizeFailure } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
@@ -1769,6 +1770,24 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   "core.*": "All standard content types.",
   "user.*": "Your custom types.",
   "app.*": "Types this app defines for itself.",
+
+  // The relationship half of the three above, and the widest edge grant
+  // expressible. All three were requestable and undescribed: a person
+  // approving `edge.*` was shown the literal and asked to agree to it.
+  //
+  // **Curated rather than derived, for the same reason their type-axis
+  // partners are.** `deriveWildcardDescription` answers for a publisher
+  // root, where the set is open and a rule is the only thing that reaches a
+  // root installed at boot. These three roots are structural — `user` and
+  // `app` are the namespace tiers and `edge.*` names no root at all — so the
+  // set is closed and a sentence can say what a rule could not.
+  //
+  // Phrased as how a person's items are joined rather than as a noun for the
+  // relation, which is the rule the concrete edge entries above follow.
+  "edge.*": "How everything in your space is connected.",
+  "edge.user.*": "How your custom relationship types connect your items.",
+  "edge.app.*":
+    "How the relationship types this app defines connect your items.",
 };
 
 /**
@@ -1916,6 +1935,13 @@ function describeScope(scope: ParsedScope): string | undefined {
       // lookup never consults.
       return (
         CONSENT_SCOPE_DESCRIPTIONS[scope.typePattern] ??
+        // Ahead of the registry rather than after it, so a namespace
+        // wildcard can never resolve one edge type's copy as a whole root's.
+        // The lookup below cannot do that today — `EDGE_TYPE_REGISTRY` is
+        // keyed on exact ids, so `google.*` simply misses — but that is the
+        // registry happening to miss rather than this function declining,
+        // and the same distinction is drawn on the type axis one arm down.
+        deriveWildcardDescription(scope.typePattern) ??
         EDGE_TYPE_REGISTRY.get(edgeType)?.description
       );
     }
@@ -1941,7 +1967,10 @@ function describeScope(scope: ParsedScope): string | undefined {
         scope.typePattern === GLOBAL_TYPE_WILDCARD ||
         subtreeWildcardRoot(scope.typePattern) !== null
       ) {
-        return undefined;
+        // Derived from the root where the map says nothing, which is what
+        // reaches a publisher root installed at boot. Returns undefined for
+        // the structural roots, whose wildcards are curated above.
+        return deriveWildcardDescription(scope.typePattern);
       }
       return TYPE_REGISTRY.get(scope.typePattern)?.description;
     }

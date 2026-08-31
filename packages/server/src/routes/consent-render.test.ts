@@ -26,6 +26,7 @@ import {
   CONSENT_SCOPE_DESCRIPTIONS,
 } from "./auth-consent.js";
 import { renderDeviceConsentScreen } from "./device-pages.js";
+import { deriveWildcardDescription } from "./wildcard-copy.js";
 import {
   OPEN_ENDED_EXPANSION_TAIL,
   OPEN_ENDED_LINE,
@@ -1751,9 +1752,53 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     for (const [pattern, copy] of Object.entries(out)) {
       expect(copy, pattern).toMatch(/\S/);
     }
-    // A wildcard nobody curated gets nothing, rather than one matched type's
-    // copy standing in for a whole namespace.
-    expect(describeAll("readwise.*:read")).toEqual({});
+    // A publisher wildcard is derived from its root rather than curated,
+    // which is the only shape that reaches a root installed at boot. Held
+    // to naming the service and to NOT being any concrete type's copy: the
+    // failure this replaces would be one matched type's sentence standing
+    // in for a whole namespace, and a bare non-empty check admits that.
+    const derived = describeAll("readwise.*:read")["readwise.*"];
+    expect(derived).toContain("Readwise");
+    for (const id of TYPE_REGISTRY.keys()) {
+      expect(derived, id).not.toBe(TYPE_REGISTRY.get(id)?.description);
+    }
+  });
+
+  it("derives a wildcard for a root this build has never heard of", () => {
+    // The property that makes the rule a rule. `buildAllowedScopes` folds in
+    // publisher roots boot installs from the `custom_types` table, so a
+    // wildcard can reach a consent screen on a running instance that no list
+    // written here could name. A table closes today's set and reopens on the
+    // next integration; this is the case that tells the two apart.
+    //
+    // The root is deliberately hyphenated, because the display name is the
+    // half a person reads.
+    const out = describeAll("acme-corp.*:read", "edge.acme-corp.*:read");
+    expect(out["acme-corp.*"]).toBe(
+      "Everything Acme Corp saves in your space.",
+    );
+    expect(out["edge.acme-corp.*"]).toBe("How Acme Corp connects your items.");
+
+    // The precondition, because both assertions pass vacuously against a
+    // build that happened to ship this root: it must be unknown here.
+    expect(TYPE_REGISTRY.has("acme-corp")).toBe(false);
+    expect(
+      [...TYPE_REGISTRY.keys()].some((id) => id.startsWith("acme-corp.")),
+    ).toBe(false);
+  });
+
+  it("declines to derive a sentence for a structural root", () => {
+    // The arm that keeps the rule off the roots the map curates. Without it
+    // a deleted curated entry does not go missing, it goes wrong: `core.*`
+    // would read as a service called "Core" rather than as the standard
+    // content types, and nothing else in this file would notice.
+    for (const pattern of ["core.*", "user.*", "app.*", "marfa.*", "*"]) {
+      expect(deriveWildcardDescription(pattern), pattern).toBeUndefined();
+    }
+    // A subtree of a root is not a root. Not requestable today, and a
+    // sentence that becomes nonsense the moment it is would be worse than
+    // none.
+    expect(deriveWildcardDescription("core.media.*")).toBeUndefined();
   });
 
   it("cannot get a wildcard's copy from the type registry", () => {
@@ -1866,7 +1911,13 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // the moment the wildcard entries landed beside them.
     const out = describeAll("*:read", "edge.*:read", "edge.metadata:read");
     expect(out["*"]).toBe("Everything in your space.");
-    expect(out["edge.*"]).toBeUndefined();
+    // `edge.*` has copy of its own now, which makes this check sharper
+    // rather than weaker: the failure it guards is `edge.*` resolving the
+    // TYPE axis's sentence off the flat map, and an undefined could never
+    // have told that apart from the entry simply not existing yet. Now it
+    // can, so the assertion is inequality against the string it must not be.
+    expect(out["edge.*"]).toBe("How everything in your space is connected.");
+    expect(out["edge.*"]).not.toBe(out["*"]);
     expect(out["edge.metadata"]).toBeUndefined();
     // The curated edge copy still resolves, keyed on the pattern. Held
     // against the registry's line rather than against emptiness: revert the
