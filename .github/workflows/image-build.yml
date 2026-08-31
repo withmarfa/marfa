@@ -140,6 +140,15 @@ jobs:
       # request merges there, the listing offers the integration, and the
       # image does not carry it. Moving the pin is what would ship that, and
       # moving the pin triggers this workflow.
+      # The other hand-maintained coupling to that repository, and the one
+      # that had no guard at all. The declaration check below compares two
+      # lists; this compares a copy against the thing it copies.
+      - name: The calendar fixture matches the manifest it copies
+        run: |
+          set -euo pipefail
+          node packages/server/scripts/check-manifest-fixture.mjs \
+            packages/server/src/routes/fixtures/google-calendar-manifest.ts \
+            integrations-src/packages/google/calendar/src/manifest.ts
       - name: The declaration covers everything the registry marks shipped
         run: |
           set -euo pipefail
