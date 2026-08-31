@@ -2,9 +2,17 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // Per-package projects. Packages without their own vitest config
-    // (shared, sdk, types) inherit from this root config when their
-    // directory is matched.
+    // Per-package projects, matched as a directory glob.
+    //
+    // A project matched this way does not inherit anything from the `test`
+    // block below. Vitest applies a root `test` block to inline projects
+    // only — "projects referenced as external files or directories do not
+    // inherit from the root config automatically" — so every package owns
+    // its own budget, and every package now sets one from
+    // `vitest.shared.ts`. This comment used to claim the opposite, and name
+    // three packages as having no config of their own when `shared` had one;
+    // the numbers below reached none of them, which is how seven packages
+    // came to run on Vitest's stock 10s default.
     projects: [
       "packages/*",
       {
@@ -20,18 +28,16 @@ export default defineConfig({
         },
       },
     ],
+    // These govern the inline `ci-config` project above and nothing else,
+    // because an inline project is the only kind that inherits them. The
+    // per-package budget lives in `vitest.shared.ts`, and `ci/test-budget.test.ts`
+    // holds every package to having one.
+    //
     // PG parallelism is owned by the server package's own vitest config:
     // each test file clones a fresh PG database from the template
     // (`packages/server/src/storage/pg/test-template.ts`), so workers
     // don't share state and file-parallelism is safe. SQLite was always
     // parallel-safe (each file uses its own tmpdir DB).
-    //
-    // PG-side: CREATE DATABASE TEMPLATE / DROP DATABASE WITH (FORCE)
-    // serialize briefly per template, so per-file setup + teardown can
-    // run a few seconds under heavy parallel contention. 20s default
-    // is generous enough that a real hang still surfaces fast.
-    // `hookTimeout` covers `beforeAll` / `afterAll` (the per-file
-    // template-clone lifecycle uses both).
     testTimeout: 20_000,
     hookTimeout: 20_000,
   },
