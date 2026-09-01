@@ -41,9 +41,12 @@ async function createConnection(status: string): Promise<string> {
       },
     },
   });
-  expect(res.status, await res.text()).toBe(201);
-  const body = (await res.json()) as { item: { id: string } };
-  return body.item.id;
+  // Read once. `await res.text()` inside the assertion message consumes the
+  // body, and the `res.json()` after it then throws "Body is unusable" —
+  // which reports as a failure of the case rather than of its setup.
+  const body = (await res.json()) as { item?: { id: string } };
+  expect(res.status, JSON.stringify(body)).toBe(201);
+  return body.item!.id;
 }
 
 describe("removing a system.connection row", () => {
@@ -71,9 +74,16 @@ describe("removing a system.connection row", () => {
     expect(after.status).toBe(200);
   });
 
-  it("refuses to purge one that is still live", async () => {
+  it("refuses to purge one that is still live, for the connection reason", async () => {
     // The sharper of the two: purge is irreversible, and this door never
     // read the item at all before refusing was added to it.
+    //
+    // **Asserted on the message rather than the status, and that is the
+    // whole point of this case.** `/purge` already answers 400 for an
+    // untrashed item, so a status-only assertion passes identically with
+    // this guard deleted — which it did, and a mutation run is what said
+    // so. Two refusals that share a status and differ in reason are
+    // indistinguishable to a test that reads only the status.
     const id = await createConnection("active");
 
     const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
@@ -81,6 +91,8 @@ describe("removing a system.connection row", () => {
     });
 
     expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain(`/connections/${id}/uninstall`);
     const after = await request(ctx.app, "GET", `/items/${id}`, {
       key: ctx.adminKey,
     });
@@ -97,29 +109,37 @@ describe("removing a system.connection row", () => {
     });
     expect(deleted.status).toBe(200);
 
+    // Trashed first, because `/purge` refuses an item that is not — a rule
+    // this guard has nothing to do with, and one that answers with the same
+    // 400. Purging directly would pass or fail for the wrong reason.
     const purgeable = await createConnection("revoked");
+    const trashed = await request(ctx.app, "DELETE", `/items/${purgeable}`, {
+      key: ctx.adminKey,
+    });
+    expect(trashed.status).toBe(200);
     const purged = await request(
       ctx.app,
       "DELETE",
       `/items/${purgeable}/purge`,
-      {
-        key: ctx.adminKey,
-      },
+      { key: ctx.adminKey },
     );
     expect(purged.status).toBe(200);
   });
 
   it("leaves every other type alone", async () => {
-    // The guard keys on the type, so an ordinary item must be untouched by
-    // it — including one whose properties happen to carry a `status`.
+    // The guard keys on the type. `core.task` carries a real `status`, so
+    // this is an item that looks like a connection to a guard reading
+    // properties rather than the type — the mistake worth pinning.
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
-        type: "core.note",
+        type: "core.task",
         properties: { title: "ordinary", status: "active" },
       },
     });
-    const { item } = (await res.json()) as { item: { id: string } };
+    const body = (await res.json()) as { item?: { id: string } };
+    expect(res.status, JSON.stringify(body)).toBe(201);
+    const item = body.item!;
 
     const deleted = await request(ctx.app, "DELETE", `/items/${item.id}`, {
       key: ctx.adminKey,
