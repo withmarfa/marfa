@@ -1,0 +1,24 @@
+-- An item records the connection that wrote it, so a collision can refuse.
+--
+-- `source` is stamped `integration:<manifest name>` and is deliberately one
+-- value for the whole integration in a space, so that reinstalling adopts the
+-- corpus it created rather than duplicating it. The cost is that two live
+-- connections of one integration share a natural-key namespace: the second
+-- either silently overwrites the first or is refused with an error about a
+-- type the caller never sent, and nothing in `(source, source_id)` can tell
+-- them apart.
+--
+-- This column is what tells them apart. It is deliberately NOT part of the
+-- natural key: the lookup tuple is untouched, so the row is still *found* on
+-- reinstall and the adoption property is unchanged. It decides only whether a
+-- resolved row is refused, and the refusal is on liveness rather than on
+-- difference — a row whose recorded writer is gone is adopted and re-stamped.
+--
+-- Nullable, additive, no backfill, no index, no foreign key. NULL means no
+-- connection is recorded as owning the row, which is the pre-column state and
+-- reads as adoptable; every such row gains a writer on its next integration
+-- write. The build serving this migration selects an explicit column list and
+-- never names this column, so it is safe to land ahead of the code that reads
+-- it. During the roll that follows, an old replica still writes NULL here — a
+-- NULL row created minutes after this migration is that window, not a defect.
+ALTER TABLE `items` ADD `written_by_connection_id` text;

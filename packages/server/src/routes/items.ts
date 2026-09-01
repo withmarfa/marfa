@@ -31,6 +31,7 @@ import {
   requireTypeAccess,
   isOwnConnectionRead,
   itemProvenanceSource,
+  writerConnectionOf,
   requireActivityAttribution,
   requireMirrorProtection,
   requireDeclaredTypeMatches,
@@ -57,6 +58,7 @@ import { applyInlineEdges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
+  requireOwningConnection,
   resolveOrphanScope,
   resolveOrphanScopeForOwnWrite,
   withOrphanState,
@@ -1236,6 +1238,19 @@ export function itemRoutes(storage: Storage) {
         body.source_id,
         spaceId,
       );
+      // Hoisted above the trashed branch on purpose (D63). That branch
+      // answers 200 with the row and its metadata before the update arm is
+      // reached, so a guard placed only in the update arm would hand a
+      // sibling connection its twin's row and call it an acknowledgement.
+      // One call here covers both arms.
+      //
+      // Also ahead of every gate that reads the row's type, because a row
+      // that is not yours is not yours to be told about — and because it is
+      // what turns today's answer, a `type_mismatch` naming a type the
+      // caller never sent, into one that names the collision.
+      const ownership = existing
+        ? await requireOwningConnection(storage, credential, existing)
+        : "own";
       if (existing?.state === "trashed") {
         // The user deleted this. Reviving it would overturn that decision
         // silently, and refusing forever is the bug being fixed, so the
@@ -1420,6 +1435,14 @@ export function itemRoutes(storage: Storage) {
                   timestamp: body.timestamp,
                 }),
                 ...(nullClears ? { null_clears: true } : {}),
+                // Only on adoption (D63). An owner re-syncing its own row
+                // must not churn the column, and a row whose recorded
+                // writer is gone — or was never recorded — becomes this
+                // connection's on the write that adopts it, which is what
+                // makes the pre-column corpus converge without a backfill.
+                ...(ownership === "adopt" && {
+                  written_by_connection_id: writerConnectionOf(credential),
+                }),
               },
               spaceId,
             );
@@ -1514,6 +1537,7 @@ export function itemRoutes(storage: Storage) {
             timestamp: body.timestamp,
             source: stampedSource,
             source_id: body.source_id,
+            written_by_connection_id: writerConnectionOf(credential),
             device: body.device,
             capture_latitude: body.capture_latitude,
             capture_longitude: body.capture_longitude,
@@ -1650,6 +1674,11 @@ export function itemRoutes(storage: Storage) {
         ...(itemProvenanceSource(credential) !== undefined
           ? { source: itemProvenanceSource(credential) }
           : {}),
+        // Null for a person, which is the ordinary case here and is why the
+        // column is nullable. A runtime credential promoting a mirror does
+        // become the copy's writer, so the copy answers the orphan question
+        // by the same rule as every other row that credential wrote.
+        written_by_connection_id: writerConnectionOf(credential),
       },
       spaceId,
     );
@@ -2130,6 +2159,16 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "write");
 
+    // D63: a row a live sibling connection wrote is not this one's to
+    // rewrite. `requireMirrorProtection` further down compares the shared
+    // `integration:<name>` stamp and so treats the two as one writer; this
+    // is the axis it cannot see.
+    const patchOwnership = await requireOwningConnection(
+      storage,
+      c.get("apiKey"),
+      item,
+    );
+
     // Held to the same rule as every other door rather than refused
     // outright: a claim that matches the row is the ordinary case and
     // passes, a claim that disagrees is the re-type this route does not
@@ -2328,6 +2367,10 @@ export function itemRoutes(storage: Storage) {
                 c.get("apiKey")?.item_source === item.source
                   ? { null_clears: true }
                   : {}),
+                // Adoption, same rule as the natural-key door (D63).
+                ...(patchOwnership === "adopt" && {
+                  written_by_connection_id: writerConnectionOf(c.get("apiKey")),
+                }),
               },
               tid,
             )

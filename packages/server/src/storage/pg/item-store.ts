@@ -288,6 +288,9 @@ export class PgItemStore implements ItemStore {
             timestamp: input.timestamp ?? now,
             source: input.source,
             source_id: input.source_id,
+            // Null unless the caller is a runtime credential (D63). Set by
+            // the route from `writerConnectionOf`, never by the caller.
+            written_by_connection_id: input.written_by_connection_id ?? null,
             version: 1,
             schema_version: schemaVersion,
             device: input.device,
@@ -420,6 +423,23 @@ export class PgItemStore implements ItemStore {
     for (const row of rows) {
       if (row.state === "trashed" && opts?.includeTrashed !== true) continue;
       out.set(row.id, rowToItem(row));
+    }
+    return out;
+  }
+
+  async writersOf(ids: readonly string[]): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    if (ids.length === 0) return out;
+    const unique = Array.from(new Set(ids));
+    const rows = await this.db
+      .select({
+        id: items.id,
+        written_by_connection_id: items.written_by_connection_id,
+      })
+      .from(items)
+      .where(inArray(items.id, unique));
+    for (const row of rows) {
+      out.set(row.id, row.written_by_connection_id ?? null);
     }
     return out;
   }
@@ -741,6 +761,13 @@ export class PgItemStore implements ItemStore {
             ...(input.source_id !== undefined && {
               source_id: input.source_id,
             }),
+            // Only when the route asks (D63): the adopt arm re-stamps a
+            // row whose recorded writer is gone, while an owner re-syncing
+            // its own row must not churn the column. A lifecycle gesture
+            // never sets it, so archiving does not make you the writer.
+            ...(input.written_by_connection_id !== undefined && {
+              written_by_connection_id: input.written_by_connection_id,
+            }),
             // Only where a caller explicitly asked to re-type. Every other
             // door refuses a type that disagrees with the row rather than
             // passing one down here.
@@ -779,6 +806,13 @@ export class PgItemStore implements ItemStore {
             tier: newTier,
             ...(input.source_id !== undefined && {
               source_id: input.source_id,
+            }),
+            // Only when the route asks (D63): the adopt arm re-stamps a
+            // row whose recorded writer is gone, while an owner re-syncing
+            // its own row must not churn the column. A lifecycle gesture
+            // never sets it, so archiving does not make you the writer.
+            ...(input.written_by_connection_id !== undefined && {
+              written_by_connection_id: input.written_by_connection_id,
             }),
             // Carried onto the response as well as into the row. Built from
             // the pre-update snapshot, this reported the type the item had
@@ -849,6 +883,13 @@ export class PgItemStore implements ItemStore {
           ...(input.source_id !== undefined && {
             source_id: input.source_id,
           }),
+          // Only when the route asks (D63): the adopt arm re-stamps a
+          // row whose recorded writer is gone, while an owner re-syncing
+          // its own row must not churn the column. A lifecycle gesture
+          // never sets it, so archiving does not make you the writer.
+          ...(input.written_by_connection_id !== undefined && {
+            written_by_connection_id: input.written_by_connection_id,
+          }),
         };
 
         try {
@@ -878,6 +919,13 @@ export class PgItemStore implements ItemStore {
           tier: newTier,
           ...(input.source_id !== undefined && {
             source_id: input.source_id,
+          }),
+          // Only when the route asks (D63): the adopt arm re-stamps a
+          // row whose recorded writer is gone, while an owner re-syncing
+          // its own row must not churn the column. A lifecycle gesture
+          // never sets it, so archiving does not make you the writer.
+          ...(input.written_by_connection_id !== undefined && {
+            written_by_connection_id: input.written_by_connection_id,
           }),
         });
       });

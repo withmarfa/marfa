@@ -190,6 +190,17 @@ describe("reinstall adopts what the integration already synced", () => {
     expect(created.status).toBe(201);
     const createdBody = (await created.json()) as { item: { id: string } };
 
+    // The precondition D63 adds, and without it the case below tests the
+    // wrong thing. Adoption over a *recorded, dead* writer and adoption
+    // over a *null* writer take different arms of the guard, and only the
+    // first is what a reinstall actually meets. Asserting the stamp landed
+    // is what tells the two apart.
+    expect(
+      (await ctx.storage.items.writersOf([createdBody.item.id])).get(
+        createdBody.item.id,
+      ),
+    ).toBe(firstConnection);
+
     const adminKey = await ctx.storage.keys
       .list()
       .then((keys) => keys.find((k) => k.role === "instance_admin"));
@@ -219,6 +230,16 @@ describe("reinstall adopts what the integration already synced", () => {
     expect(resynced.status).toBe(200);
     const resyncedBody = (await resynced.json()) as { item: { id: string } };
     expect(resyncedBody.item.id).toBe(createdBody.item.id);
+
+    // Adopted, and re-stamped onto the connection that now owns it (D63).
+    // The refusal is on liveness rather than on difference precisely so
+    // this path stays open: the first connection is gone, so its rows are
+    // the second's to take. Drop that qualifier and this answers 409.
+    expect(
+      (await ctx.storage.items.writersOf([createdBody.item.id])).get(
+        createdBody.item.id,
+      ),
+    ).toBe(secondConnection);
 
     const list = await request(
       ctx.app,

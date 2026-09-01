@@ -568,6 +568,13 @@
       "when": 1788199770268,
       "tag": "0080_the_top_role_is_instance_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1788262474472,
+      "tag": "0081_items_written_by_connection",
+      "breakpoints": true
     }
   ]
 }

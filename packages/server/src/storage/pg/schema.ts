@@ -91,6 +91,19 @@ export const items = pgTable(
     timestamp: text("timestamp").notNull(),
     source: text("source"),
     source_id: text("source_id"),
+    // The connection that wrote this row (D63). Deliberately NOT part of
+    // the natural key: `(source, source_id)` is unchanged, so D34's
+    // reinstall adoption still resolves the same row. This column decides
+    // only whether a resolved row is *refused*, and is read by the orphan
+    // resolver so removing one of two connections marks the removed one's
+    // items orphaned rather than leaving them reading live.
+    //
+    // Nullable with no backfill. Null means no connection is recorded as
+    // owning the row: it is adopted and stamped on the next write, which
+    // is also what a dead recorded writer does. No foreign key, matching
+    // this file's rule that item-to-item references are app-level; no
+    // index, because nothing queries *by* writer.
+    written_by_connection_id: text("written_by_connection_id"),
     version: integer("version").notNull().default(1),
     schema_version: integer("schema_version"),
     device: text("device"),
