@@ -671,7 +671,7 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Soft delete an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead.",
+    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -682,6 +682,15 @@ const deleteItemRoute = createRoute({
         "application/json": { schema: OkResponseSchema },
       },
       description: "Item trashed",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -969,7 +978,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -980,6 +989,15 @@ const purgeItemRoute = createRoute({
         "application/json": { schema: OkResponseSchema },
       },
       description: "Item permanently deleted",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
     },
     401: {
       content: {
