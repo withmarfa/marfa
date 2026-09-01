@@ -41,12 +41,14 @@ import {
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { TypeFilter } from "@withmarfa/shared";
-import type { ItemStatsAxis } from "../interface.js";
+import type {
+  ItemStatsAxis,
+  StoredCreateItemInput,
+  StoredUpdateItemInput,
+} from "../interface.js";
 import { instantColumnValues } from "../instant-columns.js";
 import type {
   Item,
-  CreateItemInput,
-  UpdateItemInput,
   ConflictResponse,
   ItemState,
   PaginatedResult,
@@ -197,7 +199,7 @@ export class SqliteItemStore implements ItemStore {
     );
   }
 
-  async create(input: CreateItemInput, spaceId?: string): Promise<Item> {
+  async create(input: StoredCreateItemInput, spaceId?: string): Promise<Item> {
     const id = input.id ?? generateId();
     if (input.id && !isValidId(input.id)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid item ID");
@@ -282,6 +284,9 @@ export class SqliteItemStore implements ItemStore {
             timestamp: input.timestamp ?? now,
             source: input.source,
             source_id: input.source_id,
+            // Null unless the caller is a runtime credential (D63). Set by
+            // the route from `writerConnectionOf`, never by the caller.
+            written_by_connection_id: input.written_by_connection_id ?? null,
             version: 1,
             schema_version: schemaVersion,
             device: input.device,
@@ -425,6 +430,31 @@ export class SqliteItemStore implements ItemStore {
     for (const row of rows) {
       if (row.state === "trashed" && opts?.includeTrashed !== true) continue;
       out.set(row.id, rowToItem(row));
+    }
+    return out;
+  }
+
+  async writersOf(ids: readonly string[]): Promise<Map<string, string | null>> {
+    const out = new Map<string, string | null>();
+    if (ids.length === 0) return out;
+    const unique = Array.from(new Set(ids));
+    // Chunked because `POST /items/bulk-actions` can hand this its whole
+    // match set, and that cap is above SQLite's default
+    // SQLITE_MAX_VARIABLE_NUMBER of 32766. One oversized `IN` would fail
+    // on SQLite and pass on Postgres, which is the dialect split worth
+    // avoiding in a query added for a correctness guard.
+    const CHUNK = 1000;
+    for (let i = 0; i < unique.length; i += CHUNK) {
+      const rows = await this.db
+        .select({
+          id: items.id,
+          written_by_connection_id: items.written_by_connection_id,
+        })
+        .from(items)
+        .where(inArray(items.id, unique.slice(i, i + CHUNK)));
+      for (const row of rows) {
+        out.set(row.id, row.written_by_connection_id ?? null);
+      }
     }
     return out;
   }
@@ -662,7 +692,7 @@ export class SqliteItemStore implements ItemStore {
 
   async update(
     id: string,
-    input: UpdateItemInput,
+    input: StoredUpdateItemInput,
     spaceId?: string,
   ): Promise<Item | ConflictResponse> {
     const whereClause = this.spaceWhere(id, spaceId);
@@ -744,6 +774,13 @@ export class SqliteItemStore implements ItemStore {
           ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
           ...(input.source_id !== undefined && {
             source_id: input.source_id,
+          }),
+          // Only when the route asks (D63): the adopt arm re-stamps a
+          // row whose recorded writer is gone, while an owner re-syncing
+          // its own row must not churn the column. A lifecycle gesture
+          // never sets it, so archiving does not make you the writer.
+          ...(input.written_by_connection_id !== undefined && {
+            written_by_connection_id: input.written_by_connection_id,
           }),
           // Only where a caller explicitly asked to re-type. Every other
           // door refuses a type that disagrees with the row rather than
@@ -844,6 +881,13 @@ export class SqliteItemStore implements ItemStore {
         ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
         ...(input.source_id !== undefined && {
           source_id: input.source_id,
+        }),
+        // Only when the route asks (D63): the adopt arm re-stamps a
+        // row whose recorded writer is gone, while an owner re-syncing
+        // its own row must not churn the column. A lifecycle gesture
+        // never sets it, so archiving does not make you the writer.
+        ...(input.written_by_connection_id !== undefined && {
+          written_by_connection_id: input.written_by_connection_id,
         }),
       };
 

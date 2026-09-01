@@ -415,7 +415,8 @@ CREATE TABLE IF NOT EXISTS public.items (
     tier text DEFAULT 'library'::text NOT NULL,
     search_vector tsvector,
     starts_at_utc text,
-    ends_at_utc text
+    ends_at_utc text,
+    written_by_connection_id text
 );
 
 CREATE TABLE IF NOT EXISTS public.metadata (

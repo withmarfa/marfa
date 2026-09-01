@@ -10,13 +10,13 @@
     "exports": 9
   },
   "@withmarfa/sdk": {
-    "version": "2.5.0",
+    "version": "2.6.0",
     "hash": "7abe3cb51ab88200951e9a68145fd29f03b98250bbd109db41b4df9d3f76e726",
     "exports": 125
   },
   "@withmarfa/shared": {
-    "version": "6.12.0",
-    "hash": "f89636cfe444b09a349589569599e80fe654c34045d87498beec889ee52dbf85",
+    "version": "6.13.0",
+    "hash": "f5f7f673e90620bdacb6e45b20c50604e6b67fe55cd5cf4ccc7f62d821751a41",
     "exports": 263
   },
   "@withmarfa/webhooks": {

@@ -31,6 +31,7 @@ import {
   requireTypeAccess,
   isOwnConnectionRead,
   itemProvenanceSource,
+  writerConnectionOf,
   requireActivityAttribution,
   requireMirrorProtection,
   requireDeclaredTypeMatches,
@@ -57,6 +58,7 @@ import { applyInlineEdges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
+  requireOwningConnection,
   resolveOrphanScope,
   resolveOrphanScopeForOwnWrite,
   withOrphanState,
@@ -220,7 +222,10 @@ const createItemRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_mismatch"]),
+          schema: makeErrorResponseSchema([
+            "type_mismatch",
+            "provenance_collision",
+          ]),
         },
       },
       description:
@@ -645,7 +650,11 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.union([
             ConflictResponseSchema,
-            makeErrorResponseSchema(["source_id_conflict", "type_mismatch"]),
+            makeErrorResponseSchema([
+              "source_id_conflict",
+              "type_mismatch",
+              "provenance_collision",
+            ]),
           ]),
         },
       },
@@ -1236,6 +1245,18 @@ export function itemRoutes(storage: Storage) {
         body.source_id,
         spaceId,
       );
+      // D63 is checked on BOTH arms below rather than once here, and the
+      // difference is disclosure. This branch reasons carefully that the
+      // row's type is a gate rather than a filter — gate before disclosing,
+      // so a refusal cannot be read off the body — and the provenance
+      // refusal names `item_id`, `source` and the owning connection's id.
+      // Answering it ahead of `requireTypeAccess` would disclose all three
+      // to a caller the type gate is about to refuse and tell nothing.
+      //
+      // So each arm runs it last among its own gates. That is two call
+      // sites for one rule, which is the shape this codebase treats as a
+      // hazard — the trashed arm has its own named test for exactly that
+      // reason, and deleting either call reddens one case and only one.
       if (existing?.state === "trashed") {
         // The user deleted this. Reviving it would overturn that decision
         // silently, and refusing forever is the bug being fixed, so the
@@ -1266,6 +1287,11 @@ export function itemRoutes(storage: Storage) {
         //
         // Gate before disclosing, so a refusal cannot be read off the body.
         requireTypeAccess(c, existing.type, "write");
+        // Then D63: a twin's trashed row is not this connection's to be
+        // acknowledged. Without this the branch answers 200 carrying the
+        // row and its metadata, which reads as "your record is already
+        // stored, and deleted" when it is somebody else's.
+        await requireOwningConnection(storage, credential, existing);
         const metadata = await storage.metadata.get(existing.id);
         return c.json(
           {
@@ -1363,6 +1389,16 @@ export function itemRoutes(storage: Storage) {
         // six were found disagreeing.
         requireDeclaredTypeMatches(type, existing);
 
+        // D63, last among this arm's row-side gates for the same reason
+        // the bulk door orders it last: the gates above have narrower
+        // refusals that disclose less, and `requireActivityAttribution`
+        // must keep the one refusal a test names as its own.
+        const ownership = await requireOwningConnection(
+          storage,
+          credential,
+          existing,
+        );
+
         // An owning integration's re-sync gets faithful-mirror null
         // semantics: the upstream cleared the field, so an explicit null
         // clears the key here too.
@@ -1420,6 +1456,14 @@ export function itemRoutes(storage: Storage) {
                   timestamp: body.timestamp,
                 }),
                 ...(nullClears ? { null_clears: true } : {}),
+                // Only on adoption (D63). An owner re-syncing its own row
+                // must not churn the column, and a row whose recorded
+                // writer is gone — or was never recorded — becomes this
+                // connection's on the write that adopts it, which is what
+                // makes the pre-column corpus converge without a backfill.
+                ...(ownership === "adopt" && {
+                  written_by_connection_id: writerConnectionOf(credential),
+                }),
               },
               spaceId,
             );
@@ -1514,6 +1558,7 @@ export function itemRoutes(storage: Storage) {
             timestamp: body.timestamp,
             source: stampedSource,
             source_id: body.source_id,
+            written_by_connection_id: writerConnectionOf(credential),
             device: body.device,
             capture_latitude: body.capture_latitude,
             capture_longitude: body.capture_longitude,
@@ -1650,6 +1695,11 @@ export function itemRoutes(storage: Storage) {
         ...(itemProvenanceSource(credential) !== undefined
           ? { source: itemProvenanceSource(credential) }
           : {}),
+        // Null for a person, which is the ordinary case here and is why the
+        // column is nullable. A runtime credential promoting a mirror does
+        // become the copy's writer, so the copy answers the orphan question
+        // by the same rule as every other row that credential wrote.
+        written_by_connection_id: writerConnectionOf(credential),
       },
       spaceId,
     );
@@ -2178,6 +2228,17 @@ export function itemRoutes(storage: Storage) {
         : item.properties,
     );
     requireMirrorProtection(c.get("apiKey"), item);
+    // D63, and last among the row-side gates so this door answers in the
+    // same order `POST /items/bulk` does — the two are the same operation
+    // reached through different doors, and `checkUpdate` says so. Ordering
+    // it ahead of `requireActivityAttribution` would also take that gate's
+    // only refusal away from it, leaving the test that names it measuring
+    // this guard instead.
+    const patchOwnership = await requireOwningConnection(
+      storage,
+      c.get("apiKey"),
+      item,
+    );
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
     // unique per space — the same constraint enforced at create time.
@@ -2328,6 +2389,10 @@ export function itemRoutes(storage: Storage) {
                 c.get("apiKey")?.item_source === item.source
                   ? { null_clears: true }
                   : {}),
+                // Adoption, same rule as the natural-key door (D63).
+                ...(patchOwnership === "adopt" && {
+                  written_by_connection_id: writerConnectionOf(c.get("apiKey")),
+                }),
               },
               tid,
             )

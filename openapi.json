@@ -689,7 +689,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "type_mismatch"
+                            "type_mismatch",
+                            "provenance_collision"
                           ]
                         },
                         "message": {
@@ -2873,7 +2874,8 @@
                               "type": "string",
                               "enum": [
                                 "source_id_conflict",
-                                "type_mismatch"
+                                "type_mismatch",
+                                "provenance_collision"
                               ]
                             },
                             "message": {

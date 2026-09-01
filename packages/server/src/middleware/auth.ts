@@ -892,6 +892,27 @@ export function itemProvenanceSource(
 }
 
 /**
+ * The connection to record as having written a row (D63), or null.
+ *
+ * **Gated on `is_runtime_credential`, not on the shape of `source`.** Only
+ * `createRuntimeCredential` sets that flag; `keys.create` cannot. The string
+ * is not safe to reason from — the console's self-serve mint writes the
+ * caller's `label` straight into `source`, so a space owner could mint one
+ * labelled `integration:acme/calendar` and `itemProvenanceSource` would hand
+ * back the forged value. Reading the flag makes that unreachable rather than
+ * merely unlikely, which is the same reasoning
+ * `resolveOrphanScopeForOwnWrite` already gives for the same choice.
+ *
+ * Null for every human-minted credential, which is why the column stays
+ * nullable: a row a person wrote has no owning connection, and that is a
+ * fact rather than a gap.
+ */
+export function writerConnectionOf(key: ApiKey | undefined): string | null {
+  if (key?.is_runtime_credential !== true) return null;
+  return key.connection_id ?? null;
+}
+
+/**
  * Refuse a `system.activity` write that claims to be a Connection other
  * than the writing runtime credential's own.
  *

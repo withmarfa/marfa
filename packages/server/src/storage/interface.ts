@@ -268,8 +268,26 @@ export interface ItemGetOptions {
   includePlatformScoped?: boolean;
 }
 
+/**
+ * The connection that wrote a row (D63), carried on the write inputs.
+ *
+ * **Server-internal, deliberately not on `CreateItemInput` /
+ * `UpdateItemInput`.** Those are `@withmarfa/shared`'s published types and
+ * the SDK's own parameter types, so a field declared there is one a client
+ * can set — and this one is server-set from the calling runtime
+ * credential, gated on `is_runtime_credential` rather than on the shape of
+ * `source`. Declaring it publicly would invite callers to pass a value that
+ * every route strips, which is a worse surface than not offering it.
+ */
+export interface ItemWriterInput {
+  written_by_connection_id?: string | null;
+}
+
+export type StoredCreateItemInput = CreateItemInput & ItemWriterInput;
+export type StoredUpdateItemInput = UpdateItemInput & ItemWriterInput;
+
 export interface ItemStore {
-  create(input: CreateItemInput, spaceId?: string): Promise<Item>;
+  create(input: StoredCreateItemInput, spaceId?: string): Promise<Item>;
   get(
     id: string,
     spaceId?: string,
@@ -296,6 +314,28 @@ export interface ItemStore {
     spaceId?: string,
     opts?: { includeTrashed?: boolean },
   ): Promise<Map<string, Item>>;
+  /**
+   * The connection recorded as having written each of `ids` (D63).
+   *
+   * One indexed `id IN (...)` returning a single column, because the value
+   * is deliberately not on `Item` — putting it there would disclose which
+   * install wrote each row to every reader, including narrowly-scoped app
+   * principals holding no read on `system.connection`, for a fact only the
+   * server's own orphan derivation and one error body consume.
+   *
+   * **An id absent from the map is one no row was found for**, which is not
+   * the same event as a row whose column is null — but both mean the same
+   * thing to every caller here, and deliberately so: no connection is
+   * recorded as owning that row, so it falls back to the coarser
+   * `(space, manifest name)` answer. Stating it rather than leaving it to be
+   * inferred, because the two arriving as one value is the kind of thing a
+   * later reader assumes was an oversight.
+   *
+   * Callers pass ids from rows they have already read and are already
+   * authorised to see, so this adds no disclosure of its own and takes no
+   * space fence.
+   */
+  writersOf(ids: readonly string[]): Promise<Map<string, string | null>>;
   /**
    * Like `get`, but returns trashed items too. Intended for callers that
    * need to read an item's metadata (e.g. its `type` for a permission
@@ -330,7 +370,7 @@ export interface ItemStore {
   ): Promise<Item | null>;
   update(
     id: string,
-    input: UpdateItemInput,
+    input: StoredUpdateItemInput,
     spaceId?: string,
   ): Promise<Item | ConflictResponse>;
   delete(id: string, spaceId?: string): Promise<void>;

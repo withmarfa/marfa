@@ -512,6 +512,193 @@ const NOT_A_PROPERTIES_DOOR: Record<string, string> = {
     "creates a fresh item from a mirror it only reads; never writes an existing row's properties, and the create it performs runs the create-door gates",
 };
 
+/**
+ * Two Connections of ONE integration, which is the case `source` cannot see.
+ *
+ * `runtimeCredentialItemSource` stamps `integration:<manifest name>` for every
+ * Connection of an integration in a space, deliberately, so a reinstall adopts
+ * the corpus it created (D34). The cost is that two live Connections share a
+ * natural-key namespace and `permitsMirrorWrite` — which compares that same
+ * shared string — treats them as one writer by construction. The row's
+ * recorded writer is the axis that tells them apart (D63).
+ *
+ * On `core.note` rather than `system.activity`, for the reason the mirror
+ * block above gives: attribution is a different gate with its own refusal, and
+ * a note is outside it, so nothing shadows the one being measured here.
+ */
+describe("two connections of one integration (D63)", () => {
+  let spaceId: string;
+  let mine: Credential;
+  let twin: Credential;
+  let seq = 0;
+
+  beforeAll(async () => {
+    const space = await ctx.storage.spaces!.create("provenance-collision");
+    spaceId = space.id;
+    const shared = await integrationFor("acme/collide");
+    mine = await credentialFor(spaceId, "acme/collide", shared);
+    twin = await credentialFor(spaceId, "acme/collide", shared);
+  });
+
+  const key = (): string => `rec-${String(seq++)}`;
+
+  async function noteBy(
+    owner: Credential,
+    sourceId: string,
+    body = "the owner's copy",
+  ): Promise<Response> {
+    return request(ctx.app, "POST", "/items", {
+      key: owner.key,
+      body: { type: "core.note", source_id: sourceId, properties: { body } },
+    });
+  }
+
+  it("the two credentials really do share one provenance stamp", () => {
+    // The precondition, asserted rather than assumed. Without this equality
+    // `mine`'s natural key never resolves `twin`'s row at all: the write
+    // falls through to create, every case below passes, and none of them is
+    // testing what its name says. This file records that exact failure
+    // having happened once already.
+    expect(mine.itemSource).toBe(twin.itemSource);
+    expect(mine.connectionId).not.toBe(twin.connectionId);
+  });
+
+  it("refuses a write that resolves a live twin's row, and names the owner", async () => {
+    const sourceId = key();
+    expect((await noteBy(twin, sourceId)).status).toBe(201);
+
+    const res = await noteBy(mine, sourceId, "overwritten");
+    expect(await refusalCode(res)).toBe("provenance_collision");
+
+    const body = (await res.json()) as {
+      error?: { details?: { owning_connection_id?: string } };
+    };
+    expect(body.error?.details?.owning_connection_id).toBe(twin.connectionId);
+
+    // Refused, not merged: the row is byte-for-byte the twin's.
+    const page = await ctx.storage.items.list({ spaceId, type: "core.note" });
+    const row = page.data.find((i) => i.source_id === sourceId);
+    expect(row?.properties.body).toBe("the owner's copy");
+  });
+
+  it("each connection keeps its own row", async () => {
+    // The acceptance criterion, and the positive case that stops the
+    // refusal above meaning "this guard refuses everything". A guard that
+    // refused unconditionally passes the previous test and fails this one.
+    const mineKey = key();
+    const twinKey = key();
+    expect((await noteBy(twin, twinKey, "twin's")).status).toBe(201);
+    expect((await noteBy(mine, mineKey, "mine")).status).toBe(201);
+
+    const page = await ctx.storage.items.list({ spaceId, type: "core.note" });
+    const twinRow = page.data.find((i) => i.source_id === twinKey);
+    const mineRow = page.data.find((i) => i.source_id === mineKey);
+    expect(twinRow).toBeDefined();
+    expect(mineRow).toBeDefined();
+    expect(twinRow!.id).not.toBe(mineRow!.id);
+
+    const writers = await ctx.storage.items.writersOf([
+      twinRow!.id,
+      mineRow!.id,
+    ]);
+    expect(writers.get(twinRow!.id)).toBe(twin.connectionId);
+    expect(writers.get(mineRow!.id)).toBe(mine.connectionId);
+  });
+
+  it("does not refuse the owner re-syncing its own row", async () => {
+    const sourceId = key();
+    const first = await noteBy(twin, sourceId, "v1");
+    expect(first.status).toBe(201);
+    const firstId = ((await first.json()) as { item: { id: string } }).item.id;
+
+    const second = await noteBy(twin, sourceId, "v2");
+    expect(second.status).toBe(200);
+    expect(((await second.json()) as { item: { id: string } }).item.id).toBe(
+      firstId,
+    );
+  });
+
+  it("refuses on the trashed arm rather than acknowledging the twin's row", async () => {
+    // The single highest-value case here. The trashed branch answers 200
+    // with the row AND its metadata before the update arm is reached, so a
+    // guard placed only in the update arm hands a sibling its twin's row
+    // and calls it an acknowledgement. Deleting the hoisted call reddens
+    // this case and nothing else.
+    const sourceId = key();
+    const created = await noteBy(twin, sourceId, "then trashed");
+    expect(created.status).toBe(201);
+    const id = ((await created.json()) as { item: { id: string } }).item.id;
+    await ctx.storage.items.delete(id, spaceId);
+
+    const res = await noteBy(mine, sourceId, "claiming it");
+    expect(await refusalCode(res)).toBe("provenance_collision");
+  });
+
+  it("refuses create_only rather than reporting the twin's row as a duplicate", async () => {
+    // `skipped / duplicate_source` reads as "already stored" and sends the
+    // handler on believing its own record is present. It is not: the row
+    // belongs to somebody else.
+    const sourceId = key();
+    expect((await noteBy(twin, sourceId)).status).toBe(201);
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: {
+        mode: "create_only",
+        atomic: false,
+        items: [
+          { type: "core.note", source_id: sourceId, properties: { body: "x" } },
+        ],
+      },
+    });
+    const body = (await res.json()) as {
+      results?: { outcome?: string; error?: { code?: string } }[];
+    };
+    expect(body.results?.[0]?.outcome).toBe("errored");
+    expect(body.results?.[0]?.error?.code).toBe("provenance_collision");
+  });
+
+  it("refuses PATCH by id on a live twin's row", async () => {
+    const sourceId = key();
+    const created = await noteBy(twin, sourceId);
+    const id = ((await created.json()) as { item: { id: string } }).item.id;
+
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: mine.key,
+      body: { properties: { body: "overwritten" } },
+    });
+    expect(await refusalCode(res)).toBe("provenance_collision");
+  });
+
+  it("adopts a row that records no writer, and stamps itself", async () => {
+    // Every row written before this column existed is in this state, which
+    // is why there is no backfill. Proved in the code rather than asserted
+    // in a comment.
+    const sourceId = key();
+    const row = await ctx.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "pre-column" },
+        source: mine.itemSource,
+        source_id: sourceId,
+      },
+      spaceId,
+    );
+    expect(
+      (await ctx.storage.items.writersOf([row.id])).get(row.id),
+    ).toBeNull();
+
+    const res = await noteBy(mine, sourceId, "adopted");
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { item: { id: string } }).item.id).toBe(
+      row.id,
+    );
+    expect((await ctx.storage.items.writersOf([row.id])).get(row.id)).toBe(
+      mine.connectionId,
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The agreement
 // ---------------------------------------------------------------------------

@@ -45,9 +45,12 @@ import {
   permitsActivityAttribution,
   permitsMirrorWrite,
   itemProvenanceSource,
+  writerConnectionOf,
   getTypeFilter,
   hasPlatformAuthority,
+  INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
+import { createOwnershipGuard, liveConnectionIds } from "./_orphaned.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
@@ -534,7 +537,20 @@ async function processBulkItem(
     checkUpdate: (
       existing: Item,
       raw: { properties?: Record<string, unknown> },
-    ) => void;
+    ) => Promise<"own" | "adopt">;
+    /**
+     * The provenance half of the row-side gate on its own (D63), for the
+     * `create_only` arm — which authorizes nothing else and must keep it
+     * that way.
+     */
+    checkProvenance: (existing: Item) => Promise<"own" | "adopt">;
+    /**
+     * The connection to record as this write's author (D63), or null when
+     * the caller is not a runtime credential. Computed once per request in
+     * the route rather than per entry, because it is a property of the
+     * credential and cannot change inside a batch.
+     */
+    writerConnectionId: string | null;
     /**
      * The edge half of the dual gate, mirroring `requireEdgePermission` on
      * `POST /edges` and on `POST /items` with an inline `edges` payload.
@@ -566,7 +582,9 @@ async function processBulkItem(
     retype,
     checkWrite,
     checkUpdate,
+    checkProvenance,
     checkEdgeWrite,
+    writerConnectionId,
   } = options;
 
   // Reconcile inline edges. `applyInlineEdges` deletes-then-validates-then-
@@ -627,6 +645,30 @@ async function processBulkItem(
 
   // create_only: existing match → skipped. No writes.
   if (existing && mode === "create_only") {
+    // Guarded before the skip (D63). A row a live sibling connection owns
+    // is not this caller's duplicate, and answering `skipped /
+    // duplicate_source` says it is — which reads as "already stored" and
+    // sends the handler on believing its record is present.
+    //
+    // **The provenance guard alone, not `checkUpdate`.** This arm has never
+    // run the update authorization and must not start: `create_only` with
+    // locally-assigned ids is the offline-first path, and putting
+    // `requireMirrorProtection` and `requireTypeAccess` in front of a skip
+    // would turn "that id is already taken" into a refusal — and, since
+    // `atomic` defaults to true, into a whole-batch rollback.
+    try {
+      await checkProvenance(existing);
+    } catch (err) {
+      if (err instanceof MarfaError) {
+        return {
+          index,
+          outcome: "errored",
+          id: existing.id,
+          error: { code: err.code, message: err.message },
+        };
+      }
+      throw err;
+    }
     return {
       index,
       outcome: "skipped",
@@ -638,12 +680,15 @@ async function processBulkItem(
   // upsert + existing: update properties/tier/timestamp in place,
   // optionally reconciling edges.
   if (existing) {
+    // No initialiser: `checkUpdate` below either assigns it or throws, so
+    // a default here would be a value nothing can read.
+    let ownership: "own" | "adopt";
     // Authorize against the row about to be overwritten. The entry's own
     // `type` is not what is being written — it describes a create that is
     // no longer happening — so it is checked for agreement rather than
     // used.
     try {
-      checkUpdate(existing, { properties: raw.properties });
+      ownership = await checkUpdate(existing, { properties: raw.properties });
       // Both resolutions above land here, and neither used the entry's
       // `type` to get here: the natural key ignores it, and the id
       // fallback ignores it too. Declaring one type and resolving another
@@ -731,6 +776,10 @@ async function processBulkItem(
         ...(resultingType === existing.type ? {} : { type: resultingType }),
         tier: raw.tier,
         timestamp: raw.timestamp,
+        // Adoption only (D63), matching the single-item doors.
+        ...(ownership === "adopt" && {
+          written_by_connection_id: writerConnectionId,
+        }),
       },
       spaceId,
     );
@@ -811,6 +860,7 @@ async function processBulkItem(
       ...(sourceId !== undefined && { source_id: sourceId }),
       ...(raw.device !== undefined && { device: raw.device }),
       ...(raw.tags !== undefined && { tags: raw.tags }),
+      written_by_connection_id: writerConnectionId,
     };
     const created = await storage.items.create(createInput, spaceId);
     if (raw.edges) {
@@ -855,10 +905,16 @@ export function bulkRoutes(storage: Storage) {
     // cannot edit a sibling's activity without naming a connection at
     // all; after, so it cannot re-point its own. The merge mirrors the
     // shallow property merge the storage layer performs.
-    const checkUpdate = (
+    // One guard for the whole request, so the connection walk behind it is
+    // paid once per space rather than once per entry (D63).
+    const ownershipGuard = createOwnershipGuard(storage);
+    const checkProvenance = (existing: Item): Promise<"own" | "adopt"> =>
+      ownershipGuard(c.get("apiKey"), existing);
+
+    const checkUpdate = async (
       existing: Item,
       raw: { properties?: Record<string, unknown> },
-    ): void => {
+    ): Promise<"own" | "adopt"> => {
       const key = c.get("apiKey");
       requireTypeAccess(c, existing.type, "write");
       requireActivityAttribution(key, existing.type, existing.properties);
@@ -870,6 +926,13 @@ export function bulkRoutes(storage: Storage) {
           : existing.properties,
       );
       requireMirrorProtection(key, existing);
+      // Last of the row-side gates rather than first, deliberately.
+      // `requireActivityAttribution` above is the only thing that can
+      // refuse a sibling's `system.activity` row, and a test names it as
+      // such; answering ahead of it would leave that test measuring this
+      // guard instead, and the gate it names could then be deleted with
+      // the file still green.
+      return ownershipGuard(key, existing);
     };
     // The edge half of the dual gate. Same call the direct routes make,
     // so the three doors that accept an inline `edges` payload agree.
@@ -966,7 +1029,9 @@ export function bulkRoutes(storage: Storage) {
           retype,
           checkWrite,
           checkUpdate,
+          checkProvenance,
           checkEdgeWrite,
+          writerConnectionId: writerConnectionOf(c.get("apiKey")),
         });
         if (atomic && result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw
@@ -1167,6 +1232,53 @@ export function bulkRoutes(storage: Storage) {
         `Bulk action matched more than ${String(cap)} items`,
         { matched: matched.length, cap },
       );
+    }
+
+    // The connection axis (D63), batched rather than folded into `mayAct`:
+    // it needs one column read over the match set and one connection walk
+    // per space, and `mayAct` runs per row inside the page loop.
+    //
+    // **Narrowing, not refusing**, which is this route's established answer
+    // on every other axis: one unreachable row must not fail an action over
+    // thousands. And on the same axis mirror protection uses — only where a
+    // patch is being applied — because transitions and retiers are user
+    // gestures on rows an integration owns and are deliberately exempt.
+    if (patch !== undefined && matched.length > 0) {
+      const mine =
+        callerKey?.is_runtime_credential === true
+          ? callerKey.connection_id
+          : null;
+      if (mine !== null && mine !== undefined) {
+        const candidates = matched.filter((item) =>
+          item.source.startsWith(INTEGRATION_SOURCE_PREFIX),
+        );
+        if (candidates.length > 0) {
+          const writers = await storage.items.writersOf(
+            candidates.map((item) => item.id),
+          );
+          const spaces = new Set(
+            candidates.map((item) => item.space_id ?? null),
+          );
+          const liveBySpace = new Map<string | null, ReadonlySet<string>>();
+          for (const space of spaces) {
+            liveBySpace.set(space, await liveConnectionIds(storage, space));
+          }
+          const refused = new Set<string>();
+          for (const item of candidates) {
+            const writer = writers.get(item.id) ?? null;
+            // Null and a dead writer both stay in: this door does not
+            // adopt, and a row nobody live owns is not somebody else's.
+            if (writer === null || writer === mine) continue;
+            const live = liveBySpace.get(item.space_id ?? null);
+            if (live?.has(writer) === true) refused.add(item.id);
+          }
+          if (refused.size > 0) {
+            const kept = matched.filter((item) => !refused.has(item.id));
+            matched.length = 0;
+            matched.push(...kept);
+          }
+        }
+      }
     }
 
     // Dry run: report matched ids without mutating anything. No audit.

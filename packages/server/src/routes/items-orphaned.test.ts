@@ -511,6 +511,129 @@ describe("the connection's lifecycle state is what moves the answer", () => {
   });
 });
 
+describe("two connections of one integration (D63)", () => {
+  /**
+   * The case `(space, manifest name)` could not see, and the reason the
+   * column exists.
+   *
+   * Both connections stamp the same `integration:<name>` on their rows, so
+   * the pre-D63 walk collected one string for the pair. Removing one left
+   * every row it wrote reading `orphaned: false` on the strength of its
+   * sibling — the field's stated contract answered correctly, and the
+   * question a reader actually asks answered wrongly.
+   */
+  it("marks the removed connection's rows and leaves its sibling's alone", async () => {
+    const spaceId = (await ctx.storage.spaces!.create("orphan-twins")).id;
+    const readerKey = await mintSpaceKey(spaceId, "orphan-twins-reader");
+    const twins = manifest("acme/orphan-twins");
+    const catalogRow = await registerCatalogRow(twins);
+
+    const first = await install(twins, catalogRow, spaceId);
+    const second = await install(twins, catalogRow, spaceId);
+    expect(first).not.toBe(second);
+
+    const firstItem = await writeNote(
+      await mintRuntimeKey(twins, first, spaceId),
+      "written by the connection that will be removed",
+    );
+    const secondItem = await writeNote(
+      await mintRuntimeKey(twins, second, spaceId),
+      "written by the connection that stays",
+    );
+
+    // Precondition. Without it the assertion after the uninstall proves
+    // nothing about the uninstall: a resolver that answered `true` for
+    // everything would pass that one and fail this.
+    const before = await listItems(readerKey);
+    expect(need(before, firstItem, "the first item").orphaned).toBe(false);
+    expect(need(before, secondItem, "the second item").orphaned).toBe(false);
+
+    // And that the two really are one integration, which is the whole
+    // premise: different manifests would not share a provenance string and
+    // nothing here would be testing the case it names.
+    const rows = await ctx.storage.items.getMany(
+      [firstItem, secondItem],
+      spaceId,
+    );
+    expect(rows.get(firstItem)?.source).toBe(rows.get(secondItem)?.source);
+
+    await performUninstall(ctx.storage, {
+      apiKeyId: adminKeyId,
+      spaceId,
+      connectionId: first,
+      clientIp: null,
+    });
+
+    const after = await listItems(readerKey);
+    expect(
+      need(after, firstItem, "the removed connection's item").orphaned,
+    ).toBe(true);
+    // The positive beside it. A resolver that marks everything orphaned the
+    // moment any connection dies passes the line above and fails this one.
+    expect(need(after, secondItem, "the live connection's item").orphaned).toBe(
+      false,
+    );
+  });
+
+  it("falls back to the manifest answer for a row that records no writer", async () => {
+    // Every row written before the column existed is in this state, and it
+    // is why no backfill is needed. The pre-column rule was
+    // `(space, manifest name)`, and that is exactly what it still gets.
+    const spaceId = (await ctx.storage.spaces!.create("orphan-nullwriter")).id;
+    const readerKey = await mintSpaceKey(spaceId, "orphan-nullwriter-reader");
+    const live = manifest("acme/orphan-null-live");
+    const gone = manifest("acme/orphan-null-gone");
+    const liveConnection = await install(
+      live,
+      await registerCatalogRow(live),
+      spaceId,
+    );
+    const goneConnection = await install(
+      gone,
+      await registerCatalogRow(gone),
+      spaceId,
+    );
+
+    // Written through storage rather than the route, so the column stays
+    // null the way a pre-column row's is.
+    const liveRow = await ctx.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "no writer recorded, integration still live" },
+        source: runtimeCredentialItemSource(live) ?? undefined,
+      },
+      spaceId,
+    );
+    const goneRow = await ctx.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: "no writer recorded, integration removed" },
+        source: runtimeCredentialItemSource(gone) ?? undefined,
+      },
+      spaceId,
+    );
+    const writers = await ctx.storage.items.writersOf([liveRow.id, goneRow.id]);
+    expect(writers.get(liveRow.id)).toBeNull();
+    expect(writers.get(goneRow.id)).toBeNull();
+
+    await performUninstall(ctx.storage, {
+      apiKeyId: adminKeyId,
+      spaceId,
+      connectionId: goneConnection,
+      clientIp: null,
+    });
+    expect(liveConnection).toBeDefined();
+
+    const items = await listItems(readerKey);
+    expect(need(items, liveRow.id, "the null-writer live row").orphaned).toBe(
+      false,
+    );
+    expect(
+      need(items, goneRow.id, "the null-writer removed row").orphaned,
+    ).toBe(true);
+  });
+});
+
 describe("every read path carries it", () => {
   it("GET /items/:id", async () => {
     const res = await request(ctx.app, "GET", `/items/${goneItemId}`, {
@@ -985,6 +1108,9 @@ describe("the own-write shortcut's space equality", () => {
 
   it("answers without a query when the row is the caller's own", async () => {
     const row = {
+      // Not a stored row: `writersOf` finds nothing for it, which is the
+      // no-recorded-writer path and the one these two cases are about.
+      id: "01000000-0000-7000-8000-000000000001",
       source: "integration:acme/orphan-gone",
       space_id: homeSpace,
     };
@@ -1000,6 +1126,9 @@ describe("the own-write shortcut's space equality", () => {
 
   it("falls back when the row is in a different space from the caller", async () => {
     const row = {
+      // Not a stored row: `writersOf` finds nothing for it, which is the
+      // no-recorded-writer path and the one these two cases are about.
+      id: "01000000-0000-7000-8000-000000000001",
       source: "integration:acme/orphan-gone",
       space_id: homeSpace,
     };

@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS "items" (
 	\`capture_latitude\` real,
 	\`capture_longitude\` real,
 	\`tier\` text DEFAULT 'library' NOT NULL
-, "starts_at_utc" text, "ends_at_utc" text);
+, "starts_at_utc" text, "ends_at_utc" text, \`written_by_connection_id\` text);
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);
 
