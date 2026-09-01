@@ -671,7 +671,7 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Soft delete an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead.",
+    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -682,6 +682,15 @@ const deleteItemRoute = createRoute({
         "application/json": { schema: OkResponseSchema },
       },
       description: "Item trashed",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -969,7 +978,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -980,6 +989,15 @@ const purgeItemRoute = createRoute({
         "application/json": { schema: OkResponseSchema },
       },
       description: "Item permanently deleted",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -2479,6 +2497,51 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
+  /**
+   * Refuse to remove a `system.connection` row that has not been uninstalled.
+   *
+   * **A credential must not outlive the connection it was minted for**, and
+   * neither of these doors was keeping that true. Both remove the row and
+   * neither revokes anything: `api_keys.connection_id` carries no foreign key,
+   * so a runtime credential whose connection has been deleted is standing
+   * privilege that nothing can attribute — the row naming its owner is gone.
+   * Five such credentials were found on staging and the session that found them
+   * could not establish where they came from, which is the shape the
+   * conventions forbid twice over.
+   *
+   * **Refusing rather than revoking here is the point.** Revoking would be a
+   * second teardown beside `performUninstall`, and `performUninstall` does more
+   * than revoke: leased tokens, the proxy's cached upstream tokens, inbound
+   * webhook subscriptions. Two teardowns drift, and the one reached by an
+   * ordinary `DELETE /items/{id}` is the one nobody would think to keep in step.
+   * So this door sends the caller to the door that already does it properly.
+   *
+   * An already-revoked connection deletes freely: uninstall has run, the
+   * credentials are gone, and the row is ordinary history at that point.
+   */
+  function refuseUnlessUninstalled(
+    item: Awaited<ReturnType<typeof storage.items.get>>,
+  ): void {
+    if (item?.type !== "system.connection") return;
+    const props = item.properties as
+      { status?: unknown; kind?: unknown } | undefined;
+    // **`kind`, not just the type.** `system.connection` covers both kinds
+    // and only `integration` has a runtime credential minted for it. An
+    // `app` connection is an OAuth grant: it holds no runtime credential,
+    // there is no uninstall pipeline to send its owner to, and deleting one
+    // is exactly how a grant is withdrawn. Refusing those breaks that.
+    if (props?.kind !== "integration") return;
+    if (props.status === "revoked") return;
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Connection ${item.id} is still live. Uninstall it first with ` +
+        `POST /connections/${item.id}/uninstall, which revokes its runtime ` +
+        `credentials and leased tokens, drops its cached upstream tokens and ` +
+        `disables its inbound webhooks. Removing the row here would leave ` +
+        `those behind with nothing naming their owner.`,
+    );
+  }
+
   router.openapi(deleteItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -2493,6 +2556,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, targetItem.type, "write");
+    refuseUnlessUninstalled(targetItem);
 
     const snapshots = await storage.runInTransaction(async () => {
       const toDelete = await planCascadeDelete(storage.edges, id, tid);
@@ -2698,6 +2762,9 @@ export function itemRoutes(storage: Storage) {
 
     requireSpaceAdmin(c);
     const spaceId = c.get("apiKey")?.space_id;
+    // Read before removing. This door used to purge without ever looking at
+    // the row, so it could not have known a connection from a note.
+    refuseUnlessUninstalled(await storage.items.get(id, spaceId));
     // Edges have no FK to items — explicit cleanup required before purge.
     // Fence the edge cleanup to the caller's space so a space-scoped purge
     // never drops another space's edges.
