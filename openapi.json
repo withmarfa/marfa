@@ -4753,7 +4753,7 @@
             }
           },
           "403": {
-            "description": "Admin required",
+            "description": "Admin required, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
             "content": {
               "application/json": {
                 "schema": {
@@ -4765,7 +4765,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "forbidden"
+                            "forbidden",
+                            "type_not_permitted"
                           ]
                         },
                         "message": {

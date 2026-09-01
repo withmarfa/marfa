@@ -1010,10 +1010,11 @@ const purgeItemRoute = createRoute({
     403: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
+          schema: makeErrorResponseSchema(["forbidden", "type_not_permitted"]),
         },
       },
-      description: "Admin required",
+      description:
+        "Admin required, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
     },
   },
 });
@@ -2764,7 +2765,29 @@ export function itemRoutes(storage: Storage) {
     const spaceId = c.get("apiKey")?.space_id;
     // Read before removing. This door used to purge without ever looking at
     // the row, so it could not have known a connection from a note.
-    refuseUnlessUninstalled(await storage.items.get(id, spaceId));
+    const purgeTarget = await storage.items.get(id, spaceId);
+    refuseUnlessUninstalled(purgeTarget);
+
+    // Two doors refuse one operation, and reading only the second one sends
+    // you somewhere there is nothing to find.
+    //
+    // Purging is trash-then-purge, so a caller meets `DELETE /items/{id}`
+    // first. For a reserved-namespace row a space-scoped credential is
+    // refused there, by name: "only platform credentials may write marfa.*
+    // items". The row therefore never becomes trashed, and this door then
+    // answers "Only trashed items can be purged" — which is true, and reads
+    // as an ordering mistake the caller did not make. Somebody following it
+    // goes looking for the trash step they think they skipped.
+    //
+    // Asking the write rule on the not-trashed path names the real reason
+    // and changes nothing else: a trashed row is purged exactly as before,
+    // so a reserved-namespace item a platform credential already trashed is
+    // still purgeable, and the caller who genuinely forgot to trash first
+    // still gets the message about trashing. This runs only where the purge
+    // was going to be refused anyway.
+    if (purgeTarget && purgeTarget.state !== "trashed") {
+      checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
+    }
     // Edges have no FK to items — explicit cleanup required before purge.
     // Fence the edge cleanup to the caller's space so a space-scoped purge
     // never drops another space's edges.
