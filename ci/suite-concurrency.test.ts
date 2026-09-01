@@ -152,17 +152,30 @@ describe("the suite jobs take the machine one at a time", () => {
     }
   });
 
-  it("leaves the ref-scoped workflow group cancelling as it did", () => {
-    // The half that was already right, and that the job-level group must not
-    // cost: a second push to one branch still cancels the first. That is also
-    // what bounds the queue — it holds one entry per live branch rather than
-    // one per push.
+  it("cancels a superseded run on a branch and never on main", () => {
+    // A second push to one branch still cancels the first, which is what
+    // bounds the queue to one entry per live branch rather than one per
+    // push. `main` is the exception, and it has to be: `publish.yml`
+    // refuses to tag a commit unless a *successful* `ci.yml` run exists at
+    // that exact SHA, and a cancelled run is not a successful one — so a
+    // burst of merges left every commit but the last permanently
+    // unpublishable, six of them in one evening.
+    //
+    // The literal is asserted rather than parsed. This expression decides
+    // whether a main commit can ever be released from, and a test that
+    // accepted any truthy-looking expression would pass for `github.ref !=
+    // 'refs/heads/mian'` too.
     const top = workflow.concurrency as Concurrency | undefined;
     expect(
       top?.group,
       `the workflow-level group must stay keyed on the ref, so a superseded ` +
         `run on one branch is cancelled rather than queued behind others`,
     ).toBe("${{ github.workflow }}-${{ github.ref }}");
-    expect(top?.["cancel-in-progress"]).toBe(true);
+    expect(
+      top?.["cancel-in-progress"],
+      `main must keep its per-commit CI result: publish.yml gates on a ` +
+        `successful run at the exact SHA, so a cancelled run on main is a ` +
+        `commit that can never be released from. Branches still cancel.`,
+    ).toBe("${{ github.ref != 'refs/heads/main' }}");
   });
 });
