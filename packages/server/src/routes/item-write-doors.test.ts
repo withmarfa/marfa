@@ -1148,3 +1148,326 @@ describe("tier on a system.* row", () => {
     expect(bulkById.status).toBeGreaterThanOrEqual(400);
   });
 });
+
+/**
+ * D64 — an integration may only destroy what it wrote.
+ *
+ * The other half of the block above, and the same predicate: if connection B
+ * may not overwrite connection A's row, it cannot be right that B may destroy
+ * it, because there is no coherent position in which the stronger harm is the
+ * less protected one.
+ *
+ * **In this file rather than one of its own, deliberately.** These cases need
+ * exactly the fixture above — two live connections of one integration in one
+ * space, sharing a provenance stamp — and a second copy of that fixture is
+ * the drift this file already argues against. The two rules are one model.
+ *
+ * The doors are enumerated because enumerating them was never the reliable
+ * part: `DELETE /items/{id}` — including every row its cascade reaches —
+ * `POST /items/{id}/transition`, `POST /items/{id}/restore`, and the bulk
+ * route's `transition` arm. Each has its own named case, so deleting one
+ * door's guard reddens that door rather than merely the suite.
+ *
+ * **Both purge doors are absent from that list on purpose**, and one case
+ * says so: they are role-gated shut to a runtime credential, so there is
+ * nothing here for provenance to decide. The bulk route's `update_tags`,
+ * `update_tier` and `update_timestamp` arms are outside D64 and still reach
+ * a sibling's rows; that is recorded as its own finding rather than being
+ * quietly widened here.
+ */
+describe("destroying a sibling's row (D64)", () => {
+  let spaceId: string;
+  let mine: Credential;
+  let twin: Credential;
+  let seq = 0;
+
+  beforeAll(async () => {
+    const space = await ctx.storage.spaces!.create("provenance-destroy");
+    spaceId = space.id;
+    const shared = await integrationFor("acme/destroy");
+    mine = await credentialFor(spaceId, "acme/destroy", shared);
+    twin = await credentialFor(spaceId, "acme/destroy", shared);
+  });
+
+  const key = (): string => `del-${String(seq++)}`;
+
+  /** A row the twin wrote, returned by id. */
+  async function twinRow(): Promise<string> {
+    const sourceId = key();
+    const res = await request(ctx.app, "POST", "/items", {
+      key: twin.key,
+      body: {
+        type: "core.note",
+        source_id: sourceId,
+        properties: { body: "the twin's" },
+      },
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { item: { id: string } }).item.id;
+  }
+
+  it("the fixture really is two live connections sharing one stamp", () => {
+    // The precondition. Without the shared stamp the guard short-circuits
+    // before it reads anything, every case below passes, and none of them
+    // tests what its name says.
+    expect(mine.itemSource).toBe(twin.itemSource);
+    expect(mine.connectionId).not.toBe(twin.connectionId);
+  });
+
+  it("refuses DELETE /items/{id} on a live twin's row", async () => {
+    const id = await twinRow();
+    const res = await request(ctx.app, "DELETE", `/items/${id}`, {
+      key: mine.key,
+    });
+    expect(await refusalCode(res)).toBe("provenance_collision");
+
+    // Refused, not half-applied.
+    const row = await ctx.storage.items.get(id, spaceId);
+    expect(row?.state).toBe("active");
+  });
+
+  it("closes both purge doors to an integration by role, before provenance", async () => {
+    // Not a provenance refusal, and worth a case saying so. The single-row
+    // door is `requireSpaceAdmin` and the bulk arm is `requireAdmin`, and a
+    // runtime credential is neither — so an integration never reaches the
+    // point where D64 would have an opinion. A guard there would be
+    // unreachable code no test could pin.
+    //
+    // This is the case that reddens if either door ever widens, which is
+    // what makes leaving the guard out safe rather than merely tidy.
+    const id = await twinRow();
+    const single = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
+      key: mine.key,
+    });
+    expect(await refusalCode(single)).toBe("forbidden");
+    expect(await ctx.storage.items.get(id, spaceId)).not.toBeNull();
+
+    const bulk = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter: { type: "core.note", source: mine.itemSource },
+      },
+      mine.key,
+    );
+    expect(bulk.initialStatus).toBe(403);
+    expect(await ctx.storage.items.get(id, spaceId)).not.toBeNull();
+  });
+
+  it("refuses POST /items/{id}/transition on a live twin's row", async () => {
+    // The door the bulk route's filter reaches one row at a time, and the
+    // one the old exemption was written for.
+    const id = await twinRow();
+    const res = await request(ctx.app, "POST", `/items/${id}/transition`, {
+      key: mine.key,
+      body: { state: "trashed" },
+    });
+    expect(await refusalCode(res)).toBe("provenance_collision");
+    const row = await ctx.storage.items.get(id, spaceId);
+    expect(row?.state).toBe("active");
+  });
+
+  it("refuses POST /items/{id}/restore on a live twin's row", async () => {
+    // Not destructive, and guarded anyway: the rule follows the actor, and
+    // a connection with no claim to trash a sibling's row has none to
+    // un-trash one either.
+    const id = await twinRow();
+    await ctx.storage.items.transition(id, "trashed", spaceId);
+    const res = await request(ctx.app, "POST", `/items/${id}/restore`, {
+      key: mine.key,
+    });
+    expect(await refusalCode(res)).toBe("provenance_collision");
+  });
+
+  it("narrows a bulk transition to rows the caller wrote", async () => {
+    // The call the ticket was filed on: `filter.source` names the stamp both
+    // connections share, so one request reached every row the sibling wrote.
+    // Narrowed rather than refused, which is this route's answer on every
+    // other axis — one unreachable row must not fail an action over
+    // thousands.
+    const theirs = await twinRow();
+    const mineRes = await request(ctx.app, "POST", "/items", {
+      key: mine.key,
+      body: {
+        type: "core.note",
+        source_id: key(),
+        properties: { body: "mine" },
+      },
+    });
+    expect(mineRes.status).toBe(201);
+    const ours = ((await mineRes.json()) as { item: { id: string } }).item.id;
+
+    const run = await runBulkActionAsync(
+      ctx,
+      {
+        action: "transition",
+        state: "trashed",
+        filter: { type: "core.note", source: mine.itemSource },
+      },
+      mine.key,
+    );
+    expect(run.initialStatus).toBeLessThan(300);
+
+    // Mine went; theirs stayed. `items.get` answers null for a trashed row,
+    // so absence is how "it was trashed" reads here — which is also why the
+    // surviving row is asserted positively rather than by its absence.
+    expect(await ctx.storage.items.get(ours, spaceId)).toBeNull();
+    expect((await ctx.storage.items.get(theirs, spaceId))?.state).toBe(
+      "active",
+    );
+  });
+
+  it("refuses a cascade that would reach a live twin's row", async () => {
+    // The rule was one edge away from being void. `parent-of` ships with
+    // `cascade_on_delete: "cascade"` and admits any type at either end, so a
+    // connection deleting a row it wrote took every child with it — including
+    // a live sibling's, unguarded, publishing a `deleted` event on the way.
+    // The direct delete of that same row is refused, which is what made the
+    // gap worth closing rather than documenting.
+    const theirs = await twinRow();
+    const mineRes = await request(ctx.app, "POST", "/items", {
+      key: mine.key,
+      body: {
+        type: "core.note",
+        source_id: key(),
+        properties: { body: "the parent" },
+      },
+    });
+    expect(mineRes.status).toBe(201);
+    const ours = ((await mineRes.json()) as { item: { id: string } }).item.id;
+
+    // Through a credential bound to this space, not the platform admin: the
+    // platform credential holds no space, so the edge would land space-less
+    // and the cascade — which is scoped to the caller's space — would never
+    // find it. The case would then pass by not cascading at all.
+    const edgeKeyRes = await request(
+      ctx.app,
+      "POST",
+      `/admin/spaces/${spaceId}/keys`,
+      {
+        key: ctx.adminKey,
+        body: {
+          label: `edger-${String(seq)}`,
+          source: `edger-${String(seq++)}`,
+          role: "space_admin",
+        },
+      },
+    );
+    expect(edgeKeyRes.status).toBe(201);
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ((await edgeKeyRes.json()) as { key: string }).key,
+      body: { edge_type: "parent-of", source_id: ours, target_id: theirs },
+    });
+    expect(edge.status).toBe(201);
+
+    const res = await request(ctx.app, "DELETE", `/items/${ours}`, {
+      key: mine.key,
+    });
+    expect(await refusalCode(res)).toBe("provenance_collision");
+
+    // Neither row moved: the refusal rolls the whole plan back rather than
+    // leaving a half-applied cascade.
+    expect((await ctx.storage.items.get(ours, spaceId))?.state).toBe("active");
+    expect((await ctx.storage.items.get(theirs, spaceId))?.state).toBe(
+      "active",
+    );
+  });
+
+  it("leaves a row another integration wrote alone, deliberately", async () => {
+    // The boundary of D64, asserted so that widening it is a decision rather
+    // than a drift. `marfa/task-auto-archive` lists `core.task` with no
+    // source filter and archives everything past a cutoff, including tasks
+    // other integrations wrote — so refusing a cross-integration lifecycle
+    // gesture stops a shipped integration doing its job. That is the
+    // counter-example D64's precondition asked for, and the ruling says to
+    // revisit rather than work around it.
+    //
+    // The write is still refused, by mirror protection, which is why the two
+    // gestures differ here and why that asymmetry is worth a case of its own.
+    const stranger = await credentialFor(spaceId, "acme/stranger");
+    const strangerRes = await request(ctx.app, "POST", "/items", {
+      key: stranger.key,
+      body: {
+        type: "core.note",
+        source_id: key(),
+        properties: { body: "another integration's" },
+      },
+    });
+    expect(strangerRes.status).toBe(201);
+    const theirs = ((await strangerRes.json()) as { item: { id: string } }).item
+      .id;
+    expect(stranger.itemSource).not.toBe(mine.itemSource);
+
+    const transitioned = await request(
+      ctx.app,
+      "POST",
+      `/items/${theirs}/transition`,
+      { key: mine.key, body: { state: "archived" } },
+    );
+    expect(transitioned.status).toBe(200);
+  });
+
+  it("lets a connection destroy its own row", async () => {
+    // The positive beside the refusal, per D56. A guard that refused
+    // everything would pass every case above.
+    const res = await request(ctx.app, "POST", "/items", {
+      key: mine.key,
+      body: {
+        type: "core.note",
+        source_id: key(),
+        properties: { body: "mine to remove" },
+      },
+    });
+    const id = ((await res.json()) as { item: { id: string } }).item.id;
+
+    const deleted = await request(ctx.app, "DELETE", `/items/${id}`, {
+      key: mine.key,
+    });
+    expect(deleted.status).toBe(200);
+  });
+
+  it("leaves a person acting through their own credential alone", async () => {
+    // Nothing here narrows what a human can do in their own space, which is
+    // the half of D64 that is a promise rather than a restriction. The twin
+    // wrote the row; an ordinary space credential removes it regardless.
+    const id = await twinRow();
+    const spaceKeyRes = await request(
+      ctx.app,
+      "POST",
+      `/admin/spaces/${spaceId}/keys`,
+      {
+        key: ctx.adminKey,
+        body: {
+          label: `person-${String(seq++)}`,
+          source: `person-${String(seq)}`,
+          role: "space_admin",
+        },
+      },
+    );
+    expect(spaceKeyRes.status).toBe(201);
+    const personKey = ((await spaceKeyRes.json()) as { key: string }).key;
+
+    const deleted = await request(ctx.app, "DELETE", `/items/${id}`, {
+      key: personKey,
+    });
+    expect(deleted.status).toBe(200);
+  });
+
+  it("still lets a row whose writer is gone be destroyed", async () => {
+    // The D34-shaped non-regression. Uninstall leaves the items, so a row
+    // whose writer is no longer installed must stay reachable — otherwise
+    // the guard strands a corpus nobody can clean up, which is worse than
+    // what it prevents.
+    const id = await twinRow();
+    // The lifecycle axis, which is what liveness reads — deliberately not
+    // `runtime_status`, since a paused connection is still installed and its
+    // rows are not orphaned. Setting `properties.status` alone leaves the
+    // connection live and this case green for the wrong reason; it did.
+    await ctx.storage.items.transition(twin.connectionId, "revoked", spaceId);
+    const res = await request(ctx.app, "DELETE", `/items/${id}`, {
+      key: mine.key,
+    });
+    expect(res.status).toBe(200);
+  });
+});

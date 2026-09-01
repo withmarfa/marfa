@@ -11,7 +11,11 @@ import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
-import { resolveOrphanScopeForOwnWrite, withOrphanState } from "./_orphaned.js";
+import {
+  createOwnershipGuard,
+  resolveOrphanScopeForOwnWrite,
+  withOrphanState,
+} from "./_orphaned.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -59,6 +63,15 @@ const restoreItemRoute = createRoute({
         },
       },
       description: "Item not found",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["provenance_collision"]),
+        },
+      },
+      description:
+        "An integration may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
     },
   },
 });
@@ -120,6 +133,15 @@ const transitionItemRoute = createRoute({
       },
       description: "Item not found",
     },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["provenance_collision"]),
+        },
+      },
+      description:
+        "An integration may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
+    },
   },
 });
 
@@ -129,6 +151,29 @@ const transitionItemRoute = createRoute({
 
 export function itemsLifecycleRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
+
+  /**
+   * D64: an integration may only destroy what it wrote.
+   *
+   * Applied to the lifecycle axis as well as the delete doors, because the
+   * ruling follows the actor rather than the gesture — and because trashing
+   * through `POST /items/{id}/transition` reaches exactly the rows that
+   * `DELETE /items/{id}` does. Guarding one and not the other would move the
+   * gap rather than close it.
+   *
+   * Restore is guarded too. It is not destructive, but it is a lifecycle
+   * write on a row this connection does not own, and the rule is about the
+   * actor: a connection that may not trash a sibling's row has no better
+   * claim to un-trash one.
+   *
+   * **Built per request, never once per router.** The guard memoizes the
+   * space's live-connection walk, and that answer is good for exactly the
+   * request that took it — held across requests it reports an uninstalled
+   * connection as live for the life of the process, which turns the guard
+   * from a protection into a permanent refusal nobody can clear.
+   */
+  const lifecycleGuard = (): ReturnType<typeof createOwnershipGuard> =>
+    createOwnershipGuard(storage, "destroy");
 
   // POST /items/:id/restore
   router.openapi(restoreItemRoute, async (c) => {
@@ -150,6 +195,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     }
     requireTypeAccess(c, pending.type, "write");
     requireRowWritable(c.get("apiKey"), pending);
+    await lifecycleGuard()(c.get("apiKey"), pending);
     const restored = await storage.items.restore(id, spaceId);
     const metadata = await storage.metadata.get(id);
     await publish({
@@ -202,6 +248,7 @@ export function itemsLifecycleRoutes(storage: Storage) {
     }
     requireTypeAccess(c, item.type, "write");
     requireRowWritable(c.get("apiKey"), item);
+    await lifecycleGuard()(c.get("apiKey"), item);
     const updated = await storage.items.transition(id, state, spaceId);
     const metadata = await storage.metadata.get(id);
     await publish({

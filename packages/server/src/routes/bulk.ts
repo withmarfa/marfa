@@ -1240,10 +1240,26 @@ export function bulkRoutes(storage: Storage) {
     //
     // **Narrowing, not refusing**, which is this route's established answer
     // on every other axis: one unreachable row must not fail an action over
-    // thousands. And on the same axis mirror protection uses — only where a
-    // patch is being applied — because transitions and retiers are user
-    // gestures on rows an integration owns and are deliberately exempt.
-    if (patch !== undefined && matched.length > 0) {
+    // thousands.
+    //
+    // **D64 widened which actions this covers, and the rule now follows the
+    // actor rather than the gesture.** It used to run only where a patch was
+    // being applied, on the reasoning that a transition or a retier is a
+    // person's gesture on a row an integration owns. That was coherent while
+    // two connections of one integration were indistinguishable. Once the
+    // platform refuses B's write to A's row it cannot also permit B to trash
+    // it: there is no coherent position in which the stronger harm is the
+    // less protected one, and `filter.source` plus `action: "transition"`
+    // was one call that reached every row a sibling had written.
+    //
+    // `update_tags`, `update_tier` and `update_timestamp` stay outside this,
+    // deliberately. They are neither the write D63 ruled on nor the destroy
+    // D64 ruled on, and widening to them here would be this change deciding
+    // a question nobody has put.
+    // `purge` is absent deliberately: it is `requireAdmin` above, so no
+    // runtime credential reaches it and narrowing it would be unreachable.
+    const narrowsOnProvenance = patch !== undefined || action === "transition";
+    if (narrowsOnProvenance && matched.length > 0) {
       const mine =
         callerKey?.is_runtime_credential === true
           ? callerKey.connection_id

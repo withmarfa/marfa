@@ -319,11 +319,24 @@ export function resolveOrphanScope(
  * should stamp itself as the writer. Throws only when a *live* sibling owns
  * the row.
  */
+/**
+ * Which gesture is being refused, which decides only the wording.
+ *
+ * The rule is identical for both and that is the whole of D64: if a
+ * connection may not overwrite a sibling's row, it cannot be right that it
+ * may destroy the same row, because there is no coherent position in which
+ * the stronger harm is the less protected one. So this parameter picks a
+ * message and never a verdict — a second predicate would be a second
+ * opinion about liveness, and the two would drift.
+ */
+export type ItemGesture = "write" | "destroy";
+
 export function checkOwningConnection(
   key: ApiKey | undefined,
   row: Pick<Item, "id" | "source" | "source_id">,
   writer: string | null,
   isWriterLive: (connectionId: string) => boolean,
+  gesture: ItemGesture = "write",
 ): "own" | "adopt" {
   const sourceId = row.source_id ?? "(none)";
   if (!isIntegrationSourced(row)) return "own";
@@ -332,12 +345,27 @@ export function checkOwningConnection(
   // integration's row, which `requireMirrorProtection` already rules on.
   // Adding a second opinion here would refuse the promote path.
   if (mine === null || mine === undefined) return "own";
-  // **Only a sibling of the same integration.** A row a *different*
-  // integration wrote is `requireMirrorProtection`'s to refuse, and it
-  // already does, with a message and a remedy that fit — promote it to edit
-  // your own copy. Answering `provenance_collision` there would tell the
-  // caller to scope a `source_id` it does not own, and it would take a
-  // refusal away from the gate that a test names as its owner.
+  // **Only a sibling of the same integration, on both gestures.**
+  //
+  // On a write, a row a *different* integration wrote is
+  // `requireMirrorProtection`'s to refuse, and it already does, with a
+  // message and a remedy that fit — promote it to edit your own copy.
+  //
+  // On a destroy nothing refuses it, and that is deliberate rather than an
+  // oversight this narrowing hides. It is tempting to read the symmetry
+  // argument as reaching cross-integration too: mirror protection refuses
+  // the write, so why permit the destroy? **Because a shipped integration
+  // depends on it.** `marfa/task-auto-archive` lists `core.task` with no
+  // source filter and archives everything past a cutoff — tasks that
+  // `todoist/tasks`, `google/tasks` and people wrote. Refusing a
+  // cross-integration lifecycle gesture stops it archiving anything and
+  // makes it report `action_required` per task.
+  //
+  // That is the counter-example D64's own precondition asked for, and the
+  // ruling says to revisit rather than work around it. So D64 is scoped to
+  // siblings of one integration, which is what it was filed about, and a
+  // cross-integration destroy stays a capability question nobody has ruled
+  // on. Do not close it here by widening this line.
   if (key?.item_source !== row.source) return "own";
   if (writer === null) return "adopt";
   if (writer === mine) return "own";
@@ -345,17 +373,24 @@ export function checkOwningConnection(
   throw new MarfaError(
     ErrorCode.PROVENANCE_COLLISION,
     // Says what is enforced and no more. An earlier draft read "two
-    // connections of one integration are two corpora", which promises an
-    // ownership the platform does not defend: lifecycle gestures are exempt
-    // from this guard, so a sibling that cannot overwrite a row can still
-    // trash it (T-1076). A guarantee that half-holds is worse than one
-    // stated narrowly, and the narrow statement is true — this write is
-    // refused.
+    // connections of one integration are two corpora", which promised an
+    // ownership the platform did not then defend: lifecycle gestures were
+    // exempt, so a sibling that could not overwrite a row could still trash
+    // it. That is no longer true — the destroy arm below is the other half
+    // — but the message stays narrow anyway, because a refusal should
+    // describe the call it refused rather than the model behind it.
     //
     // It also names `source_id` rather than `source`. An earlier draft
     // interpolated the source under the `source_id` label, which sent a
     // reader looking for a key they had not sent.
-    `This write resolves an item under source "${row.source}" with source_id "${sourceId}", and connection ${writer} wrote it. That connection is still installed, so the write is refused rather than overwriting its item. Give this record a source_id scoped to the upstream source it came from.`,
+    gesture === "destroy"
+      ? // No remedy sentence, deliberately. A refused *write* has one — scope
+        // the `source_id` — and there is no equivalent here: the answer to
+        // "may I trash this" is no, not "trash it differently". Pointing at
+        // uninstall would be worse, since that is the owner's gesture and
+        // this caller is not the owner.
+        `This item was written by connection ${writer}, which is still installed. An integration may only trash, archive or purge rows it wrote, so this is refused. The connection that owns the row is the one that can remove it.`
+      : `This write resolves an item under source "${row.source}" with source_id "${sourceId}", and connection ${writer} wrote it. That connection is still installed, so the write is refused rather than overwriting its item. Give this record a source_id scoped to the upstream source it came from.`,
     {
       item_id: row.id,
       source: row.source,
@@ -377,6 +412,8 @@ export function checkOwningConnection(
  */
 export function createOwnershipGuard(
   storage: Storage,
+  /** Wording only; the verdict is the same for both. See {@link ItemGesture}. */
+  gesture: ItemGesture = "write",
 ): (
   key: ApiKey | undefined,
   row: Pick<Item, "id" | "source" | "source_id" | "space_id">,
@@ -392,8 +429,10 @@ export function createOwnershipGuard(
     if (!isIntegrationSourced(row)) return "own";
     const mine = key?.is_runtime_credential === true ? key.connection_id : null;
     if (mine === null || mine === undefined) return "own";
-    // Same narrowing as `checkOwningConnection`, applied before the read so
-    // a cross-integration write costs no query at all.
+    // Same narrowing as `checkOwningConnection`, on both gestures, applied
+    // before the read so a cross-integration gesture costs no query at all.
+    // The reasoning for keeping the destroy path narrowed too is at the
+    // other site, and it names the shipped integration that depends on it.
     if (key?.item_source !== row.source) return "own";
     const writers = await storage.items.writersOf([row.id]);
     const writer = writers.get(row.id) ?? null;
@@ -407,7 +446,13 @@ export function createOwnershipGuard(
       live.set(spaceKey, known);
     }
     const resolved = known;
-    return checkOwningConnection(key, row, writer, (id) => resolved.has(id));
+    return checkOwningConnection(
+      key,
+      row,
+      writer,
+      (id) => resolved.has(id),
+      gesture,
+    );
   };
 }
 
@@ -622,10 +667,19 @@ export async function resolveOrphanScopeForOwnWrite(
   //
   // On the write doors the guard has already run, so the row's writer is
   // this connection by construction — either it already was, or the adopt
-  // arm just stamped it. The doors that can legitimately reach a twin's row
-  // are the lifecycle gestures, which are exempt from the guard, so one
-  // by-id column read replaces a listing plus a catalog get per integration
-  // and falls back whenever it finds a writer that is not this one.
+  // arm just stamped it. **Since D64 that holds on the lifecycle doors too**,
+  // which used to be the exception here: a transition or a restore reaching
+  // a live twin's row is now refused rather than permitted.
+  //
+  // Scoped deliberately to *the doors that call this function*, and to rows
+  // whose writer is resolvable. It is not a claim that nothing anywhere can
+  // reach a row this connection did not write — the bulk route's tag, tier
+  // and timestamp arms still can, and edges carry no writer column at all.
+  // So the fallback below is load-bearing rather than defensive: one by-id
+  // column read replaces a listing plus a catalog get per integration, and
+  // it falls back whenever it finds a writer that is not this one, which is
+  // the adopted-from-a-dead-twin case and exactly when the fallback's answer
+  // is the one that matters.
   const writers = await storage.items.writersOf(
     integrationSourced.map((item) => item.id),
   );

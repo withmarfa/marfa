@@ -58,6 +58,7 @@ import { applyInlineEdges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
+  createOwnershipGuard,
   requireOwningConnection,
   resolveOrphanScope,
   resolveOrphanScopeForOwnWrite,
@@ -699,6 +700,15 @@ const deleteItemRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["provenance_collision"]),
+        },
+      },
+      description:
+        "An integration may only destroy what it wrote. The row's recorded writer is another connection that is still installed, so the gesture is refused; the response names the owning connection. A row whose writer has been uninstalled is not refused.",
     },
   },
 });
@@ -2558,12 +2568,41 @@ export function itemRoutes(storage: Storage) {
     }
     requireTypeAccess(c, targetItem.type, "write");
     refuseUnlessUninstalled(targetItem);
+    // D64: an integration may only destroy what it wrote. Trashing a sibling
+    // connection's corpus was the destructive half D63 left open — the
+    // property write was refused and the delete was not, which is the
+    // stronger harm being the less protected one.
+    //
+    // The same predicate the write path uses, in its destroy wording, because
+    // a second implementation would be a second opinion about which
+    // connections are live and the two would drift. **Built per request**:
+    // it memoizes the space's connection walk, and that answer is only good
+    // for the request that took it.
+    //
+    // A person acting through their own credential is untouched — the guard
+    // returns "own" for anything that is not a runtime credential.
+    const guardDestroy = createOwnershipGuard(storage, "destroy");
+    await guardDestroy(c.get("apiKey"), targetItem);
 
     const snapshots = await storage.runInTransaction(async () => {
       const toDelete = await planCascadeDelete(storage.edges, id, tid);
       const snaps = await Promise.all(
         toDelete.map((delId) => storage.items.get(delId, tid)),
       );
+      // **Every row the cascade reaches, not just the one named in the URL.**
+      // `parent-of` ships with `cascade_on_delete: "cascade"` and admits any
+      // type at either end, so a connection that deletes a row it wrote takes
+      // every child with it — including rows a live sibling wrote. Guarding
+      // the target alone left the rule one edge away from being void: the
+      // direct delete of a sibling's row was refused while the same row went
+      // through the cascade, and it published a `deleted` event on the way.
+      //
+      // Inside the transaction so a refusal rolls the whole plan back rather
+      // than leaving a partial cascade, and against the snapshots already
+      // read rather than a second round of reads.
+      for (const snap of snaps) {
+        if (snap) await guardDestroy(c.get("apiKey"), snap);
+      }
       for (const delId of toDelete) {
         await storage.items.delete(delId, tid);
       }
@@ -2788,6 +2827,16 @@ export function itemRoutes(storage: Storage) {
     if (purgeTarget && purgeTarget.state !== "trashed") {
       checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
     }
+
+    // **No D64 provenance guard here**, and that is a finding rather than an
+    // omission: this door is `requireSpaceAdmin` and a runtime credential is
+    // a member, so an integration is refused `forbidden` above and never
+    // reaches the point where provenance would be consulted. A guard here
+    // would be unreachable code no test could pin, which is worse than none
+    // because it reads as a protection somebody is relying on.
+    // `item-write-doors.test.ts` asserts the role gate instead, so the day
+    // this door widens, the case saying an integration cannot purge is the
+    // one that reddens.
     // Edges have no FK to items — explicit cleanup required before purge.
     // Fence the edge cleanup to the caller's space so a space-scoped purge
     // never drops another space's edges.
