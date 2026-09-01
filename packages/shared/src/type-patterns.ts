@@ -196,3 +196,108 @@ export function typeSubtreeToSql(
     extraTypes: declaredExtras(root, spaceId),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Type filters: a grant and the exclusions that carve into it
+// ---------------------------------------------------------------------------
+
+/**
+ * What a credential may read, as a list query can express it.
+ *
+ * `allowed: undefined` means no restriction — an admin or space_admin, whose
+ * space isolation is enforced separately. An empty array is the opposite:
+ * nothing is visible. `excluded` subtracts from `allowed` under the ranking
+ * `resolveTypePermission` uses, which is why the two travel together: a caller
+ * that took the permitted list alone would fail open, and that is the defect
+ * this shape exists to make unrepresentable rather than to guard against.
+ */
+export interface TypeFilter {
+  allowed: string[] | undefined;
+  excluded: string[];
+}
+
+/**
+ * A granted pattern and the exclusions that outrank it.
+ *
+ * `minus` is not "every exclusion". A permission map is resolved by
+ * specificity — an exact key beats any wildcard, a longer subtree root beats a
+ * shorter one, the global wildcard is the last resort — so an exclusion only
+ * subtracts from a grant *less* specific than itself. `{"user.secret":
+ * "read", "user.*": "none"}` grants `user.secret`, because the exact key wins,
+ * and a compiler that subtracted every exclusion from every grant would get
+ * that backwards. Ranking once here is what keeps six SQL compilers and one
+ * JavaScript predicate from each having their own opinion about it.
+ */
+export interface TypeFilterTerm {
+  pattern: string;
+  minus: string[];
+}
+
+/**
+ * Specificity, in `resolveTypePermission`'s order. An exact identifier is
+ * unbounded rather than merely long: that function returns on an exact key
+ * before it looks at any wildcard, so no subtree root can outrank one however
+ * deep it is.
+ */
+function patternRank(pattern: string): number {
+  if (pattern === GLOBAL_TYPE_WILDCARD) return -1;
+  const root = subtreeWildcardRoot(pattern);
+  if (root === null) return Number.POSITIVE_INFINITY;
+  return root.length;
+}
+
+/**
+ * Whether an exclusion can remove anything from what a grant admits.
+ *
+ * Probing with the exclusion's own root rather than the pattern string is what
+ * makes a subtree exclusion answer for its whole subtree: if `user.a` is
+ * inside `user.*` then so is everything under it.
+ */
+function exclusionReachesInto(grant: string, exclusion: string): boolean {
+  const root = subtreeWildcardRoot(exclusion);
+  return typeMatchesPattern(root ?? exclusion, grant);
+}
+
+/**
+ * Decompose a filter into terms a query can compile independently.
+ *
+ * Each granted pattern keeps only the exclusions that both outrank it and
+ * reach into it, so a compiler emits `match(pattern) AND NOT (match(minus) OR
+ * ...)` per term and `or`s the terms together. With no exclusions every
+ * `minus` is empty and the result is exactly the disjunction these compilers
+ * have always emitted.
+ */
+export function typeFilterTerms(
+  allowed: string[],
+  excluded: string[],
+): TypeFilterTerm[] {
+  return allowed.map((pattern) => {
+    const rank = patternRank(pattern);
+    return {
+      pattern,
+      minus: excluded.filter(
+        (exclusion) =>
+          patternRank(exclusion) > rank &&
+          exclusionReachesInto(pattern, exclusion),
+      ),
+    };
+  });
+}
+
+/**
+ * The same decision as the SQL compilers, for callers that hold a type in hand
+ * rather than a query — the SSE stream, which filters events in JavaScript
+ * because there is no query to attach a predicate to.
+ *
+ * Written over {@link typeFilterTerms} rather than beside it so the ranking
+ * cannot drift between the streamed answer and the queried one for the same
+ * grant.
+ */
+export function matchesTypeFilter(type: string, filter: TypeFilter): boolean {
+  if (filter.allowed === undefined) return true;
+  return typeFilterTerms(filter.allowed, filter.excluded).some(
+    ({ pattern, minus }) =>
+      typeMatchesPattern(type, pattern) &&
+      !minus.some((exclusion) => typeMatchesPattern(type, exclusion)),
+  );
+}

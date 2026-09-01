@@ -1099,7 +1099,7 @@ export function bulkRoutes(storage: Storage) {
     // Non-admin callers see their match set narrowed to writable types.
     // Purge already rejected non-admin above, so getTypeFilter is a no-op
     // for admin callers regardless.
-    const allowedTypes = getTypeFilter(c);
+    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
 
     // The type axis is not the only one a caller can be narrower than.
     // `system.activity` sits in every runtime credential's type filter —
@@ -1144,6 +1144,7 @@ export function bulkRoutes(storage: Storage) {
         tags: filter.tags,
         filter: filter.filter,
         allowed_types: allowedTypes,
+        excluded_types: excludedTypes,
         since: filter.since,
         until: filter.until,
         limit: Math.min(200, cap + 1 - matched.length),

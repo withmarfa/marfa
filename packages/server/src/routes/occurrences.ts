@@ -99,7 +99,7 @@ import {
   MarfaError,
   ErrorCode,
   isValidTypePattern,
-  matchesTypePattern,
+  matchesTypeFilter,
 } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -1010,15 +1010,16 @@ export function occurrenceRoutes(
     // The caller's own type permissions still decide what is readable;
     // this route narrows to event types on top of that rather than
     // instead of it.
-    // `getTypeFilter` returns the credential's permission patterns, not
-    // concrete type ids, so the narrowing has to go through the pattern
-    // matcher rather than a membership test.
-    const allowed = getTypeFilter(c);
+    // `getTypeFilter` returns the credential's permission patterns and the
+    // exclusions that carve into them, not concrete type ids, so the
+    // narrowing goes through the same predicate the SSE stream uses rather
+    // than a membership test.
+    const typeFilter = getTypeFilter(c);
     const wanted = (
       query.type !== undefined
         ? EVENT_TYPES.filter((t) => t === query.type)
         : EVENT_TYPES
-    ).filter((t) => allowed === undefined || matchesTypePattern(t, allowed));
+    ).filter((t) => matchesTypeFilter(t, typeFilter));
     if (wanted.length === 0) {
       // Every count here is scoped to what this request read, and it
       // read nothing, so the zeros are true rather than a claim about

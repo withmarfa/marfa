@@ -136,11 +136,11 @@ describe("space_admin bypasses type_permissions", () => {
     }).toThrow();
   });
 
-  it("computeTypeFilter returns undefined (no filter) for space_admin", () => {
+  it("computeTypeFilter does not restrict a space_admin", () => {
     const key = fakeKey("space_admin", {
       type_permissions: { "core.note": "read" },
     });
-    expect(computeTypeFilter(key)).toBeUndefined();
+    expect(computeTypeFilter(key).allowed).toBeUndefined();
   });
 
   it("computeTypeFilter still filters for member role", () => {
@@ -148,7 +148,10 @@ describe("space_admin bypasses type_permissions", () => {
       type_permissions: { "core.note": "read", "core.task": "write" },
     });
     const filter = computeTypeFilter(key);
-    expect(filter).toEqual(expect.arrayContaining(["core.note", "core.task"]));
+    expect(filter.allowed).toEqual(
+      expect.arrayContaining(["core.note", "core.task"]),
+    );
+    expect(filter.excluded).toEqual([]);
   });
 });
 

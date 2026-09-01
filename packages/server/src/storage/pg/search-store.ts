@@ -2,6 +2,7 @@ import { safeJsonParse } from "../json-utils.js";
 import {
   parseFilter,
   typePatternToSql,
+  typeFilterTerms,
   typeSubtreeToSql,
   type SearchResult,
 } from "@withmarfa/shared";
@@ -179,7 +180,7 @@ export class PgSearchStore implements SearchStore {
       if (filters.allowed_types.length === 0) {
         conditions.push("AND 1=0");
       } else {
-        const typeClauses = filters.allowed_types.map((pattern) => {
+        const clauseFor = (pattern: string): string => {
           const { global, exact, descendantPattern } =
             typePatternToSql(pattern);
           if (global) return "1=1";
@@ -190,6 +191,14 @@ export class PgSearchStore implements SearchStore {
           }
           params.push(exact, descendantPattern);
           return `(i.type = $${String(paramIdx++)} OR i.type LIKE $${String(paramIdx++)} ESCAPE '\\')`;
+        };
+        const typeClauses = typeFilterTerms(
+          filters.allowed_types,
+          filters.excluded_types ?? [],
+        ).map(({ pattern, minus }) => {
+          const granted = clauseFor(pattern);
+          if (minus.length === 0) return granted;
+          return `(${granted} AND NOT (${minus.map(clauseFor).join(" OR ")}))`;
         });
         conditions.push(`AND (${typeClauses.join(" OR ")})`);
       }

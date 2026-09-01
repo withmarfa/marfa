@@ -30,6 +30,7 @@ import {
   ErrorCode,
   SYSTEM_DEFAULT_STATE,
   typePatternToSql,
+  typeFilterTerms,
   typeSubtreeToSql,
 } from "@withmarfa/shared";
 import { resolveMergePolicy } from "../policy.js";
@@ -39,6 +40,7 @@ import {
 } from "../merge-properties.js";
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
+import type { TypeFilter } from "@withmarfa/shared";
 import { instantColumnValues } from "../instant-columns.js";
 import type {
   Item,
@@ -138,21 +140,36 @@ function isPrimaryKeyViolation(err: unknown): boolean {
  * all, which must see nothing rather than everything. `undefined` out means "no
  * predicate", so a caller pushes the result only when it is present.
  */
+function typePatternClause(pattern: string): SQL {
+  const { global, exact, descendantPattern } = typePatternToSql(pattern);
+  if (global) return sql`1=1`;
+  // Only the empty string reaches here, and `resolveTypePermission` cannot
+  // honor that as a grant or as an exclusion either — so `1=0` matches the
+  // point check in both positions: it grants nothing, and negated it
+  // withholds nothing.
+  if (!exact) return sql`1=0`;
+  if (!descendantPattern) return sql`${items.type} = ${exact}`;
+  return sql`(${items.type} = ${exact} OR ${items.type} LIKE ${descendantPattern} ESCAPE '\\')`;
+}
+
 function allowedTypesCondition(
   patterns: string[] | undefined,
+  excluded: string[] = [],
 ): SQL | undefined {
   if (!patterns) return undefined;
   if (patterns.length === 0) return sql`1=0`;
-  const clauses = patterns.map((pattern) => {
-    const { global, exact, descendantPattern } = typePatternToSql(pattern);
-    if (global) return sql`1=1`;
-    if (!exact) return sql`1=0`;
-    if (!descendantPattern) return eq(items.type, exact);
-    return or(
-      eq(items.type, exact),
-      sql`${items.type} LIKE ${descendantPattern} ESCAPE '\\'`,
-    );
-  });
+  const clauses = typeFilterTerms(patterns, excluded).map(
+    ({ pattern, minus }) => {
+      const granted = typePatternClause(pattern);
+      if (minus.length === 0) return granted;
+      // `typeFilterTerms` has already dropped the exclusions this grant
+      // outranks, so everything left genuinely carves into it.
+      const carved = minus
+        .map(typePatternClause)
+        .reduce((acc, part) => sql`${acc} OR ${part}`);
+      return sql`(${granted} AND NOT (${carved}))`;
+    },
+  );
   return or(...clauses);
 }
 
@@ -518,7 +535,10 @@ export class SqliteItemStore implements ItemStore {
     }
 
     if (filters.allowed_types) {
-      const clause = allowedTypesCondition(filters.allowed_types);
+      const clause = allowedTypesCondition(
+        filters.allowed_types,
+        filters.excluded_types,
+      );
       if (clause) conditions.push(clause);
     }
 
@@ -1131,11 +1151,14 @@ export class SqliteItemStore implements ItemStore {
 
   async stats(
     spaceId?: string,
-    allowedTypes?: string[],
+    typeFilter?: TypeFilter,
     sourceFilter?: SourceFilterSettings,
   ): Promise<Record<string, number>> {
     const conditions = [spaceCondition(items.space_id, spaceId)];
-    const typeClause = allowedTypesCondition(allowedTypes);
+    const typeClause = allowedTypesCondition(
+      typeFilter?.allowed,
+      typeFilter?.excluded,
+    );
     if (typeClause) conditions.push(typeClause);
     // Counts have to agree with the listing they summarize, so the read
     // lever applies here too.

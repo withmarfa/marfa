@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { ErrorCode, MarfaError, matchesTypePattern } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
 import { subscribe, subscribeEdges, wireEventName } from "../pubsub.js";
@@ -54,7 +54,11 @@ export function eventRoutes(
     const spaceId = apiKey.space_id;
     const typeParam = c.req.query("type") ?? undefined;
     const lastEventId = c.req.header("Last-Event-ID");
-    const allowedTypes = computeTypeFilter(apiKey);
+    // The SSE stream is the one type filter with no query to hang a
+    // predicate on, so it asks `matchesTypeFilter` — written over the same
+    // ranking the SQL compilers use, so a streamed answer and a queried one
+    // cannot disagree about the same grant.
+    const typeFilter = computeTypeFilter(apiKey);
 
     return (async () => {
       const maxViewers = options.maxViewers ?? 0;
@@ -219,10 +223,7 @@ export function eventRoutes(
             eventId: bigint | undefined,
             event: ItemEventWithId,
           ) => {
-            if (
-              allowedTypes &&
-              !matchesTypePattern(event.item.type, allowedTypes)
-            ) {
+            if (!matchesTypeFilter(event.item.type, typeFilter)) {
               return;
             }
 
@@ -389,13 +390,13 @@ export function eventRoutes(
                           continue;
                         }
                       }
-                      if (!isEdge && allowedTypes) {
+                      if (!isEdge && typeFilter.allowed !== undefined) {
                         const parsed = JSON.parse(event.payload) as {
                           item?: { type?: string };
                         };
                         if (
                           parsed.item?.type &&
-                          !matchesTypePattern(parsed.item.type, allowedTypes)
+                          !matchesTypeFilter(parsed.item.type, typeFilter)
                         ) {
                           lastReplayedId = event.id;
                           continue;
