@@ -82,10 +82,7 @@ function manifest(name: string): IntegrationManifest {
   };
 }
 
-async function credentialFor(
-  spaceId: string,
-  name: string,
-): Promise<Credential> {
+async function integrationFor(name: string): Promise<string> {
   const m = manifest(name);
   const integration = await ctx.storage.items.create(
     {
@@ -100,6 +97,26 @@ async function credentialFor(
     },
     undefined,
   );
+  return integration.id;
+}
+
+/**
+ * A Connection of `name`, and a runtime credential for it.
+ *
+ * `integrationId` is a parameter so two Connections can be built on ONE
+ * integration. That is not a convenience: `item_source` is keyed on the
+ * manifest name, so two Connections of the same integration share it, and
+ * sharing it is the only way a natural-key door resolves a row this
+ * credential did not write. Without a second Connection built this way the
+ * row-side gates on those doors have nothing to refuse and are deletable
+ * with this whole file green.
+ */
+async function credentialFor(
+  spaceId: string,
+  name: string,
+  integrationId?: string,
+): Promise<Credential> {
+  const integration = { id: integrationId ?? (await integrationFor(name)) };
   const connection = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -389,6 +406,92 @@ const DOORS: Door[] = [
 ];
 
 /**
+ * Mirror protection, on the doors where it can actually refuse.
+ *
+ * `permitsMirrorWrite` admits a row whose `source` is not an integration's,
+ * or whose source is the caller's own `item_source`. Two consequences decide
+ * where it can be tested at all:
+ *
+ *  - **Not on the natural-key doors.** `stampedSource` is `item_source ??
+ *    source` and the lookup keys on it, so a row resolved by natural key
+ *    always carries the caller's own source and the predicate compares a
+ *    value with itself. Deleting the call from that branch leaves this file
+ *    and `mirror-rule.test.ts` green, and that is unreachability rather than
+ *    a coverage gap — there is no fixture that would redden it.
+ *  - **Not through `system.activity` anywhere.** The attribution gate runs
+ *    immediately before it and refuses first, which is what shadowed this on
+ *    every door that resolves a foreign row.
+ *
+ * So the row here is a `core.note` — in the manifest's `target_types`, so
+ * both credentials genuinely hold write on it, and outside the attribution
+ * rule entirely. Addressed by id, which is the only way to reach a row whose
+ * source is not the caller's. `mirror-rule.test.ts` asserts this rule through
+ * `PATCH /items/{id}` alone; these are the sibling doors it does not reach.
+ */
+describe("mirror protection on the by-id doors", () => {
+  let spaceId: string;
+  let mine: Credential;
+  let sibling: Credential;
+
+  beforeAll(async () => {
+    const space = await ctx.storage.spaces!.create("mirror-by-id");
+    spaceId = space.id;
+    mine = await credentialFor(spaceId, "acme/mirror-mine");
+    sibling = await credentialFor(spaceId, "acme/mirror-sibling");
+  });
+
+  /** A note owned by `owner`, carrying that integration's provenance. */
+  async function noteOwnedBy(owner: Credential): Promise<string> {
+    const res = await request(ctx.app, "POST", "/items", {
+      key: owner.key,
+      body: {
+        type: "core.note",
+        source_id: `note-${Math.random().toString(36).slice(2, 10)}`,
+        properties: { body: "the owning integration's copy" },
+      },
+    });
+    expect(res.status).toBe(201);
+    return ((await res.json()) as { item: { id: string } }).item.id;
+  }
+
+  it("refuses PATCH /items/{id} on another integration's mirror", async () => {
+    const id = await noteOwnedBy(sibling);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: mine.key,
+      body: { properties: { body: "overwritten" } },
+    });
+    // The rule that refused, not merely that something did.
+    expect(await refusalCode(res)).toBe("integration_owned");
+    const after = await ctx.storage.items.get(id, spaceId);
+    expect(after?.properties.body).toBe("the owning integration's copy");
+  });
+
+  it("refuses POST /items/bulk (by id) on another integration's mirror", async () => {
+    const id = await noteOwnedBy(sibling);
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: mine.key,
+      body: { items: [{ id, type: "core.note", properties: { body: "x" } }] },
+    });
+    expect(await refusalCode(res)).toBe("integration_owned");
+    const after = await ctx.storage.items.get(id, spaceId);
+    expect(after?.properties.body).toBe("the owning integration's copy");
+  });
+
+  it("still writes the owning integration's own mirror", async () => {
+    // The permissive direction. Without it a guard that refuses everything
+    // satisfies both assertions above and this file would not notice.
+    const id = await noteOwnedBy(mine);
+    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: mine.key,
+      body: { properties: { body: "its own update" } },
+    });
+    expect(res.status).toBe(200);
+    const after = await ctx.storage.items.get(id, spaceId);
+    expect(after?.properties.body).toBe("its own update");
+  });
+});
+
+/**
  * Routes under `/items` that mutate something but cannot write an item's
  * properties, so they are not doors this file speaks for. Listed rather
  * than omitted: the coverage check fails on anything in neither table,
@@ -417,13 +520,20 @@ describe.each(DOORS)("$name", (door) => {
   let spaceId: string;
   let mine: Credential;
   let sibling: Credential;
+  let twin: Credential;
   let seq = 0;
 
   beforeAll(async () => {
     const slug = door.name.replace(/[^a-z]+/gi, "-").toLowerCase();
     const space = await ctx.storage.spaces!.create(slug);
     spaceId = space.id;
-    mine = await credentialFor(spaceId, `acme/${slug}-mine`);
+    const ownIntegration = await integrationFor(`acme/${slug}-mine`);
+    mine = await credentialFor(spaceId, `acme/${slug}-mine`, ownIntegration);
+    // A second Connection of the SAME integration, so it shares `mine`'s
+    // `item_source` and its rows are reachable by `mine`'s natural key.
+    // A different manifest name would put them beyond `findBySourceId`,
+    // which is what left the row-side gates unreachable on those doors.
+    twin = await credentialFor(spaceId, `acme/${slug}-mine`, ownIntegration);
     sibling = await credentialFor(spaceId, `acme/${slug}-sibling`);
   });
 
@@ -514,6 +624,35 @@ describe.each(DOORS)("$name", (door) => {
 
     const after = await ctx.storage.items.get(target.id, spaceId);
     expect(after?.properties.connection_id).toBe(sibling.connectionId);
+    expect(after?.properties.severity).toBe("info");
+    expect(after?.properties.summary).toBe("sync complete");
+  });
+
+  it("refuses to claim a row its own source resolves but a twin owns", async () => {
+    // The scenario the row-side attribution gate is the ONLY thing that can
+    // refuse, and the one this file could not express until `twin` existed.
+    //
+    // `twin` is a second Connection of the same integration, so it shares
+    // `mine`'s `item_source` and this row IS resolvable by `mine`'s natural
+    // key — where a `sibling`'s row is not, and the write falls through to
+    // create without ever touching a row. The claim-side check passes
+    // because the write names `mine`'s own connection; only the row as it
+    // stands says the row is not `mine`'s to speak for.
+    const target = await activityRow(twin, `twin-${String(seq++)}`);
+
+    const res = await door.write({
+      key: mine.key,
+      target,
+      properties: {
+        connection_id: mine.connectionId,
+        severity: "action_required",
+        summary: "actually mine",
+      },
+    });
+    expect(await refusalCode(res)).not.toBe("type_mismatch");
+
+    const after = await ctx.storage.items.get(target.id, spaceId);
+    expect(after?.properties.connection_id).toBe(twin.connectionId);
     expect(after?.properties.severity).toBe("info");
     expect(after?.properties.summary).toBe("sync complete");
   });
