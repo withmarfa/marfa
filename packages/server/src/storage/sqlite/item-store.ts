@@ -41,6 +41,7 @@ import {
 import { filterToSqlConditions, sourceFilterToSql } from "../filter-sql.js";
 import type { SourceFilterSettings } from "../filter-sql.js";
 import type { TypeFilter } from "@withmarfa/shared";
+import type { ItemStatsAxis } from "../interface.js";
 import { instantColumnValues } from "../instant-columns.js";
 import type {
   Item,
@@ -1153,6 +1154,7 @@ export class SqliteItemStore implements ItemStore {
     spaceId?: string,
     typeFilter?: TypeFilter,
     sourceFilter?: SourceFilterSettings,
+    by: ItemStatsAxis = "state",
   ): Promise<Record<string, number>> {
     const conditions = [spaceCondition(items.space_id, spaceId)];
     const typeClause = allowedTypesCondition(
@@ -1172,17 +1174,20 @@ export class SqliteItemStore implements ItemStore {
 
     const rows = await this.db
       .select({
-        state: items.state,
+        // The grouped column is chosen here rather than by two near-identical
+        // query builders, so a filter added to one axis cannot be missed on
+        // the other — which is what would break the totals agreeing.
+        bucket: by === "type" ? items.type : items.state,
         count: sql<number>`count(*)`,
       })
       .from(items)
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .groupBy(items.state)
+      .groupBy(by === "type" ? items.type : items.state)
       .all();
 
     const result: Record<string, number> = {};
     for (const row of rows) {
-      result[row.state] = row.count;
+      result[row.bucket] = row.count;
     }
     return result;
   }

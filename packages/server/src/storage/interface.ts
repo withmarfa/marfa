@@ -162,6 +162,9 @@ export interface ItemFilters {
   cursor?: string;
 }
 
+/** The axis `ItemStore.stats` groups on. */
+export type ItemStatsAxis = "state" | "type";
+
 export interface SearchFilters {
   spaceId?: string;
   type?: string;
@@ -362,10 +365,24 @@ export interface ItemStore {
    * asking about the subtype.
    */
   countByType(type: string): Promise<number>;
+  /**
+   * Item counts for the space, grouped on one axis.
+   *
+   * `by` chooses the axis and nothing else: both groupings cover the same
+   * rows — everything this caller can read — so their totals agree. That is
+   * the property `routes/items-stats-by-type.test.ts` asserts, and it is
+   * what catches a breakdown that quietly dropped a filter the other keeps.
+   *
+   * `"type"` answers which types a space actually uses, which nothing else
+   * could without paging every row: `GET /types` lists what is registered,
+   * a longer and different list, and `countByType` takes one exact
+   * identifier per call and is unscoped by space.
+   */
   stats(
     spaceId?: string,
     typeFilter?: TypeFilter,
     sourceFilter?: SourceFilterSettings,
+    by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**
    * Hard-delete every trashed item whose `updated_at` is strictly older
