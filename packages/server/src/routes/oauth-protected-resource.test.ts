@@ -90,7 +90,7 @@ describe("authorization-server discovery at spec-formed URLs", () => {
         token_endpoint?: string;
         grant_types_supported?: string[];
       };
-      // The same augmented document the bare-root paths serve — issuer,
+      // One augmented document at every URL a client can derive: issuer,
       // endpoints, and the device-code augmentation all present.
       expect(body.issuer).toMatch(/\/auth$/);
       expect(body.token_endpoint).toMatch(/\/auth\/oauth2\/token$/);

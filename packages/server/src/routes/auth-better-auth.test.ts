@@ -510,12 +510,12 @@ describe("better-auth /auth/* surface", () => {
     expect(body.components.identity_providers).toBeUndefined();
   });
 
-  it("/.well-known/oauth-authorization-server returns the discovery doc", async () => {
+  it("/.well-known/oauth-authorization-server/auth returns the discovery doc", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(
       ctx.app,
       "GET",
-      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server/auth",
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -542,7 +542,7 @@ describe("better-auth /auth/* surface", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server/auth",
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -571,7 +571,7 @@ describe("better-auth /auth/* surface", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/.well-known/openid-configuration",
+      "/.well-known/openid-configuration/auth",
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -593,18 +593,22 @@ describe("better-auth /auth/* surface", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server/auth",
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
 
     // The @better-auth/oauth-provider plugin sets the issuer to
-    // `${authBaseUrl}/auth` (basePath included). The bare-root
-    // /.well-known endpoint re-publishes the same payload; RFC 8414
-    // strict reading would prefer the issuer match the retrieval
-    // prefix, but most RPs only require consistency across token +
-    // id_token claims (preserved — they all use the plugin's issuer
-    // string).
+    // `${authBaseUrl}/auth` (basePath included), and this document came
+    // back from `/.well-known/oauth-authorization-server/auth` — the
+    // RFC 8414 §3.1 URL for exactly that issuer, formed by inserting the
+    // well-known segment between the host and the issuer's path. The two
+    // identifiers therefore agree, and §3.3 — the document's `issuer`
+    // must equal the issuer whose metadata was requested — passes on the
+    // strings themselves rather than on a client being lenient. That
+    // check is the one guard stopping a metadata document from pointing
+    // a client at somebody else's token endpoint, so it is the reading
+    // to satisfy, not to work around.
     expect(body.issuer).toBe(`${base}/auth`);
 
     // Every absolute-URL field starts with the configured base. If the
@@ -622,6 +626,67 @@ describe("better-auth /auth/* surface", () => {
       const value = body[field];
       expect(typeof value).toBe("string");
       expect(value as string).toMatch(new RegExp(`^${base}/`));
+    }
+  });
+
+  it("every derivable discovery URL serves the same augmented document", async () => {
+    // Three of these are registered because a client derives them; the fourth,
+    // `/auth/.well-known/oauth-authorization-server`, is registered because the
+    // Better Auth plugin answers it from inside its own mount if we do not.
+    // That plugin document is not the same one — it carries no device-code
+    // grant, no `device_authorization_endpoint` and no permission bundles —
+    // and its issuer matches the URL, so a client checking RFC 8414 §3.3 finds
+    // nothing wrong. A device-flow client discovering there concludes the
+    // server has no device flow. Asserting a 200 would not catch that; the
+    // augmentation is the whole point, so the augmentation is what is asserted.
+    ctx = await createTestContext({ authAllowSignup: false });
+    for (const path of [
+      "/.well-known/oauth-authorization-server/auth",
+      "/.well-known/openid-configuration/auth",
+      "/auth/.well-known/openid-configuration",
+      "/auth/.well-known/oauth-authorization-server",
+    ]) {
+      const res = await request(ctx.app, "GET", path);
+      expect(res.status, `${path} must be served`).toBe(200);
+      const body = (await res.json()) as {
+        issuer?: string;
+        grant_types_supported?: string[];
+        device_authorization_endpoint?: string;
+        marfa_permission_bundles?: unknown;
+      };
+      expect(body.issuer, `${path} issuer`).toMatch(/\/auth$/);
+      expect(body.grant_types_supported, `${path} device-code grant`).toContain(
+        "urn:ietf:params:oauth:grant-type:device_code",
+      );
+      expect(
+        body.device_authorization_endpoint,
+        `${path} device endpoint`,
+      ).toMatch(/\/auth\/device$/);
+      expect(
+        body.marfa_permission_bundles,
+        `${path} permission bundles`,
+      ).toBeDefined();
+    }
+  });
+
+  it("the bare-root discovery paths 404, and that 404 is the product", async () => {
+    // These two paths are deliberately unregistered. Per RFC 8414 §3 they
+    // belong to an issuer of `<authBaseUrl>` with no path component, and
+    // this server's issuer is `<authBaseUrl>/auth` — so a document served
+    // here answered a question nobody had asked. Its `issuer` could not
+    // match the issuer the client was discovering against, the client
+    // failed the §3.3 identity check, and what it reported was a
+    // malformed metadata document: a server-shaped error for a client
+    // holding the wrong issuer. The 404 is the better answer because it
+    // names its own cause — there is no authorization server at that
+    // identifier, and the three spec-formed URLs above say where one is.
+    ctx = await createTestContext({ authAllowSignup: false });
+    for (const path of [
+      "/.well-known/oauth-authorization-server",
+      "/.well-known/openid-configuration",
+    ]) {
+      const res = await request(ctx.app, "GET", path);
+      expect(res.status, `${path} must not be served`).toBe(404);
     }
   });
 

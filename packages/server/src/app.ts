@@ -327,13 +327,6 @@ export function createApp(
     app.route("/", localRuntimeApp);
   }
 
-  // OAuth 2.1 / OIDC discovery — owned by the @better-auth/oauth-provider
-  // plugin. The plugin auto-mounts the docs under its basePath (`/auth`)
-  // but per RFC 8414 / OIDC Discovery, RPs probe the bare-root paths.
-  // The plugin ships exportable helpers that re-publish the same metadata
-  // at the root. JWKS stays at the plugin's `/auth/jwks` — the discovery
-  // doc points there, so RPs that read the doc will follow correctly.
-
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE
   // authMiddleware AND before the better-auth catch-all so
@@ -522,11 +515,20 @@ export function createApp(
     });
   }
 
-  // Bare-root discovery (RFC 8414 + OIDC Discovery). The plugin auto-publishes
-  // the same metadata at `/auth/.well-known/*` via its basePath, but most RPs
-  // only probe the bare-root paths. These two helpers re-publish the same
-  // response payload. The discovery doc points RPs at the actual endpoint paths
-  // (e.g. `/auth/oauth2/token`, `/auth/jwks`) — no further root aliasing is needed.
+  // Discovery (RFC 8414 + OIDC Discovery). The discovery doc points RPs at the
+  // actual endpoint paths (e.g. `/auth/oauth2/token`, `/auth/jwks`).
+  //
+  // The plugin also answers `/auth/.well-known/*` on its own basePath, and its
+  // document is **not** the same as the one below — it is the unaugmented one,
+  // described in the next paragraph. Every URL a client can derive is therefore
+  // registered here ahead of the `/auth/*` catch-all, so Hono answers first and
+  // one document is served everywhere. An unregistered derivation reaches the
+  // plugin instead and returns a document that passes every check a client
+  // makes — the issuer matches, because the URL really does belong to this
+  // issuer — while silently omitting the device-code grant. A device-flow
+  // client discovering there concludes the server does not support device flow.
+  // That is a worse failure than the bare-root one this block used to have,
+  // where at least the issuer mismatch named the problem.
   //
   // The plugin's helper does NOT advertise the device-code grant type or the
   // `device_authorization_endpoint` field (RFC 8628 §4) by default. Marfa owns
@@ -589,20 +591,23 @@ export function createApp(
         headers,
       });
     };
-    app.get("/.well-known/oauth-authorization-server", (c) =>
-      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
-    );
-    app.get("/.well-known/openid-configuration", (c) =>
-      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
-    );
     // RFC 8414 §3.1 forms the metadata URL by inserting the well-known
     // segment between host and issuer path, and OIDC discovery appends its
-    // segment to the issuer. The issuer here is `<base>/auth`, so a
-    // spec-following client requests the path-aware URLs below — the
-    // bare-root copies above predate that reading and stay for the RPs
-    // already pinned to them. All serve the same augmented document. The
-    // issuer-suffixed OIDC path resolves here because these registrations
-    // run before the `/auth/*` catch-all mounts.
+    // segment to the issuer. The issuer here is `<base>/auth`, so those are
+    // the three URLs a spec-following client asks for, and they are the three
+    // registered. All serve the same augmented document. The issuer-suffixed
+    // OIDC path resolves here because these registrations run before the
+    // `/auth/*` catch-all mounts.
+    //
+    // The bare-root `/.well-known/oauth-authorization-server` and
+    // `/.well-known/openid-configuration` are deliberately absent, and a
+    // request to either is a plain 404. Per RFC 8414 §3 those paths belong to
+    // an issuer of `<base>` with no path component, which this server is not,
+    // so answering there returned a document whose `issuer` could not match
+    // what the client asked about. That turned a client holding the wrong
+    // issuer into a server-shaped error — "the metadata document is invalid"
+    // — and cost several releases of dead sign-in in one app before anyone
+    // read the two identifiers side by side. A 404 names its own cause.
     app.get("/.well-known/oauth-authorization-server/auth", (c) =>
       augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
     );
@@ -611,6 +616,9 @@ export function createApp(
     );
     app.get("/auth/.well-known/openid-configuration", (c) =>
       augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
+    );
+    app.get("/auth/.well-known/oauth-authorization-server", (c) =>
+      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
     );
     // RFC 9728: the resource-server metadata a bearer challenge points at.
     app.route("/", oauthProtectedResourceRoutes(config));
