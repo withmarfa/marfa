@@ -16,7 +16,25 @@ function redactSecret(secret: string): string {
   return "****" + secret.slice(-4);
 }
 
-const VALID_EVENTS = new Set([
+/**
+ * Every event an outbound webhook may subscribe to.
+ *
+ * **The one statement of the vocabulary, and the specification is generated
+ * from it rather than describing it separately.** It was a `Set` here and
+ * `z.array(z.string())` in the schema, so the constraint was real, enforced,
+ * and invisible: a generated client got `string`, an editor offered no
+ * completion, and the only way to learn a valid name was to send a wrong one
+ * and read the 400. A specification that accepts any string where the runtime
+ * accepts ten is wrong rather than incomplete.
+ *
+ * Restating the list in the schema would have fixed that and reintroduced the
+ * drift one layer along, which is why `EventNameSchema` derives from this
+ * rather than repeating it.
+ *
+ * `*` is a member: it is the subscribe-to-everything wildcard, and a caller
+ * needs to see it offered as much as any named event.
+ */
+export const WEBHOOK_EVENTS = [
   "item.created",
   "item.updated",
   "item.deleted",
@@ -27,7 +45,21 @@ const VALID_EVENTS = new Set([
   "edge.updated",
   "edge.deleted",
   "*",
-]);
+] as const;
+
+/**
+ * The vocabulary as the request schemas see it, which is what puts the names
+ * in `openapi.json`.
+ *
+ * This replaced two hand-written validation loops rather than joining them.
+ * They threw a `validation_error` naming the offending value, and so does
+ * this — through the router's `defaultHook`, with the field path and the
+ * permitted values in `details.errors` instead of interpolated into a
+ * sentence. Structured rather than prose, and the two loops had drifted into
+ * saying different things anyway: one listed the valid types and the other
+ * did not.
+ */
+const EventNameSchema = z.enum(WEBHOOK_EVENTS);
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -36,6 +68,13 @@ const VALID_EVENTS = new Set([
 const WebhookSchema = z.object({
   id: z.string(),
   url: z.string(),
+  // Deliberately `string`, where the request side is the enum.
+  //
+  // A stored row holds whatever was valid when it was written, and typing
+  // the read side to today's vocabulary would assert something the database
+  // cannot guarantee: retire an event and every row that subscribed to it
+  // becomes a response the specification says is impossible. The constraint
+  // belongs on the way in, which is where it is enforced.
   events: z.array(z.string()),
   type_filter: z.string().nullable().optional(),
   secret: z.string(),
@@ -75,7 +114,7 @@ const createWebhookRoute = createRoute({
           schema: z.object({
             url: z.string().min(1, "url is required"),
             events: z
-              .array(z.string())
+              .array(EventNameSchema)
               .min(1, "events must be a non-empty array"),
             type_filter: z.string().nullish(),
             secret: z.string().optional(),
@@ -206,7 +245,7 @@ const updateWebhookRoute = createRoute({
         "application/json": {
           schema: z.object({
             url: z.string().optional(),
-            events: z.array(z.string()).min(1).optional(),
+            events: z.array(EventNameSchema).min(1).optional(),
             type_filter: z.string().nullish(),
             active: z.boolean().optional(),
           }),
@@ -375,15 +414,6 @@ export function webhookRoutes(storage: Storage) {
       );
     }
 
-    for (const event of body.events) {
-      if (!VALID_EVENTS.has(event)) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          `Invalid event type "${event}". Valid types: ${[...VALID_EVENTS].join(", ")}`,
-        );
-      }
-    }
-
     const webhook = await storage.runInTransaction(async () => {
       await reserveQuota(c, storage, [{ resource: "webhooks", increment: 1 }]);
       return storage.outboundWebhooks.create(
@@ -450,17 +480,6 @@ export function webhookRoutes(storage: Storage) {
           ErrorCode.VALIDATION_ERROR,
           "url must be a valid URL",
         );
-      }
-    }
-
-    if (body.events !== undefined) {
-      for (const event of body.events) {
-        if (!VALID_EVENTS.has(event)) {
-          throw new MarfaError(
-            ErrorCode.VALIDATION_ERROR,
-            `Invalid event type: ${event}`,
-          );
-        }
       }
     }
 

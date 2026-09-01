@@ -21725,7 +21725,19 @@
                   "events": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "item.created",
+                        "item.updated",
+                        "item.deleted",
+                        "item.restored",
+                        "item.state_changed",
+                        "metadata.changed",
+                        "edge.created",
+                        "edge.updated",
+                        "edge.deleted",
+                        "*"
+                      ]
                     },
                     "minItems": 1
                   },
@@ -22182,7 +22194,19 @@
                   "events": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "string",
+                      "enum": [
+                        "item.created",
+                        "item.updated",
+                        "item.deleted",
+                        "item.restored",
+                        "item.state_changed",
+                        "metadata.changed",
+                        "edge.created",
+                        "edge.updated",
+                        "edge.deleted",
+                        "*"
+                      ]
                     },
                     "minItems": 1
                   },
