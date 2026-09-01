@@ -32,6 +32,12 @@ jobs:
       # stronger than what it replaces: nothing previously stopped a tag being
       # cut on a commit CI had never seen, because the checks here ran against
       # the tag's own tree and would pass either way.
+      #
+      # This gate is why `ci.yml` does not cancel superseded runs on `main`.
+      # The two read as correct in isolation and the cost only appears where
+      # they meet: a burst of merges used to leave every commit but the last
+      # with a cancelled run, and therefore unpublishable, with nothing
+      # reporting it. Changing either half without the other reopens that.
       - name: Require a green CI run for this commit
         env:
           GH_TOKEN: ${{ github.token }}

@@ -26,9 +26,27 @@ on:
   # does not move when the run finishes.
   workflow_dispatch:
 
+# Cancels a superseded run on a branch, and deliberately does not on `main`.
+#
+# On a branch a second push means the first answer describes a tree nobody has
+# any more, so cancelling is free. `main` is not a branch in that sense: every
+# commit on it is a release candidate, and `publish.yml` refuses to tag a
+# commit unless a *successful* `ci.yml` run exists at that exact SHA. A
+# cancelled run is not a successful one, so a superseded main commit becomes
+# permanently unpublishable — silently, because nothing errors and the commit
+# looks fine. Six consecutive commits were in that state in one evening.
+#
+# The cost is queue time: main runs now stack rather than supersede, in the
+# `marfa-suite-shared-host` group below. That is affordable because main pushes
+# are merges, bounded by how fast people and sessions merge, where branch
+# pushes are not — and those keep their cancellation.
+#
+# Before adding `cancel-in-progress` to any group, ask what consumes the run's
+# result at a specific SHA. Cancellation is safe where only the latest answer
+# is wanted and unsafe wherever a per-commit answer is a gate.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   # Classifies the diff so the expensive jobs below can skip work they cannot
@@ -423,8 +441,9 @@ jobs:
     # nothing to read. `max` queues up to a hundred, FIFO, and cannot be
     # combined with `cancel-in-progress: true`.
     #
-    # The ref-scoped group on the workflow above is untouched and still
-    # cancels a superseded run on the same branch, which is what keeps this
+    # The ref-scoped group on the workflow above still cancels a superseded
+    # run on the same branch — though no longer on `main`, where a per-commit
+    # result is a publish gate — which is what keeps this
     # queue bounded by the number of live branches rather than by the number
     # of pushes.
     #
