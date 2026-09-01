@@ -98,12 +98,20 @@ describe("reserveWithTimeout", () => {
     // it and the caller's worst case is unchanged.
     const conn = fakeReserved();
     const pool = fakePool([null, conn]);
+    /** The caller's budget, named so the bound below can be about it. */
+    const BUDGET_MS = 10_000;
     const started = performance.now();
-    const outcome = await reserveWithTimeout(pool.client, 10_000);
+    const outcome = await reserveWithTimeout(pool.client, BUDGET_MS);
     const elapsed = performance.now() - started;
     expect(outcome.connection).toBe(conn);
     expect(outcome.attempts).toBe(2);
-    expect(elapsed).toBeLessThan(2_000);
+    // Written against the budget, in the same voice as the assertion in the
+    // test below. The regression is the lost first ask spending the whole
+    // budget instead of a fraction of it, which lands near BUDGET_MS — so a
+    // fifth of it sits clearly below that and well above the first ask's
+    // own share. A bare 2000 says neither of those things and reads as a
+    // stopwatch on the machine.
+    expect(elapsed).toBeLessThan(BUDGET_MS / 5);
   });
 
   it("never exceeds the budget it was given", async () => {

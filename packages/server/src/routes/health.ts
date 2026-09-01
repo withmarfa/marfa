@@ -105,7 +105,7 @@ interface DatabaseConnections {
  * Two seconds is well past a healthy answer (single-digit milliseconds) and
  * well short of any caller's patience.
  */
-const PROBE_TIMEOUT_MS = 2_000;
+export const PROBE_TIMEOUT_MS = 2_000;
 
 /** Marker for a probe that outran its budget rather than failing. */
 const TIMED_OUT = Symbol("probe-timed-out");
