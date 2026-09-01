@@ -259,6 +259,61 @@ describe("ConnectionClient", () => {
   });
 });
 
+describe("ConnectionClient re-typing on a mapping re-apply", () => {
+  const bulkResponse = (): Response =>
+    new Response(
+      JSON.stringify({
+        counts: { created: 0, updated: 1, skipped: 0, errored: 0 },
+        results: [{ index: 0, outcome: "updated", id: "item_1" }],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  const clientFor = (
+    captured: Captured[],
+  ): InstanceType<typeof ConnectionClient> =>
+    new ConnectionClient({
+      apiUrl: "https://api.example.com",
+      credential: CRED,
+      refreshCredential: () => Promise.resolve(REFRESHED),
+      fetch: makeFetch([bulkResponse, bulkResponse], captured),
+    });
+
+  it("does not ask for re-typing by default", async () => {
+    // The refusal this omission leaves in place is what stops an ordinary
+    // sync bug moving a corpus, so the default is the load-bearing half.
+    const captured: Captured[] = [];
+    await clientFor(captured).bulkUpsertItems([
+      { type: "core.note", source_id: "up_1" },
+    ]);
+    expect(JSON.parse(captured[0]!.body!)).not.toHaveProperty("retype");
+  });
+
+  it("asks for it once the resolver has turned it on", async () => {
+    const captured: Captured[] = [];
+    const client = clientFor(captured);
+    client.enableRetypeWrites();
+    await client.bulkUpsertItems([{ type: "core.note", source_id: "up_1" }]);
+    expect(
+      (JSON.parse(captured[0]!.body!) as { retype?: boolean }).retype,
+    ).toBe(true);
+  });
+
+  it("keeps asking for the rest of the dispatch, not just the next batch", async () => {
+    // A corpus does not arrive in one page, and a flag that cleared
+    // itself after one batch would move the first slice and refuse the
+    // rest — which reads as a partial success nobody asked for.
+    const captured: Captured[] = [];
+    const client = clientFor(captured);
+    client.enableRetypeWrites();
+    await client.bulkUpsertItems([{ type: "core.note", source_id: "up_1" }]);
+    await client.bulkUpsertItems([{ type: "core.note", source_id: "up_2" }]);
+    expect(
+      (JSON.parse(captured[1]!.body!) as { retype?: boolean }).retype,
+    ).toBe(true);
+  });
+});
+
 describe("ConnectionClient.bulkUpsertItems", () => {
   it("posts the batch to /items/bulk as a best-effort upsert", async () => {
     const captured: Captured[] = [];

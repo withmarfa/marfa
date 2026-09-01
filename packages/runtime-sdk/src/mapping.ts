@@ -99,6 +99,34 @@ export function createMappingResolver(
       return null;
     }
     mapping = parsed.data;
+
+    // The re-apply answer is judged only now, behind both returns above,
+    // and the order is the whole point.
+    //
+    // Re-typing and the mapping are one instruction, not two. The answer
+    // means "move the items already there onto what this mapping says" —
+    // so a run with no mapping to say anything has nothing to move them
+    // onto. Granting the permission before knowing whether a mapping
+    // parsed would hand it to a run in which `resolve` answers `family`
+    // for every record, and re-typing every record to the write family is
+    // the one outcome this feature must never produce by accident. The
+    // `unparseable` arm is not hypothetical: it is the state a connection
+    // reaches when the stored mapping outruns the SDK that reads it, and
+    // it is precisely the arm that falls through to the family.
+    //
+    // The connection is already in hand, so this costs no extra round trip.
+    const until = (
+      connection?.properties as { mapping_reapply_until?: unknown } | undefined
+    )?.mapping_reapply_until;
+    if (typeof until === "string") {
+      const deadline = Date.parse(until);
+      // An unparseable stamp is not an answer. Treating it as one would
+      // turn a corrupt field into a standing instruction to move a
+      // corpus, which is the direction that cannot be undone by noticing.
+      if (Number.isFinite(deadline) && deadline > Date.now()) {
+        client.enableRetypeWrites();
+      }
+    }
     return mapping;
   }
 
