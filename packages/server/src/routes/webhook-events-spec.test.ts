@@ -41,7 +41,7 @@ function eventsEnumAt(
 
 describe("the webhook event vocabulary is published", () => {
   it("offers every event the runtime accepts, on both doors that take one", async () => {
-    const spec = (await buildPublishedOpenAPISpec()) as Record<string, unknown>;
+    const spec = await buildPublishedOpenAPISpec();
 
     // Both request doors, because a caller subscribing and a caller
     // editing a subscription need the same list and one of them was
@@ -62,7 +62,7 @@ describe("the webhook event vocabulary is published", () => {
   it("is a vocabulary rather than an empty array", async () => {
     // A derivation that resolved to nothing would satisfy the assertion
     // above against an empty source and publish an enum nobody can use.
-    const spec = (await buildPublishedOpenAPISpec()) as Record<string, unknown>;
+    const spec = await buildPublishedOpenAPISpec();
     const carried = eventsEnumAt(spec, "/webhooks", "post") as string[];
     expect(carried.length).toBeGreaterThan(1);
     // The wildcard is a member and is easy to lose when a list is filtered
