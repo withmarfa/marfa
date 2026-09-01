@@ -289,8 +289,18 @@ export class ConnectionClient {
    * Turn re-typing on for the rest of this dispatch.
    *
    * Called by the mapping resolver when it loads a connection carrying a
-   * live answer, and by nothing else — the deadline is the server's to
-   * judge and a handler is not offered a way to ask for this.
+   * live answer and a mapping that parsed.
+   *
+   * **This is not an authorization boundary and must not be read as one.**
+   * The method is public on the client a handler receives as `ctx.marfa`,
+   * and the server gates `retype` on write permission alone — it never
+   * reads `mapping_reapply_until`. A handler can therefore re-type with no
+   * stamp at all, by calling this or by sending `retype` itself, and the
+   * deadline is judged against the runtime host's clock rather than the
+   * server's. What the stamp buys is that the *platform's own* resolver
+   * will not turn re-typing on unasked; it buys nothing against handler
+   * code, which is trusted here for the same reason it is trusted with the
+   * write itself.
    */
   enableRetypeWrites(): void {
     this.retypeWrites = true;

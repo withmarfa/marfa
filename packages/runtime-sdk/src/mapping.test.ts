@@ -258,6 +258,49 @@ describe("bringing the items already stored along", () => {
     expect(enableRetypeWrites).not.toHaveBeenCalled();
   });
 
+  it("leaves it off when the stored mapping will not parse", async () => {
+    // The arm this feature could do the most damage through, and the one
+    // no amount of care in the deadline logic protects.
+    //
+    // An unparseable mapping falls through to the family for every record
+    // — deliberately, because configure-time validation owns refusal. Turn
+    // re-typing on beside that and the run does not decline to route: it
+    // moves the entire corpus onto the write family, which is the single
+    // outcome this feature must never reach by accident. The answer means
+    // "bring the items onto what this mapping says", so a mapping that
+    // says nothing has nothing to bring them onto.
+    //
+    // It is reachable rather than theoretical: a stored mapping outrunning
+    // the SDK that reads it lands exactly here.
+    const { client, enableRetypeWrites } = clientWith(
+      { rules: [{ nonsense: true }] },
+      { mapping_reapply_until: hoursFromNow(4) },
+    );
+    const resolver = createMappingResolver(client, "conn-1");
+    const resolution = await resolver.resolve({ kind: "article", title: "A" });
+
+    expect(resolution).toEqual({ kind: "family" });
+    expect(enableRetypeWrites).not.toHaveBeenCalled();
+  });
+
+  it("leaves it off when no mapping is configured at all", async () => {
+    // The same hazard by the shorter route: a live answer against a
+    // connection whose mapping was cleared rather than corrupted. Clearing
+    // the mapping is supposed to take the answer with it, so this is the
+    // window between the two writes, and a lost race here would move a
+    // corpus.
+    const { client, enableRetypeWrites } = clientWith(null, {
+      mapping_reapply_until: hoursFromNow(4),
+    });
+    const resolution = await createMappingResolver(client, "conn-1").resolve({
+      kind: "article",
+      title: "A",
+    });
+
+    expect(resolution).toEqual({ kind: "family" });
+    expect(enableRetypeWrites).not.toHaveBeenCalled();
+  });
+
   it("refuses to read an unparseable stamp as an answer", async () => {
     // The asymmetry decides this. Reading a corrupt field as "no" costs a
     // re-apply somebody can ask for again; reading it as "yes" moves a

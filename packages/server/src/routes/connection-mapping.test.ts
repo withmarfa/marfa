@@ -210,6 +210,48 @@ describe("bringing the items already there", () => {
     });
   });
 
+  it("reports a live answer on the read, not only on the write that set it", async () => {
+    // Otherwise the only caller who can see the window is the one that
+    // just supplied it, and the deadline's stated purpose — telling a
+    // person why this is still on, with a time — is unreachable through
+    // the API. A settings page reloading the connection is the caller
+    // that actually needs it.
+    await request(
+      ctx.app,
+      "PUT",
+      `/connections/${mappedConnectionId}/mapping?reapply=true`,
+      { key: ctx.adminKey, body: VALID_MAPPING },
+    );
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${mappedConnectionId}/mapping`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { reapply_until: string | null };
+    expect(Date.parse(body.reapply_until!)).toBeGreaterThan(Date.now());
+  });
+
+  it("reports no answer on the read once none stands", async () => {
+    await request(
+      ctx.app,
+      "PUT",
+      `/connections/${mappedConnectionId}/mapping?reapply=false`,
+      { key: ctx.adminKey, body: VALID_MAPPING },
+    );
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/connections/${mappedConnectionId}/mapping`,
+      { key: ctx.adminKey },
+    );
+    const body = (await res.json()) as { reapply_until: string | null };
+    expect(body.reapply_until).toBeNull();
+  });
+
   it("does not record one when the answer is no", async () => {
     const res = await request(
       ctx.app,
@@ -242,9 +284,12 @@ describe("bringing the items already there", () => {
       `/connections/${mappedConnectionId}/mapping?reapply=false`,
       { key: ctx.adminKey, body: VALID_MAPPING },
     );
-    expect(
-      (await readConnection(mappedConnectionId)).mapping_reapply_until ?? null,
-    ).toBeNull();
+    // Asserted as absent rather than as null-or-absent. `null_clears` is
+    // what removes the key; without it the merge stores an explicit null,
+    // and a `?? null` assertion would read that as a pass and pin nothing.
+    expect(await readConnection(mappedConnectionId)).not.toHaveProperty(
+      "mapping_reapply_until",
+    );
   });
 
   it("takes the answer away with the mapping it was about", async () => {
@@ -265,6 +310,6 @@ describe("bringing the items already there", () => {
     // A standing "bring the corpus along" against a mapping that no
     // longer exists could only move rows towards the write family, which
     // is not what anybody agreed to.
-    expect(props.mapping_reapply_until ?? null).toBeNull();
+    expect(props).not.toHaveProperty("mapping_reapply_until");
   });
 });

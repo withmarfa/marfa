@@ -182,8 +182,25 @@ export function connectionMappingRoutes(storage: Storage) {
     const apiKey = requireSpaceAdmin(c);
     const { id } = c.req.valid("param");
     const item = await resolveConnection(id, apiKey.space_id);
-    const mapping = (item.properties as { mapping?: unknown }).mapping ?? null;
-    return c.json({ connection_id: id, mapping }, 200);
+    const props = item.properties as {
+      mapping?: unknown;
+      mapping_reapply_until?: unknown;
+    };
+    const mapping = props.mapping ?? null;
+    // Returned on the read, not only on the write that set it. "The corpus
+    // is being brought along" and "it was, and that has lapsed" are
+    // different states, and until this was here the only caller who could
+    // tell them apart was the one that had just supplied the answer — so a
+    // settings page reloading the connection could not see a live window,
+    // which is the question the deadline exists to answer.
+    const reapplyUntil =
+      typeof props.mapping_reapply_until === "string"
+        ? props.mapping_reapply_until
+        : null;
+    return c.json(
+      { connection_id: id, mapping, reapply_until: reapplyUntil },
+      200,
+    );
   });
 
   router.openapi(putMappingRoute, async (c) => {
