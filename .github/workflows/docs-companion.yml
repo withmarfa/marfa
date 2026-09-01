@@ -83,7 +83,15 @@ jobs:
             // there. A suffix rather than an entry in SURFACE_EXCLUDES, because
             // this is not a subtree: the test lives beside the surface by
             // convention, in every package.
-            const isTest = (f) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(f);
+            // `.test.` only, deliberately, though `.spec.` is the other common
+            // spelling. This repository has no `*.spec.*` file and its convention
+            // is a sibling `*.test.ts`, so the alternative would exempt nothing
+            // that exists — while colliding with this codebase's own vocabulary
+            // inside a tracked prefix: an `openapi.spec.ts` under
+            // `packages/server/src/openapi` is a plausible name for something
+            // that IS the surface, and it would be skipped silently. A `.spec.`
+            // test added later is merely gated, which is the safe direction.
+            const isTest = (f) => /\.test\.[cm]?[jt]sx?$/.test(f);
             const isDocSurface = (f) =>
               !isTest(f) &&
               !SURFACE_EXCLUDES.some((p) => f.startsWith(p)) &&
@@ -107,7 +115,35 @@ jobs:
             const hasDocsRef =
               /withmarfa\/docs#\d+/i.test(body) ||
               /github\.com\/withmarfa\/docs\/pull\/\d+/i.test(body);
-            const hasOptOutLine = /^\s*docs:\s*(n\/?a|none|not\s+required|skip)/im.test(body);
+            // Anchored at both ends, so the opt-out has to be a line somebody
+            // wrote as an opt-out rather than a line that happens to begin that
+            // way. Unanchored, a pasted commit-log excerpt (`docs: skip
+            // generated changelog entry`), a sentence opening `docs: none of
+            // the below need review`, or a `docs: skip` inside a fenced code
+            // block each disabled the gate on a pull request that genuinely
+            // changed a surface — silently, which is the direction that costs
+            // something. A false positive is noisy and self-correcting; a false
+            // negative lets docs drift with nobody learning that they have.
+            //
+            // `[ \t]` rather than `\s` throughout, because `\s` matches a
+            // newline and would let the keyword sit on the following line.
+            //
+            // No `\r?` before the anchor, and that is checked rather than
+            // assumed: pull request bodies arrive CRLF-delimited, and it is
+            // natural to think `$` needs help with that. It does not —
+            // ECMAScript counts `\r` as a line terminator, so `$` under `m`
+            // already matches before it. A `\r?` here would be inert, and an
+            // inert guard reads as a necessary one.
+            // Fenced blocks are removed before the opt-out is looked for. A
+            // `docs: skip` inside one is a line in an example, not a waiver,
+            // and anchoring alone cannot tell them apart because it genuinely
+            // is on a line of its own. Two lines to close the last way the
+            // gate could be opened by somebody who did not mean to open it.
+            const prose = body.replace(/```[\s\S]*?```/g, "");
+            const hasOptOutLine =
+              /^[ \t]*docs:[ \t]*(n\/?a|none|not[ \t]+required|skip)[ \t]*$/im.test(
+                prose,
+              );
             const hasOptOutLabel = (pr.labels || []).some((l) => l.name === 'no-docs');
             const hasCompanion = hasDocsRef || hasOptOutLine || hasOptOutLabel;
 
