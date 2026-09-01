@@ -46,8 +46,7 @@
  *
  * (Gap 1 — `device_code` in `grant_types_supported` and the
  * `device_authorization_endpoint` field — is handled separately by the
- * augmented bare-root `/.well-known/oauth-authorization-server` and
- * `/.well-known/openid-configuration` handlers in `app.ts`.)
+ * augmented discovery handlers in `app.ts`.)
  */
 
 import { randomBytes } from "node:crypto";

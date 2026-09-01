@@ -547,7 +547,7 @@ describe("every way of asking for a credential is accounted for", () => {
     const res = await request(
       ctx.app,
       "GET",
-      "/.well-known/oauth-authorization-server",
+      "/.well-known/oauth-authorization-server/auth",
       {},
     );
     expect(res.status).toBe(200);
