@@ -24,6 +24,7 @@ const VALID_EVENTS = new Set([
   "item.state_changed",
   "metadata.changed",
   "edge.created",
+  "edge.updated",
   "edge.deleted",
   "*",
 ]);
