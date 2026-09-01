@@ -1,9 +1,25 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { healthRoutes } from "./health.js";
+import { healthRoutes, PROBE_TIMEOUT_MS } from "./health.js";
 import { setStoredValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
+
+/**
+ * What "answered rather than hung" is allowed to cost.
+ *
+ * Derived from the endpoint's own probe budget rather than picked. Both
+ * regressions this guards are unbounded waits — the production incident was
+ * fifty-two seconds and then a 500 — so the bound does not need to be tight,
+ * it needs to be far below unbounded and comfortably above one probe budget
+ * on a machine that is sometimes busy. Three times the budget is both.
+ *
+ * A bare figure here would measure the runner instead: too low and a loaded
+ * machine reports a defect that is not there, too high and it stops meaning
+ * anything. Written against the constant so that changing the probe budget
+ * moves this with it.
+ */
+const ANSWERS_WITHIN_MS = PROBE_TIMEOUT_MS * 3;
 
 /**
  * `/health` had no test at all until the endpoint stopped answering on
@@ -183,7 +199,7 @@ describe("GET /health", () => {
 
     const started = Date.now();
     const body = (await (await app.request("/")).json()) as DeadLetterBody;
-    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(Date.now() - started).toBeLessThan(ANSWERS_WITHIN_MS);
     expect(body.components.dead_letters).toBeUndefined();
     expect(body.components.database?.status).toBe("ok");
   });
@@ -203,7 +219,7 @@ describe("GET /health", () => {
     // the deploy gate reads the body, and a degraded build that is
     // serving is still the build that is serving.
     expect(res.status).toBe(200);
-    expect(elapsed).toBeLessThan(10_000);
+    expect(elapsed).toBeLessThan(ANSWERS_WITHIN_MS);
 
     const body = (await res.json()) as HealthBody;
     expect(body.status).toBe("degraded");

@@ -27,7 +27,7 @@ const JOB_LOCK_RESERVE_TIMEOUT_MS = 15_000;
  * comfortably above anything a single-connection client should take to
  * answer when it is genuinely free.
  */
-const HOLDER_RESERVE_TIMEOUT_MS = 5_000;
+export const HOLDER_RESERVE_TIMEOUT_MS = 5_000;
 
 /**
  * Postgres-backed coordination via advisory locks.

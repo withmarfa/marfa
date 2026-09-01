@@ -15,7 +15,10 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { PgCoordinationStore } from "./coordination-store.js";
+import {
+  HOLDER_RESERVE_TIMEOUT_MS,
+  PgCoordinationStore,
+} from "./coordination-store.js";
 import { acquireStreamRls, StreamPoolExhaustedError } from "./streaming-rls.js";
 import type { PgClient } from "./connection.js";
 
@@ -118,8 +121,15 @@ describe.skipIf(!isPg || databaseUrl === "")("session pool bounds", () => {
           Promise.resolve("held"),
         );
         expect(result).toBeUndefined();
-        // Bounded, and comfortably inside the election's own retry period.
-        expect(Date.now() - started).toBeLessThan(20_000);
+        // Bounded, and derived from the budget it is about rather than
+        // chosen. The regression is an unbounded wait — a reservation that
+        // is destroyed rather than refused never resolves and never
+        // rejects — so what this has to distinguish is "returned inside its
+        // own budget" from "did not return". Three times the budget leaves
+        // room for a busy machine without the bound becoming meaningless.
+        expect(Date.now() - started).toBeLessThan(
+          HOLDER_RESERVE_TIMEOUT_MS * 3,
+        );
       } finally {
         held.release();
       }
