@@ -91,8 +91,7 @@ describe.skipIf(!isPg)("pg-boss 12 local-runtime integration", () => {
         },
       );
       await boss.send(queue, { hello: "world" });
-      const deadline = Date.now() + 15_000;
-      while (received.length === 0 && Date.now() < deadline) {
+      while (received.length === 0) {
         await new Promise((resolve) => setTimeout(resolve, 200));
       }
       expect(received).toEqual([{ hello: "world" }]);
@@ -152,8 +151,7 @@ describe.skipIf(!isPg)(
           );
 
           await boss.send(queue, {}, { retryLimit: 1, retryDelay: 0 });
-          const deadline = Date.now() + 20_000;
-          while (seen.length < 2 && Date.now() < deadline) {
+          while (seen.length < 2) {
             await sleep(250);
           }
 

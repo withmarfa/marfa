@@ -114,9 +114,10 @@ describe("GET /events — viewer cap", () => {
     await first.close();
     // Cleanup runs from the pump's next tick after cancel; poll rather
     // than assume the decrement is synchronous with close().
-    const deadline = Date.now() + 5_000;
-    let reopened: OpenStream | null = null;
-    while (Date.now() < deadline) {
+    // Assigned on the only path out of the loop below, which exits only on
+    // success — the runner's budget is what ends a run that never gets one.
+    let reopened!: OpenStream;
+    for (;;) {
       const attempt = await openStream(app);
       if (attempt.status === 200) {
         reopened = attempt;
@@ -124,8 +125,8 @@ describe("GET /events — viewer cap", () => {
       }
       await new Promise((r) => setTimeout(r, 50));
     }
-    expect(reopened?.status).toBe(200);
-    await reopened?.close();
+    expect(reopened.status).toBe(200);
+    await reopened.close();
   }, 30_000);
 });
 
@@ -194,11 +195,7 @@ describe.skipIf(!isPg)("GET /events — live viewers hold no pool slot", () => {
     let received = "";
     try {
       // 1. The replay genuinely runs: the second row arrives as a frame.
-      const replayDeadline = Date.now() + 15_000;
-      while (
-        !received.includes("evt-cap-replayed") &&
-        Date.now() < replayDeadline
-      ) {
+      while (!received.includes("evt-cap-replayed")) {
         const chunk = await Promise.race([
           reader.read(),
           new Promise<{ value?: Uint8Array; done: boolean }>((r) =>
@@ -214,9 +211,8 @@ describe.skipIf(!isPg)("GET /events — live viewers hold no pool slot", () => {
 
       // 2. The reservation came back: the whole pool is reservable while
       // the stream is still open.
-      const drainDeadline = Date.now() + 20_000;
       let drained = false;
-      while (!drained && Date.now() < drainDeadline) {
+      while (!drained) {
         const held = [];
         try {
           for (let i = 0; i < 3; i++) {
@@ -248,8 +244,7 @@ describe.skipIf(!isPg)("GET /events — live viewers hold no pool slot", () => {
         originatingConnectionId: null,
         hopCount: 0,
       });
-      const liveDeadline = Date.now() + 10_000;
-      while (!received.includes("evt-cap-live") && Date.now() < liveDeadline) {
+      while (!received.includes("evt-cap-live")) {
         const chunk = await Promise.race([
           reader.read(),
           new Promise<{ value?: Uint8Array; done: boolean }>((r) =>

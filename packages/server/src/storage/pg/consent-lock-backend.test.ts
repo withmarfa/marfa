@@ -120,9 +120,19 @@ describe.skipIf(!isPg)("pg consent lock backend", () => {
         state.held = true;
         await holding;
       });
-      const deadline = Date.now() + 5_000;
-      while (!state.held && Date.now() < deadline) await sleep(25);
-      expect(state.held).toBe(true);
+      // No deadline of this test's own. The runner owns the timeout, so a
+      // starved acquisition reports `Test timed out in 30000ms` — which names
+      // itself — instead of `expected false to be true`, which reads as a
+      // defect in the lock backend and sends the next reader to study a diff
+      // that is fine. A hand-rolled `while` against `Date.now()` takes the
+      // timeout away from the runner and re-emits it as a logic failure,
+      // and nothing in the output says a clock was involved.
+      //
+      // The condition here can be starved rather than merely delayed: the
+      // holder has to clone a database, open a connection and take a
+      // cluster-wide advisory lock, and on a machine running four suites at
+      // once that does not finish in five seconds.
+      while (!state.held) await sleep(25);
 
       // A different key, but the single-slot client is occupied: the
       // reservation times out and surfaces as a retryable refusal
