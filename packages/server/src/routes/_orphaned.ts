@@ -321,10 +321,11 @@ export function resolveOrphanScope(
  */
 export function checkOwningConnection(
   key: ApiKey | undefined,
-  row: Pick<Item, "id" | "source">,
+  row: Pick<Item, "id" | "source" | "source_id">,
   writer: string | null,
   isWriterLive: (connectionId: string) => boolean,
 ): "own" | "adopt" {
+  const sourceId = row.source_id ?? "(none)";
   if (!isIntegrationSourced(row)) return "own";
   const mine = key?.is_runtime_credential === true ? key.connection_id : null;
   // Not a runtime credential: this is a person or an app touching an
@@ -343,10 +344,22 @@ export function checkOwningConnection(
   if (!isWriterLive(writer)) return "adopt";
   throw new MarfaError(
     ErrorCode.PROVENANCE_COLLISION,
-    `source_id "${row.source}" resolves an item written by connection ${writer}, which is still installed. Two connections of one integration are two corpora; this write is refused rather than overwriting. Scope this record's source_id to the upstream source it came from.`,
+    // Says what is enforced and no more. An earlier draft read "two
+    // connections of one integration are two corpora", which promises an
+    // ownership the platform does not defend: lifecycle gestures are exempt
+    // from this guard, so a sibling that cannot overwrite a row can still
+    // trash it (T-1076). A guarantee that half-holds is worse than one
+    // stated narrowly, and the narrow statement is true — this write is
+    // refused.
+    //
+    // It also names `source_id` rather than `source`. An earlier draft
+    // interpolated the source under the `source_id` label, which sent a
+    // reader looking for a key they had not sent.
+    `This write resolves an item under source "${row.source}" with source_id "${sourceId}", and connection ${writer} wrote it. That connection is still installed, so the write is refused rather than overwriting its item. Give this record a source_id scoped to the upstream source it came from.`,
     {
       item_id: row.id,
       source: row.source,
+      source_id: row.source_id ?? null,
       owning_connection_id: writer,
       writing_connection_id: mine,
     },
@@ -366,7 +379,7 @@ export function createOwnershipGuard(
   storage: Storage,
 ): (
   key: ApiKey | undefined,
-  row: Pick<Item, "id" | "source" | "space_id">,
+  row: Pick<Item, "id" | "source" | "source_id" | "space_id">,
 ) => Promise<"own" | "adopt"> {
   // Memoized for the guard's lifetime, which is one request. Without it a
   // door that guards a batch pays one connection walk PER ROW, and that is
@@ -408,7 +421,7 @@ export function createOwnershipGuard(
 export async function requireOwningConnection(
   storage: Storage,
   key: ApiKey | undefined,
-  row: Pick<Item, "id" | "source" | "space_id">,
+  row: Pick<Item, "id" | "source" | "source_id" | "space_id">,
 ): Promise<"own" | "adopt"> {
   return createOwnershipGuard(storage)(key, row);
 }

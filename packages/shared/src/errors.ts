@@ -349,6 +349,12 @@ export enum ErrorCode {
    * is for the handler to scope its `source_id` per upstream source
    * (decision 18) so the two connections stop competing for one key.
    *
+   * **It refuses a write and asserts nothing wider.** Lifecycle gestures —
+   * transition, restore, delete — are deliberately exempt from this guard,
+   * so a connection refused here can still trash the same row. Reading this
+   * as "the row belongs to that connection" would be reading a guarantee
+   * the platform does not defend.
+   *
    * **The create race answers a different code.** Two connections creating
    * the same `source_id` concurrently, where both pre-checks miss, trip the
    * `idx_items_source_dedup` unique constraint and surface as
