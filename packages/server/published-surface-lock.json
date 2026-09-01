@@ -11,12 +11,12 @@
   },
   "@withmarfa/sdk": {
     "version": "2.6.0",
-    "hash": "429f49f5bb0897b709ccd3b534119dd421fb89033138582b1ed8a62cee0ca907",
+    "hash": "7abe3cb51ab88200951e9a68145fd29f03b98250bbd109db41b4df9d3f76e726",
     "exports": 125
   },
   "@withmarfa/shared": {
     "version": "6.13.0",
-    "hash": "0b84cb3fb90b0c542b408a3e62c029c6e9ae8ed8edf029261b530accbf2a3438",
+    "hash": "f5f7f673e90620bdacb6e45b20c50604e6b67fe55cd5cf4ccc7f62d821751a41",
     "exports": 263
   },
   "@withmarfa/webhooks": {

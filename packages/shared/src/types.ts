@@ -233,43 +233,11 @@ export interface CreateItemInput {
   capture_latitude?: number;
   capture_longitude?: number;
   tags?: string[];
-  /**
-   * The connection that wrote this row, recorded so a genuine collision can
-   * refuse loudly (D63).
-   *
-   * **Server-set, never caller-supplied.** Stamped from the calling runtime
-   * credential's own `connection_id`, gated on `is_runtime_credential`
-   * rather than on the shape of `source`, because a self-serve mint writes
-   * the caller's label straight into `source` and an `integration:`-looking
-   * string is therefore forgeable while the flag is not.
-   *
-   * Deliberately not part of the natural key and not on `Item`: it changes
-   * what *refuses*, never what *resolves*, so D34's reinstall adoption is
-   * untouched. Null means no connection is recorded as owning the row,
-   * which is the pre-column state and reads as adoptable.
-   */
-  written_by_connection_id?: string | null;
 }
 
 /** Input for updating an existing item. */
 export interface UpdateItemInput {
   properties?: Record<string, unknown>;
-  /**
-   * The connection that wrote this row, recorded so a genuine collision can
-   * refuse loudly (D63).
-   *
-   * **Server-set, never caller-supplied.** Stamped from the calling runtime
-   * credential's own `connection_id`, gated on `is_runtime_credential`
-   * rather than on the shape of `source`, because a self-serve mint writes
-   * the caller's label straight into `source` and an `integration:`-looking
-   * string is therefore forgeable while the flag is not.
-   *
-   * Deliberately not part of the natural key and not on `Item`: it changes
-   * what *refuses*, never what *resolves*, so D34's reinstall adoption is
-   * untouched. Null means no connection is recorded as owning the row,
-   * which is the pre-column state and reads as adoptable.
-   */
-  written_by_connection_id?: string | null;
   /**
    * Faithful-mirror semantics for an owning integration's re-sync: an
    * explicit null deletes the key instead of reading as "leave unset".

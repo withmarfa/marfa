@@ -222,7 +222,10 @@ const createItemRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["type_mismatch"]),
+          schema: makeErrorResponseSchema([
+            "type_mismatch",
+            "provenance_collision",
+          ]),
         },
       },
       description:
@@ -647,7 +650,11 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.union([
             ConflictResponseSchema,
-            makeErrorResponseSchema(["source_id_conflict", "type_mismatch"]),
+            makeErrorResponseSchema([
+              "source_id_conflict",
+              "type_mismatch",
+              "provenance_collision",
+            ]),
           ]),
         },
       },
@@ -1238,19 +1245,18 @@ export function itemRoutes(storage: Storage) {
         body.source_id,
         spaceId,
       );
-      // Hoisted above the trashed branch on purpose (D63). That branch
-      // answers 200 with the row and its metadata before the update arm is
-      // reached, so a guard placed only in the update arm would hand a
-      // sibling connection its twin's row and call it an acknowledgement.
-      // One call here covers both arms.
+      // D63 is checked on BOTH arms below rather than once here, and the
+      // difference is disclosure. This branch reasons carefully that the
+      // row's type is a gate rather than a filter — gate before disclosing,
+      // so a refusal cannot be read off the body — and the provenance
+      // refusal names `item_id`, `source` and the owning connection's id.
+      // Answering it ahead of `requireTypeAccess` would disclose all three
+      // to a caller the type gate is about to refuse and tell nothing.
       //
-      // Also ahead of every gate that reads the row's type, because a row
-      // that is not yours is not yours to be told about — and because it is
-      // what turns today's answer, a `type_mismatch` naming a type the
-      // caller never sent, into one that names the collision.
-      const ownership = existing
-        ? await requireOwningConnection(storage, credential, existing)
-        : "own";
+      // So each arm runs it last among its own gates. That is two call
+      // sites for one rule, which is the shape this codebase treats as a
+      // hazard — the trashed arm has its own named test for exactly that
+      // reason, and deleting either call reddens one case and only one.
       if (existing?.state === "trashed") {
         // The user deleted this. Reviving it would overturn that decision
         // silently, and refusing forever is the bug being fixed, so the
@@ -1281,6 +1287,11 @@ export function itemRoutes(storage: Storage) {
         //
         // Gate before disclosing, so a refusal cannot be read off the body.
         requireTypeAccess(c, existing.type, "write");
+        // Then D63: a twin's trashed row is not this connection's to be
+        // acknowledged. Without this the branch answers 200 carrying the
+        // row and its metadata, which reads as "your record is already
+        // stored, and deleted" when it is somebody else's.
+        await requireOwningConnection(storage, credential, existing);
         const metadata = await storage.metadata.get(existing.id);
         return c.json(
           {
@@ -1377,6 +1388,16 @@ export function itemRoutes(storage: Storage) {
         // time a rule lived at one door and not its neighbours, four of
         // six were found disagreeing.
         requireDeclaredTypeMatches(type, existing);
+
+        // D63, last among this arm's row-side gates for the same reason
+        // the bulk door orders it last: the gates above have narrower
+        // refusals that disclose less, and `requireActivityAttribution`
+        // must keep the one refusal a test names as its own.
+        const ownership = await requireOwningConnection(
+          storage,
+          credential,
+          existing,
+        );
 
         // An owning integration's re-sync gets faithful-mirror null
         // semantics: the upstream cleared the field, so an explicit null
@@ -2159,16 +2180,6 @@ export function itemRoutes(storage: Storage) {
 
     requireTypeAccess(c, item.type, "write");
 
-    // D63: a row a live sibling connection wrote is not this one's to
-    // rewrite. `requireMirrorProtection` further down compares the shared
-    // `integration:<name>` stamp and so treats the two as one writer; this
-    // is the axis it cannot see.
-    const patchOwnership = await requireOwningConnection(
-      storage,
-      c.get("apiKey"),
-      item,
-    );
-
     // Held to the same rule as every other door rather than refused
     // outright: a claim that matches the row is the ordinary case and
     // passes, a claim that disagrees is the re-type this route does not
@@ -2217,6 +2228,17 @@ export function itemRoutes(storage: Storage) {
         : item.properties,
     );
     requireMirrorProtection(c.get("apiKey"), item);
+    // D63, and last among the row-side gates so this door answers in the
+    // same order `POST /items/bulk` does — the two are the same operation
+    // reached through different doors, and `checkUpdate` says so. Ordering
+    // it ahead of `requireActivityAttribution` would also take that gate's
+    // only refusal away from it, leaving the test that names it measuring
+    // this guard instead.
+    const patchOwnership = await requireOwningConnection(
+      storage,
+      c.get("apiKey"),
+      item,
+    );
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
     // unique per space — the same constraint enforced at create time.

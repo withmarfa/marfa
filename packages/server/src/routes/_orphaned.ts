@@ -362,26 +362,55 @@ export function checkOwningConnection(
  * expensive half is therefore paid on the adoption sweep after a reinstall,
  * once per row and once ever, rather than on every write.
  */
+export function createOwnershipGuard(
+  storage: Storage,
+): (
+  key: ApiKey | undefined,
+  row: Pick<Item, "id" | "source" | "space_id">,
+) => Promise<"own" | "adopt"> {
+  // Memoized for the guard's lifetime, which is one request. Without it a
+  // door that guards a batch pays one connection walk PER ROW, and that is
+  // not the rare path it looks like: after a reinstall every row in the
+  // corpus takes the writer-is-somebody-else branch, because adoption over
+  // a dead writer needs the same liveness answer the refusal does. A
+  // re-sync of five thousand records would have run five thousand walks.
+  const live = new Map<SpaceKey, ReadonlySet<string>>();
+  return async (key, row) => {
+    if (!isIntegrationSourced(row)) return "own";
+    const mine = key?.is_runtime_credential === true ? key.connection_id : null;
+    if (mine === null || mine === undefined) return "own";
+    // Same narrowing as `checkOwningConnection`, applied before the read so
+    // a cross-integration write costs no query at all.
+    if (key?.item_source !== row.source) return "own";
+    const writers = await storage.items.writersOf([row.id]);
+    const writer = writers.get(row.id) ?? null;
+    if (writer === null || writer === mine) {
+      return writer === null ? "adopt" : "own";
+    }
+    const spaceKey = spaceKeyOf(row);
+    let known = live.get(spaceKey);
+    if (!known) {
+      known = (await liveIntegrationScope(storage, spaceKey)).connections;
+      live.set(spaceKey, known);
+    }
+    const resolved = known;
+    return checkOwningConnection(key, row, writer, (id) => resolved.has(id));
+  };
+}
+
+/**
+ * {@link createOwnershipGuard} for a door that guards exactly one row.
+ *
+ * Two reads, and only the first always runs: one indexed by-id column read
+ * for the writer, and — only when the writer is somebody else — the space's
+ * connection walk to ask whether that somebody is still installed.
+ */
 export async function requireOwningConnection(
   storage: Storage,
   key: ApiKey | undefined,
   row: Pick<Item, "id" | "source" | "space_id">,
 ): Promise<"own" | "adopt"> {
-  if (!isIntegrationSourced(row)) return "own";
-  const mine = key?.is_runtime_credential === true ? key.connection_id : null;
-  if (mine === null || mine === undefined) return "own";
-  // Same narrowing as `checkOwningConnection`, applied before the read so a
-  // cross-integration write costs no query at all.
-  if (key?.item_source !== row.source) return "own";
-  const writers = await storage.items.writersOf([row.id]);
-  const writer = writers.get(row.id) ?? null;
-  if (writer === null || writer === mine) {
-    return writer === null ? "adopt" : "own";
-  }
-  const scope = await liveIntegrationScope(storage, spaceKeyOf(row));
-  return checkOwningConnection(key, row, writer, (id) =>
-    scope.connections.has(id),
-  );
+  return createOwnershipGuard(storage)(key, row);
 }
 
 /** The live connection ids in one space, for a door that guards a batch and
@@ -415,7 +444,9 @@ async function liveIntegrationScope(
   // and resolving it inside the page loop would have been one awaited round
   // trip per connection.
   const refs = new Set<string>();
-  const connections = new Set<string>();
+  // ref -> the connections resolving it, so a connection joins the live set
+  // only if its own ref resolved. Several connections routinely share a ref.
+  const byRef = new Map<string, string[]>();
   let cursor: string | null = null;
   do {
     const page: { data: Item[]; cursor: string | null } =
@@ -445,17 +476,29 @@ async function liveIntegrationScope(
       // cross-space hole for good: a row is only allowed to answer for the
       // space it is actually in, whatever the query returned.
       if (spaceKeyOf(connection) !== spaceKey) continue;
-      connections.add(connection.id);
       const ref = connection.properties.integration_ref;
-      if (typeof ref === "string") refs.add(ref);
+      // Held rather than added, because both sets have to answer to the
+      // same condition. A connection whose ref resolves to nothing usable
+      // keeps no provenance string alive — the loop below says why — and
+      // it must not keep its own id alive either. Adding it here
+      // unconditionally made a connection that cannot be resolved read as
+      // live on the connection axis while reading as dead on the source
+      // axis, so its rows flipped to `orphaned: false` and a sibling
+      // re-syncing one of them was refused against a writer that can never
+      // write again.
+      if (typeof ref === "string") {
+        refs.add(ref);
+        byRef.set(ref, [...(byRef.get(ref) ?? []), connection.id]);
+      }
     }
     cursor = page.cursor;
   } while (cursor !== null);
 
-  if (refs.size === 0) return { sources: new Set(), connections };
+  if (refs.size === 0) return { sources: new Set(), connections: new Set() };
 
+  const ordered = [...refs];
   const manifests = await Promise.all(
-    [...refs].map((ref) =>
+    ordered.map((ref) =>
       manifestOfCatalogRow(
         storage,
         ref,
@@ -467,13 +510,18 @@ async function liveIntegrationScope(
   );
 
   const live = new Set<string>();
-  for (const manifest of manifests) {
+  const connections = new Set<string>();
+  for (const [ref, manifest] of ordered.map(
+    (r, i) => [r, manifests[i]] as const,
+  )) {
     const source = runtimeCredentialItemSource(manifest);
     // Null when the ref resolves to nothing usable. A connection whose
     // manifest cannot be resolved grants no provenance identity either (see
     // `runtimeCredentialItemSource`), so it can have written no rows and
-    // there is nothing for it to keep alive.
-    if (source !== null) live.add(source);
+    // there is nothing for it to keep alive — on either axis.
+    if (source === null) continue;
+    live.add(source);
+    for (const id of byRef.get(ref) ?? []) connections.add(id);
   }
   return { sources: live, connections };
 }

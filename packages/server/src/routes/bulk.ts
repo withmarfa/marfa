@@ -48,8 +48,9 @@ import {
   writerConnectionOf,
   getTypeFilter,
   hasPlatformAuthority,
+  INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
-import { liveConnectionIds, requireOwningConnection } from "./_orphaned.js";
+import { createOwnershipGuard, liveConnectionIds } from "./_orphaned.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
@@ -538,6 +539,12 @@ async function processBulkItem(
       raw: { properties?: Record<string, unknown> },
     ) => Promise<"own" | "adopt">;
     /**
+     * The provenance half of the row-side gate on its own (D63), for the
+     * `create_only` arm — which authorizes nothing else and must keep it
+     * that way.
+     */
+    checkProvenance: (existing: Item) => Promise<"own" | "adopt">;
+    /**
      * The connection to record as this write's author (D63), or null when
      * the caller is not a runtime credential. Computed once per request in
      * the route rather than per entry, because it is a property of the
@@ -575,6 +582,7 @@ async function processBulkItem(
     retype,
     checkWrite,
     checkUpdate,
+    checkProvenance,
     checkEdgeWrite,
     writerConnectionId,
   } = options;
@@ -641,8 +649,15 @@ async function processBulkItem(
     // is not this caller's duplicate, and answering `skipped /
     // duplicate_source` says it is — which reads as "already stored" and
     // sends the handler on believing its record is present.
+    //
+    // **The provenance guard alone, not `checkUpdate`.** This arm has never
+    // run the update authorization and must not start: `create_only` with
+    // locally-assigned ids is the offline-first path, and putting
+    // `requireMirrorProtection` and `requireTypeAccess` in front of a skip
+    // would turn "that id is already taken" into a refusal — and, since
+    // `atomic` defaults to true, into a whole-batch rollback.
     try {
-      await checkUpdate(existing, {});
+      await checkProvenance(existing);
     } catch (err) {
       if (err instanceof MarfaError) {
         return {
@@ -890,6 +905,12 @@ export function bulkRoutes(storage: Storage) {
     // cannot edit a sibling's activity without naming a connection at
     // all; after, so it cannot re-point its own. The merge mirrors the
     // shallow property merge the storage layer performs.
+    // One guard for the whole request, so the connection walk behind it is
+    // paid once per space rather than once per entry (D63).
+    const ownershipGuard = createOwnershipGuard(storage);
+    const checkProvenance = (existing: Item): Promise<"own" | "adopt"> =>
+      ownershipGuard(c.get("apiKey"), existing);
+
     const checkUpdate = async (
       existing: Item,
       raw: { properties?: Record<string, unknown> },
@@ -911,7 +932,7 @@ export function bulkRoutes(storage: Storage) {
       // such; answering ahead of it would leave that test measuring this
       // guard instead, and the gate it names could then be deleted with
       // the file still green.
-      return requireOwningConnection(storage, key, existing);
+      return ownershipGuard(key, existing);
     };
     // The edge half of the dual gate. Same call the direct routes make,
     // so the three doors that accept an inline `edges` payload agree.
@@ -1008,6 +1029,7 @@ export function bulkRoutes(storage: Storage) {
           retype,
           checkWrite,
           checkUpdate,
+          checkProvenance,
           checkEdgeWrite,
           writerConnectionId: writerConnectionOf(c.get("apiKey")),
         });
@@ -1228,7 +1250,7 @@ export function bulkRoutes(storage: Storage) {
           : null;
       if (mine !== null && mine !== undefined) {
         const candidates = matched.filter((item) =>
-          item.source.startsWith("integration:"),
+          item.source.startsWith(INTEGRATION_SOURCE_PREFIX),
         );
         if (candidates.length > 0) {
           const writers = await storage.items.writersOf(
