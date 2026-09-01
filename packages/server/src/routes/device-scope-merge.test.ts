@@ -254,23 +254,30 @@ describe("mergeDeviceApprovalScopes, the axes beyond item types", () => {
     expect(grantCoversScope(merged, "edge.other:write")).toBe(true);
   });
 
-  // REGRESSION: the prune deleted a live grant here, and this is the shape
-  // the sufficiency argument does not cover. The edge axis has no pattern
-  // validator, so `edge.*.*:write` parses where `core.*.*:write` is refused,
-  // and its root is `*`, a string that matches the global KEY while matching
-  // no concrete edge type. The malformed entry therefore answered for
-  // `edge.*` at the key level while conferring nothing at any id, and the
-  // wildcard carrying write on every edge type on the instance was dropped as
-  // redundant. Reachable through operator-configured permission bundles,
-  // whose only filter is `isValidScope`.
+  // REGRESSION: the prune deleted a live grant here. `edge.*.*:write` used to
+  // parse — the edge axis had no pattern validator where the type axis routes
+  // a wildcard's root through `TYPE_ID_PREFIX` — and its root is `*`, a string
+  // that matches the global KEY while matching no concrete edge type. The
+  // malformed entry therefore answered for `edge.*` at the key level while
+  // conferring nothing at any id, and the wildcard carrying write on every
+  // edge type on the instance was dropped as redundant. It was reachable
+  // through any operator-configured permission bundle, whose only filter is
+  // `isValidScope`.
   //
-  // Refusing only malformed CANDIDATES does not fix it: the entry deleted
-  // here is `edge.*`, whose own key is well-formed. What fixes it is keeping
-  // a malformed key out of the map a candidate is measured against.
+  // **The grammar refuses it at the door now, and this case survives the
+  // narrowing rather than being retired by it.** A stored grant made before
+  // the narrowing still carries the literal, and the door does not reach
+  // backwards. What changed is which family it belongs to: it is no longer a
+  // key the resolvers reason about and refuse one gate later, it is a literal
+  // they cannot parse at all — so `membershipScopes` carries it and it never
+  // enters the map a candidate is measured against. That is strictly stronger
+  // than what kept this green before, because it cannot answer for a key even
+  // in principle.
   it("does not drop a wildcard on the say-so of a malformed sibling key", () => {
-    // Preconditions. The grammar hole is real, it is this axis alone, and the
-    // malformed literal genuinely confers nothing concrete.
-    expect(isValidScope("edge.*.*:write")).toBe(true);
+    // Preconditions. Both axes refuse the shape now, which is the fix; the
+    // stored literal still confers nothing concrete, which is why the
+    // wildcard beside it must survive.
+    expect(isValidScope("edge.*.*:write")).toBe(false);
     expect(isValidScope("core.*.*:write")).toBe(false);
     expect(grantCoversScope(["edge.*.*:write"], "edge.parent-of:write")).toBe(
       false,
@@ -307,7 +314,7 @@ describe("mergeDeviceApprovalScopes, the axes beyond item types", () => {
   // runtime-registered relation edges short of the global wildcard, so this
   // is a grant a space cannot express any other way.
   it("does not drop a namespace wildcard on the say-so of a malformed child", () => {
-    expect(isValidScope("edge.user.*.*:write")).toBe(true);
+    expect(isValidScope("edge.user.*.*:write")).toBe(false);
     expect(subtreeWildcardRoot("user.*.*")).toBe("user.*");
     expect(
       grantCoversScope(["edge.user.*.*:write"], "edge.user.blocks:write"),
@@ -906,24 +913,26 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
     for (const q of PLAIN) PAIRS.push([c, q], [q, c]);
   }
 
-  it("is built on scopes the grammar admits that confer nothing", () => {
+  it("is built on scopes this build cannot parse, which a grant may still carry", () => {
     expect(resolvable("*")).toBe(true);
     expect(resolvable("user.*")).toBe(true);
     expect(resolvable("parent-of")).toBe(true);
 
     for (const scope of MALFORMED) {
+      // **The grammar refuses these now, and the sweep below is still the
+      // point.** The door does not reach backwards: a grant stored before the
+      // narrowing carries the literal, and the prune still has to walk past it
+      // without taking anything away.
       expect({ scope, valid: isValidScope(scope) }).toEqual({
         scope,
-        valid: true,
+        valid: false,
       });
-      const key = emittedKey(scope);
-      expect({
-        scope,
-        unresolvable: key ? !resolvable(key.key) : null,
-      }).toEqual({
-        scope,
-        unresolvable: true,
-      });
+      // **It emits no key at all, where it used to emit an unresolvable one.**
+      // That is the stronger of the two states rather than a weaker one: a key
+      // the resolvers cannot resolve still has to be refused at a gate, and a
+      // literal with no key never reaches the map a candidate is measured
+      // against. The regressions above are what that protects.
+      expect({ scope, key: emittedKey(scope) }).toEqual({ scope, key: null });
       // Inert: it reaches no concrete point, at either verb.
       for (const point of POINTS) {
         expect({
@@ -994,7 +1003,18 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
 
       for (let i = 0; i < pruned.length; i++) {
         const key = emittedKey(pruned[i]!);
-        if (key && !resolvable(key.key)) {
+        // **Two ways an entry sits outside "the keys it may reason about",
+        // and this skips both.** An unresolvable key is one. A literal that
+        // emits no key at all is the other, and it is the family the narrowed
+        // edge grammar moved these carriers into: the prune keeps it by
+        // design, because a literal this build cannot read may be from a
+        // later build rather than an older one, and dropping it would
+        // silently narrow a grant across a rolling deploy.
+        //
+        // Such an entry is redundant by the measure below — removing it
+        // changes no verb and no membership — so without this arm the sweep
+        // would report the forward-compatibility carry as a defect.
+        if (!key || !resolvable(key.key)) {
           skipped++;
           continue;
         }
@@ -1182,7 +1202,7 @@ describe("intersectDeviceScopes, the edge and metadata axes", () => {
   // operator-configured permission bundles, whose only filter is
   // `isValidScope`.
   it("does not issue a wildcard the grant only reaches through a malformed key", () => {
-    expect(isValidScope("edge.*.*:read")).toBe(true);
+    expect(isValidScope("edge.*.*:read")).toBe(false);
     expect(grantCoversScope(["edge.*.*:read"], "edge.parent-of:read")).toBe(
       false,
     );
@@ -1224,62 +1244,101 @@ describe("intersectDeviceScopes, the edge and metadata axes", () => {
     ).toBe("none");
   });
 
-  // The other half: such a key is never emitted either. It confers nothing at
-  // any concrete id, so carrying it into the issued list would tell the
-  // client it was granted something that reaches nothing, and unlike the
-  // merge's record, this list is what the token is minted from.
-  it("does not issue a malformed key even where both sides name it", () => {
+  // **This case inverted with the narrowing, and the inversion is correct.**
+  // It used to assert that such a key is never emitted: it confers nothing at
+  // any concrete id, so carrying it into the issued list would tell the client
+  // it was granted something that reaches nothing, and unlike the merge's
+  // record, this list is what a token is minted from.
+  //
+  // That reasoning applied while the literal PARSED and resolved a key the
+  // gates could refuse. It no longer parses, so it joins the family whose rule
+  // is set intersection by membership — the one
+  // `issues a literal this build cannot parse only where both sides name it`
+  // states, whose fixture is named `a-scope-from-a-later-build`.
+  //
+  // **That rule outranks the tidiness argument above, and deliberately.** A
+  // literal this build cannot read may be from a NEWER build rather than an
+  // older one, and dropping it would silently narrow a grant across a rolling
+  // deploy. Carrying it is safe because membership requires BOTH sides to name
+  // it, so no wildcard can confer it, and it reaches no concrete id — the
+  // fixture test above pins that it is inert at every point.
+  //
+  // So the cost is the one the old comment named, and it is now accepted: a
+  // legacy literal can ride along in an issued list conferring nothing. That
+  // is exactly what already happens for a later-build literal, which makes the
+  // behaviour consistent rather than a new exception.
+  it("issues a key the narrowed grammar refuses, as a literal it cannot parse", () => {
     const both = ["edge.*:read", "edge.*.*:read"];
     const issued = intersectDeviceScopes(both, both);
     expect(issued).toContain("edge.*:read");
-    expect(issued).not.toContain("edge.*.*:read");
+    expect(issued).toContain("edge.*.*:read");
     expect(
       intersectDeviceScopes(
         ["edge.user.*:read", "edge.user.*.*:read"],
         ["edge.user.*:read", "edge.user.*.*:read"],
       ),
-    ).not.toContain("edge.user.*.*:read");
+    ).toContain("edge.user.*.*:read");
+
+    // The half that keeps it safe, asserted here rather than assumed from the
+    // rule: one side naming it is not enough, so a grant holding it cannot
+    // push it into a token the device never asked for.
+    expect(
+      intersectDeviceScopes(["edge.*:read"], ["edge.*:read", "edge.*.*:read"]),
+    ).not.toContain("edge.*.*:read");
+    // And it confers nothing wherever it lands.
+    expect(grantCoversScope(issued, "edge.parent-of:read")).toBe(true);
+    expect(grantCoversScope(["edge.*.*:read"], "edge.parent-of:read")).toBe(
+      false,
+    );
   });
 
-  // What the refusal costs, stated rather than excluded. A refused key is
-  // `R.*` for an `R` that itself ends in `.*`, so the ids beneath it are the
-  // ones carrying a whole-segment asterisk of their own, first segment or
-  // not, and the pointwise minimum is false at them in both directions. Not
-  // hypothetical: `routes/edge-types.ts` registers both ids below, because it
-  // skips the identifier check for any id holding a hyphen, and
-  // `bundlePublishedScopes` admits the scope into an operator-configured
-  // bundle on `isValidScope` alone. It is accepted as a trade, because what
-  // the refusal removes is a token over every ordinary edge type on the
-  // instance while what it costs is confined to ids that exist only through
-  // that registration hole.
-  it("issues above and below both sides at an id beneath a key it refuses", () => {
-    // The premise: the refused key reaches these ids and no ordinary one.
-    expect(isValidScope("edge.*.*:read")).toBe(true);
+  // **This documented a cost, and the narrowing removed it.** The old guard
+  // refused a key `R.*` whose `R` itself ends in `.*`, and the ids beneath
+  // such a key are the ones carrying a whole-segment asterisk of their own. At
+  // those ids a broader key survived the refusal and answered in the dropped
+  // pin's place — `edge.*.a-b` came out of the intersect at `write` where
+  // neither side had conferred write. That was accepted as a trade, because
+  // what the refusal removed was a token over every ordinary edge type on the
+  // instance while what it cost was confined to ids reachable only through the
+  // registration hole in `routes/edge-types.ts`.
+  //
+  // **Neither half of the trade exists now.** The literal does not parse, so
+  // there is no key to refuse and nothing is dropped from a map; and it
+  // confers nothing anywhere, so no broader key is left answering in its
+  // place. Every probe below reads `none` — including the two that read
+  // `write`, which were the widening.
+  //
+  // The ids are also unregisterable: the hyphen escape hatch that admitted
+  // them is closed, so this describes what happens to a grant stored before
+  // both changes rather than anything a deployment can still create.
+  it("no longer widens an id beneath the key it used to refuse", () => {
+    // The premise: the literal is refused at the door and reaches nothing.
+    expect(isValidScope("edge.*.*:read")).toBe(false);
     expect(resolvable("*.*")).toBe(false);
-    expect(verb(["edge.*.*:read"], "edge.*.a-b")).toBe("read");
+    expect(verb(["edge.*.*:read"], "edge.*.a-b")).toBe("none");
     expect(verb(["edge.*.*:read"], "edge.parent-of")).toBe("none");
 
-    // Above: a broader key survives the refusal and answers in the dropped
-    // pin's place, at a verb neither side conferred.
+    // Above: this pair produced `write` at an id neither side conferred write
+    // on. It is the widening, and it is gone.
     const above = ["edge.*:write", "edge.*.*:read"];
-    expect(verb(above, "edge.*.a-b")).toBe("read");
+    expect(verb(above, "edge.*.a-b")).toBe("none");
     expect(verb(intersectDeviceScopes(above, above), "edge.*.a-b")).toBe(
-      "write",
+      "none",
     );
 
     // The same one level down, so this is not a claim about the global root
     // and the asterisk is not the id's first segment.
     const nested = ["edge.user.*:write", "edge.user.*.*:read"];
-    expect(verb(nested, "edge.user.*.q-x")).toBe("read");
+    expect(verb(nested, "edge.user.*.q-x")).toBe("none");
     expect(verb(intersectDeviceScopes(nested, nested), "edge.user.*.q-x")).toBe(
-      "write",
+      "none",
     );
 
-    // Below, and the commoner direction: with no broader key to survive, the
-    // id loses what both sides conferred rather than gaining anything.
+    // Alone, the literal is still ISSUED — membership, both sides naming it,
+    // the forward-compatibility rule — and still confers nothing at the id.
+    // Carried and inert is the whole of what it now does.
     const alone = ["edge.*.*:read"];
-    expect(verb(alone, "edge.*.a-b")).toBe("read");
-    expect(intersectDeviceScopes(alone, alone)).toEqual([]);
+    expect(intersectDeviceScopes(alone, alone)).toEqual(["edge.*.*:read"]);
     expect(verb(intersectDeviceScopes(alone, alone), "edge.*.a-b")).toBe(
       "none",
     );
@@ -1299,11 +1358,19 @@ describe("intersectDeviceScopes, the edge and metadata axes", () => {
     // admits, its key is exactly the class the earlier rule refused (an
     // asterisk outside a subtree-root position), and what the two sides
     // genuinely confer at that id is read.
-    expect(isValidScope("edge.a-b*c:read")).toBe(true);
-    expect(emittedKey("edge.a-b*c:read")).toEqual({
-      axis: "edge",
-      key: "a-b*c",
-    });
+    expect(isValidScope("edge.a-b*c:read")).toBe(false);
+    // **It emits no key now**, where it used to emit `a-b*c`. The narrowed
+    // grammar refuses an asterisk outside a final `.*`, so this shape is no
+    // longer nameable in a request — and the registration door stopped
+    // admitting such an id when the hyphen escape hatch went, so it is
+    // unreachable from both directions.
+    //
+    // A grant stored before either change still carries it, which is why this
+    // case stays. **The pin still holds**, asserted below rather than assumed:
+    // that was the live question, since a literal conferring nothing would
+    // have let the wildcard above it answer at a verb neither side conferred,
+    // which is precisely what this test exists to catch.
+    expect(emittedKey("edge.a-b*c:read")).toBeNull();
     expect("a-b*c".includes("*")).toBe(true);
     expect(subtreeWildcardRoot("a-b*c")).toBeNull();
     expect(verb(both, "edge.a-b*c")).toBe("read");
@@ -1324,10 +1391,16 @@ describe("intersectDeviceScopes, the edge and metadata axes", () => {
     // The same thing one level out. A subtree wildcard whose ROOT carries an
     // asterisk without being a pattern still reaches concrete ids, so it pins
     // them, and it is not the shape the guard refuses.
+    // A subtree wildcard whose ROOT carries an asterisk. The narrowed grammar
+    // refuses it — the root must be `[a-z0-9_-]+` throughout — so unlike the
+    // exact-match pin above it, it no longer reaches the ids beneath it. That
+    // is a narrowing of a stored grant and it fails CLOSED: `none` rather than
+    // the `write` the wildcard above would have given, so nothing widens. The
+    // ids it stops reaching cannot be registered either.
     const rooted = ["edge.*:write", "edge.a-b*.*:read"];
-    expect(verb(rooted, "edge.a-b*.x")).toBe("read");
+    expect(verb(rooted, "edge.a-b*.x")).toBe("none");
     expect(verb(intersectDeviceScopes(rooted, rooted), "edge.a-b*.x")).toBe(
-      "read",
+      "none",
     );
   });
 
@@ -1336,12 +1409,26 @@ describe("intersectDeviceScopes, the edge and metadata axes", () => {
   // issued. Here the grant pins the id and the request reaches it through a
   // wildcard, so the true intersection is read, and dropping the pin from the
   // grant's map left the walk with no key naming that id at all.
-  it("issues a pin whose key carries an asterisk where both sides reach it", () => {
+  // **The mirror, and it inverted for the same reason as its siblings.** The
+  // grant pins the id and the request reaches it only through a wildcard, so
+  // the request never names the literal — and membership requires both sides.
+  // The device therefore does not receive a literal it did not ask for, which
+  // is the property that keeps the forward-compatibility carry safe.
+  //
+  // It reads as a loss and is not one in practice: `a-b*c` is unregisterable,
+  // so no edge type exists at that id for the device to lose access to.
+  it("withholds a pin the request never named, even where the grant has it", () => {
     const issued = intersectDeviceScopes(
       ["edge.*:read"],
       ["edge.user.*:read", "edge.a-b*c:read"],
     );
-    expect(verb(issued, "edge.a-b*c")).toBe("read");
+    expect(issued).not.toContain("edge.a-b*c:read");
+    expect(verb(issued, "edge.a-b*c")).toBe("none");
+
+    // Named by both, it is carried — the same pair, with the request naming it
+    // too. That is the line between "not asked for" and "cannot be read".
+    const both = ["edge.*:read", "edge.a-b*c:read"];
+    expect(intersectDeviceScopes(both, both)).toContain("edge.a-b*c:read");
   });
 });
 
@@ -1415,11 +1502,24 @@ describe("intersectDeviceScopes, the pointwise minimum at every concrete id", ()
     "edge.user",
     "edge.user.blocks",
     "edge.other",
-    "edge.a-b*c",
-    "edge.a-b*",
-    "edge.a-b*.x",
-    "edge.*.a-b",
-    "edge.user.*.q-x",
+    // **Five asterisk-carrying ids came out of this list with the narrowed
+    // edge grammar**: `edge.a-b*c`, `edge.a-b*`, `edge.a-b*.x`, `edge.*.a-b`
+    // and `edge.user.*.q-x`. They were here because the registration door in
+    // `routes/edge-types.ts` skipped its identifier check for any id holding a
+    // hyphen, so ids like these could genuinely exist and the resolvers had to
+    // answer for them.
+    //
+    // Both doors are shut now — that escape hatch went with the edge-type
+    // identifier grammar, and the scope grammar no longer admits an asterisk
+    // outside a final `.*` — so no deployment can produce one and no request
+    // can name one. A probe list is a claim about ids that exist, and holding
+    // these would ask the resolvers to be right about identifiers nothing can
+    // create.
+    //
+    // What a grant STORED before those changes does with such a literal is not
+    // dropped with them: it is the subject of the cases above, which assert it
+    // is carried, inert, and fails closed rather than letting the wildcard
+    // above it answer in its place.
     "metadata.types",
     "metadata.other",
   ];
@@ -1463,10 +1563,10 @@ describe("intersectDeviceScopes, the pointwise minimum at every concrete id", ()
   // refuses would never reach a breadth axis at all.
   //
   // A probe is a pattern when it has a subtree root or is the global
-  // wildcard, and an asterisk alone does not make it one: `edge.a-b*c` is a
-  // concrete edge id the registration hole admits, and the resolvers answer
-  // for it by exact match like any other point. Testing for an asterisk
-  // instead is the reading that kept this class out of the vocabulary.
+  // wildcard, and an asterisk alone does not make it one. That distinction
+  // was what admitted `edge.a-b*c` and its siblings to this list, back when
+  // the registration hole could produce them; they are gone from it now, and
+  // the reasoning is recorded at the list itself.
   it("is built on scopes and probes of the shape the clause assumes", () => {
     for (const point of POINTS) {
       expect({ point, parses: parseScope(`${point}:read`) !== null }).toEqual({
