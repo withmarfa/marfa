@@ -2523,9 +2523,15 @@ export function itemRoutes(storage: Storage) {
     item: Awaited<ReturnType<typeof storage.items.get>>,
   ): void {
     if (item?.type !== "system.connection") return;
-    const status = (item.properties as { status?: unknown } | undefined)
-      ?.status;
-    if (status === "revoked") return;
+    const props = item.properties as
+      { status?: unknown; kind?: unknown } | undefined;
+    // **`kind`, not just the type.** `system.connection` covers both kinds
+    // and only `integration` has a runtime credential minted for it. An
+    // `app` connection is an OAuth grant: it holds no runtime credential,
+    // there is no uninstall pipeline to send its owner to, and deleting one
+    // is exactly how a grant is withdrawn. Refusing those breaks that.
+    if (props?.kind !== "integration") return;
+    if (props.status === "revoked") return;
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
       `Connection ${item.id} is still live. Uninstall it first with ` +

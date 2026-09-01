@@ -126,6 +126,41 @@ describe("removing a system.connection row", () => {
     expect(purged.status).toBe(200);
   });
 
+  it("leaves an app connection alone, which is how a grant is withdrawn", async () => {
+    // `system.connection` covers two kinds and only `integration` has a
+    // runtime credential minted for it. An `app` connection is an OAuth
+    // grant: nothing to revoke, no uninstall pipeline to be sent to, and
+    // deleting the row is exactly how a person withdraws it.
+    //
+    // Keying the guard on the type alone broke that, and no case here
+    // caught it because every fixture above installs an integration. CI
+    // did, through a device-grant test that deletes a grant and expects
+    // 200 — which is a worse way to find out than this one.
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+    });
+    const body = (await res.json()) as { item?: { id: string } };
+    expect(res.status, JSON.stringify(body)).toBe(201);
+
+    const deleted = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${body.item!.id}`,
+      {
+        key: ctx.adminKey,
+      },
+    );
+    expect(deleted.status).toBe(200);
+  });
+
   it("leaves every other type alone", async () => {
     // The guard keys on the type. `core.task` carries a real `status`, so
     // this is an item that looks like a connection to a guard reading
