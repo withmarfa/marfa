@@ -329,10 +329,20 @@ const getItemStatsRoute = createRoute({
   method: "get",
   path: "/stats",
   tags: ["Items"],
-  summary: "Get item counts by state",
+  summary: "Get item counts",
   description:
-    "Returns a count of items per lifecycle state for the space. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+    "Returns a count of items for the space, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types the space actually uses, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
   security: [{ bearerAuth: [] }],
+  request: {
+    query: z.object({
+      by: z
+        .enum(["state", "type"])
+        .optional()
+        .describe(
+          "Grouping axis. Defaults to `state`, which is what this route has always returned.",
+        ),
+    }),
+  },
   responses: {
     200: {
       content: {
@@ -1721,6 +1731,7 @@ export function itemRoutes(storage: Storage) {
     requireAuth(c);
     const callerKey = c.get("apiKey");
     const spaceId = callerKey?.space_id;
+    const { by } = c.req.valid("query");
     const typeFilter = getTypeFilter(c);
     // These counts summarize the listing, so they narrow with it.
     const spaceConfig =
@@ -1732,6 +1743,7 @@ export function itemRoutes(storage: Storage) {
       spaceId,
       typeFilter,
       enforcement.source_filter,
+      by,
     );
     return c.json(stats, 200);
   });

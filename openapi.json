@@ -1666,11 +1666,27 @@
         "tags": [
           "Items"
         ],
-        "summary": "Get item counts by state",
-        "description": "Returns a count of items per lifecycle state for the space. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
+        "summary": "Get item counts",
+        "description": "Returns a count of items for the space, grouped on one axis. `by=state` (the default) counts per lifecycle state; `by=type` names the types the space actually uses, which is otherwise unanswerable without paging every row. Both groupings cover the same rows, so their totals agree. The counts are scoped to the caller's type permissions, so a credential sees only the types it can read.",
         "security": [
           {
             "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "state",
+                "type"
+              ],
+              "description": "Grouping axis. Defaults to `state`, which is what this route has always returned."
+            },
+            "required": false,
+            "description": "Grouping axis. Defaults to `state`, which is what this route has always returned.",
+            "name": "by",
+            "in": "query"
           }
         ],
         "responses": {
