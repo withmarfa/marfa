@@ -74,7 +74,18 @@ jobs:
             // filename rather than a directory is what keeps it in the
             // check.
             const isManifest = (f) => f.endsWith('/src/manifest.ts');
+            // A test is never a documented contract. It sits under the same
+            // prefixes as the thing it covers, so `packages/server/src/routes/`
+            // catches every route test in the repository — and a change that
+            // only adds or repairs tests then asks for a docs companion that
+            // cannot exist. That fired on a test-only pull request touching four
+            // files under `routes/`, and it will fire on everyone who adds tests
+            // there. A suffix rather than an entry in SURFACE_EXCLUDES, because
+            // this is not a subtree: the test lives beside the surface by
+            // convention, in every package.
+            const isTest = (f) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(f);
             const isDocSurface = (f) =>
+              !isTest(f) &&
               !SURFACE_EXCLUDES.some((p) => f.startsWith(p)) &&
               (SURFACE_PREFIXES.some((p) => f.startsWith(p)) || isManifest(f));
 
