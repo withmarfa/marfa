@@ -35,43 +35,10 @@ function mayWriteReservedNamespace(apiKey: ApiKey | undefined): boolean {
   return hasPlatformAuthority(apiKey) || apiKey.is_platform;
 }
 
-/** The `connection.runtime` namespace is reserved for the
- *  per-Connection runtime credential's hot state. Only runtime
- *  credentials (is_runtime_credential + connection_id
- *  stamped at mint) can write it; admin keys can read but not write so
- *  operators can inspect runtime state in the UI without corrupting
- *  it. */
-const RUNTIME_NAMESPACE = "connection.runtime";
-
-/**
- * The reserved root `connection.runtime` sits under. Derived rather than
- * spelled again so the root cannot drift from the namespace it governs,
- * and so a sibling added under it (the inbound-delivery idempotency
- * window is one) is covered without a second list to remember.
- */
-const RUNTIME_NAMESPACE_ROOT = `${RUNTIME_NAMESPACE.split(".")[0] ?? ""}.`;
-
-/**
- * Whether a write to this namespace is worth telling subscribers about.
- *
- * Everything under the `connection.` root is per-Connection runtime
- * state — sync cursors, the recent error tail, the inbound idempotency
- * window — written by a runtime credential on the machine's behalf
- * rather than by a person. Two reasons it stays silent. The local
- * integrations runtime writes the identical blob straight through
- * storage, so emitting here would make the event depend on which
- * substrate happened to write it. And `metadata.changed` has no
- * namespace filter, so every subscription without a type filter would
- * receive cursors and error tails at dispatch frequency.
- *
- * Deliberately broader than the write gate below, which matches
- * `RUNTIME_NAMESPACE` exactly. Silence is the safe direction to be
- * broad in: the cost of not emitting for a sibling under this root is a
- * consumer polling, and the cost of emitting is the noise above.
- */
-function announcesMetadataChange(namespace: string): boolean {
-  return !namespace.startsWith(RUNTIME_NAMESPACE_ROOT);
-}
+import {
+  RUNTIME_NAMESPACE,
+  announcesMetadataChange,
+} from "../metadata-namespaces.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -82,6 +49,7 @@ import {
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
+import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -490,7 +458,7 @@ export function extensionRoutes(storage: Storage) {
     if (announcesMetadataChange(namespace)) {
       await publish({
         type: "metadata_changed",
-        item,
+        item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
         metadata: await storage.metadata.get(id),
         spaceId: apiKey?.space_id,
       });
@@ -571,7 +539,7 @@ export function extensionRoutes(storage: Storage) {
     if (announcesMetadataChange(namespace)) {
       await publish({
         type: "metadata_changed",
-        item,
+        item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
         metadata: await storage.metadata.get(id),
         spaceId: apiKey?.space_id,
       });

@@ -8,7 +8,9 @@ import {
 import type { MetadataStore } from "../interface.js";
 import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
+import type { PgTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
+import { announcesMetadataChange } from "../../metadata-namespaces.js";
 
 export class PgMetadataStore implements MetadataStore {
   constructor(private db: PgDb) {}
@@ -89,8 +91,43 @@ export class PgMetadataStore implements MetadataStore {
       GROUP BY tag
       ORDER BY count DESC, tag ASC
     `);
-    void items;
     return result as unknown as { tag: string; count: number }[];
+  }
+
+  /**
+   * The one place this store writes the sidecar, so the item's
+   * modification time cannot be left behind by a door added later.
+   *
+   * A metadata write a client can learn about moves the item's
+   * modification time; one that is deliberately invisible does not. Tags
+   * always announce, so tags always bump. An extension bumps exactly
+   * when it announces, decided by the same predicate the publish door
+   * consults rather than by a second list of namespaces here — silent on
+   * the stream and loud on catch-up is a worse disagreement than either
+   * half alone.
+   *
+   * The bump matters because an incremental catch-up filters on
+   * `items.updated_at`. Leaving it where it was hands a resuming client
+   * a short list that looks complete.
+   */
+  private async writeSidecar(
+    tx: PgTxContext,
+    itemId: string,
+    write: { tags: string } | { extensions: string; namespace: string },
+  ): Promise<void> {
+    await tx
+      .update(metadata)
+      .set(
+        "tags" in write
+          ? { tags: write.tags }
+          : { extensions: write.extensions },
+      )
+      .where(eq(metadata.item_id, itemId));
+    if (!("tags" in write) && !announcesMetadataChange(write.namespace)) return;
+    await tx
+      .update(items)
+      .set({ updated_at: new Date().toISOString() })
+      .where(eq(items.id, itemId));
   }
 
   async getMany(itemIds: string[]): Promise<Metadata[]> {
@@ -117,10 +154,9 @@ export class PgMetadataStore implements MetadataStore {
   }
 
   async set(itemId: string, tags: string[]): Promise<Metadata> {
-    await this.db
-      .update(metadata)
-      .set({ tags: JSON.stringify(tags) })
-      .where(eq(metadata.item_id, itemId));
+    await this.db.transaction(async (tx) => {
+      await this.writeSidecar(tx, itemId, { tags: JSON.stringify(tags) });
+    });
     return this.get(itemId);
   }
 
@@ -136,10 +172,9 @@ export class PgMetadataStore implements MetadataStore {
       const mergedTags = tags
         ? [...new Set([...current.tags, ...tags])]
         : current.tags;
-      await tx
-        .update(metadata)
-        .set({ tags: JSON.stringify(mergedTags) })
-        .where(eq(metadata.item_id, itemId));
+      await this.writeSidecar(tx, itemId, {
+        tags: JSON.stringify(mergedTags),
+      });
       return { ...current, tags: mergedTags };
     });
   }
@@ -154,10 +189,7 @@ export class PgMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const merged = [...new Set([...current.tags, ...tags])];
-      await tx
-        .update(metadata)
-        .set({ tags: JSON.stringify(merged) })
-        .where(eq(metadata.item_id, itemId));
+      await this.writeSidecar(tx, itemId, { tags: JSON.stringify(merged) });
       return { ...current, tags: merged };
     });
   }
@@ -172,10 +204,9 @@ export class PgMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const filtered = current.tags.filter((t) => t !== tag);
-      await tx
-        .update(metadata)
-        .set({ tags: JSON.stringify(filtered) })
-        .where(eq(metadata.item_id, itemId));
+      await this.writeSidecar(tx, itemId, {
+        tags: JSON.stringify(filtered),
+      });
       return { ...current, tags: filtered };
     });
   }
@@ -221,10 +252,10 @@ export class PgMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const extensions = { ...current.extensions, [namespace]: data };
-      await tx
-        .update(metadata)
-        .set({ extensions: JSON.stringify(extensions) })
-        .where(eq(metadata.item_id, itemId));
+      await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(extensions),
+        namespace,
+      });
       return extensions;
     });
   }
@@ -251,10 +282,10 @@ export class PgMetadataStore implements MetadataStore {
         : { item_id: itemId, tags: [], extensions: {} };
       const next = mutate(current.extensions[namespace] ?? {});
       const extensions = { ...current.extensions, [namespace]: next };
-      await tx
-        .update(metadata)
-        .set({ extensions: JSON.stringify(extensions) })
-        .where(eq(metadata.item_id, itemId));
+      await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(extensions),
+        namespace,
+      });
       return next;
     });
   }
@@ -274,10 +305,10 @@ export class PgMetadataStore implements MetadataStore {
       const rest = Object.fromEntries(
         Object.entries(current.extensions).filter(([k]) => k !== namespace),
       );
-      await tx
-        .update(metadata)
-        .set({ extensions: JSON.stringify(rest) })
-        .where(eq(metadata.item_id, itemId));
+      await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(rest),
+        namespace,
+      });
       return rest;
     });
   }

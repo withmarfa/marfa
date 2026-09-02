@@ -61,6 +61,7 @@ import {
   HYDRATE_PER_TYPE_CAP,
 } from "./_edges-hydrate.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
+import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
@@ -2878,7 +2879,11 @@ export function itemRoutes(storage: Storage) {
     const metadata = await storage.metadata.set(id, tags);
     await publish({
       type: "metadata_changed",
-      item,
+      item: await itemAfterMetadataWrite(
+        storage,
+        item,
+        c.get("apiKey")?.space_id,
+      ),
       metadata,
       spaceId: c.get("apiKey")?.space_id,
     });
@@ -2926,7 +2931,11 @@ export function itemRoutes(storage: Storage) {
 
     await publish({
       type: "metadata_changed",
-      item,
+      item: await itemAfterMetadataWrite(
+        storage,
+        item,
+        c.get("apiKey")?.space_id,
+      ),
       metadata,
       spaceId: c.get("apiKey")?.space_id,
     });
@@ -2976,7 +2985,11 @@ export function itemRoutes(storage: Storage) {
     });
     await publish({
       type: "metadata_changed",
-      item,
+      item: await itemAfterMetadataWrite(
+        storage,
+        item,
+        c.get("apiKey")?.space_id,
+      ),
       metadata,
       spaceId: c.get("apiKey")?.space_id,
     });
@@ -3083,7 +3096,11 @@ export function itemRoutes(storage: Storage) {
     });
     await publish({
       type: "metadata_changed",
-      item,
+      item: await itemAfterMetadataWrite(
+        storage,
+        item,
+        c.get("apiKey")?.space_id,
+      ),
       metadata,
       spaceId: c.get("apiKey")?.space_id,
     });
