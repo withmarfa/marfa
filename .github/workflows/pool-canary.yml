@@ -4,16 +4,15 @@
 #
 # Every job landing on the pool failed at `Set up runner`, before a single
 # step executed, for nineteen hours across four repositories. Eight pull
-# requests accumulated and nobody noticed. Every notifier in the estate is
-# correctly shaped to survive the pool dying — hosted sibling job, `needs`,
-# `if: always()` — and every one of them reports *its own workflow's*
-# outcome. Nothing observed the pool itself.
+# requests accumulated and nobody noticed. Everything that reports on CI
+# reports *some workflow's own outcome*, and a workflow nobody triggered has
+# no outcome to report. Nothing observed the pool itself.
 #
 # **So a pool that fails every job produced the same bytes as a pool with no
 # work, and a quiet weekend is the more common explanation.** That is the
 # same failure the estate's own rule is about: a check whose negative result
 # and whose failure result are the same bytes has no negative result. Here
-# the bytes were *no alerts arrived*.
+# the bytes were *nothing was reported*.
 #
 # This workflow manufactures the work, so silence stops being ambiguous.
 #
@@ -29,7 +28,7 @@
 #
 # Agreed with the session that owns it: restoring the pool must not wait on
 # detectability, and a checker living on the machine it checks cannot report
-# that machine being wrong. The detection belongs where the alerting lives.
+# that machine being wrong. The detection belongs somewhere else entirely.
 
 name: Pool canary
 
@@ -52,9 +51,9 @@ on:
 # That is the second failure shape and it is otherwise nearly silent: a job
 # waiting for a self-hosted runner is not failed by GitHub until its queue
 # limit expires a day later, so "no runner ever took it" would be reported
-# a day after it started. Cancelling brings that back to one hour, and the
-# notifier below treats `cancelled` as an alert rather than as silence
-# precisely so this arrives as one.
+# a day after it started. Cancelling gives the run a conclusion within the
+# hour instead, and a run that concludes cancelled every hour is the shape
+# of this failure — which is the whole reason the probe is worth queuing.
 concurrency:
   group: pool-canary
   cancel-in-progress: true
@@ -85,82 +84,3 @@ jobs:
         run: |
           echo "The pool started a job and reached a step."
           echo "Runner: ${RUNNER_NAME:-unknown} on ${RUNNER_OS:-unknown}"
-
-  notify:
-    # Reports the probe's outcome to the configured alert destination. Runs
-    # hosted rather than on the pool deliberately: when the pool is the
-    # thing that broke, a notifier living on it cannot tell anyone.
-    #
-    # `if: always()` so a cancelled run still reports. That is not
-    # incidental here — cancellation is one of the two conditions this
-    # workflow exists to detect, per the concurrency note above.
-    needs: [probe]
-    # Skipped when no alert destination is configured, so a fork sends
-    # nothing. The gate is on the variable rather than on the token because
-    # `secrets` is not available in an `if:` at any level, while `vars` is.
-    if: always() && vars.ALERT_WEBHOOK_URL != ''
-    timeout-minutes: 5
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report outcome
-        env:
-          ALERT_URL: ${{ vars.ALERT_WEBHOOK_URL }}
-          ALERT_TOKEN: ${{ secrets.ALERT_WEBHOOK_TOKEN }}
-          RESULT: ${{ needs.probe.result }}
-          WORKFLOW: ${{ github.workflow }}
-          REPO: ${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          set -euo pipefail
-
-          # `needs.<job>.result` is one of success, failure, cancelled or
-          # skipped, and nothing else. A job past its timeout reports
-          # failure, so there is no `timed_out` to match.
-          #
-          # Every non-success opens an alert, and the three are separated
-          # because they say different things to whoever reads it.
-          # `cancelled` is the queued-and-never-picked-up case and is the
-          # one somebody would otherwise dismiss as a stray cancel.
-          # `skipped` is unreachable while `probe` has no `if:`, and is
-          # here so that adding one later cannot turn this notifier into a
-          # liar by reporting a job that did not run as a job that ran
-          # green.
-          case "$RESULT" in
-            success)
-              STATE=resolved
-              TITLE="The self-hosted pool is running jobs"
-              ;;
-            cancelled)
-              STATE=open
-              TITLE="The self-hosted pool did not pick up a probe within an hour"
-              ;;
-            skipped)
-              STATE=open
-              TITLE="The self-hosted pool probe did not run"
-              ;;
-            *)
-              STATE=open
-              TITLE="The self-hosted pool could not run a job"
-              ;;
-          esac
-
-          # The destination may or may not need a credential, so the header
-          # is built rather than hardcoded: an empty token would otherwise
-          # be sent as "Bearer " with nothing after it, which reads as a
-          # malformed request rather than an unauthenticated one.
-          AUTH=()
-          if [ -n "${ALERT_TOKEN:-}" ]; then
-            AUTH=(-H "Authorization: Bearer $ALERT_TOKEN")
-          fi
-
-          # The key is the estate's state for "can the pool run anything",
-          # so it is deliberately not per-run: one alert opens when the
-          # pool goes down and the next healthy probe resolves it.
-          jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
-                --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULT" \
-            '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
-              fields:{Repository:$r,Workflow:$w,Probe:$j}}' \
-          | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
-              "${AUTH[@]}" \
-              -H "Content-Type: application/json" --data @- \
-          || echo "Alert POST did not succeed (see above); not failing the run over it."

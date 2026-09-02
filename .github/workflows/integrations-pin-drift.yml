@@ -32,9 +32,11 @@
 # manufacture failures in whatever else happened to be running. Nothing
 # about comparing two refs of another repository wants the local pool.
 #
-# **One notifier, not a second one.** The estate already had a scheduled
-# guard that failed daily into silence for a week. The `notify` job below is
-# the same shape every other workflow here uses.
+# **The notifier states the finding, not the exit code.** A scheduled guard
+# has no audience: nobody is watching a 07:42 run, so its report is the only
+# thing anybody reads, and a report carrying a job conclusion sends whoever
+# reads it back to the log to learn what actually happened. The `drift` job
+# publishes what it found as job outputs and `notify` puts it in the title.
 name: Integrations pin drift
 
 on:
@@ -58,6 +60,13 @@ env:
 jobs:
   drift:
     name: The pin is level with what the image would ship
+    # What the notifier reports. Four different conditions end this job
+    # without the pin being level and only one of them is drift, so the
+    # verdict is published rather than inferred from the job's result.
+    outputs:
+      verdict: ${{ steps.finding.outputs.verdict }}
+      detail: ${{ steps.finding.outputs.detail }}
+      fields: ${{ steps.finding.outputs.fields }}
     runs-on: ubuntu-latest
     # A budget rather than the six-hour default: two installs and two builds
     # is minutes, and anything an order of magnitude past that is wedged.
@@ -83,7 +92,17 @@ jobs:
           DEPLOY_KEY: ${{ secrets.INTEGRATIONS_DEPLOY_KEY }}
         run: |
           set -euo pipefail
+          # Every branch that ends this job without a verdict writes one into
+          # `finding/` before it exits. The `Publish the finding` step at the
+          # end of the job is the only thing that writes $GITHUB_OUTPUT, and
+          # it runs on `if: always()` — which is what carries a finding out of
+          # a failed job. Written before the exit rather than after it, for
+          # the same reason.
+          mkdir -p finding
           if [ -z "${DEPLOY_KEY:-}" ]; then
+            # Neither branch compared anything, so neither can say the pin is
+            # level. A guard that reached no verdict reports inconclusive.
+            echo inconclusive > finding/verdict
             if [ "${GITHUB_REPOSITORY}" = "${PIN_CANONICAL_REPO}" ]; then
               echo "::error title=Pin drift guard cannot run::INTEGRATIONS_DEPLOY_KEY is not set on ${GITHUB_REPOSITORY}, so the pin was never compared. Failing rather than passing: a guard that cannot run must not report green."
               exit 1
@@ -94,6 +113,7 @@ jobs:
           fi
           ref="$(node packages/server/scripts/read-integrations-ref.mjs packages/server/integrations-ref.txt)"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$ref" > finding/pin
           node packages/server/scripts/read-installed-integrations.mjs \
             packages/server/installed-integrations.txt > declared.txt
           echo "Pin is $ref; the image installs $(wc -l < declared.txt | tr -d ' ') integrations."
@@ -120,7 +140,8 @@ jobs:
       # Both inputs are already here, so ask now. Against `main`'s registry
       # rather than the pinned one, because a merge there is what starts the
       # clock.
-      - name: The declaration covers everything main's registry marks shipped
+      - id: declared
+        name: The declaration covers everything main's registry marks shipped
         if: steps.pin.outputs.skip != 'true'
         run: |
           set -euo pipefail
@@ -131,6 +152,14 @@ jobs:
           ' | sort > shipped.txt
           missing="$(comm -13 declared.sorted shipped.txt)"
           if [ -n "$missing" ]; then
+            count="$(printf '%s\n' "$missing" | wc -l | tr -d ' ')"
+            printf '%s\n' "$missing" > finding/subjects
+            echo undeclared > finding/verdict
+            if [ "$count" = 1 ]; then
+              printf '%s is shipped on main and not declared\n' "$missing" > finding/detail
+            else
+              printf '%s are shipped on main and not declared\n' "$count" > finding/detail
+            fi
             echo "::error::withmarfa/integrations marks these shippedByMarfa on main and packages/server/installed-integrations.txt does not declare them:"
             echo "$missing" | sed 's/^/  /'
             echo "The image would not carry them and the listing would offer them. Declare them, or set shippedByMarfa false."
@@ -146,12 +175,16 @@ jobs:
         run: |
           set -euo pipefail
           head_sha="$(git -C head rev-parse HEAD)"
+          printf '%s\n' "$head_sha" > finding/main
           if [ "$head_sha" = "$PIN" ]; then
             echo "The pin is main. Nothing to compare."
+            echo current > finding/verdict
             echo "compare=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if ! git -C head merge-base --is-ancestor "$PIN" HEAD; then
+            echo orphaned > finding/verdict
+            printf 'pinned to %s, which is not on main\n' "${PIN:0:7}" > finding/detail
             echo "::error title=Pin is not on main::$PIN is not an ancestor of withmarfa/integrations main. The image is built from a commit that repository's main does not contain."
             exit 1
           fi
@@ -198,6 +231,7 @@ jobs:
 
           if [ -z "$reaching" ]; then
             echo "The pin is $count commits behind, and none of it is a path the image can carry."
+            echo current > finding/verdict
             echo "compare=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -227,7 +261,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: head/pnpm-lock.yaml
 
-      - name: Build both refs and compare what the image would stage
+      - id: compare
+        name: Build both refs and compare what the image would stage
         if: steps.behind.outputs.compare == 'true'
         env:
           PIN: ${{ steps.pin.outputs.ref }}
@@ -252,40 +287,100 @@ jobs:
             )
           done
 
-          differing=""
+          : > finding/subjects
           while read -r name; do
             if ! diff -r -q "pinned/packages/$name/dist" "head/packages/$name/dist" >/dev/null 2>&1; then
-              differing="$differing $name"
+              printf '%s\n' "$name" >> finding/subjects
             fi
           done < declared.txt
 
-          if [ -z "$differing" ]; then
+          if [ ! -s finding/subjects ]; then
             echo "Every installed integration builds byte-identically at both refs. The pin is behind and correctly so."
+            echo current > finding/verdict
             exit 0
           fi
-          echo "::error title=The pin is behind something the image would ship::These integrations build differently at withmarfa/integrations main than at the pinned commit:$differing"
+
+          head_sha="$(cat finding/main)"
+          count="$(wc -l < finding/subjects | tr -d ' ')"
+          echo drifted > finding/verdict
+          if [ "$count" = 1 ]; then
+            printf 'pinned to %s, main is %s (%s differs)\n' \
+              "${PIN:0:7}" "${head_sha:0:7}" "$(cat finding/subjects)" > finding/detail
+          else
+            printf 'pinned to %s, main is %s (%s integrations differ)\n' \
+              "${PIN:0:7}" "${head_sha:0:7}" "$count" > finding/detail
+          fi
+
+          echo "::error title=The pin is behind something the image would ship::These integrations build differently at withmarfa/integrations main than at the pinned commit: $(tr '\n' ' ' < finding/subjects)"
           echo "Move packages/server/integrations-ref.txt to a newer commit, or decide deliberately not to."
-          for name in $differing; do
+          while read -r name; do
             echo "--- $name"
             diff -r -q "pinned/packages/$name/dist" "head/packages/$name/dist" || true
-          done
+          done < finding/subjects
           exit 1
 
+      # The only step in this job that writes $GITHUB_OUTPUT for the notifier,
+      # and `if: always()` is what carries a finding out of a job that failed.
+      #
+      # **The default is `inconclusive`, and that is the load-bearing half.**
+      # A `run:` block runs under `bash -e`, so any command that exits
+      # non-zero kills its step where it stands — a failed `pnpm install`
+      # above never reaches the line that would have recorded a verdict. If
+      # the absence of a verdict meant "level", every such death would report
+      # the pin current, which is a green alert for a guard that never ran.
+      # So each branch that actually established something writes `current`
+      # itself, and silence means nobody established anything.
+      - id: finding
+        if: always()
+        name: Publish the finding
+        env:
+          SERVER_URL: ${{ github.server_url }}
+          INTEGRATIONS_REPO: withmarfa/integrations
+        run: |
+          set -euo pipefail
+          mkdir -p finding
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json, os, pathlib
+
+          finding = pathlib.Path("finding")
+
+          def read(name: str) -> str:
+              path = finding / name
+              return path.read_text().strip() if path.exists() else ""
+
+          server = os.environ["SERVER_URL"].rstrip("/")
+          repo = os.environ["INTEGRATIONS_REPO"]
+
+          def commit(sha: str) -> str:
+              return f"[{sha[:7]}]({server}/{repo}/commit/{sha})"
+
+          def package(name: str) -> str:
+              return f"[{name}]({server}/{repo}/tree/main/packages/{name})"
+
+          pin, main = read("pin"), read("main")
+          subjects = [line for line in read("subjects").splitlines() if line]
+
+          fields = {}
+          if pin:
+              fields["Pinned"] = commit(pin)
+          if main:
+              fields["Integrations main"] = commit(main)
+          if subjects:
+              fields["Integrations"] = ", ".join(package(n) for n in subjects)
+
+          print("verdict=" + (read("verdict") or "inconclusive"))
+          print("detail=" + " ".join(read("detail").split()))
+          print("fields=" + json.dumps(fields, separators=(",", ":")))
+          PY
+
   notify:
-    # Reports this run's outcome to aic-alerts, hosted like every other
-    # notifier here. The drift job is hosted too, so this is not the
-    # pool-cannot-report-on-itself case the others carry; it is hosted
-    # because that is what every notifier in this repository is, and a
-    # notifier that follows its job onto whatever runner is convenient is one
-    # more thing to reason about.
+    # A scheduled guard has no audience, so this job is the finding. It runs
+    # hosted, like the rest of this workflow.
     #
-    # A dispatch of `main` reports as well as the schedule, for the reason
-    # the OpenAPI guard records: when this fails it prints what to do, and
-    # re-running it is how anybody establishes the repair worked. Reporting
-    # only on the schedule leaves the alert open until the next morning.
-    #
-    # `cancelled` and `skipped` open an alert rather than staying silent. A
-    # guard that did not run is not a guard that ran green.
+    # A dispatch of `main` reports as well as the schedule: when this fails it
+    # prints what to do, and re-running it is how anybody establishes the
+    # repair worked. Reporting only on the schedule leaves the alert open
+    # until the next morning.
     needs: [drift]
     # Skipped when no alert destination is configured, so a fork sends nothing.
     if: >-
@@ -296,20 +391,56 @@ jobs:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
-      - name: Report outcome
+      - name: Report the finding
         env:
           ALERT_URL: ${{ vars.ALERT_WEBHOOK_URL }}
           ALERT_TOKEN: ${{ secrets.ALERT_WEBHOOK_TOKEN }}
+          VERDICT: ${{ needs.drift.outputs.verdict }}
+          DETAIL: ${{ needs.drift.outputs.detail }}
+          EXTRA_FIELDS: ${{ needs.drift.outputs.fields }}
           RESULTS: ${{ join(needs.*.result, ',') }}
           WORKFLOW: ${{ github.workflow }}
           REPO: ${{ github.repository }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # The verdict comes from the job's outputs, not from its result.
+          # Four conditions end that job without the pin being level and only
+          # one of them is drift, so the result cannot say which happened.
+          #
+          # `needs.<job>.result` is still read, for the two cases that leave
+          # no outputs at all: a cancelled job, and a skipped one. Both mean
+          # nothing was established, which is what the empty verdict below
+          # already resolves to — they are named here so a reader does not
+          # have to work that out from a fall-through.
           case ",$RESULTS," in
-            *,failure,*) STATE=open; TITLE="$WORKFLOW failed on $REPO" ;;
-            *,cancelled,*|*,skipped,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
-            *) STATE=resolved; TITLE="$WORKFLOW is green again on $REPO" ;;
+            *,cancelled,*|*,skipped,*) VERDICT=inconclusive ;;
           esac
+
+          # An open state without a finding to state would be reported as a
+          # bare subject, so it is treated as no finding at all.
+          if [ -z "${DETAIL:-}" ] && [ "${VERDICT:-}" != current ]; then
+            VERDICT=inconclusive
+          fi
+
+          case "${VERDICT:-}" in
+            current)
+              STATE=resolved
+              TITLE="Integrations: current"
+              ;;
+            drifted | undeclared | orphaned)
+              STATE=open
+              TITLE="Integrations: $DETAIL"
+              ;;
+            *)
+              # `inconclusive`, and every way of reaching no verdict at all.
+              # The subject deliberately changes to the check rather than the
+              # thing checked: nothing here is a statement about the pin.
+              STATE=open
+              TITLE="Integrations pin check: inconclusive"
+              ;;
+          esac
+
           # The destination may or may not need a credential, so the header is
           # built rather than hardcoded: an empty token would otherwise be sent
           # as "Bearer " with nothing after it, which reads as a malformed
@@ -318,10 +449,23 @@ jobs:
           if [ -n "${ALERT_TOKEN:-}" ]; then
             AUTH=(-H "Authorization: Bearer $ALERT_TOKEN")
           fi
+
+          EXTRA="${EXTRA_FIELDS:-}"
+          [ -n "$EXTRA" ] || EXTRA='{}'
+
+          # `github.workflow` is the workflow's DISPLAY NAME, not its
+          # filename, and it is half the alert key. Renaming `name:` at the
+          # top of this file therefore re-keys every alert it sends: whatever
+          # is open under the old key never resolves, and anything filtering
+          # on the key silently stops matching. Rename it deliberately or not
+          # at all.
+          #
+          # Links belong in fields, as Markdown; the title stays plain prose.
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
-                --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULTS" \
+                --arg u "$RUN_URL" --arg r "[$REPO]($REPO_URL)" --arg j "$RESULTS" \
+                --argjson x "$EXTRA" \
             '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
-              fields:{Repository:$r,Workflow:$w,Jobs:$j}}' \
+              fields:({Repository:$r} + $x + {Jobs:$j})}' \
           | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
               "${AUTH[@]}" \
               -H "Content-Type: application/json" --data @- \
