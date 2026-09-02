@@ -7403,7 +7403,7 @@
           "Extensions"
         ],
         "summary": "Replace an extension namespace",
-        "description": "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints.",
+        "description": "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change.",
         "security": [
           {
             "bearerAuth": []
@@ -7634,7 +7634,7 @@
           "Extensions"
         ],
         "summary": "Delete an extension namespace",
-        "description": "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response.",
+        "description": "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. The removal publishes `metadata.changed` carrying the item and its whole metadata row, so a subscriber learns to drop its copy.",
         "security": [
           {
             "bearerAuth": []

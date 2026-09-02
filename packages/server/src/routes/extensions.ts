@@ -51,6 +51,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { publish } from "../pubsub.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -185,7 +186,7 @@ const setExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Replace an extension namespace",
   description:
-    "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints.",
+    "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -255,7 +256,7 @@ const deleteExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Delete an extension namespace",
   description:
-    "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response.",
+    "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. The removal publishes `metadata.changed` carrying the item and its whole metadata row, so a subscriber learns to drop its copy.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -446,6 +447,23 @@ export function extensionRoutes(storage: Storage) {
 
     const extensions = await storage.metadata.setExtension(id, namespace, body);
 
+    // The extensions map and the tags are one metadata row, and the four
+    // doors that write the other half of it publish. A subscriber cannot
+    // tell which door wrote the row, so emitting for one and not the other
+    // makes propagation depend on which the writer happened to use — and an
+    // app storing sidecar state here changed a record no second device was
+    // ever told about.
+    //
+    // Read the row back rather than composing the event from the extensions
+    // this call returned: the payload carries the whole metadata, and half
+    // of it is the half this door did not touch.
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata: await storage.metadata.get(id),
+      spaceId: apiKey?.space_id,
+    });
+
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       space_id: c.get("apiKey")?.space_id ?? null,
@@ -514,6 +532,17 @@ export function extensionRoutes(storage: Storage) {
     }
 
     const extensions = await storage.metadata.deleteExtension(id, namespace);
+
+    // A removal is as observable as a write, and for the same reason as
+    // the replace door above: the namespace's absence from the payload is
+    // how a subscriber learns to drop its own copy.
+    await publish({
+      type: "metadata_changed",
+      item,
+      metadata: await storage.metadata.get(id),
+      spaceId: apiKey?.space_id,
+    });
+
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       space_id: c.get("apiKey")?.space_id ?? null,
