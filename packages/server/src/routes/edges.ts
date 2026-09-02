@@ -126,13 +126,19 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time.",
+    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already in use is refused with 409 `conflict`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
       content: {
         "application/json": {
           schema: z.object({
+            id: z
+              .string()
+              .optional()
+              .describe(
+                "Client-supplied edge id. Omit to have the server mint one.",
+              ),
             source_id: z.string(),
             target_id: z.string(),
             edge_type: z.string(),
@@ -181,6 +187,15 @@ const createEdgeRoute = createRoute({
         },
       },
       description: "Source, target, or edge type not found",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
+      description:
+        "The supplied `id` is already held by an edge. The response names it as `existing_id`.",
     },
   },
 });
@@ -290,6 +305,12 @@ export function edgeRoutes(storage: Storage) {
     if (!isValidId(body.target_id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid target_id");
     }
+    // Gated at the door like the item id it mirrors. An ungated id is
+    // stored verbatim, so the row would carry something no other route
+    // can address and nothing downstream would object.
+    if (body.id !== undefined && !isValidId(body.id)) {
+      throw new MarfaError(ErrorCode.INVALID_ID, "Invalid edge ID");
+    }
     const spaceId = c.get("apiKey")?.space_id;
 
     // Dual gate: source item's type permission + edge type permission.
@@ -313,6 +334,7 @@ export function edgeRoutes(storage: Storage) {
       });
       return storage.edges.createRaw(
         {
+          id: body.id,
           source_id: body.source_id,
           target_id: body.target_id,
           edge_type: body.edge_type,

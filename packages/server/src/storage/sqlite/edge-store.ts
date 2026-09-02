@@ -6,13 +6,14 @@
  * has to be read call site by call site, and reading it wrong is the
  * defect the helper exists for. Delete this line when you do. */
 import { eq, and, or, desc, inArray, lt, sql, count } from "drizzle-orm";
-import { generateId } from "@withmarfa/shared";
+import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { Edge, CreateEdgeInput, PaginatedResult } from "@withmarfa/shared";
 import type { EdgeStore, EdgeListFilters } from "../interface.js";
 import { encodeCursor, decodeCursor } from "../interface.js";
 import { rowToEdge } from "../edge-constraints.js";
 import { edges } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { isPrimaryKeyViolation } from "./pk-violation.js";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 500;
@@ -48,7 +49,22 @@ export class SqliteEdgeStore implements EdgeStore {
       created_at: now,
       updated_at: now,
     };
-    await this.db.insert(edges).values(row).run();
+    // A client may mint this id, so a collision is a caller error rather
+    // than a server fault. Without the trap it surfaced as a 500, which
+    // tells a synced client nothing it can act on — and the id it sent is
+    // exactly the thing it needs named back.
+    try {
+      await this.db.insert(edges).values(row).run();
+    } catch (err) {
+      if (isPrimaryKeyViolation(err, "edges")) {
+        throw new MarfaError(
+          ErrorCode.CONFLICT,
+          `Edge with id=${id} already exists`,
+          { existing_id: id },
+        );
+      }
+      throw err;
+    }
     return rowToEdge(row);
   }
 
