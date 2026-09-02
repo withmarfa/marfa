@@ -1,11 +1,17 @@
 import { Hono } from "hono";
 import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
+import {
+  requireAuth,
+  computeTypeFilter,
+  roleBypassesPermissionMaps,
+} from "../middleware/auth.js";
 import { subscribe, subscribeEdges, wireEventName } from "../pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { PgClient } from "../storage/pg/connection.js";
+import type { ApiKey, Metadata } from "@withmarfa/shared";
+import { filterMetadataForCaller } from "./util.js";
 import { StreamPoolExhaustedError } from "../storage/pg/streaming-rls.js";
 import {
   acquireStreamRls,
@@ -39,6 +45,50 @@ export interface EventRoutesOptions {
    * deployments that want a stated limit rather than discovering one.
    */
   maxViewers?: number;
+}
+
+/**
+ * Narrow a decoded replay payload to what this subscriber may read.
+ *
+ * The replay re-sends `event_log.payload` verbatim, so the live path's
+ * filter never sees it. `parsed` is the row the replay loop already
+ * decoded, or null when it decoded nothing — an edge frame carries no
+ * metadata, and a credential that bypasses the permission maps has
+ * nothing to narrow, so neither is worth a decode. The stored string is
+ * returned as written in both cases, and in every case where the payload
+ * turns out to carry no extensions to narrow.
+ *
+ * A payload that does not decode never reaches here: the loop skips that
+ * row rather than sending it. Passing the bytes through would hand a
+ * subscriber whatever they hold regardless of its permissions, which is
+ * the one thing this function exists to prevent, and a string that is not
+ * JSON would not decode on the client either — so withholding it costs
+ * the subscriber nothing it could have used.
+ */
+function filterReplayPayload(
+  payload: string,
+  parsed: Record<string, unknown> | null,
+  apiKey: ApiKey | undefined,
+): string {
+  if (parsed === null) return payload;
+  // A credential that bypasses the maps has nothing to narrow, so it pays
+  // no re-serialize. Without this an admin catching up on a backlog
+  // rebuilt every metadata frame in it to arrive at the same bytes.
+  if (roleBypassesPermissionMaps(apiKey)) return payload;
+  // Shape-checked rather than presence-checked. `filterMetadataForCaller`
+  // hands `.extensions` to a filter that iterates its keys, so a stored
+  // payload whose `metadata` lacks that block — an older shape, or a
+  // hand-written row — would throw inside `replay()`, whose catch ends
+  // the catch-up silently and leaves the client short of events it will
+  // never ask for again.
+  const metadata: unknown = parsed.metadata;
+  if (metadata === null || typeof metadata !== "object") return payload;
+  const extensions: unknown = (metadata as Record<string, unknown>).extensions;
+  if (extensions === null || typeof extensions !== "object") return payload;
+  return JSON.stringify({
+    ...parsed,
+    metadata: filterMetadataForCaller(metadata as Metadata, apiKey),
+  });
 }
 
 export function eventRoutes(
@@ -231,7 +281,21 @@ export function eventRoutes(
             const sseData = {
               type: wireType,
               item: event.item,
-              ...(event.metadata && { metadata: event.metadata }),
+              // The same narrowing every REST read of metadata goes
+              // through. Without it a credential holding nothing on a
+              // namespace still received its contents, for every item
+              // whose type it could read — the type filter above is not
+              // a substitute, because it says nothing about namespaces.
+              //
+              // **Every item frame that carries metadata, not just
+              // `metadata.changed`.** `item.created`, `item.updated`,
+              // `item.restored` and `item.state_changed` all publish
+              // with the row attached, and they all serialize here. A
+              // filter keyed on the wire name would have left four
+              // frames unnarrowed while reading as complete.
+              ...(event.metadata && {
+                metadata: filterMetadataForCaller(event.metadata, apiKey),
+              }),
             };
 
             const idField =
@@ -376,39 +440,83 @@ export function eventRoutes(
                       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
                       if (state.closed) return;
                       const isEdge = event.edge_id !== null;
-                      if (isEdge) {
-                        if (typeParam) {
-                          lastReplayedId = event.id;
-                          continue;
-                        }
-                      } else if (typeParam) {
-                        const parsed = JSON.parse(event.payload) as {
-                          item?: { type?: string };
-                        };
-                        if (parsed.item?.type !== typeParam) {
+                      if (isEdge && typeParam) {
+                        lastReplayedId = event.id;
+                        continue;
+                      }
+                      // Decoded once for the whole row, shared by the type
+                      // checks and the narrowing below. An edge frame
+                      // carries no item type and no metadata, and
+                      // `typeFilter.allowed` is undefined for exactly the
+                      // credentials that bypass the permission maps, so
+                      // neither needs the row decoded at all. Typed as
+                      // unknown-valued rather than as an event: this is a
+                      // stored string, so its declared shape is a claim
+                      // about it rather than a fact, and the checks that
+                      // keep a mis-shaped row from throwing would read as
+                      // unnecessary against a declared type.
+                      let parsed: Record<string, unknown> | null = null;
+                      if (
+                        !isEdge &&
+                        (typeParam || typeFilter.allowed !== undefined)
+                      ) {
+                        try {
+                          parsed = JSON.parse(event.payload) as Record<
+                            string,
+                            unknown
+                          >;
+                        } catch {
+                          // Fail closed on a stored payload that is not
+                          // JSON. It cannot be narrowed to what this
+                          // subscriber may read, so sending it would hand
+                          // over whatever it holds regardless of the
+                          // permissions this whole path exists to apply;
+                          // and it would not decode on the client either,
+                          // so withholding it costs nothing usable. One
+                          // line names the row, because a payload that is
+                          // not JSON is a defect somebody has to find, and
+                          // a silent skip leaves no trace of it anywhere.
+                          console.warn(
+                            `[events] replay skipped event ${String(event.id)}: stored payload is not valid JSON`,
+                          );
                           lastReplayedId = event.id;
                           continue;
                         }
                       }
-                      if (!isEdge && typeFilter.allowed !== undefined) {
-                        const parsed = JSON.parse(event.payload) as {
-                          item?: { type?: string };
-                        };
-                        if (
-                          parsed.item?.type &&
-                          !matchesTypeFilter(parsed.item.type, typeFilter)
-                        ) {
-                          lastReplayedId = event.id;
-                          continue;
-                        }
+                      const parsedItem: unknown = parsed?.item;
+                      const itemType =
+                        typeof parsedItem === "object" && parsedItem !== null
+                          ? (parsedItem as { type?: string }).type
+                          : undefined;
+                      if (typeParam && itemType !== typeParam) {
+                        lastReplayedId = event.id;
+                        continue;
+                      }
+                      if (
+                        typeFilter.allowed !== undefined &&
+                        itemType &&
+                        !matchesTypeFilter(itemType, typeFilter)
+                      ) {
+                        lastReplayedId = event.id;
+                        continue;
                       }
 
                       const replayWireType = wireEventName(
                         event.event_type as
                           ItemEventWithId["type"] | EdgeEventWithId["type"],
                       );
+                      // The stored payload is re-sent as a string, so the
+                      // live path's filter never touched it: this is a
+                      // second, independent copy of the same disclosure
+                      // and needs its own narrowing. It applies to every
+                      // stored frame carrying metadata, which is four
+                      // event types besides `metadata.changed`. Only a
+                      // payload that actually carries a metadata block is
+                      // re-serialized, so replaying an edge event, or any
+                      // event for a credential that bypasses the maps,
+                      // pays nothing.
                       send(
-                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${event.payload}\n\n`,
+                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
                       );
                       lastReplayedId = event.id;
                     }

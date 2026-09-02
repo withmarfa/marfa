@@ -1,5 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireSpaceAdmin } from "../middleware/auth.js";
 import { reserveQuota } from "../middleware/quota.js";
@@ -151,6 +152,18 @@ const createWebhookRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "scoped_credential_not_permitted",
+          ]),
+        },
+      },
+      description:
+        "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may register or re-point one.",
+    },
   },
 });
 
@@ -181,6 +194,15 @@ const listWebhooksRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description:
+        "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
     },
   },
 });
@@ -215,6 +237,15 @@ const getWebhookRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description:
+        "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
     },
     404: {
       content: {
@@ -281,6 +312,18 @@ const updateWebhookRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "scoped_credential_not_permitted",
+          ]),
+        },
+      },
+      description:
+        "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may register or re-point one.",
+    },
     404: {
       content: {
         "application/json": {
@@ -322,6 +365,18 @@ const deleteWebhookRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema([
+            "forbidden",
+            "scoped_credential_not_permitted",
+          ]),
+        },
+      },
+      description:
+        "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may create, re-point or destroy one.",
     },
     404: {
       content: {
@@ -377,6 +432,15 @@ const listDeliveriesRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description:
+        "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
+    },
     404: {
       content: {
         "application/json": {
@@ -392,6 +456,41 @@ const listDeliveriesRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
+/**
+ * Refuse a credential whose reach is narrower than the space.
+ *
+ * A webhook subscription is space-level and carries no credential of its
+ * own: the row stores a url, a secret, an event list and a space, and
+ * deliveries are built once and sent to every matching endpoint. So there
+ * is no principal to narrow a payload against, and the only way the
+ * delivery can be bounded is for the subscription to belong to a
+ * credential whose grant already covers everything in the space.
+ *
+ * `requireSpaceAdmin` alone does not give that. An OAuth-derived token
+ * projects the user's role — it can be `space_admin` — while holding a
+ * grant that is a subset of the space, and `roleBypassesPermissionMaps`
+ * deliberately excludes it for exactly that reason. Such a credential
+ * registering a webhook would create a standing subscription delivering
+ * more than the app was ever granted, with nothing on the row to say so.
+ *
+ * Every write door is guarded, not only registration. `PATCH` re-points
+ * the url and rewrites the event list, which is registering a different
+ * subscription on a row that already exists; `DELETE` destroys one the
+ * credential could not have created, silencing deliveries the space
+ * depends on. The message names all three so it stays true wherever it
+ * is returned.
+ *
+ * Refused rather than filtered, because filtering needs a principal the
+ * row does not have. Unscoped space admins are unaffected.
+ */
+function refuseScopedCredential(key: ApiKey): void {
+  if (key.scope_enforced !== true) return;
+  throw new MarfaError(
+    ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED,
+    "A webhook subscription is space-level and cannot be registered, re-pointed or removed by a credential scoped to less than the space",
+  );
+}
+
 export function webhookRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -399,6 +498,7 @@ export function webhookRoutes(storage: Storage) {
     // space_admin only. Storage filters by key.space_id, so cross-space
     // attempts return WEBHOOK_NOT_FOUND rather than 403.
     const key = requireSpaceAdmin(c);
+    refuseScopedCredential(key);
 
     // Reserved around the create below rather than checked here, so
     // concurrent creates cannot each see room against the same pre-write
@@ -464,6 +564,10 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(updateWebhookRoute, async (c) => {
     const key = requireSpaceAdmin(c);
+    // The update door too: it re-points `url` and rewrites `events`, so
+    // admitting a scoped credential here would let it take over a
+    // subscription it could not have created.
+    refuseScopedCredential(key);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -503,6 +607,11 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(deleteWebhookRoute, async (c) => {
     const key = requireSpaceAdmin(c);
+    // Destroying a subscription this credential could not have created is
+    // the same rationale as refusing to create one: the row belongs to
+    // the space, not to the grant, and an app holding a subset of the
+    // space must not be able to silence deliveries the space depends on.
+    refuseScopedCredential(key);
     const { id } = c.req.valid("param");
 
     const existing = await storage.outboundWebhooks.get(id, key.space_id);

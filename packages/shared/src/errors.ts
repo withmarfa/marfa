@@ -27,6 +27,19 @@ export enum ErrorCode {
    */
   INTEGRATION_OWNED = "integration_owned",
   TYPE_NOT_PERMITTED = "type_not_permitted",
+  /**
+   * A scope-enforced credential (an OAuth-derived token) attempted an
+   * operation reserved for a credential whose reach is the whole space.
+   *
+   * Distinct from the generic `FORBIDDEN` it shares a status with,
+   * because the caller's role is not the problem and re-granting the
+   * role will not help: an OAuth token can project `space_admin` and
+   * still hold a grant narrower than the space. Outbound webhooks are
+   * the case this exists for — a subscription is space-level and carries
+   * no credential of its own, so anything it delivers is bounded by the
+   * space rather than by the grant of whoever registered it.
+   */
+  SCOPED_CREDENTIAL_NOT_PERMITTED = "scoped_credential_not_permitted",
   INVALID_TRANSITION = "invalid_transition",
   TYPE_NOT_FOUND = "type_not_found",
   DUPLICATE_SOURCE = "duplicate_source",
@@ -396,6 +409,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.FORBIDDEN]: 403,
   [ErrorCode.INTEGRATION_OWNED]: 403,
   [ErrorCode.TYPE_NOT_PERMITTED]: 403,
+  [ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED]: 403,
   [ErrorCode.INVALID_TRANSITION]: 400,
   [ErrorCode.TYPE_NOT_FOUND]: 404,
   [ErrorCode.DUPLICATE_SOURCE]: 409,
