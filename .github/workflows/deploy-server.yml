@@ -42,6 +42,7 @@
 # infra/digitalocean/README.md), and Docker logged into the registry.
 
 name: Deploy server
+run-name: Deploy server (${{ inputs.environment }})
 
 on:
   workflow_dispatch:
