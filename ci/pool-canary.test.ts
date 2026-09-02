@@ -8,9 +8,8 @@
  * Every way of breaking it leaves a green, quiet workflow — which is
  * indistinguishable from the healthy state it is supposed to certify, and
  * is the exact failure it was written to close. A CI run cannot catch any
- * of them: the canary passes on a hosted runner, passes with its notifier
- * on the pool, and passes with a verdict that calls a cancellation
- * healthy.
+ * of them: the canary passes on a hosted runner, and passes when its
+ * cancellation stops being visible.
  *
  * The routing one is the sharpest. Every other job in this repository
  * reads `vars.CI_RUNNER` so work can be moved between the pool and a
@@ -29,8 +28,6 @@ const workflowPath = join(repoRoot, ".github", "workflows", "pool-canary.yml");
 
 interface Job {
   "runs-on"?: unknown;
-  if?: string;
-  needs?: unknown;
   steps?: { run?: unknown }[];
 }
 
@@ -42,11 +39,6 @@ interface Workflow {
 
 const workflow = parse(readFileSync(workflowPath, "utf8")) as Workflow;
 const probe = workflow.jobs?.probe;
-const notify = workflow.jobs?.notify;
-
-const notifyScript = (notify?.steps ?? [])
-  .map((step) => (typeof step.run === "string" ? step.run : ""))
-  .join("\n");
 
 describe("the pool canary", () => {
   it("is reading the workflow it means to", () => {
@@ -54,8 +46,7 @@ describe("the pool canary", () => {
     // `undefined` if the workflow were renamed or restructured, and
     // `undefined` satisfies most of the assertions below by accident.
     expect(probe).toBeDefined();
-    expect(notify).toBeDefined();
-    expect(notifyScript).toContain("ALERT_URL");
+    expect(probe?.steps ?? []).not.toHaveLength(0);
   });
 
   it("probes the pool by its literal label, never through CI_RUNNER", () => {
@@ -65,29 +56,11 @@ describe("the pool canary", () => {
     expect(probe?.["runs-on"]).toBe("self-hosted");
   });
 
-  it("reports from a hosted runner, so the pool cannot silence its own alarm", () => {
-    expect(notify?.["runs-on"]).toBe("ubuntu-latest");
-  });
-
-  it("reports whatever happened to the probe, including nothing", () => {
-    // Without `always()` the notifier is skipped exactly when the probe
-    // failed, which is every case worth reporting.
-    expect(notify?.if ?? "").toContain("always()");
-    expect(notify?.needs).toEqual(["probe"]);
-  });
-
-  it("sends nowhere when no destination is configured", () => {
-    // A fork must contact nobody. The gate is on the variable rather than
-    // the secret because `secrets` is not available in an `if:` at any
-    // level and `vars` is.
-    expect(notify?.if ?? "").toContain("vars.ALERT_WEBHOOK_URL != ''");
-  });
-
   it("cancels a probe the pool never picked up", () => {
     // A job waiting for a self-hosted runner is not failed by GitHub until
     // its queue limit expires a day later. Cancelling on the next
-    // scheduled run brings the report back to one hour, and it is the only
-    // thing that does.
+    // scheduled run gives it a conclusion within the hour, and it is the
+    // only thing that does.
     expect(workflow.concurrency?.["cancel-in-progress"]).toBe(true);
     expect(workflow.concurrency?.group).toBe("pool-canary");
   });
@@ -98,35 +71,5 @@ describe("the pool canary", () => {
     const crons = workflow.on?.schedule ?? [];
     expect(crons).toHaveLength(1);
     expect(crons[0]?.cron).toMatch(/^\d+ \* \* \* \*$/);
-  });
-
-  it("calls only a successful probe healthy", () => {
-    // The permissive direction, and the one a plausible edit reaches. A
-    // `case` whose `cancelled` arm fell through to the catch-all would
-    // resolve the alert on the run that detected the pool never picking a
-    // job up — reporting the failure as the recovery.
-    //
-    // Asserted as "resolved is reached from exactly one place, and that
-    // place is the success arm" rather than by matching each arm, because
-    // the arms can be reordered and renamed while that property is what
-    // makes the verdict correct.
-    const resolvedArms = notifyScript.match(/STATE=resolved/g) ?? [];
-    expect(resolvedArms).toHaveLength(1);
-    const beforeResolved = notifyScript.slice(
-      0,
-      notifyScript.indexOf("STATE=resolved"),
-    );
-    expect(beforeResolved.slice(-200)).toContain("success)");
-  });
-
-  it("keys the alert on the condition rather than on the run", () => {
-    // One alert opens when the pool goes down and the next healthy probe
-    // resolves it. Keyed per run, every hourly failure would open its own
-    // and nothing would ever close one.
-    expect(notifyScript).toContain('--arg k "github/$REPO/$WORKFLOW"');
-    // The key as the payload actually carries it, not merely the variable
-    // that feeds it: composing anything per-run onto `$k` at the jq call
-    // is the shape that would open an alert an hour and never close one.
-    expect(notifyScript).toContain("key:$k,");
   });
 });

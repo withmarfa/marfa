@@ -43,6 +43,12 @@ env:
 jobs:
   drift:
     name: Published spec matches this one
+    # What the notifier reports. `cmp` below decides whether this job passes;
+    # these say what the difference was, which an exit code cannot.
+    outputs:
+      verdict: ${{ steps.finding.outputs.verdict }}
+      detail: ${{ steps.finding.outputs.detail }}
+      fields: ${{ steps.finding.outputs.fields }}
     timeout-minutes: 10
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     permissions:
@@ -55,8 +61,20 @@ jobs:
           GH_TOKEN: ${{ secrets.DOCS_SYNC_TOKEN }}
         run: |
           set -euo pipefail
+          # Every branch that ends this step writes its finding into
+          # `finding/` before it exits. The `Publish the finding` step is the
+          # only thing that writes $GITHUB_OUTPUT, and it runs on
+          # `if: always()` — which is what carries a finding out of a failed
+          # job. Nothing here infers a verdict from silence: a `run:` block
+          # runs under `bash -e`, so a failing `gh api` kills this step where
+          # it stands, and the absence of a verdict has to mean "nothing was
+          # established" rather than "the two match".
+          mkdir -p finding
 
           if [ -z "${GH_TOKEN:-}" ]; then
+            # Neither branch compared anything, so neither can say the two
+            # agree. A guard that reached no verdict reports inconclusive.
+            echo inconclusive > finding/verdict
             if [ "${GITHUB_REPOSITORY}" = "${SPEC_CANONICAL_REPO}" ]; then
               echo "::error title=Drift guard cannot run::DOCS_SYNC_TOKEN is not set on ${GITHUB_REPOSITORY}, so openapi.json was never compared against ${SPEC_TARGET_REPO}. Failing rather than passing: a guard that cannot run must not report green."
               exit 1
@@ -69,10 +87,16 @@ jobs:
             -H "Accept: application/vnd.github.raw" \
             "repos/${SPEC_TARGET_REPO}/contents/openapi.json" > published-openapi.json
 
+          # `cmp` is the whole of the pass/fail decision and stays that way.
+          # The comparison below runs only after this has already said the
+          # two differ, and it describes that difference rather than deciding
+          # anything about it.
           if cmp -s published-openapi.json openapi.json; then
             echo "${SPEC_TARGET_REPO} matches this spec."
+            echo current > finding/verdict
             exit 0
           fi
+          echo drifted > finding/verdict
 
           # The repair changed when the sync started merging its own pull
           # request. Before that, a red guard usually meant a pull request
@@ -82,21 +106,103 @@ jobs:
           # request is open. This guard's expected state is green.
           echo "::error title=Published spec is stale::${SPEC_TARGET_REPO} differs from the spec generated here. The sync enables auto-merge on the pull request it opens, so this means either its last run failed, or that pull request is open with a failing check. Check the 'Sync openapi.json to docs' run for the spec change that landed here, and ${SPEC_TARGET_REPO} for an open sync pull request."
           python3 - <<'PY'
-          import json
+          import json, pathlib
 
           published = json.load(open('published-openapi.json'))
           current = json.load(open('openapi.json'))
-          pub, cur = set(published.get('paths', {})), set(current.get('paths', {}))
-          for label, paths in (('missing from docs', cur - pub), ('no longer generated', pub - cur)):
-              for path in sorted(paths):
+          pub, cur = published.get('paths', {}), current.get('paths', {})
+
+          # A changed operation body counts as a differing path. Comparing the
+          # parsed documents rather than their bytes is what makes that
+          # countable, and it is why the count can be zero on a file `cmp`
+          # says differs: a reformat moves bytes without moving anything a
+          # reader of the reference would notice.
+          added = sorted(set(cur) - set(pub))
+          removed = sorted(set(pub) - set(cur))
+          changed = sorted(p for p in set(pub) & set(cur) if pub[p] != cur[p])
+          sections = sorted(
+              k for k in set(published) | set(current)
+              if k != 'paths' and published.get(k) != current.get(k)
+          )
+
+          for label, paths in (('missing from docs', added),
+                               ('no longer generated', removed),
+                               ('operation differs', changed)):
+              for path in paths:
                   print(f'{label}: {path}')
-          if pub == cur:
-              print('path sets match; the difference is inside one or more operations')
+          for section in sections:
+              print(f'section differs: {section}')
+
+          total = len(added) + len(removed) + len(changed)
+          if total:
+              detail = f'{total} path differs from main' if total == 1 \
+                  else f'{total} paths differ from main'
+          elif sections:
+              detail = 'differs from main outside its paths'
+          else:
+              print('no path and no section differs; the files differ in formatting alone')
+              detail = 'differs from main in formatting only'
+
+          def summarize(label, paths, cap=8):
+              shown = ', '.join(paths[:cap])
+              extra = len(paths) - cap
+              return f'{label}: {shown}' + (f', and {extra} more' if extra > 0 else '')
+
+          parts = [summarize(label, paths)
+                   for label, paths in (('missing from docs', added),
+                                        ('no longer generated', removed),
+                                        ('operation differs', changed))
+                   if paths]
+
+          out = pathlib.Path('finding')
+          out.joinpath('detail').write_text(detail + '\n')
+          if parts:
+              out.joinpath('paths').write_text('; '.join(parts) + '\n')
+          if sections:
+              out.joinpath('sections').write_text(', '.join(sections) + '\n')
           PY
           exit 1
 
+      # The only step in this job that writes $GITHUB_OUTPUT for the notifier,
+      # and `if: always()` is what carries a finding out of a job that failed.
+      # The default verdict is `inconclusive` rather than `current`, so a step
+      # that died before reaching a verdict cannot resolve an open alert.
+      - id: finding
+        if: always()
+        name: Publish the finding
+        env:
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p finding
+          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          import json, os, pathlib
+
+          finding = pathlib.Path("finding")
+
+          def read(name: str) -> str:
+              path = finding / name
+              return path.read_text().strip() if path.exists() else ""
+
+          server = os.environ["SERVER_URL"].rstrip("/")
+          target = os.environ["SPEC_TARGET_REPO"]
+
+          fields = {
+              "Reference": f"[{target} openapi.json]"
+                           f"({server}/{target}/blob/main/openapi.json)",
+          }
+          if read("paths"):
+              fields["Paths"] = read("paths")
+          if read("sections"):
+              fields["Sections"] = read("sections")
+
+          print("verdict=" + (read("verdict") or "inconclusive"))
+          print("detail=" + " ".join(read("detail").split()))
+          print("fields=" + json.dumps(fields, separators=(",", ":")))
+          PY
+
   notify:
-    # Reports this run's outcome to the configured alert destination. Runs
+    # Reports what the guard found to the configured alert destination. Runs
     # hosted rather than on the self-hosted pool deliberately: when the pool is
     # the thing that broke, a notifier living on it cannot tell anyone.
     #
@@ -110,18 +216,14 @@ jobs:
     # `main` is load-bearing. A dispatch can name any ref, this alert key is
     # the estate's state for this guard, and a branch's spec is not the
     # estate's, so reporting a branch outcome under it would be a lie in the
-    # other direction. That is also why the image build's notifier stays on
-    # pushes alone: there a push answers a question about `main` and a
-    # dispatch answers one about a branch somebody is proposing. The two
-    # notifiers look alike and answer different questions.
+    # other direction.
     #
-    # The verdict keys on the drift job's own result, and `cancelled` opens an
-    # alert rather than staying silent: the drift job runs on the self-hosted
-    # pool (CI_RUNNER), and a run queued there that never gets picked up is
-    # cancelled by GitHub's queue limit, which is the pool-down case this job
-    # exists for. A rare deliberate cancel pays one benign alert that the next
-    # scheduled run resolves, which is cheap against the guard silently going
-    # dark.
+    # A cancelled run reports inconclusive rather than staying silent: the
+    # drift job runs on the self-hosted pool (CI_RUNNER), and a run queued
+    # there that never gets picked up is cancelled by GitHub's queue limit,
+    # which is the pool-down case this job exists for. A rare deliberate
+    # cancel pays one benign alert that the next scheduled run resolves,
+    # which is cheap against the guard silently going dark.
     needs: [drift]
     # Skipped when no alert destination is configured, so a fork sends nothing.
     if: >-
@@ -132,29 +234,56 @@ jobs:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
-      - name: Report outcome
+      - name: Report the finding
         env:
           ALERT_URL: ${{ vars.ALERT_WEBHOOK_URL }}
           ALERT_TOKEN: ${{ secrets.ALERT_WEBHOOK_TOKEN }}
+          VERDICT: ${{ needs.drift.outputs.verdict }}
+          DETAIL: ${{ needs.drift.outputs.detail }}
+          EXTRA_FIELDS: ${{ needs.drift.outputs.fields }}
           RESULTS: ${{ join(needs.*.result, ',') }}
           WORKFLOW: ${{ github.workflow }}
           REPO: ${{ github.repository }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # `needs.<job>.result` is one of success, failure, cancelled or
-          # skipped, and nothing else. A job past its timeout reports
-          # failure, so there is no `timed_out` to match.
+          # The verdict comes from the job's outputs, not from its result. The
+          # result says the job failed; only the outputs say whether that was
+          # drift or a guard that never reached the comparison.
           #
-          # `skipped` sits with `cancelled` rather than falling through to
-          # the catch-all: a job that did not run is not a job that ran
-          # green, and reporting one as the other is how a guard goes dark
-          # quietly. Unreachable while `sync` has no `if:`, and here so that
-          # adding one later cannot turn this notifier into a liar.
+          # `needs.<job>.result` is one of success, failure, cancelled or
+          # skipped, and nothing else. A job past its timeout reports failure,
+          # so there is no `timed_out` to match. The two that leave no outputs
+          # at all are named here rather than left to fall through, so a
+          # reader does not have to derive them from an empty string.
           case ",$RESULTS," in
-            *,failure,*) STATE=open; TITLE="$WORKFLOW failed on $REPO" ;;
-            *,cancelled,*|*,skipped,*) STATE=open; TITLE="$WORKFLOW did not complete on $REPO" ;;
-            *) STATE=resolved; TITLE="$WORKFLOW is green again on $REPO" ;;
+            *,cancelled,*|*,skipped,*) VERDICT=inconclusive ;;
           esac
+
+          # An open state with nothing to state would post a bare subject, so
+          # it is treated as no finding at all.
+          if [ -z "${DETAIL:-}" ] && [ "${VERDICT:-}" != current ]; then
+            VERDICT=inconclusive
+          fi
+
+          case "${VERDICT:-}" in
+            current)
+              STATE=resolved
+              TITLE="OpenAPI reference: current"
+              ;;
+            drifted)
+              STATE=open
+              TITLE="OpenAPI reference: $DETAIL"
+              ;;
+            *)
+              # `inconclusive`, and every way of reaching no verdict at all.
+              # The subject deliberately changes to the check rather than the
+              # thing checked: nothing here is a statement about the spec.
+              STATE=open
+              TITLE="OpenAPI drift check: inconclusive"
+              ;;
+          esac
+
           # The destination may or may not need a credential, so the header is
           # built rather than hardcoded: an empty token would otherwise be sent
           # as "Bearer " with nothing after it, which reads as a malformed
@@ -163,10 +292,23 @@ jobs:
           if [ -n "${ALERT_TOKEN:-}" ]; then
             AUTH=(-H "Authorization: Bearer $ALERT_TOKEN")
           fi
+
+          EXTRA="${EXTRA_FIELDS:-}"
+          [ -n "$EXTRA" ] || EXTRA='{}'
+
+          # `github.workflow` is the workflow's DISPLAY NAME, not its
+          # filename, and it is half the alert key. Renaming `name:` at the
+          # top of this file therefore re-keys every alert it sends: whatever
+          # is open under the old key never resolves, and anything filtering
+          # on the key silently stops matching. Rename it deliberately or not
+          # at all.
+          #
+          # Links belong in fields, as Markdown; the title stays plain prose.
           jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
-                --arg u "$RUN_URL" --arg r "$REPO" --arg w "$WORKFLOW" --arg j "$RESULTS" \
+                --arg u "$RUN_URL" --arg r "[$REPO]($REPO_URL)" --arg j "$RESULTS" \
+                --argjson x "$EXTRA" \
             '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
-              fields:{Repository:$r,Workflow:$w,Jobs:$j}}' \
+              fields:({Repository:$r} + $x + {Jobs:$j})}' \
           | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
               "${AUTH[@]}" \
               -H "Content-Type: application/json" --data @- \

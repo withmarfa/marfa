@@ -281,17 +281,11 @@ pnpm --filter @withmarfa/server schema-sql:generate
 
 The cost that justified the exclusion also moved: it was billed minutes on hosted runners, and CI runs on a self-hosted pool now. What remains is machine time on a shared box, which the path filters keep off the majority of pull requests.
 
-### A red `main` says which kind of red
+### A red `main` says which kind of red, and the run does not
 
-`ci.yml`'s `notify` job reports `main`'s verdict to the alerting service, and distinguishes a test failure from a job that never ran.
+**A red `main` is a test failure or an abandonment, and they mean opposite things.** A test failure says the commit is bad. An abandonment says nothing at all about the commit, and every later pull request is then measured against a baseline nobody has information about. Two runs were once abandoned when the host ran out of ephemeral TCP source ports and the runners' own lease-renewal loop could not open a socket; both reported `failure`, neither had run a failing test, and the only place that said so was a log file on the machine.
 
-**The two mean opposite things.** A test failure says the commit is bad. An abandonment says nothing at all about the commit, and every later pull request is then measured against a baseline nobody has information about. Two runs were once abandoned when the host ran out of ephemeral TCP source ports and the runners' own lease-renewal loop could not open a socket; both reported `failure`, neither had run a failing test, and the only place that said so was a log file on the machine.
-
-**The distinction is clean through the API**, which is what makes this cheap: an abandoned job has no step whose conclusion is `failure` and at least one that is `cancelled`, while every genuine failure has exactly one failing step. When it fires, the alert names the affected jobs and says to re-run rather than read it as a defect.
-
-`main` only. A pull request's red is already in front of whoever pushed it. Hosted, like every notifier here, because a notifier on the pool cannot report that the pool is broken, which in this job's case is the whole point.
-
-**Two cases are deliberately silent**, and a reader whose alert never resolved should look here first. A run **cancelled as a whole** is skipped: `always()` includes the cancelled case, and the concurrency group supersedes a main run whenever two merges land inside one matrix, so reporting it would alert on a commit the newer run already covers. A **green verdict on a merge the `changes` job called non-code** is not reported either: the two dialect jobs gate at step level and report success without running anything, so resolving on that would close an alert about a red `main` that nothing has re-tested. In both, a genuinely open alert stays open until something actually runs, which is the right direction.
+**The distinction is clean through the API**, which is the cheap way to settle it when a red `main` looks wrong: an abandoned job has no step whose conclusion is `failure` and at least one that is `cancelled`, while every genuine failure has exactly one failing step. Read that before treating a red `main` as a defect, because nothing computes it for you.
 
 ### The image build
 
@@ -304,19 +298,18 @@ The cost that justified the exclusion also moved: it was billed minutes on hoste
 - **Hosted, not the self-hosted pool.** The pool is arm64 and the image is `linux/amd64`; emulated cross-building is far slower than a native build. Same reason the deploy's `build-push` job is hosted. A green build is about two and a quarter minutes.
 - **The whole image, not `--target build`.** Stopping at the build stage skips the runtime layout and the check that the staged integrations can load. Those are seconds on top. The saving is in dropping `--push`, which also means the job needs no registry credential.
 - **Its own workflow rather than a job in `ci.yml`, and that is load-bearing.** `ci.yml` cancels a superseded run so two Postgres-bearing matrices never contend for one machine. That is right for the matrix and wrong here: a merge landing inside the build window would cancel the previous merge's image build, and `ci.yml`'s path gating derives from `github.event.before`, so the newer run would compute its own diff, find no image path in it, and skip the build entirely. Here the gate is the workflow's own `paths:`, so a push either produces a run or produces nothing, and `cancel-in-progress: false` lets an in-flight build survive a newer push rather than being dropped. These runs cost the hosted allowance rather than the shared pool, so letting them overlap contends with nothing.
-- **A red image build alerts.** The workflow carries its own `notify` job, hosted, like every other notifier here.
 
 **Dispatching it is not free.** Unlike a `ci.yml` dispatch, a `Server image` dispatch always runs the full amd64 build. That is the point of having it — it is how a Dockerfile change gets checked before it merges — but it is billed hosted minutes rather than pool time.
 
 ### The pool canary
 
-`Pool canary` (`.github/workflows/pool-canary.yml`) says, hourly, whether the self-hosted pool can run a job at all. One trivial job on the pool, one hosted notifier reporting its outcome.
+`Pool canary` (`.github/workflows/pool-canary.yml`) says, hourly, whether the self-hosted pool can run a job at all. One trivial job on the pool, and nothing else.
 
-**It exists because a pool that fails every job produced the same bytes as a pool with no work.** Every job landing on the pool once failed at `Set up runner`, before a single step executed, for nineteen hours across four repositories, and nobody noticed. Every notifier in the estate is correctly shaped to survive the pool dying — hosted sibling job, `needs`, `if: always()` — and every one of them reports _its own workflow's_ outcome. Nothing observed the pool itself, and a quiet weekend is the more common explanation for silence. This workflow manufactures the work so silence stops being ambiguous.
+**It exists because a pool that fails every job produced the same bytes as a pool with no work.** Every job landing on the pool once failed at `Set up runner`, before a single step executed, for nineteen hours across four repositories, and nobody noticed. Everything that reports on CI reports some workflow's own outcome, and a workflow nobody triggered has no outcome to report. Nothing observed the pool itself, and a quiet weekend is the more common explanation for silence. This workflow manufactures the work so silence stops being ambiguous.
 
-**The probe reads `self-hosted` literally and must never read `vars.CI_RUNNER`.** It is the one job here that is deliberately not routable: routed through the variable it would run on whatever the estate's default happens to be and report the pool healthy from a hosted runner, which is the check answering a different question than the one it is named for. `ci/pool-canary.test.ts` holds it there, along with every other property that can be undone without producing an error — a notifier moved onto the pool, a verdict that calls a cancellation healthy, an alert key composed per run so nothing ever resolves.
+**The probe reads `self-hosted` literally and must never read `vars.CI_RUNNER`.** It is the one job here that is deliberately not routable: routed through the variable it would run on whatever the estate's default happens to be and report the pool healthy from a hosted runner, which is the check answering a different question than the one it is named for. `ci/pool-canary.test.ts` holds it there, along with the two other properties that can be undone without producing an error: the cancellation below, and the hourly cadence.
 
-**`cancel-in-progress: true` is load-bearing rather than hygiene.** A job waiting for a self-hosted runner is not failed by GitHub until its queue limit expires a day later, so "no runner ever picked it up" would otherwise be reported a day after it started. Cancelling a still-running probe when the next hourly one starts brings that back to an hour, and the notifier treats `cancelled` as an alert precisely so it arrives as one.
+**`cancel-in-progress: true` is load-bearing rather than hygiene.** A job waiting for a self-hosted runner is not failed by GitHub until its queue limit expires a day later, so "no runner ever picked it up" would otherwise surface a day after it started. Cancelling a still-running probe when the next hourly one starts gives the run a conclusion within the hour instead, and an hourly run concluding `cancelled` is the shape of this failure.
 
 **Queue age was the alternative and does not detect what happened.** Those jobs were picked up promptly and then failed; the queue was never long. It also inherits the original problem, because it can only report when there is work — and a quiet weekend is exactly when nothing else is watching.
 
@@ -326,13 +319,33 @@ The cost that justified the exclusion also moved: it was billed minutes on hoste
 
 ### The integrations pin
 
-`Integrations pin drift` (`.github/workflows/integrations-pin-drift.yml`) says when `packages/server/integrations-ref.txt` has fallen behind something the image would ship. Daily at 07:42 UTC, plus dispatch. Hosted, with its own `notify` job.
+`Integrations pin drift` (`.github/workflows/integrations-pin-drift.yml`) says when `packages/server/integrations-ref.txt` has fallen behind something the image would ship. Daily at 07:42 UTC, plus dispatch. Hosted, with its own `notify` job, which states the finding rather than the exit code — see below.
 
 **It compares built output rather than changed paths**, and that is the whole design. esbuild discards ordinary comments unconditionally, so a JSDoc-only edit to a manifest and a comment-only edit to a handler both produce a byte-identical bundle, and those edits dominate that repository's history. Any path filter wide enough to catch a real source change catches them too, so the obvious version of this guard reports noise on its first run. Paths decide only whether the comparison is worth doing: they narrow to declared packages plus everything outside `packages/`, then exclude what no bundle can carry, and an unrecognised path is compared rather than passed.
 
 **It also asks the question the image build asks, a day earlier.** The image build holds the registry at the _pinned_ commit; this holds `main`'s, so a new integration merged there and marked `shippedByMarfa` is reported the next morning rather than whenever somebody next moves the pin.
 
 **Hosted, not the pool.** Two installs and two builds of a fifteen-package workspace, on a timer, unattended. The pool is one shared machine serving every pull request in the estate, and several suites fail on fixed time budgets, so a scheduled pair of builds landing there manufactures failures in whatever else is running. It is pinned to `ubuntu-latest`, so it caches unconditionally, as `publish.yml`'s two jobs do for the same reason: a runner fixed to a hosted label keeps no store between runs, and needs no expression to work that out.
+
+### The two workflows that still notify
+
+`integrations-pin-drift.yml` and `openapi-drift.yml` are the only workflows here with a `notify` job. Both are scheduled, and that is the criterion: **a push-triggered run has an audience** — whoever pushed sees the check — **and a scheduled run has none**, so its report is the only thing anybody reads. Everything push- or dispatch-triggered lost its notifier, because reporting a red that is already in front of somebody is noise.
+
+**The notifier states the finding, not the exit code.** Both jobs used to send `join(needs.*.result, ',')`, so the alert for a genuine drift read `failure` and sent whoever opened it back to the run log. The checking job knew which integration, which commit, which paths; it logged all of it and told the notifier none of it. Each checking job now declares `outputs:` and the notifier reads them.
+
+Three properties make that work, and **none of them produces an error when undone**, which is why `ci/notify-detail.test.ts` holds all three:
+
+- **The step that writes `$GITHUB_OUTPUT` runs on `if: always()`.** Without it the step is skipped exactly when an earlier step failed, so every alert worth sending arrives with no detail.
+- **An absent verdict never resolves an alert.** A `run:` block runs under `bash -e`, so any command exiting non-zero kills its step where it stands and nothing after it in that step records anything. Each branch that establishes something therefore writes `current` itself, and `STATE=resolved` is reachable only from that explicit verdict — so a step dying anywhere, for any reason, reports `inconclusive` rather than closing an alert about a condition nothing re-tested.
+- **A finding is written before the exit that follows it, never after.** The test cannot check this one: whether an arbitrary command can fail is not a question the workflow text answers. The property above is what makes it not matter.
+
+**`inconclusive`, never `skipped`.** "Skipped" implies a decision and makes a guard that silently stopped running read as routine. The subject changes with it, deliberately — `OpenAPI drift check: inconclusive` rather than `OpenAPI reference: …` — because that message is not a statement about the reference.
+
+**Titles are plain prose; links go in `fields` as Markdown.** An open message and its resolve carry the identical subject (`Integrations: pinned to a1b2c3d, main is 9f8e7d6` and `Integrations: current`) so the pair reads as one thing changing state.
+
+**`key` is `github/$REPO/$WORKFLOW`, and `github.workflow` is the workflow's display name rather than its filename.** Renaming `name:` therefore re-keys every alert from that workflow: whatever is open under the old key never resolves, and anything filtering on it silently stops matching. There is a comment saying so at each site.
+
+**Do not "fix" a quiet notifier by hardcoding a destination.** The job is gated on `vars.ALERT_WEBHOOK_URL` being non-empty and the `Authorization` header is omitted entirely when `secrets.ALERT_WEBHOOK_TOKEN` is unset, so a fork with neither configured sends nothing at all: no request, no error, no retry. That silence is the half worth having. The gate is on the variable rather than the secret because it has to be — `secrets` is not available in an `if:` at any level while `vars` is, so a job cannot ask whether a secret exists.
 
 ### Where the dependency cache is allowed
 
