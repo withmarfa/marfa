@@ -639,7 +639,17 @@ async function processBulkItem(
   // would fall through to `storage.items.create(...)`, which trips a
   // unique-constraint violation and surfaces as an opaque 500.
   if (!existing && raw.id !== undefined) {
-    existing = await storage.items.get(raw.id, spaceId);
+    // `create_only` decides on presence, not on state. A repeat landing
+    // on a row the user has since trashed is still a repeat, and hiding
+    // the row here sends it to `create`, which trips the primary key and
+    // — since `atomic` defaults to true — rolls the whole batch back for
+    // a write the server already performed. `upsert` keeps the narrower
+    // lookup: there the match is an instruction to write, and a trashed
+    // row is not something a re-sync silently edits.
+    existing =
+      mode === "create_only"
+        ? await storage.items.getIncludingTrashed(raw.id, spaceId)
+        : await storage.items.get(raw.id, spaceId);
     if (existing) matchedBy = "id";
   }
 

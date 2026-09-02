@@ -13,12 +13,13 @@
  * assertion cannot see. `subscribe` is what a second device actually is.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { subscribe } from "../pubsub.js";
 import type { ItemEventWithId } from "../pubsub.js";
 import {
   createTestContext,
   request,
   TEST_API_KEY_SALT,
+  collectItemEvents,
+  settle,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
@@ -47,40 +48,6 @@ async function seedTaggedItem(): Promise<string> {
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { item: { id: string } }).item.id;
-}
-
-/**
- * Collect item events until the abort fires.
- *
- * The generator is started and given a moment to attach before the write,
- * so the subscription is genuinely listening rather than racing it — a
- * listener registered after the publish hears nothing, and the test would
- * then pass or fail on scheduling.
- */
-function collectItemEvents(
-  signal: AbortSignal,
-  spaceId?: string,
-): {
-  events: ItemEventWithId[];
-  done: Promise<void>;
-} {
-  const events: ItemEventWithId[] = [];
-  const done = (async () => {
-    try {
-      // `spaceId` is the same filter `GET /events` applies for a scoped
-      // viewer, so a frame published without one is invisible here too.
-      for await (const event of subscribe({ signal, spaceId })) {
-        events.push(event);
-      }
-    } catch {
-      // The abort ends the generator; nothing to report.
-    }
-  })();
-  return { events, done };
-}
-
-async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 /** Events this test's own item produced. Sibling tests in the same worker

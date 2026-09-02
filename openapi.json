@@ -78,7 +78,7 @@
           "Items"
         ],
         "summary": "Create an item",
-        "description": "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201.",
+        "description": "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
         "security": [
           {
             "bearerAuth": []
@@ -155,7 +155,7 @@
         },
         "responses": {
           "200": {
-            "description": "Item updated via natural-key upsert. Returned when both `source` (stamped from the credential) and request `source_id` resolve an item in the caller's space — the request is treated as an idempotent re-sync of the upstream entry. When the resolved item has been trashed the response carries `acknowledged: true` and nothing is written: the deletion stands, and the re-sync is accepted rather than refused forever. The resolved item's `type` decides the shape written, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted.",
+            "description": "The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (stamped from the credential) and request `source_id` resolve a live item in the caller's space, and it is updated in place — an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged repeat:** the request carries an `id` the caller already created, so the create is a second arrival of that client's own write; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -677,7 +677,7 @@
             }
           },
           "409": {
-            "description": "The `(source, source_id)` natural key resolved an existing item whose type is not the one declared. Re-typing an item is a deliberate operation, not something a re-sync does in passing.",
+            "description": "`type_mismatch`: the request resolved an existing item — by the `(source, source_id)` natural key or by a repeated `id` — whose type is not the one declared. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item in a space this caller cannot see, so it is somebody else's row rather than a repeat of this caller's own create.",
             "content": {
               "application/json": {
                 "schema": {
@@ -689,6 +689,7 @@
                         "code": {
                           "type": "string",
                           "enum": [
+                            "conflict",
                             "type_mismatch",
                             "provenance_collision"
                           ]
@@ -8465,7 +8466,7 @@
           "Edges"
         ],
         "summary": "Create an edge",
-        "description": "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already in use is refused with 409 `conflict`.",
+        "description": "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
         "security": [
           {
             "bearerAuth": []
@@ -8507,6 +8508,67 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "The supplied `id` already names this exact edge — same source, target and type — so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "edge": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "space_id": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "source_id": {
+                          "type": "string"
+                        },
+                        "target_id": {
+                          "type": "string"
+                        },
+                        "edge_type": {
+                          "type": "string"
+                        },
+                        "properties": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "nullable": true
+                          }
+                        },
+                        "created_at": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "source_id",
+                        "target_id",
+                        "edge_type",
+                        "properties",
+                        "created_at",
+                        "updated_at"
+                      ]
+                    },
+                    "acknowledged": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "edge",
+                    "acknowledged"
+                  ]
+                }
+              }
+            }
+          },
           "201": {
             "description": "Edge created",
             "content": {
@@ -8687,7 +8749,7 @@
             }
           },
           "409": {
-            "description": "The supplied `id` is already held by an edge. The response names it as `existing_id`.",
+            "description": "The supplied `id` is taken by an edge that is not the one this request describes — a different source, target or type — or by one in a space the caller cannot see. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id`.",
             "content": {
               "application/json": {
                 "schema": {
