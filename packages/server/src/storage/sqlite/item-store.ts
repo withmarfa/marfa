@@ -784,6 +784,7 @@ export class SqliteItemStore implements ItemStore {
           version: newVersion,
           updated_at: now,
           tier: newTier,
+          ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
           ...(input.source_id !== undefined && {
             source_id: input.source_id,
           }),
@@ -882,6 +883,7 @@ export class SqliteItemStore implements ItemStore {
         version: newVersion,
         updated_at: now,
         tier: newTier,
+        ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
         ...(input.source_id !== undefined && {
           source_id: input.source_id,
         }),

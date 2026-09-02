@@ -1514,6 +1514,38 @@ describe("PATCH /items/:id — source_id mutation", () => {
     expect(data.item.version).toBe(created.item.version + 1);
   });
 
+  it("answers a timestamp PATCH with the timestamp it stored", async () => {
+    // The response is rebuilt from the pre-update snapshot rather than
+    // re-read, so a column the update set has to be carried onto it
+    // explicitly. `type` was carried after a re-type answered with the type
+    // the row had stopped being; `timestamp` had the same gap, and it is
+    // the field a caller is most likely to read straight back.
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "restamp me" } },
+    });
+    expect(createRes.status).toBe(201);
+    const created = (await createRes.json()) as { item: { id: string } };
+
+    const when = "2021-03-04T05:06:07.000Z";
+    const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+      body: { timestamp: when },
+    });
+    expect(res.status).toBe(200);
+    expect(
+      ((await res.json()) as { item: { timestamp: string } }).item.timestamp,
+    ).toBe(when);
+
+    // And the stored row agrees, so the answer is not merely self-consistent.
+    const read = await request(ctx.app, "GET", `/items/${created.item.id}`, {
+      key: ctx.adminKey,
+    });
+    expect(
+      ((await read.json()) as { item: { timestamp: string } }).item.timestamp,
+    ).toBe(when);
+  });
+
   it("source_id PATCH alongside properties + stale version: route still rejects on natural-key conflict (collision check runs before storage)", async () => {
     // Set up: an occupant under `occupied-key-v2`, and a mover currently at
     // mover-key-v2 with an explicit version pin that won't match after a
