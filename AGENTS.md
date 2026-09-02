@@ -333,7 +333,7 @@ The cost that justified the exclusion also moved: it was billed minutes on hoste
 
 **The notifier states the finding, not the exit code.** Both jobs used to send `join(needs.*.result, ',')`, so the alert for a genuine drift read `failure` and sent whoever opened it back to the run log. The checking job knew which integration, which commit, which paths; it logged all of it and told the notifier none of it. Each checking job now declares `outputs:` and the notifier reads them.
 
-Three properties make that work, and **none of them produces an error when undone**, which is why `ci/notify-detail.test.ts` holds all three:
+Three properties make that work, and **none of them produces an error when undone**. `ci/notify-detail.test.ts` holds the first two:
 
 - **The step that writes `$GITHUB_OUTPUT` runs on `if: always()`.** Without it the step is skipped exactly when an earlier step failed, so every alert worth sending arrives with no detail.
 - **An absent verdict never resolves an alert.** A `run:` block runs under `bash -e`, so any command exiting non-zero kills its step where it stands and nothing after it in that step records anything. Each branch that establishes something therefore writes `current` itself, and `STATE=resolved` is reachable only from that explicit verdict — so a step dying anywhere, for any reason, reports `inconclusive` rather than closing an alert about a condition nothing re-tested.
@@ -344,6 +344,8 @@ Three properties make that work, and **none of them produces an error when undon
 **Titles are plain prose; links go in `fields` as Markdown.** An open message and its resolve carry the identical subject (`Integrations: pinned to a1b2c3d, main is 9f8e7d6` and `Integrations: current`) so the pair reads as one thing changing state.
 
 **`key` is `github/$REPO/$WORKFLOW`, and `github.workflow` is the workflow's display name rather than its filename.** Renaming `name:` therefore re-keys every alert from that workflow: whatever is open under the old key never resolves, and anything filtering on it silently stops matching. There is a comment saying so at each site.
+
+**A fork that configures a destination but no cross-repo credential now gets a permanently open `inconclusive`.** Both guards read another repository, so a fork holding neither `INTEGRATIONS_DEPLOY_KEY` nor `DOCS_SYNC_TOKEN` cannot run the comparison at all. That used to exit 0 and report green. It now reports that nothing was established, and nothing later resolves it, because nothing later runs. That is the intended direction — a guard that cannot run must not report green — but it is a standing alert rather than a transient one, and the repair is to stop configuring the destination rather than to make the guard pass.
 
 **Do not "fix" a quiet notifier by hardcoding a destination.** The job is gated on `vars.ALERT_WEBHOOK_URL` being non-empty and the `Authorization` header is omitted entirely when `secrets.ALERT_WEBHOOK_TOKEN` is unset, so a fork with neither configured sends nothing at all: no request, no error, no retry. That silence is the half worth having. The gate is on the variable rather than the secret because it has to be — `secrets` is not available in an `if:` at any level while `vars` is, so a job cannot ask whether a secret exists.
 

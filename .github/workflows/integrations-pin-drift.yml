@@ -158,7 +158,8 @@ jobs:
             if [ "$count" = 1 ]; then
               printf '%s is shipped on main and not declared\n' "$missing" > finding/detail
             else
-              printf '%s shipped on main are not declared\n' "$count" > finding/detail
+              printf '%s integrations shipped on main are not declared\n' \
+                "$count" > finding/detail
             fi
             echo "::error::withmarfa/integrations marks these shippedByMarfa on main and packages/server/installed-integrations.txt does not declare them:"
             echo "$missing" | sed 's/^/  /'

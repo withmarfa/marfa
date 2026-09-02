@@ -167,6 +167,18 @@ jobs:
       # and `if: always()` is what carries a finding out of a job that failed.
       # The default verdict is `inconclusive` rather than `current`, so a step
       # that died before reaching a verdict cannot resolve an open alert.
+      #
+      # **`finding/` must not survive between runs, and on this job that is
+      # not free.** Unlike its sibling guard, `drift` can be routed onto the
+      # self-hosted pool through `CI_RUNNER`, where the workspace is reused
+      # rather than being a fresh container. A `finding/verdict` left saying
+      # `current` by yesterday's clean run would then be read by a run whose
+      # comparison died early, and would resolve an open alert on evidence
+      # from a different day. Nothing here clears it: `actions/checkout`
+      # does, through its `clean` input, which defaults to true and removes
+      # untracked files before fetching. That default is load-bearing, so do
+      # not set `clean: false` on the checkout above without giving this
+      # directory somewhere per-run to live.
       - id: finding
         if: always()
         name: Publish the finding

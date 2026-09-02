@@ -128,6 +128,13 @@ describe.each(GUARDS)("$file", ({ file, checkJob }) => {
     expect(emitter, `no step with id ${emitterId}`).toBeDefined();
     expect(emitter?.if).toBe("always()");
     expect(emitter?.run ?? "").toContain("GITHUB_OUTPUT");
+
+    // The default verdict, which is the whole of the property above. Flip
+    // this one word to `current` and every prematurely-dead step resolves
+    // the open alert instead of reporting inconclusive — with no error
+    // anywhere, and with the rest of this file still green.
+    expect(emitter?.run ?? "").toMatch(/or "inconclusive"/);
+    expect(emitter?.run ?? "").not.toMatch(/or "current"/);
   });
 
   it("reads the finding rather than the job's result", () => {
