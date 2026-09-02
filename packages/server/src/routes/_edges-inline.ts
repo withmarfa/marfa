@@ -5,6 +5,15 @@ import {
   type EdgeProposal,
 } from "../storage/edge-constraints.js";
 import type { Storage } from "../storage/interface.js";
+import type { Edge } from "@withmarfa/shared";
+import { publishEdge } from "../pubsub.js";
+
+/** What one `applyInlineEdges` call changed, for the caller to announce
+ *  once its transaction has committed. */
+export interface InlineEdgeChanges {
+  created: Edge[];
+  deleted: Edge[];
+}
 
 /**
  * Replace the outbound edges of `itemId` for the listed edge types,
@@ -13,8 +22,8 @@ import type { Storage } from "../storage/interface.js";
  * then one edge per target is created. Edge types not listed in `edges`
  * are left untouched.
  *
- * Used by `/items/bulk` upsert and the natural-key upsert short-circuit
- * on `POST /items`. The proposed (post-delete) edge set is validated
+ * Used by every door that writes an item's edges inline. The proposed
+ * (post-delete) edge set is validated
  * through the same `assertEdgesCanBeCreated` checks the create path uses
  * — cardinality, type constraints, exact-duplicate, and the load-bearing
  * cycle check (`parent-of` / `supersedes`). Without it the upsert path
@@ -24,10 +33,17 @@ import type { Storage } from "../storage/interface.js";
  *
  * The delete + create are not transactional on their own — the caller
  * MUST invoke this inside a `storage.runInTransaction` so a validation
- * failure rolls the deletes back. All three call sites do (the natural-key
- * short-circuit and both bulk branches). Validation runs after the deletes
+ * failure rolls the deletes back. Every caller does. Validation runs after the deletes
  * but before any create, so a rejected set never lands a write; the
  * transaction unwinds the deletes.
+ *
+ * **Returns what it changed and announces nothing.** This runs inside the
+ * caller's transaction, so a publish from here describes a graph that may
+ * still be rolled back — an atomic bulk batch whose later item fails would
+ * leave subscribers an `edge.created` with no row behind it. The caller
+ * owns the announcement because only the caller knows when its transaction
+ * committed; `announceInlineEdges` below is the one place that knows the
+ * shape.
  *
  * `assertEdgeWritable` is the caller's edge-type permission gate, run once
  * per listed edge type. It lives here rather than at each call site because
@@ -48,7 +64,7 @@ export async function applyInlineEdges(
   edges: Record<string, string[]>,
   spaceId: string | undefined,
   assertEdgeWritable: (edgeType: string) => void,
-): Promise<void> {
+): Promise<InlineEdgeChanges> {
   // Permission first, before any shape validation or write. A caller with
   // no edge permission must not be able to distinguish a malformed target
   // from a well-formed one it still may not write.
@@ -85,8 +101,11 @@ export async function applyInlineEdges(
   // Delete first so cardinality / duplicate checks see the post-delete
   // graph: replacing this item's edges of a type must not collide with
   // the very edges being replaced.
+  const removed: Edge[] = [];
   for (const edgeType of Object.keys(edges)) {
-    await storage.edges.deleteBySource(itemId, edgeType, spaceId);
+    removed.push(
+      ...(await storage.edges.deleteBySource(itemId, edgeType, spaceId)),
+    );
   }
 
   // Validate the full proposed set against the post-delete state. Throws
@@ -96,14 +115,44 @@ export async function applyInlineEdges(
     space_id: spaceId,
   });
 
+  const created: Edge[] = [];
   for (const p of proposals) {
-    await storage.edges.createRaw(
-      {
-        source_id: p.source_id,
-        target_id: p.target_id,
-        edge_type: p.edge_type,
-      },
-      spaceId,
+    created.push(
+      await storage.edges.createRaw(
+        {
+          source_id: p.source_id,
+          target_id: p.target_id,
+          edge_type: p.edge_type,
+        },
+        spaceId,
+      ),
     );
+  }
+
+  return { created, deleted: removed };
+}
+
+/**
+ * Announce a completed inline-edge change.
+ *
+ * Deletions before creations, so a subscriber replaying a replacement in
+ * order never briefly holds both the old edge and the new one. Call this
+ * **after** the transaction commits, and after the item event, so an edge
+ * always arrives behind the item it belongs to — the ordering
+ * `POST /items` already states.
+ *
+ * One function rather than a publish per call site: six doors reach
+ * `applyInlineEdges`, and a rule spread across six of them is a rule one
+ * of them will be missing.
+ */
+export async function announceInlineEdges(
+  changes: InlineEdgeChanges,
+  spaceId: string | undefined,
+): Promise<void> {
+  for (const edge of changes.deleted) {
+    await publishEdge({ type: "edge_deleted", edge, spaceId });
+  }
+  for (const edge of changes.created) {
+    await publishEdge({ type: "edge_created", edge, spaceId });
   }
 }

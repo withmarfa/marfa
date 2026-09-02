@@ -2118,16 +2118,28 @@ export interface EdgeStore {
    * self-host).
    */
   delete(id: string, spaceId?: string): Promise<void>;
+  /**
+   * Delete every outbound edge of `sourceId`, optionally narrowed to one
+   * edge type, and return the rows that went.
+   *
+   * **The rows are the point, not a convenience.** A subscriber told an
+   * edge was deleted needs to know which one, and the caller cannot read
+   * them afterwards — they are gone. Reading them first instead would be
+   * a second query racing the delete, and would silently under-report
+   * past the list cap. Returning them from the statement that removes
+   * them is the only shape with neither problem.
+   */
   deleteBySource(
     sourceId: string,
     edgeType?: string,
     spaceId?: string,
-  ): Promise<void>;
+  ): Promise<Edge[]>;
+  /** Mirror of `deleteBySource` for inbound edges. */
   deleteByTarget(
     targetId: string,
     edgeType?: string,
     spaceId?: string,
-  ): Promise<void>;
+  ): Promise<Edge[]>;
   /**
    * Batched `deleteBySource` — drop every edge whose `source_id` is in
    * `sourceIds`, optionally filtered by `edge_type`. Single SQL DELETE per
@@ -2136,9 +2148,17 @@ export interface EdgeStore {
    * bulk-action purge worker so 100 items' worth of outbound edges drop
    * in one statement instead of 100.
    */
-  deleteBySourceBatch(sourceIds: string[], edgeType?: string): Promise<number>;
+  deleteBySourceBatch(
+    sourceIds: string[],
+    edgeType?: string,
+    spaceId?: string,
+  ): Promise<Edge[]>;
   /** Mirror of `deleteBySourceBatch` for inbound edges. */
-  deleteByTargetBatch(targetIds: string[], edgeType?: string): Promise<number>;
+  deleteByTargetBatch(
+    targetIds: string[],
+    edgeType?: string,
+    spaceId?: string,
+  ): Promise<Edge[]>;
   /**
    * Count edges where the given item is source. Used for cardinality checks.
    * When `spaceId` is supplied the count is fenced to that space so a

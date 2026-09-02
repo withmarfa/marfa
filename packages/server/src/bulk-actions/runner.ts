@@ -14,7 +14,9 @@
  */
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { Storage } from "../storage/interface.js";
+import type { Edge, Item } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
+import { publish, publishEdge } from "../pubsub.js";
 
 export interface ChunkOutcome {
   succeeded: string[];
@@ -69,27 +71,46 @@ async function runTransitionChunk({
     throw new Error("runTransitionChunk: wrong action");
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
+  // Collected inside the transaction and published after it commits, so a
+  // subscriber is never told about a row a rollback then took away.
+  const moved: Item[] = [];
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        await storage.items.transition(id, input.state, spaceId ?? undefined);
+        moved.push(
+          await storage.items.transition(id, input.state, spaceId ?? undefined),
+        );
         succeeded.push(id);
       } catch (err) {
         errors.push(toErrorEntry(id, err));
       }
     }
   });
+  if (input.emit_events ?? false) {
+    for (const item of moved) {
+      await publish({
+        type: "state_changed",
+        item,
+        ...(spaceId != null && { spaceId }),
+      });
+    }
+  }
   return { succeeded, errors };
 }
 
 async function runPurgeChunk({
   storage,
   spaceId,
+  input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
   const blob_hashes = new Set<string>();
+  // Collected inside the transaction and announced after it, so a publish
+  // that fails cannot turn a committed purge into an all-errored chunk —
+  // and nothing is announced that a rollback took away.
+  const cascaded: Edge[] = [];
   await storage.runInTransaction(async () => {
     // Trashed included: purge is the terminal step after a soft delete, so
     // every id it is handed is trashed. Excluding them left this map empty,
@@ -102,11 +123,22 @@ async function runPurgeChunk({
     for (const item of items.values()) {
       collectBlobHashes(item.properties, blob_hashes);
     }
-    // One DELETE per direction + one DELETE on items = 3 statements instead
-    // of 3 × ids.length.
+    // One DELETE per direction + one DELETE on items = 3 statements
+    // instead of 3 × ids.length. The two edge deletes return the rows
+    // they removed, which is what the announcement below names.
     try {
-      await storage.edges.deleteBySourceBatch(ids);
-      await storage.edges.deleteByTargetBatch(ids);
+      cascaded.push(
+        ...(await storage.edges.deleteBySourceBatch(
+          ids,
+          undefined,
+          spaceId ?? undefined,
+        )),
+        ...(await storage.edges.deleteByTargetBatch(
+          ids,
+          undefined,
+          spaceId ?? undefined,
+        )),
+      );
       const purged = await storage.items.bulkPurge(ids, spaceId ?? undefined);
       // Ids in `items` were in-scope and purged; ids absent from the map
       // weren't found in the space and surface as not-found errors.
@@ -123,12 +155,47 @@ async function runPurgeChunk({
       }
       void purged;
     } catch (err) {
+      // The chunk did not complete, so nothing it staged may be
+      // announced.
+      //
+      // Unreachable as the code stands, and kept anyway: both deletes are
+      // arguments to ONE `push`, so a throw from the second means the
+      // push never runs and `cascaded` is still empty. Split that into
+      // two statements — an ordinary-looking tidy-up — and the first
+      // delete's rows are staged while the chunk reports every id as
+      // errored. This line and the gate below are what make that
+      // refactor safe rather than silent.
+      cascaded.length = 0;
       const entry = toErrorEntry("", err);
       for (const id of ids) {
         errors.push({ id, code: entry.code, message: entry.message });
       }
     }
   });
+  // Outside the transaction and outside the try, so a transient publish
+  // failure cannot be recorded as a per-item error on a purge that
+  // completed — and gated on the chunk having no errors, so a chunk that
+  // failed announces nothing. See the `catch` above for why that gate
+  // cannot fire today and is kept regardless.
+  //
+  // **Edges only. A purge publishes no item event**, on this door or the
+  // single-item one: there is no purge event in the contract, and the
+  // trash transition that precedes a purge already announced the item.
+  // Inventing one here would make a bulk purge noisier than the door it
+  // mirrors.
+  //
+  // An edge pointing AT one of these items lives on an item that is NOT
+  // being purged, so nothing else tells its holder the relationship is
+  // gone — which is why the cascade is announced per edge.
+  if ((input.emit_events ?? false) && errors.length === 0) {
+    for (const edge of cascaded) {
+      await publishEdge({
+        type: "edge_deleted",
+        edge,
+        ...(spaceId != null && { spaceId }),
+      });
+    }
+  }
   return { succeeded, errors, blob_hashes };
 }
 

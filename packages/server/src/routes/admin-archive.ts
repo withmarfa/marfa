@@ -24,6 +24,8 @@ import { Readable } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
+import { publishEdge } from "../pubsub.js";
+import type { Edge } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
@@ -525,6 +527,8 @@ export function adminArchiveRoutes(
       restoreSpaceId,
     );
 
+    // Filled inside the transaction, announced after it commits.
+    const restoredEdges: Edge[] = [];
     let result;
     try {
       result = await storage.runInTransaction(async () => {
@@ -654,7 +658,7 @@ export function adminArchiveRoutes(
             }
             throw err;
           }
-          await storage.edges.createRaw(
+          const restored = await storage.edges.createRaw(
             {
               ...(edgeId !== undefined && { id: edgeId }),
               source_id: sourceId,
@@ -664,6 +668,11 @@ export function adminArchiveRoutes(
             },
             spaceId,
           );
+          // Collected, not announced. This runs inside the restore's
+          // transaction, and a later edge failing rolls the whole import
+          // back — including the `event_log` append, so a replay cannot
+          // repair a frame a live subscriber already received.
+          restoredEdges.push(restored);
           edgesImported++;
         }
 
@@ -682,6 +691,14 @@ export function adminArchiveRoutes(
       // permanently larger.
       await blobs.undo();
       throw err;
+    }
+
+    // After the transaction committed. A restore is a write like any
+    // other from a subscriber's side: a client connected while an archive
+    // is restored would otherwise receive the items and none of the graph
+    // between them, and nothing later repairs it.
+    for (const edge of restoredEdges) {
+      await publishEdge({ type: "edge_created", edge, spaceId });
     }
 
     await storage.audit.log({

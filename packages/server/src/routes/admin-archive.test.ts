@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { createGzip } from "node:zlib";
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import * as tar from "tar-stream";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  collectEdgeEvents,
+  settle,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 
@@ -20,6 +25,9 @@ async function buildArchive(
   manifest: Record<string, unknown>,
   ndjsonLines: string[],
   blobs: { hash: string; data: Buffer }[],
+  /** Lines for `edges.ndjson`. Omitted entirely when empty, so an archive
+   *  without edges keeps the shape every existing case builds. */
+  edgeLines: string[] = [],
 ): Promise<Buffer> {
   const pack = tar.pack();
   const chunks: Buffer[] = [];
@@ -34,6 +42,11 @@ async function buildArchive(
 
   const ndjsonBuf = Buffer.from(ndjsonLines.join("\n") + "\n");
   pack.entry({ name: "items.ndjson", size: ndjsonBuf.length }, ndjsonBuf);
+
+  if (edgeLines.length > 0) {
+    const edgesBuf = Buffer.from(edgeLines.join("\n") + "\n");
+    pack.entry({ name: "edges.ndjson", size: edgesBuf.length }, edgesBuf);
+  }
 
   for (const blob of blobs) {
     pack.entry(
@@ -359,5 +372,201 @@ describe("POST /admin/restore-archive — quota", () => {
     for (const blob of blobs) {
       expect(await ctx.blobBackend.exists(blob.hash)).toBe(false);
     }
+  });
+});
+
+describe("POST /admin/restore-archive — the edges it writes", () => {
+  /**
+   * A restore is a write like any other from a subscriber's side. A client
+   * connected while an archive is restored would otherwise receive the
+   * items and none of the graph between them, and nothing later repairs
+   * it: the edges already exist server-side, so no re-sync rewrites them.
+   */
+  it("announces each restored edge", async () => {
+    const source = `archive-edges-${Math.random().toString(36).slice(2, 8)}`;
+    const sourceId = "019537a0-7b80-7000-8000-0000000000e1";
+    const targetId = "019537a0-7b80-7000-8000-0000000000e2";
+    const edgeId = "019537a0-7b80-7000-8000-0000000000e3";
+
+    const archive = await buildArchive(
+      {
+        version: 1,
+        format: "marfa-archive-v1",
+        created_at: new Date().toISOString(),
+        item_count: 2,
+        blob_count: 0,
+        blobs: {},
+      },
+      [
+        JSON.stringify({
+          item: {
+            id: sourceId,
+            type: "core.note",
+            properties: { body: "archived source" },
+            source,
+            source_id: "ae-1",
+          },
+        }),
+        JSON.stringify({
+          item: {
+            id: targetId,
+            type: "core.note",
+            properties: { body: "archived target" },
+            source,
+            source_id: "ae-2",
+          },
+        }),
+      ],
+      [],
+      [
+        JSON.stringify({
+          edge: {
+            id: edgeId,
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: "references",
+            properties: {},
+          },
+        }),
+      ],
+    );
+
+    const controller = new AbortController();
+    const { events, done } = collectEdgeEvents(controller.signal);
+    await settle();
+
+    const res = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: new Uint8Array(archive),
+    });
+    expect(res.status).toBe(200);
+    await settle();
+    controller.abort();
+    await done;
+
+    expect(
+      events.filter((e) => e.type === "edge_created" && e.edge.id === edgeId),
+    ).toHaveLength(1);
+  });
+
+  it("announces nothing when a later edge rolls the restore back", async () => {
+    // The restore runs in one transaction. Announcing from inside it sent
+    // `edge.created` for edges a later failure then undid — and the
+    // `event_log` append rolls back with them, so a replay cannot repair
+    // what a live subscriber already received.
+    const source = `archive-rollback-${Math.random().toString(36).slice(2, 8)}`;
+    const sourceId = "019537a0-7b80-7000-8000-0000000000f1";
+    const targetId = "019537a0-7b80-7000-8000-0000000000f2";
+    const goodEdgeId = "019537a0-7b80-7000-8000-0000000000f3";
+
+    const archive = await buildArchive(
+      {
+        version: 1,
+        format: "marfa-archive-v1",
+        created_at: new Date().toISOString(),
+        item_count: 2,
+        blob_count: 0,
+        blobs: {},
+      },
+      [
+        JSON.stringify({
+          item: {
+            id: sourceId,
+            type: "core.note",
+            properties: { body: "rollback source" },
+            source,
+            source_id: "ar-1",
+          },
+        }),
+        JSON.stringify({
+          item: {
+            id: targetId,
+            type: "core.note",
+            properties: { body: "rollback target" },
+            source,
+            source_id: "ar-2",
+          },
+        }),
+      ],
+      [],
+      [
+        // Lands first.
+        JSON.stringify({
+          edge: {
+            id: goodEdgeId,
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: "references",
+            properties: {},
+          },
+        }),
+        // A second, valid edge. The failure is injected below rather
+        // than expressed in the archive, because this import skips every
+        // edge-shaped problem it can name — malformed, endpoint missing,
+        // already present, constraint violation — and carries on. Only a
+        // failure it cannot classify aborts the transaction, and that is
+        // an infrastructure error, which is what the stub simulates.
+        JSON.stringify({
+          edge: {
+            id: "019537a0-7b80-7000-8000-0000000000f4",
+            source_id: targetId,
+            target_id: sourceId,
+            edge_type: "references",
+            properties: {},
+          },
+        }),
+      ],
+    );
+
+    const controller = new AbortController();
+    const { events, done } = collectEdgeEvents(controller.signal);
+    await settle();
+
+    // The first edge lands, the second fails the way an infrastructure
+    // error would. Everything before it is already written.
+    const store = ctx.storage.edges;
+    const realCreate = store.createRaw.bind(store);
+    let creates = 0;
+    store.createRaw = async (input, space) => {
+      creates += 1;
+      if (creates === 2) throw new Error("simulated storage failure");
+      return realCreate(input, space);
+    };
+    let res: Response;
+    try {
+      res = await ctx.app.request("/admin/restore-archive", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: new Uint8Array(archive),
+      });
+    } finally {
+      store.createRaw = realCreate;
+    }
+    // The stub was reached, so the test is about the rollback rather than
+    // about an import that never got that far.
+    expect(creates).toBe(2);
+    await settle();
+    controller.abort();
+    await done;
+
+    // Either the import refused the batch or it skipped the bad edge; the
+    // assertion below holds only in the first case, so the test states
+    // which it is rather than passing on either.
+    expect(res.status).not.toBe(200);
+    expect(
+      events.filter(
+        (e) => e.type === "edge_created" && e.edge.id === goodEdgeId,
+      ),
+    ).toHaveLength(0);
+    // And the edge really is absent, so this is a rollback rather than a
+    // late event.
+    expect(await ctx.storage.edges.get(goodEdgeId)).toBeNull();
   });
 });

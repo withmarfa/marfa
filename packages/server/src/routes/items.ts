@@ -52,7 +52,7 @@ import { reserveQuota } from "../middleware/quota.js";
 import type { Storage, ItemSortField } from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
-import { publish } from "../pubsub.js";
+import { publish, publishEdge } from "../pubsub.js";
 import {
   hydrateEdgesForItem,
   hydrateEdgesForItems,
@@ -60,7 +60,8 @@ import {
   groupAndCap,
   HYDRATE_PER_TYPE_CAP,
 } from "./_edges-hydrate.js";
-import { applyInlineEdges } from "./_edges-inline.js";
+import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
+import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
 import {
@@ -1525,46 +1526,49 @@ export function itemRoutes(storage: Storage) {
           }
         }
 
-        const { item: updatedItem, metadata: updatedMetadata } =
-          await storage.runInTransaction(async () => {
-            const updated = await storage.items.update(
-              existing.id,
-              {
-                ...(body.properties !== undefined && { properties }),
-                ...(tierValue !== undefined && { tier: tierValue }),
-                ...(body.timestamp !== undefined && {
-                  timestamp: body.timestamp,
-                }),
-                ...(nullClears ? { null_clears: true } : {}),
-                // Only on adoption (D63). An owner re-syncing its own row
-                // must not churn the column, and a row whose recorded
-                // writer is gone — or was never recorded — becomes this
-                // connection's on the write that adopts it, which is what
-                // makes the pre-column corpus converge without a backfill.
-                ...(ownership === "adopt" && {
-                  written_by_connection_id: writerConnectionOf(credential),
-                }),
-              },
-              spaceId,
+        const {
+          item: updatedItem,
+          metadata: updatedMetadata,
+          edgeChanges: updatedEdgeChanges,
+        } = await storage.runInTransaction(async () => {
+          const updated = await storage.items.update(
+            existing.id,
+            {
+              ...(body.properties !== undefined && { properties }),
+              ...(tierValue !== undefined && { tier: tierValue }),
+              ...(body.timestamp !== undefined && {
+                timestamp: body.timestamp,
+              }),
+              ...(nullClears ? { null_clears: true } : {}),
+              // Only on adoption (D63). An owner re-syncing its own row
+              // must not churn the column, and a row whose recorded
+              // writer is gone — or was never recorded — becomes this
+              // connection's on the write that adopts it, which is what
+              // makes the pre-column corpus converge without a backfill.
+              ...(ownership === "adopt" && {
+                written_by_connection_id: writerConnectionOf(credential),
+              }),
+            },
+            spaceId,
+          );
+          if ("error" in updated) {
+            // No version was supplied on a POST — `ItemStore.update` only
+            // returns ConflictResponse when a `version` is present in the
+            // input. The natural-key upsert path never sets `version`, so
+            // this branch should be unreachable. Surface defensively if it
+            // ever does.
+            throw new MarfaError(
+              ErrorCode.VERSION_CONFLICT,
+              "Natural-key upsert produced an unexpected version conflict",
+              { id: existing.id },
             );
-            if ("error" in updated) {
-              // No version was supplied on a POST — `ItemStore.update` only
-              // returns ConflictResponse when a `version` is present in the
-              // input. The natural-key upsert path never sets `version`, so
-              // this branch should be unreachable. Surface defensively if it
-              // ever does.
-              throw new MarfaError(
-                ErrorCode.VERSION_CONFLICT,
-                "Natural-key upsert produced an unexpected version conflict",
-                { id: existing.id },
-              );
-            }
+          }
 
-            if (Array.isArray(body.tags)) {
-              await storage.metadata.set(updated.id, body.tags);
-            }
-            if (body.edges) {
-              await applyInlineEdges(
+          if (Array.isArray(body.tags)) {
+            await storage.metadata.set(updated.id, body.tags);
+          }
+          const edgeChanges = body.edges
+            ? await applyInlineEdges(
                 storage,
                 updated.id,
                 body.edges,
@@ -1572,12 +1576,12 @@ export function itemRoutes(storage: Storage) {
                 (edgeType) => {
                   requireEdgePermission(c, edgeType, "write");
                 },
-              );
-            }
+              )
+            : undefined;
 
-            const meta = await storage.metadata.get(updated.id);
-            return { item: updated, metadata: meta };
-          });
+          const meta = await storage.metadata.get(updated.id);
+          return { item: updated, metadata: meta, edgeChanges };
+        });
 
         const hydratedExisting = await hydrateEdgesForItem(
           storage,
@@ -1591,6 +1595,14 @@ export function itemRoutes(storage: Storage) {
           metadata: updatedMetadata,
           spaceId,
         });
+        // After the item, and after the transaction that wrote both. A
+        // single-item door always announces: a subscriber cannot tell an
+        // edge written through an item from one written through
+        // `/edges`, so silence here would make propagation depend on
+        // which door the writer used.
+        if (updatedEdgeChanges) {
+          await announceInlineEdges(updatedEdgeChanges, spaceId);
+        }
         void storage.audit.log({
           client_ip: c.get("clientIp") ?? null,
           space_id: c.get("apiKey")?.space_id ?? null,
@@ -1825,6 +1837,12 @@ export function itemRoutes(storage: Storage) {
       metadata,
       spaceId,
     });
+    // The item's own edges, announced after the item itself so a
+    // subscriber that resolves an edge's endpoints has already been told
+    // the new one exists.
+    for (const edge of createdEdges) {
+      await publishEdge({ type: "edge_created", edge, spaceId });
+    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       space_id: c.get("apiKey")?.space_id ?? null,
@@ -1891,7 +1909,7 @@ export function itemRoutes(storage: Storage) {
     // derived-from is many-to-many with orphan cascade and the source is
     // a freshly minted node, so the raw write cannot violate cardinality
     // or create a cycle.
-    await storage.edges.createRaw(
+    const promotionEdge = await storage.edges.createRaw(
       {
         source_id: promoted.id,
         target_id: mirror.id,
@@ -1900,6 +1918,18 @@ export function itemRoutes(storage: Storage) {
       },
       spaceId,
     );
+    // The join back to the mirror is the whole point of a promotion, and
+    // this edge is the only thing announcing it: **this door publishes no
+    // item event for the promoted item**, so a subscriber learns of the
+    // promotion from the edge or not at all. That asymmetry is the
+    // route's, not this line's — adding an `item.created` here would be a
+    // new contract rather than a fix — but a reader who assumes an item
+    // event precedes this one will be wrong.
+    await publishEdge({
+      type: "edge_created",
+      edge: promotionEdge,
+      spaceId,
+    });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -2451,9 +2481,17 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // Shape-validate the edges payload up-front so the transaction path
-    // doesn't have to double-check. Permission gating also runs here
-    // (before any write) so a denied request doesn't touch state at all.
+    // Shape-validate and permission-gate the edges payload up-front.
+    //
+    // **Kept after the collapse onto `applyInlineEdges`, and not because
+    // it refuses earlier — the helper's permission gate and its id and
+    // self-edge refusals all run before its deletes, so nothing here
+    // saves a rollback.** Two things only this pass does: it is the only
+    // check that the value at an edge type is an array at all, which the
+    // helper assumes, and its refusals carry this door's own messages
+    // (`edges.<type> must be an array of item ids`), which callers read.
+    // Delete it and a non-array value reaches a `for` over a non-iterable
+    // instead of a 400.
     if (hasEdges && body.edges) {
       for (const [edgeType, targets] of Object.entries(body.edges)) {
         if (!Array.isArray(targets)) {
@@ -2552,6 +2590,9 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
+    // Declared outside the transaction so the announcement can happen
+    // after it commits. `undefined` when the request carried no edges.
+    let patchedEdgeChanges: InlineEdgeChanges | undefined;
     const txResult = await storage.runInTransaction(async () => {
       const updated =
         hasProperties || hasTier || hasTimestamp || hasSourceId
@@ -2589,37 +2630,27 @@ export function itemRoutes(storage: Storage) {
         return updated;
       }
 
-      // Replace-all per edge type: delete existing edges first so cardinality checks see post-delete state.
+      // Through the shared helper rather than a second copy of it.
+      //
+      // The copy here did the same work — the self-edge refusal and the
+      // empty-set case were both already covered, by the pre-validation
+      // above and by an empty list being a no-op respectively. What a
+      // second copy costs is not correctness today but every change
+      // after: adding edge events meant editing two places, and this is
+      // the one that would have been missed.
       if (hasEdges && body.edges) {
-        for (const edgeType of Object.keys(body.edges)) {
-          await storage.edges.deleteBySource(id, edgeType, tid);
-        }
-        const proposals = Object.entries(body.edges).flatMap(
-          ([edgeType, targets]) =>
-            targets.map((targetId) => ({
-              source_id: id,
-              target_id: targetId,
-              edge_type: edgeType,
-            })),
+        patchedEdgeChanges = await applyInlineEdges(
+          storage,
+          id,
+          body.edges,
+          tid,
+          // Already gated up-front, before any write. Passed again
+          // because the helper requires an answer rather than a default,
+          // and re-running an idempotent check costs nothing.
+          (edgeType) => {
+            requireEdgePermission(c, edgeType, "write");
+          },
         );
-        if (proposals.length > 0) {
-          await assertEdgesCanBeCreated(
-            storage.edges,
-            storage.items,
-            proposals,
-            { space_id: tid },
-          );
-          for (const p of proposals) {
-            await storage.edges.createRaw(
-              {
-                source_id: p.source_id,
-                target_id: p.target_id,
-                edge_type: p.edge_type,
-              },
-              tid,
-            );
-          }
-        }
       }
 
       return updated;
@@ -2636,6 +2667,11 @@ export function itemRoutes(storage: Storage) {
       metadata,
       spaceId: tid,
     });
+    // After the item, and after the transaction committed. Announcing
+    // from inside would describe edges a rollback then took away.
+    if (patchedEdgeChanges) {
+      await announceInlineEdges(patchedEdgeChanges, tid);
+    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       space_id: c.get("apiKey")?.space_id ?? null,
@@ -2996,9 +3032,18 @@ export function itemRoutes(storage: Storage) {
     // Edges have no FK to items — explicit cleanup required before purge.
     // Fence the edge cleanup to the caller's space so a space-scoped purge
     // never drops another space's edges.
-    await storage.edges.deleteBySource(id, undefined, spaceId);
-    await storage.edges.deleteByTarget(id, undefined, spaceId);
+    // Every edge the purge takes with it, announced individually. A
+    // subscriber holding a graph cannot infer these from the item's own
+    // removal: an edge pointing AT the purged item lives on another item,
+    // and nothing else tells that item's holder it lost a relationship.
+    const cascaded = [
+      ...(await storage.edges.deleteBySource(id, undefined, spaceId)),
+      ...(await storage.edges.deleteByTarget(id, undefined, spaceId)),
+    ];
     await storage.items.purge(id, spaceId);
+    for (const edge of cascaded) {
+      await publishEdge({ type: "edge_deleted", edge, spaceId });
+    }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       space_id: c.get("apiKey")?.space_id ?? null,
