@@ -63,6 +63,7 @@ import { buildPropertySortExpr, propertySortValue } from "../property-sort.js";
 import { detectConflict } from "../conflict.js";
 import { edges, items, metadata, versions } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { isPrimaryKeyViolation } from "./pk-violation.js";
 import type { SqliteVersionStore } from "./version-store.js";
 import type { SqliteSearchStore } from "./search-store.js";
 import { rowToItem } from "./helpers.js";
@@ -93,38 +94,6 @@ function isSourceDedupViolation(err: unknown): boolean {
     return true;
   }
   if (message.includes("idx_items_source_dedup")) return true;
-  return false;
-}
-
-/**
- * Detect a primary-key collision on `items.id`. Happens when a caller
- * supplies an explicit `id` that already exists. The space-scoped
- * pre-checks (`get(id, spaceId)`) miss the case where the id belongs to
- * ANOTHER space — the PK is `id` alone, not `(space_id, id)`, so the
- * insert trips the constraint. Surface it as a clean `CONFLICT` (409)
- * instead of an opaque 500. Drizzle wraps the libsql error: the outer
- * Error carries a "Failed query" message with `code: undefined`, while the
- * `cause` carries `SQLITE_CONSTRAINT` + the offending column (`items.id`)
- * in its message. Inspect both. The source-dedup index has its own trap.
- */
-function isPrimaryKeyViolation(err: unknown): boolean {
-  const cause =
-    err != null && typeof err === "object"
-      ? (err as { cause?: unknown }).cause
-      : undefined;
-  for (const layer of [err, cause]) {
-    if (layer == null || typeof layer !== "object") continue;
-    const e = layer as { code?: unknown; message?: unknown };
-    const code = typeof e.code === "string" ? e.code : "";
-    const message = typeof e.message === "string" ? e.message : "";
-    if (message.includes("idx_items_source_dedup")) return false;
-    if (
-      code.includes("SQLITE_CONSTRAINT") &&
-      (message.includes("items.id") || message.includes("PRIMARY KEY"))
-    ) {
-      return true;
-    }
-  }
   return false;
 }
 
@@ -297,7 +266,7 @@ export class SqliteItemStore implements ItemStore {
           })
           .run();
       } catch (err) {
-        if (isPrimaryKeyViolation(err)) {
+        if (isPrimaryKeyViolation(err, "items")) {
           throw new MarfaError(
             ErrorCode.CONFLICT,
             `Item with id=${id} already exists`,

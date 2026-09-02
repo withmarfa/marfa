@@ -13,9 +13,13 @@
  * device actually is.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { subscribeEdges, wireEventName } from "../pubsub.js";
-import type { EdgeEventWithId } from "../pubsub.js";
-import { createTestContext, request } from "../test-utils.js";
+import { wireEventName } from "../pubsub.js";
+import {
+  createTestContext,
+  request,
+  collectEdgeEvents,
+  settle,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -64,35 +68,6 @@ async function seedEdge(): Promise<SeededEdge> {
     source_id: ids[0]!,
     target_id: ids[1]!,
   };
-}
-
-/**
- * Collect edge events until `wanted` arrives or the abort fires.
- *
- * The generator is started and its first `next()` awaited before the write,
- * so the subscription is genuinely attached rather than racing it — a
- * listener registered after the publish hears nothing and the test would
- * pass or fail on scheduling.
- */
-function collectEdgeEvents(signal: AbortSignal): {
-  events: EdgeEventWithId[];
-  done: Promise<void>;
-} {
-  const events: EdgeEventWithId[] = [];
-  const done = (async () => {
-    try {
-      for await (const event of subscribeEdges({ signal })) {
-        events.push(event);
-      }
-    } catch {
-      // The abort ends the generator; nothing to report.
-    }
-  })();
-  return { events, done };
-}
-
-async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 describe("edge.updated", () => {

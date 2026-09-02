@@ -86,37 +86,7 @@ function isSourceDedupViolation(err: unknown): boolean {
   return false;
 }
 
-/**
- * Detect a primary-key collision on `items.id`. Happens when a caller
- * supplies an explicit `id` that already exists in ANOTHER space — the
- * space-scoped pre-checks miss it because the PK is `id` alone, not
- * `(space_id, id)`. Surface it as a clean `CONFLICT` (409) instead of an
- * opaque 500. PG raises `23505` against the items pkey constraint
- * (`items_pkey`); the source-dedup index has its own trap above.
- */
-function isPrimaryKeyViolation(err: unknown): boolean {
-  const cause =
-    err != null && typeof err === "object"
-      ? (err as { cause?: unknown }).cause
-      : undefined;
-  for (const layer of [err, cause]) {
-    if (layer == null || typeof layer !== "object") continue;
-    const e = layer as {
-      code?: unknown;
-      constraint_name?: unknown;
-      message?: unknown;
-    };
-    const code = typeof e.code === "string" ? e.code : "";
-    const constraint =
-      typeof e.constraint_name === "string" ? e.constraint_name : "";
-    const message = typeof e.message === "string" ? e.message : "";
-    if (constraint === "idx_items_source_dedup") return false;
-    if (message.includes("idx_items_source_dedup")) return false;
-    if (code === "23505" && constraint === "items_pkey") return true;
-    if (code === "23505" && message.includes("items_pkey")) return true;
-  }
-  return false;
-}
+import { isPrimaryKeyViolation } from "./pk-violation.js";
 import { detectConflict } from "../conflict.js";
 // When an items.* method opens a transaction and subsequently calls
 // searchStore.{index,remove}, the searchStore writes need to flow through
@@ -301,7 +271,7 @@ export class PgItemStore implements ItemStore {
             ...instantColumnValues(properties),
           });
         } catch (err) {
-          if (isPrimaryKeyViolation(err)) {
+          if (isPrimaryKeyViolation(err, "items")) {
             throw new MarfaError(
               ErrorCode.CONFLICT,
               `Item with id=${id} already exists`,

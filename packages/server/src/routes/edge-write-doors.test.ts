@@ -21,6 +21,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
+import { generateId } from "@withmarfa/shared";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -266,5 +267,107 @@ describe.each(DOORS)("$name", (door) => {
     // The gate must not have become a blanket refusal — a fix that denies
     // everyone passes both tests above and breaks every legitimate caller.
     expect(res.status).toBeLessThan(400);
+  });
+});
+
+describe("the two doors that accept a client-supplied edge id", () => {
+  /**
+   * Agreement, like every other property in this file. `POST /edges` and
+   * `POST /edges/bulk` both declare an `id` and both write it to the same
+   * column, so an id shape one accepts and the other refuses is a rule
+   * that depends on which door the writer happened to use.
+   *
+   * The bulk door is the one that had it wrong: it declared the field
+   * first and stored whatever arrived. Nothing downstream objected —
+   * `PATCH` and `DELETE /edges/{id}` address any string — so the row was
+   * usable and the identifier was not.
+   */
+  it("refuse a malformed id the same way", async () => {
+    const source = await note();
+    const target = await note();
+    const malformed = "not-an-identifier";
+
+    const single = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        id: malformed,
+        source_id: source,
+        target_id: target,
+        edge_type: "about",
+      },
+    });
+    expect(single.status).toBe(400);
+    expect(
+      ((await single.json()) as { error: { code: string } }).error.code,
+    ).toBe("invalid_id");
+
+    const bulk = await request(ctx.app, "POST", "/edges/bulk", {
+      key: ctx.adminKey,
+      body: {
+        atomic: false,
+        edges: [
+          {
+            id: malformed,
+            source_id: source,
+            target_id: target,
+            edge_type: "about",
+          },
+        ],
+      },
+    });
+    const bulkBody = (await bulk.json()) as {
+      results: { outcome: string; error?: { code: string } }[];
+    };
+    // Bulk reports per entry rather than refusing the request, which is
+    // its contract for every other check. The code is what has to match.
+    expect(bulkBody.results[0]?.outcome).toBe("errored");
+    expect(bulkBody.results[0]?.error?.code).toBe("invalid_id");
+
+    // Neither door wrote anything.
+    expect(await edgeCount(source)).toBe(0);
+  });
+
+  it("accept a well-formed id the same way", async () => {
+    // The agreement has to hold in both directions, or "they agree" is
+    // satisfied by a door that refuses everything.
+    const singleSource = await note();
+    const singleTarget = await note();
+    const singleId = generateId();
+    const single = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        id: singleId,
+        source_id: singleSource,
+        target_id: singleTarget,
+        edge_type: "about",
+      },
+    });
+    expect(single.status).toBe(201);
+    expect(((await single.json()) as { edge: { id: string } }).edge.id).toBe(
+      singleId,
+    );
+
+    const bulkSource = await note();
+    const bulkTarget = await note();
+    const bulkId = generateId();
+    const bulk = await request(ctx.app, "POST", "/edges/bulk", {
+      key: ctx.adminKey,
+      body: {
+        atomic: false,
+        edges: [
+          {
+            id: bulkId,
+            source_id: bulkSource,
+            target_id: bulkTarget,
+            edge_type: "about",
+          },
+        ],
+      },
+    });
+    const bulkBody = (await bulk.json()) as {
+      results: { outcome: string; id?: string }[];
+    };
+    expect(bulkBody.results[0]?.outcome).toBe("created");
+    expect(bulkBody.results[0]?.id).toBe(bulkId);
   });
 });
