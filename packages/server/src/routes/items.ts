@@ -18,7 +18,13 @@ import {
   isTypeInStrictMode,
   getSourceAllowlist,
 } from "@withmarfa/shared";
-import type { Edge, Item, ItemState, Metadata } from "@withmarfa/shared";
+import type {
+  ApiKey,
+  Edge,
+  Item,
+  ItemState,
+  Metadata,
+} from "@withmarfa/shared";
 import {
   mergeUpdateProperties,
   resolveIncomingProperties,
@@ -133,7 +139,7 @@ const createItemRoute = createRoute({
   tags: ["Items"],
   summary: "Create an item",
   description:
-    "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201.",
+    "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -167,15 +173,22 @@ const createItemRoute = createRoute({
         "application/json": { schema: ItemWithMetadataSchema },
       },
       description:
-        "Item updated via natural-key upsert. Returned when both `source` " +
-        "(stamped from the credential) and request `source_id` resolve an " +
-        "item in the caller's space — the request is treated as an " +
-        "idempotent re-sync of the upstream entry. When the resolved item " +
-        "has been trashed the response carries `acknowledged: true` and " +
-        "nothing is written: the deletion stands, and the re-sync is " +
-        "accepted rather than refused forever. The resolved item's `type` " +
-        "decides the shape written, so a request naming a different one " +
-        "is refused with 409 `type_mismatch` rather than reinterpreted.",
+        "The request resolved an item that already exists, by one of two " +
+        "keys, and there are three answers. **Natural-key upsert:** both " +
+        "`source` (stamped from the credential) and request `source_id` " +
+        "resolve a live item in the caller's space, and it is updated in " +
+        "place — an idempotent re-sync of the upstream entry. " +
+        "**Acknowledged re-sync:** the same natural key resolves an item " +
+        "the user has trashed, so the response carries `acknowledged: true` " +
+        "and nothing is written; the deletion stands rather than the " +
+        "re-sync being refused forever. **Acknowledged repeat:** the " +
+        "request carries an `id` the caller already created, so the create " +
+        "is a second arrival of that client's own write; the stored row " +
+        "comes back with `acknowledged: true`, in whatever state it holds " +
+        "including trashed, and nothing is written or published. On every " +
+        "one of the three the resolved item's `type` decides the shape, so " +
+        "a request naming a different one is refused with 409 " +
+        "`type_mismatch` rather than reinterpreted.",
     },
     201: {
       content: {
@@ -224,15 +237,20 @@ const createItemRoute = createRoute({
       content: {
         "application/json": {
           schema: makeErrorResponseSchema([
+            "conflict",
             "type_mismatch",
             "provenance_collision",
           ]),
         },
       },
       description:
-        "The `(source, source_id)` natural key resolved an existing item " +
-        "whose type is not the one declared. Re-typing an item is a " +
-        "deliberate operation, not something a re-sync does in passing.",
+        "`type_mismatch`: the request resolved an existing item — by the " +
+        "`(source, source_id)` natural key or by a repeated `id` — whose " +
+        "type is not the one declared. Re-typing an item is a deliberate " +
+        "operation, not something a re-sync does in passing. `conflict`: " +
+        "the `id` is held by an item in a space this caller cannot see, so " +
+        "it is somebody else's row rather than a repeat of this caller's " +
+        "own create.",
     },
   },
 });
@@ -1029,6 +1047,38 @@ const purgeItemRoute = createRoute({
   },
 });
 
+/**
+ * The body of an acknowledged re-send: the row as it already stands.
+ *
+ * Two doors reach this, and they are the same answer to the same
+ * question — a create the server has already performed, arriving again.
+ * One resolves the row by `(source, source_id)` after the user trashed
+ * it; the other resolves it by an `id` the caller minted and is sending
+ * a second time because it never learned the first attempt landed.
+ * Neither writes, and neither publishes.
+ *
+ * Shared rather than written twice because the disclosure rules are the
+ * subtle part: the metadata is filtered to the caller's own extension
+ * permissions, and the orphan state is resolved the way every other
+ * own-write response resolves it. A second copy is a second place for
+ * one of those to be forgotten.
+ */
+async function acknowledgedItemBody(
+  storage: Storage,
+  apiKey: ApiKey | undefined,
+  existing: Item,
+): Promise<{ item: Item; metadata: Metadata; acknowledged: true }> {
+  const metadata = await storage.metadata.get(existing.id);
+  return {
+    item: withOrphanState(
+      existing,
+      await resolveOrphanScopeForOwnWrite(storage, [existing], apiKey),
+    ),
+    metadata: filterMetadataForCaller(metadata, apiKey),
+    acknowledged: true,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -1316,25 +1366,26 @@ export function itemRoutes(storage: Storage) {
         //
         // Gate before disclosing, so a refusal cannot be read off the body.
         requireTypeAccess(c, existing.type, "write");
+        // **No attribution gate here, unlike the id acknowledgement, and
+        // the asymmetry is forced rather than chosen.**
+        // `permitsActivityAttribution` constrains exactly one type,
+        // `system.activity`, and `system.*` lifecycles are bounded to
+        // `active | revoked` — so no row this arm can resolve is one that
+        // gate would ever look at. Adding it for symmetry would read as a
+        // protection somebody is relying on while being unreachable.
+        //
+        // A write never re-types the row it lands on, and an
+        // acknowledgement is a write's answer. Without this the arm
+        // accepted a body naming any type at all, which is what made the
+        // route's own 409 description untrue of it.
+        requireDeclaredTypeMatches(type, existing);
         // Then D63: a twin's trashed row is not this connection's to be
         // acknowledged. Without this the branch answers 200 carrying the
         // row and its metadata, which reads as "your record is already
         // stored, and deleted" when it is somebody else's.
         await requireOwningConnection(storage, credential, existing);
-        const metadata = await storage.metadata.get(existing.id);
         return c.json(
-          {
-            item: withOrphanState(
-              existing,
-              await resolveOrphanScopeForOwnWrite(
-                storage,
-                [existing],
-                c.get("apiKey"),
-              ),
-            ),
-            metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
-            acknowledged: true,
-          },
+          await acknowledgedItemBody(storage, c.get("apiKey"), existing),
           200,
         );
       }
@@ -1571,8 +1622,102 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    const { item, metadata, createdEdges } = await storage.runInTransaction(
-      async () => {
+    // A create arriving a second time under an id the caller minted.
+    //
+    // A synced client names a row before the server has seen it, so when
+    // the response to its create is lost it retries with the same id.
+    // The server already holds that row: the second arrival is the
+    // client's own write, not a collision with somebody else's. Refusing
+    // it forever is what strands the item — the client reads 409 as
+    // transient, retries, and every later edit to that item queues behind
+    // it. So the contract answers success and hands back the row.
+    //
+    // **Both a pre-check and a catch, and each covers what the other
+    // cannot.** The pre-check has to exist because the write path is not
+    // reachable at every moment the acknowledgement is owed: the
+    // transaction reserves quota before it inserts, so a space at its
+    // item ceiling would answer a repeat with `quota_exceeded` for a row
+    // it already holds — the same permanent refusal in another code. The
+    // catch has to exist because the pre-check races: two sends of one id
+    // can both find nothing, and the loser of the insert still needs an
+    // answer other than 409.
+    //
+    // One comparison serves both, so the two paths cannot disagree about
+    // what a repeat is or which gates it passes.
+    const repeatedRow = async (): Promise<Item | null> => {
+      // Only a caller-minted id can be a repeat. A server-generated one
+      // colliding is not this caller's own write and has no business
+      // being answered with somebody's row.
+      const clientId = body.id;
+      if (clientId === undefined) return null;
+      // Including trashed, for the reason the natural-key branch is: a
+      // row the user has since deleted would otherwise refuse this retry
+      // forever, and the retry is not asking to revive it. The row comes
+      // back in whatever state it holds.
+      const existing = await storage.items.getIncludingTrashed(
+        clientId,
+        spaceId,
+      );
+      // Nothing visible means the id belongs to a space this caller
+      // cannot see. That is a genuine collision with somebody else's row
+      // and stays a conflict — the caller learns only that the id it
+      // chose is taken, which it already told us.
+      if (!existing) return null;
+
+      // **No type gate of its own here, and its absence is the honest
+      // shape.** `requireDeclaredTypeMatches` below is exact, so a row
+      // that is acknowledged has the type the body named — and that type
+      // already cleared `requireTypeAccess` at the top of this route. A
+      // second call could therefore never refuse, and a gate that cannot
+      // refuse reads as a protection somebody is relying on.
+      //
+      // The natural-key arms do carry one, and the difference is real:
+      // they resolve by `(source, source_id)`, which says nothing about
+      // the row's type, so the row can be a type the caller may not
+      // write.
+      //
+      // Attribution on the row as it stands, in the order the update arm
+      // runs it. An acknowledgement writes nothing, so there is no
+      // incoming value to judge — but it does hand the row back, and a
+      // sibling Connection's activity row is not this credential's to be
+      // shown.
+      requireActivityAttribution(
+        c.get("apiKey"),
+        existing.type,
+        existing.properties,
+      );
+      // A write never re-types the row it lands on, on any door. Shared
+      // with the natural-key branch and the bulk door rather than
+      // restated.
+      requireDeclaredTypeMatches(type, existing);
+      // D63 last, as the sibling branches order it: the gates above have
+      // narrower refusals that disclose less.
+      await requireOwningConnection(storage, credential, existing);
+      return existing;
+    };
+
+    /** Whether this error is the trap firing on the id this request sent. */
+    const isOwnIdCollision = (err: unknown): boolean =>
+      body.id !== undefined &&
+      err instanceof MarfaError &&
+      err.code === ErrorCode.CONFLICT &&
+      // `existing_id` is set by the store from the colliding row, so this
+      // equality cannot pick up a CONFLICT raised elsewhere in the
+      // transaction.
+      (err.details as { existing_id?: string } | undefined)?.existing_id ===
+        body.id;
+
+    const alreadyHeld = await repeatedRow();
+    if (alreadyHeld) {
+      return c.json(
+        await acknowledgedItemBody(storage, c.get("apiKey"), alreadyHeld),
+        200,
+      );
+    }
+
+    let writeResult;
+    try {
+      writeResult = await storage.runInTransaction(async () => {
         // The reservation is the first thing in this transaction and holds for
         // the rest of it, so the count it reads includes every create already
         // committed against this space's ceiling.
@@ -1647,8 +1792,19 @@ export function itemRoutes(storage: Storage) {
           },
           createdEdges,
         };
-      },
-    );
+      });
+    } catch (err) {
+      // The concurrency backstop. The row appeared between the pre-check
+      // and the insert, which is the one case the pre-check cannot cover.
+      if (!isOwnIdCollision(err)) throw err;
+      const raced = await repeatedRow();
+      if (!raced) throw err;
+      return c.json(
+        await acknowledgedItemBody(storage, c.get("apiKey"), raced),
+        200,
+      );
+    }
+    const { item, metadata, createdEdges } = writeResult;
 
     // Sorted to the store's exact read order (created_at DESC, id DESC)
     // before grouping: groupAndCap's cap and cursor logic assume it, and

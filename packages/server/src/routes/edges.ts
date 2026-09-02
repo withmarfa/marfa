@@ -1,5 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError, isValidId } from "@withmarfa/shared";
+import type { Edge } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -126,7 +127,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already in use is refused with 409 `conflict`.",
+    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -149,6 +150,18 @@ const createEdgeRoute = createRoute({
     },
   },
   responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            edge: EdgeSchema,
+            acknowledged: z.boolean(),
+          }),
+        },
+      },
+      description:
+        "The supplied `id` already names this exact edge — same source, target and type — so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`.",
+    },
     201: {
       content: {
         "application/json": { schema: z.object({ edge: EdgeSchema }) },
@@ -195,7 +208,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "The supplied `id` is already held by an edge. The response names it as `existing_id`.",
+        "The supplied `id` is taken by an edge that is not the one this request describes — a different source, target or type — or by one in a space the caller cannot see. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id`.",
     },
   },
 });
@@ -328,24 +341,89 @@ export function edgeRoutes(storage: Storage) {
     requireTypeAccess(c, sourceItem.type, "write");
     requireEdgePermission(c, body.edge_type, "write");
 
-    const edge = await storage.runInTransaction(async () => {
-      await assertEdgeCanBeCreated(storage.edges, storage.items, {
-        source_id: body.source_id,
-        target_id: body.target_id,
-        edge_type: body.edge_type,
-        space_id: spaceId,
-      });
-      return storage.edges.createRaw(
-        {
-          id: body.id,
+    // A create arriving a second time under an id the caller minted.
+    //
+    // A synced client names a row before the server has seen it, so when
+    // the response to its create is lost it retries with the same id. The
+    // second arrival of an id the server already holds is that client's
+    // own write, so the contract answers success and returns the row
+    // rather than making every engine implement the lookup itself.
+    //
+    // **A pre-check and a catch, as the item door has.** The pre-check is
+    // load-bearing here rather than an optimization:
+    // `assertEdgeCanBeCreated` refuses an exact duplicate triple before
+    // any insert, so a client replaying its own create meets that 400 and
+    // never reaches the primary-key collision. The catch covers what the
+    // pre-check cannot — two sends of one id both finding nothing, where
+    // the loser of the insert still needs an answer other than 409.
+    //
+    // One comparison serves both.
+    //
+    // Gated above rather than here: the gates ran on the body's source
+    // type and edge type, and an acknowledgement is only ever returned
+    // when the row's triple equals the body's — so gating on the body is
+    // gating on the row.
+    const repeatedEdge = async (): Promise<Edge | null> => {
+      if (body.id === undefined) return null;
+      const existing = await storage.edges.get(body.id);
+      if (!existing) return null;
+      // `edges.get` is unscoped, so an edge outside the caller's space is
+      // left to the store's own collision trap: it is somebody else's row
+      // and this caller must not learn it exists, let alone read it back.
+      if (spaceId && existing.space_id !== spaceId) return null;
+      const sameEdge =
+        existing.source_id === body.source_id &&
+        existing.target_id === body.target_id &&
+        existing.edge_type === body.edge_type;
+      if (sameEdge) return existing;
+      // The id is this caller's to see and names something else. That is
+      // a genuine collision rather than a repeat.
+      throw new MarfaError(
+        ErrorCode.CONFLICT,
+        `Edge with id=${body.id} already exists`,
+        { existing_id: body.id },
+      );
+    };
+
+    const alreadyHeld = await repeatedEdge();
+    if (alreadyHeld) {
+      return c.json({ edge: alreadyHeld, acknowledged: true }, 200);
+    }
+
+    let edge: Edge;
+    try {
+      edge = await storage.runInTransaction(async () => {
+        await assertEdgeCanBeCreated(storage.edges, storage.items, {
           source_id: body.source_id,
           target_id: body.target_id,
           edge_type: body.edge_type,
-          properties: body.properties,
-        },
-        spaceId,
-      );
-    });
+          space_id: spaceId,
+        });
+        return storage.edges.createRaw(
+          {
+            id: body.id,
+            source_id: body.source_id,
+            target_id: body.target_id,
+            edge_type: body.edge_type,
+            properties: body.properties,
+          },
+          spaceId,
+        );
+      });
+    } catch (err) {
+      // The concurrency backstop. The row appeared between the pre-check
+      // and the insert, which is the one case the pre-check cannot cover.
+      const isOwnIdCollision =
+        body.id !== undefined &&
+        err instanceof MarfaError &&
+        err.code === ErrorCode.CONFLICT &&
+        (err.details as { existing_id?: string } | undefined)?.existing_id ===
+          body.id;
+      if (!isOwnIdCollision) throw err;
+      const raced = await repeatedEdge();
+      if (!raced) throw err;
+      return c.json({ edge: raced, acknowledged: true }, 200);
+    }
     await publishEdge({ type: "edge_created", edge, spaceId });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

@@ -16,8 +16,8 @@ import type { AppEnv } from "./middleware/auth.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { subscribeEdges } from "./pubsub.js";
-import type { EdgeEventWithId } from "./pubsub.js";
+import { subscribe, subscribeEdges } from "./pubsub.js";
+import type { EdgeEventWithId, ItemEventWithId } from "./pubsub.js";
 import { BulkActionWorker } from "./bulk-actions/index.js";
 import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 
@@ -1048,4 +1048,35 @@ export function collectEdgeEvents(signal: AbortSignal): {
  */
 export async function settle(ms = 50): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Collect every item event until `signal` aborts.
+ *
+ * The item-event twin of `collectEdgeEvents`, and here for the same
+ * reason: the negative assertion — proving nothing was published — has no
+ * event to await, so it listens for a bounded moment and finds the
+ * collection empty.
+ */
+export function collectItemEvents(
+  signal: AbortSignal,
+  /** The same fence `GET /events` applies for a scoped viewer, so a frame
+   *  published without a space — or with the wrong one — is invisible here
+   *  too. Omit it to watch everything, which is what a platform key sees. */
+  spaceId?: string,
+): {
+  events: ItemEventWithId[];
+  done: Promise<void>;
+} {
+  const events: ItemEventWithId[] = [];
+  const done = (async () => {
+    try {
+      for await (const event of subscribe({ signal, spaceId })) {
+        events.push(event);
+      }
+    } catch {
+      // The abort ends the generator; nothing to report.
+    }
+  })();
+  return { events, done };
 }

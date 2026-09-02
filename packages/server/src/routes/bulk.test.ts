@@ -796,3 +796,47 @@ describe("POST /items/bulk — emit_events", () => {
     expect(seen).toEqual([markerId]);
   });
 });
+
+describe("POST /items/bulk — a repeated id in create_only", () => {
+  /**
+   * The bulk contract answers per entry, so the acknowledgement takes the
+   * shape this door already has: `skipped` with `duplicate_id`. What was
+   * wrong is the lookup behind it, which hid trashed rows — so a repeat
+   * landing on a row the user had since deleted fell through to `create`,
+   * tripped the primary key, and (since `atomic` defaults to true) rolled
+   * the whole batch back for a write the server had already performed.
+   */
+  it("is skipped rather than rolling the batch back, even when trashed", async () => {
+    const seed = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "seeded" } },
+    });
+    expect(seed.status).toBe(201);
+    const id = ((await seed.json()) as { item: { id: string } }).item.id;
+    expect(
+      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.adminKey }))
+        .status,
+    ).toBe(200);
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        mode: "create_only",
+        items: [
+          { type: "core.note", id, properties: { body: "the repeat" } },
+          { type: "core.note", properties: { body: "a genuine create" } },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      results: { index: number; outcome: string; reason?: string }[];
+      counts: { created: number; skipped: number; errored: number };
+    };
+    expect(body.results[0]?.outcome).toBe("skipped");
+    expect(body.results[0]?.reason).toBe("duplicate_id");
+    // And the batch was not rolled back: the sibling entry landed.
+    expect(body.results[1]?.outcome).toBe("created");
+    expect(body.counts.errored).toBe(0);
+  });
+});

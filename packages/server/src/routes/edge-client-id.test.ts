@@ -106,6 +106,13 @@ describe("a client-supplied edge id", () => {
     // answers. Reusing the id alone has to be the thing that refuses,
     // and it has to refuse as a conflict rather than as an unhandled
     // constraint violation surfacing as a 500.
+    //
+    // **This stops at the route's id pre-check rather than reaching the
+    // store's trap**, which is a change from when it was written: the
+    // acknowledgement branch resolves the id before the insert and
+    // refuses here when the triple disagrees. The trap underneath is
+    // still covered, by the bulk door's own reused-id case, which has no
+    // pre-check in front of it.
     const second = await seedItem("second-source");
     const secondTarget = await seedItem("second-target");
     const controller = new AbortController();

@@ -244,7 +244,7 @@ interface Door {
  */
 const CANNOT_MISDECLARE: Record<string, string> = {
   "POST /items (create)":
-    "resolves no row, so the type it names IS the row — nothing to disagree with",
+    "carries no natural key, so it resolves no row and the type it names IS the row — nothing to disagree with. Supplying an `id` that already exists DOES resolve one, but that path writes nothing and returns the row, so it fits none of the write-shaped assertions here; its gates are covered in repeated-create-acknowledgement.test.ts",
   "POST /items/bulk-actions (update_properties)":
     "selects by filter, where a type is a selector: it cannot disagree with the rows it selected on",
 };
