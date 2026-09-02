@@ -25,10 +25,47 @@ rm -f \
   packages/server/data/*-test.db-shm \
   packages/server/data/*-test.db-wal
 
+# Set once the suite is running, so cleanup can stop it. Empty before then.
+TEST_PID=""
+CLEANED=""
+
+# This script allocates no container, so there is nothing to release — but
+# a killed run still orphans the suite's process tree, a worker per core,
+# against whatever the machine does next. That is the same tree the
+# Postgres script collects, and the same reason: a foreground child defers
+# every trap until it returns, so a `TERM` was recorded and not acted on
+# and the `KILL` that followed ran nothing.
+cleanup() {
+  trap "" INT TERM HUP
+  [ -n "${CLEANED}" ] && return 0
+  CLEANED=1
+  if [ -n "${TEST_PID}" ] && kill -0 "${TEST_PID}" 2>/dev/null; then
+    kill -TERM -- "-${TEST_PID}" 2>/dev/null || kill -TERM "${TEST_PID}" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      kill -0 "${TEST_PID}" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL -- "-${TEST_PID}" 2>/dev/null || kill -KILL "${TEST_PID}" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 129' HUP
+
 echo "→ Running server tests (SQLite)"
 # The root `pnpm test` uses vitest projects (packages/*) which is how CI
 # runs the suite. Running scoped to the server package fails config
 # resolution when the root vitest.config.ts owns the projects list.
-pnpm test
+set -m
+pnpm test &
+TEST_PID=$!
+set +m
+TEST_STATUS=0
+wait "${TEST_PID}" || TEST_STATUS=$?
+TEST_PID=""
+if [ "${TEST_STATUS}" -ne 0 ]; then
+  exit "${TEST_STATUS}"
+fi
 
 echo "✓ test:fresh-sqlite passed"

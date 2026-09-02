@@ -72,7 +72,65 @@ if ! docker info >/dev/null 2>&1; then
   exit 0
 fi
 
+# Set once the suite is running, so cleanup can stop it. Empty before then.
+TEST_PID=""
+# Set only while the image pull is in flight, for the same reason.
+PULL_PID=""
+# The trap fires on a signal AND again on the exit that signal causes, and
+# the second pass would report a teardown that already happened.
+CLEANED=""
+
 cleanup() {
+  # Disarm first. The wait loop below can take five seconds, and a runner
+  # that escalates during it would otherwise re-enter this function and
+  # abandon the teardown half-done — the containers are removed after the
+  # loop, so a second signal lands in the worst possible place. Ignoring
+  # the signals outright is what makes the rest of this function atomic
+  # with respect to them; `CLEANED` only stops the EXIT pass repeating it.
+  trap "" INT TERM HUP
+  [ -n "${CLEANED}" ] && return 0
+  CLEANED=1
+  # The suite first. It is talking to the database that is about to be
+  # removed, and on a cancellation nobody is reading its output — left
+  # running it holds a worker per core against whatever the machine does
+  # next. A killed run once left fourteen of these behind.
+  #
+  # **The whole process group, not the child and its children.** `pnpm`
+  # spawns vitest, which spawns a worker per core, so the workers are
+  # grandchildren and `pkill -P` never reaches them: signaling only the
+  # direct children leaves exactly the tree this is here to collect.
+  # `set -m` above put the suite in its own process group, so negating
+  # its pid addresses all of it.
+  #
+  # **The trade-off, stated because it is not free.** Its own group also
+  # means the suite is no longer in this script's group, so a signal sent
+  # to *our group alone* no longer reaches it incidentally — this cleanup
+  # is what stops those workers. Bounded rather than open: the runner's
+  # last resort is `KillProcessTree`, which walks the parent/child map and
+  # kills children before parents rather than signalling a group, so it
+  # still collects them. What the change does cost is a manual
+  # `kill -KILL -<pgid>` against this script, which would now leave them.
+  # The same wait-then-KILL escalation the suite gets below. A `docker
+  # pull` mid-layer does not stop on a TERM promptly, and a cleanup that
+  # only asks leaves it running against a network this function is about
+  # to remove.
+  if [ -n "${PULL_PID}" ] && kill -0 "${PULL_PID}" 2>/dev/null; then
+    kill -TERM -- "-${PULL_PID}" 2>/dev/null || kill -TERM "${PULL_PID}" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      kill -0 "${PULL_PID}" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL -- "-${PULL_PID}" 2>/dev/null || kill -KILL "${PULL_PID}" 2>/dev/null || true
+  fi
+  if [ -n "${TEST_PID}" ] && kill -0 "${TEST_PID}" 2>/dev/null; then
+    kill -TERM -- "-${TEST_PID}" 2>/dev/null || kill -TERM "${TEST_PID}" 2>/dev/null || true
+    # Give it a moment to go before pulling the database out from under it.
+    for _ in 1 2 3 4 5; do
+      kill -0 "${TEST_PID}" 2>/dev/null || break
+      sleep 1
+    done
+    kill -KILL -- "-${TEST_PID}" 2>/dev/null || kill -KILL "${TEST_PID}" 2>/dev/null || true
+  fi
   echo "→ Tearing down ${BOUNCER_NAME} and ${CONTAINER_NAME}"
   # -v matters: the postgres image declares a VOLUME, so every run mints an
   # anonymous volume, and removing the container without -v orphans it at
@@ -94,12 +152,60 @@ cleanup() {
 # and a network running, and the networks accumulate invisibly because
 # their names carry the shell's PID, so nothing later can tell an orphan
 # from a live run's and nothing dares delete either.
-trap cleanup EXIT INT TERM
+#
+# The runner's cancellation sequence, from `actions/runner`
+# `src/Runner.Sdk/ProcessInvoker.cs`: `CancelAndKillProcessTree` sends
+# SIGINT, waits `_sigintTimeout` (7500 ms), sends SIGTERM, waits
+# `_sigtermTimeout` (2500 ms), then `KillProcessTree`. **SIGINT is first,
+# not SIGTERM**, and both are delivered to a single pid — `kill(_proc.Id,
+# signal)` — so they reach this shell and nothing else. That is why the
+# INT trap matters most in practice and why the reproduction signalled
+# the script's pid rather than its group.
+#
+# `HUP` alongside the other two: a runner tearing its session down is
+# another way this script is ended without exiting, and an untrapped fatal
+# signal does not run the EXIT trap.
+#
+# **Trapping is not enough on its own, which is what this run's history
+# missed.** Bash defers a trap until the foreground command finishes, so
+# with the suite running in the foreground a `TERM` was recorded and not
+# acted on: the script kept going, the runner's grace period expired, and
+# the `KILL` that followed ran no trap at all. Measured — fifteen seconds
+# after a `TERM` the script was still running tests, and the `KILL` left
+# both containers, the network and fourteen vitest processes behind. The
+# suite therefore runs in the background and is waited on below, so the
+# handler runs the moment the signal arrives.
+# **The signal traps exit; the EXIT trap only cleans up.** A handler that
+# returns resumes the script where it was interrupted, so a `TERM` during
+# the readiness loop tore the container down and then went on polling for
+# it — measured, and the reason a plain `trap cleanup ... TERM` is not
+# enough on its own. `CLEANED` makes the EXIT pass that follows a no-op.
+# 128 + signal number is the conventional status for each.
+trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 129' HUP
 
 # Remove anything a crashed previous run left behind under these names.
 docker rm -f -v "${BOUNCER_NAME}" >/dev/null 2>&1 || true
 docker rm -f -v "${CONTAINER_NAME}" >/dev/null 2>&1 || true
 docker network rm "${NETWORK_NAME}" >/dev/null 2>&1 || true
+
+# Pull before the run, backgrounded and waited on like everything else
+# that can take a while. A `docker run` against a cold cache pulls in the
+# foreground, and a foreground command defers the trap for as long as the
+# pull takes — which on a fresh runner is the longest unprotected window
+# in this script. Failures are ignored: `docker run` will pull anyway, and
+# a registry hiccup here should not fail a suite that could still run from
+# a warm cache.
+echo "→ Pulling images if needed"
+set -m
+(docker pull postgres:17 >/dev/null 2>&1 || true
+ docker pull "${BOUNCER_IMAGE}" >/dev/null 2>&1 || true) &
+PULL_PID=$!
+set +m
+wait "${PULL_PID}" || true
+PULL_PID=""
 
 docker network create "${NETWORK_NAME}" >/dev/null
 
@@ -271,11 +377,29 @@ echo "→ Running server tests (Postgres)"
 #
 # Both name POOLER_DB rather than the main database, so the DDL those
 # suites run cannot reach anything else in the run.
+# `set -m` gives the suite its own process group, so the cleanup can
+# signal the whole tree rather than only the direct child. Turned off
+# again immediately: it is needed for the spawn, not for the wait.
+set -m
 DB_DIALECT=pg \
   DATABASE_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${PG_DB}" \
   MARFA_TEST_PG_ADMIN_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/postgres" \
   MARFA_TEST_PGBOUNCER_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${BOUNCER_PORT}/${POOLER_DB}" \
   MARFA_TEST_PGBOUNCER_DIRECT_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${POOLER_DB}" \
-  pnpm test
+  pnpm test &
+TEST_PID=$!
+set +m
+
+# `wait` rather than running the suite in the foreground, and that is the
+# whole fix: a foreground child makes bash defer every trap until it
+# returns, while `wait` is interruptible and lets the handler run at once.
+# The assignment on failure is what keeps `set -e` from exiting here
+# before the status can be read and re-raised deliberately below.
+TEST_STATUS=0
+wait "${TEST_PID}" || TEST_STATUS=$?
+TEST_PID=""
+if [ "${TEST_STATUS}" -ne 0 ]; then
+  exit "${TEST_STATUS}"
+fi
 
 echo "✓ test:pg passed"
