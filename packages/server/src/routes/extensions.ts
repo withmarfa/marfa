@@ -42,6 +42,36 @@ function mayWriteReservedNamespace(apiKey: ApiKey | undefined): boolean {
  *  operators can inspect runtime state in the UI without corrupting
  *  it. */
 const RUNTIME_NAMESPACE = "connection.runtime";
+
+/**
+ * The reserved root `connection.runtime` sits under. Derived rather than
+ * spelled again so the root cannot drift from the namespace it governs,
+ * and so a sibling added under it (the inbound-delivery idempotency
+ * window is one) is covered without a second list to remember.
+ */
+const RUNTIME_NAMESPACE_ROOT = `${RUNTIME_NAMESPACE.split(".")[0] ?? ""}.`;
+
+/**
+ * Whether a write to this namespace is worth telling subscribers about.
+ *
+ * Everything under the `connection.` root is per-Connection runtime
+ * state — sync cursors, the recent error tail, the inbound idempotency
+ * window — written by a runtime credential on the machine's behalf
+ * rather than by a person. Two reasons it stays silent. The local
+ * integrations runtime writes the identical blob straight through
+ * storage, so emitting here would make the event depend on which
+ * substrate happened to write it. And `metadata.changed` has no
+ * namespace filter, so every subscription without a type filter would
+ * receive cursors and error tails at dispatch frequency.
+ *
+ * Deliberately broader than the write gate below, which matches
+ * `RUNTIME_NAMESPACE` exactly. Silence is the safe direction to be
+ * broad in: the cost of not emitting for a sibling under this root is a
+ * consumer polling, and the cost of emitting is the noise above.
+ */
+function announcesMetadataChange(namespace: string): boolean {
+  return !namespace.startsWith(RUNTIME_NAMESPACE_ROOT);
+}
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -186,7 +216,7 @@ const setExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Replace an extension namespace",
   description:
-    "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change.",
+    "Replaces the JSON payload for one extension namespace on the item, requiring `write` on that namespace. The body is capped at 100KB; reserved namespaces such as `connection.runtime` carry additional write constraints. A successful write publishes `metadata.changed` carrying the item and its whole metadata row, so realtime subscribers and webhooks hear it as they do a tag change. Namespaces under the reserved `connection.` root are the exception and stay silent: they carry per-Connection runtime state written on the machine's behalf.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -256,7 +286,7 @@ const deleteExtensionRoute = createRoute({
   tags: ["Extensions"],
   summary: "Delete an extension namespace",
   description:
-    "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. The removal publishes `metadata.changed` carrying the item and its whole metadata row, so a subscriber learns to drop its copy.",
+    "Removes one extension namespace from the item, requiring `write` on that namespace. Idempotent — deleting a namespace that doesn't exist returns 200 with the unchanged extensions response. Every call publishes `metadata.changed` carrying the item and its whole metadata row, including one that removes nothing, exactly as a tag write that changes nothing still publishes. Namespaces under the reserved `connection.` root stay silent.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -457,12 +487,14 @@ export function extensionRoutes(storage: Storage) {
     // Read the row back rather than composing the event from the extensions
     // this call returned: the payload carries the whole metadata, and half
     // of it is the half this door did not touch.
-    await publish({
-      type: "metadata_changed",
-      item,
-      metadata: await storage.metadata.get(id),
-      spaceId: apiKey?.space_id,
-    });
+    if (announcesMetadataChange(namespace)) {
+      await publish({
+        type: "metadata_changed",
+        item,
+        metadata: await storage.metadata.get(id),
+        spaceId: apiKey?.space_id,
+      });
+    }
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -536,12 +568,14 @@ export function extensionRoutes(storage: Storage) {
     // A removal is as observable as a write, and for the same reason as
     // the replace door above: the namespace's absence from the payload is
     // how a subscriber learns to drop its own copy.
-    await publish({
-      type: "metadata_changed",
-      item,
-      metadata: await storage.metadata.get(id),
-      spaceId: apiKey?.space_id,
-    });
+    if (announcesMetadataChange(namespace)) {
+      await publish({
+        type: "metadata_changed",
+        item,
+        metadata: await storage.metadata.get(id),
+        spaceId: apiKey?.space_id,
+      });
+    }
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

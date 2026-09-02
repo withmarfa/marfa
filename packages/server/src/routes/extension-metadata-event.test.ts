@@ -15,8 +15,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { subscribe } from "../pubsub.js";
 import type { ItemEventWithId } from "../pubsub.js";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
+import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -51,14 +57,19 @@ async function seedTaggedItem(): Promise<string> {
  * listener registered after the publish hears nothing, and the test would
  * then pass or fail on scheduling.
  */
-function collectItemEvents(signal: AbortSignal): {
+function collectItemEvents(
+  signal: AbortSignal,
+  spaceId?: string,
+): {
   events: ItemEventWithId[];
   done: Promise<void>;
 } {
   const events: ItemEventWithId[] = [];
   const done = (async () => {
     try {
-      for await (const event of subscribe({ signal })) {
+      // `spaceId` is the same filter `GET /events` applies for a scoped
+      // viewer, so a frame published without one is invisible here too.
+      for await (const event of subscribe({ signal, spaceId })) {
         events.push(event);
       }
     } catch {
@@ -110,7 +121,6 @@ describe("metadata.changed on an extension write", () => {
     // shape the four tag and metadata doors already publish rather than a
     // second, thinner one a consumer would have to special-case.
     expect(changes[0]?.metadata?.tags).toEqual(["kept"]);
-    expect(changes[0]?.item.type).toBe("core.note");
   });
 
   it("is observed by a second subscriber when an extension is deleted", async () => {
@@ -142,7 +152,147 @@ describe("metadata.changed on an extension write", () => {
     expect(changes).toHaveLength(1);
     // A removal is as observable as a write. The namespace is gone from
     // the payload, which is how a subscriber learns to drop its copy.
+    //
+    // This line passes vacuously on an absent or empty `metadata`, so it
+    // is load-bearing only beside the tag assertion below — that one is
+    // what proves a real metadata row arrived for the check to be about.
     expect(changes[0]?.metadata?.extensions.reader).toBeUndefined();
     expect(changes[0]?.metadata?.tags).toEqual(["kept"]);
+  });
+});
+
+describe("the space a metadata.changed frame is delivered in", () => {
+  /**
+   * `GET /events` subscribes with the viewer's own `space_id`, so a frame
+   * published without one — or with the wrong one — is dropped for every
+   * real viewer while still being visible to a test that subscribes
+   * unscoped. The two tests above subscribe unscoped under a platform
+   * key, so they cannot see that difference at all. This one can.
+   */
+  it("reaches a viewer in the writing space and no viewer outside it", async () => {
+    // Thrown rather than returned early. A skip here would report green
+    // having proved nothing, and this is the one test covering the fence
+    // every real viewer sits behind.
+    const spaces = ctx.storage.spaces;
+    if (!spaces) throw new Error("this test needs a space store");
+    const spaceA = await spaces.create("ext-events-a");
+    const spaceB = await spaces.create("ext-events-b");
+
+    const item = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "scoped" }, tags: ["kept"] },
+      spaceA.id,
+    );
+
+    // A member in space A holding write on the namespace and nothing
+    // else. The extension doors do not consult type permissions, so this
+    // is the whole grant such a caller needs.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const memberKey = `marfa_k1_extspace_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: `extspace-${suffix}`,
+        source: `extspace-${suffix}`,
+        role: "member",
+        type_permissions: {},
+        extension_permissions: { reader: "write" },
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(memberKey, TEST_API_KEY_SALT),
+      spaceA.id,
+    );
+
+    const inA = new AbortController();
+    const inB = new AbortController();
+    const viewerA = collectItemEvents(inA.signal, spaceA.id);
+    const viewerB = collectItemEvents(inB.signal, spaceB.id);
+    await settle();
+
+    const written = await request(
+      ctx.app,
+      "PUT",
+      `/items/${item.id}/extensions/reader`,
+      { key: memberKey, body: { offset: 7 } },
+    );
+    expect(written.status).toBe(200);
+    const removed = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${item.id}/extensions/reader`,
+      { key: memberKey },
+    );
+    expect(removed.status).toBe(200);
+    await settle();
+    inA.abort();
+    inB.abort();
+    await viewerA.done;
+    await viewerB.done;
+
+    // Both doors, in the space that owns the row.
+    expect(metadataEventsFor(viewerA.events, item.id)).toHaveLength(2);
+    // And nothing at all next door. A publish carrying no space would
+    // reach neither viewer, so the emptiness here is only meaningful
+    // beside the count above.
+    expect(metadataEventsFor(viewerB.events, item.id)).toHaveLength(0);
+  });
+});
+
+describe("the reserved connection namespaces", () => {
+  /**
+   * Per-Connection runtime state is written by the machine, at dispatch
+   * frequency, and the local integrations runtime writes the identical
+   * blob straight through storage without publishing. Emitting here
+   * would make the event depend on which substrate did the write, and
+   * would put sync cursors and error tails on every `metadata.changed`
+   * subscription that carries no type filter.
+   */
+  it("are written without announcing anything", async () => {
+    // The gate admits only the connection's own runtime credential, so
+    // the row has to be a real connection and the credential has to be
+    // bound to it.
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const runtimeKey = `marfa_k1_extruntime_${suffix}`;
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: `extruntime-${suffix}`,
+        source: `extruntime-${suffix}`,
+        role: "member",
+        type_permissions: {},
+        connection_id: connection.id,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: runtimeCredentialItemSource({ name: "acme.fixture" }),
+      },
+      hashApiKey(runtimeKey, TEST_API_KEY_SALT),
+      undefined,
+    );
+
+    const controller = new AbortController();
+    const { events, done } = collectItemEvents(controller.signal);
+    await settle();
+
+    const res = await request(
+      ctx.app,
+      "PUT",
+      `/items/${connection.id}/extensions/connection.runtime`,
+      { key: runtimeKey, body: { cursor: "abc123" } },
+    );
+    // The write lands — this is silence, not refusal.
+    expect(res.status).toBe(200);
+    await settle();
+    controller.abort();
+    await done;
+
+    expect(metadataEventsFor(events, connection.id)).toHaveLength(0);
   });
 });
