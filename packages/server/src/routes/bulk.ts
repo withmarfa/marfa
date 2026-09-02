@@ -54,7 +54,8 @@ import { createOwnershipGuard, liveConnectionIds } from "./_orphaned.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
-import { applyInlineEdges } from "./_edges-inline.js";
+import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
+import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
@@ -561,6 +562,13 @@ async function processBulkItem(
      * is a delete instruction.
      */
     checkEdgeWrite: (edgeType: string) => void;
+    /**
+     * Where this item's inline-edge changes go, for the caller to
+     * announce once its transaction has committed. A callback rather
+     * than a return value because the edges are written several layers
+     * below the result this function reports.
+     */
+    recordEdgeChanges: (changes: InlineEdgeChanges) => void;
   },
 ): Promise<BulkItemResult> {
   if (!isValidTypeIdentifier(raw.type)) {
@@ -584,6 +592,7 @@ async function processBulkItem(
     checkUpdate,
     checkProvenance,
     checkEdgeWrite,
+    recordEdgeChanges,
     writerConnectionId,
   } = options;
 
@@ -597,13 +606,16 @@ async function processBulkItem(
     id: string,
     edgeSet: Record<string, string[]>,
   ): Promise<void> => {
-    if (atomic) {
-      await applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite);
-    } else {
-      await storage.runInTransaction(() =>
-        applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite),
-      );
-    }
+    // Handed to the caller rather than announced here. In atomic mode
+    // this runs inside the batch transaction, so a publish from here
+    // would describe edges a later item's failure then rolls back.
+    recordEdgeChanges(
+      atomic
+        ? await applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite)
+        : await storage.runInTransaction(() =>
+            applyInlineEdges(storage, id, edgeSet, spaceId, checkEdgeWrite),
+          ),
+    );
   };
 
   try {
@@ -959,6 +971,13 @@ export function bulkRoutes(storage: Storage) {
     // corpus on an ordinary sync bug.
     const retype = body.retype === true;
     const emitEvents = body.emit_events ?? false;
+    // Filled by each item's edge reconciliation and drained after the
+    // batch commits, under the request's `emit_events` — which already
+    // governs whether the items in the same batch publish, so an inline
+    // edge and the item that owns it are announced together or not at
+    // all. Declared here so an atomic rollback discards it along with
+    // the writes it describes.
+    const inlineEdgeChanges: InlineEdgeChanges[] = [];
 
     if (items.length > MAX_BULK_ITEMS) {
       throw new MarfaError(
@@ -1041,6 +1060,7 @@ export function bulkRoutes(storage: Storage) {
           checkUpdate,
           checkProvenance,
           checkEdgeWrite,
+          recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
           writerConnectionId: writerConnectionOf(c.get("apiKey")),
         });
         if (atomic && result.outcome === "errored") {
@@ -1087,6 +1107,12 @@ export function bulkRoutes(storage: Storage) {
             });
           }
         }
+      }
+      // Edges after the items, and after the batch committed. An atomic
+      // batch that rolled back never reaches here, so a subscriber is
+      // never told about an edge whose write was undone.
+      for (const changes of inlineEdgeChanges) {
+        await announceInlineEdges(changes, spaceId);
       }
     }
 

@@ -1,4 +1,7 @@
-import { applyInlineEdges } from "../routes/_edges-inline.js";
+import {
+  applyInlineEdges,
+  announceInlineEdges,
+} from "../routes/_edges-inline.js";
 import type { Storage } from "../storage/interface.js";
 
 /**
@@ -59,7 +62,7 @@ export async function seedStarterContent(
   // welcome note references the docs bookmark. applyInlineEdges validates the
   // proposed set and must run inside a transaction (its delete-then-create
   // needs rollback on a rejected set).
-  await storage.runInTransaction(() =>
+  const changes = await storage.runInTransaction(() =>
     applyInlineEdges(
       storage,
       welcome.id,
@@ -71,4 +74,10 @@ export async function seedStarterContent(
       () => undefined,
     ),
   );
+  // Announced after the transaction, like every other call site. A space
+  // being provisioned has no subscribers yet, so these reach the event
+  // log and nobody else — but staying silent here would be a second rule
+  // about when an inline edge is announced, kept alive by the one case
+  // where the answer cannot be observed.
+  await announceInlineEdges(changes, spaceId);
 }

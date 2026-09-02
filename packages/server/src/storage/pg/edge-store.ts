@@ -191,54 +191,60 @@ export class PgEdgeStore implements EdgeStore {
     sourceId: string,
     edgeType?: string,
     spaceId?: string,
-  ): Promise<void> {
+  ): Promise<Edge[]> {
     const conditions = [eq(edges.source_id, sourceId)];
     if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
     if (spaceId !== undefined) conditions.push(eq(edges.space_id, spaceId));
-    await this.db.delete(edges).where(and(...conditions));
+    const removed = await this.db
+      .delete(edges)
+      .where(and(...conditions))
+      .returning();
+    return removed.map(rowToEdge);
   }
 
   async deleteByTarget(
     targetId: string,
     edgeType?: string,
     spaceId?: string,
-  ): Promise<void> {
+  ): Promise<Edge[]> {
     const conditions = [eq(edges.target_id, targetId)];
     if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
     if (spaceId !== undefined) conditions.push(eq(edges.space_id, spaceId));
-    await this.db.delete(edges).where(and(...conditions));
+    const removed = await this.db
+      .delete(edges)
+      .where(and(...conditions))
+      .returning();
+    return removed.map(rowToEdge);
   }
 
   async deleteBySourceBatch(
     sourceIds: string[],
     edgeType?: string,
-  ): Promise<number> {
-    if (sourceIds.length === 0) return 0;
+    spaceId?: string,
+  ): Promise<Edge[]> {
+    if (sourceIds.length === 0) return [];
     const unique = Array.from(new Set(sourceIds));
-    const where = edgeType
-      ? and(inArray(edges.source_id, unique), eq(edges.edge_type, edgeType))
-      : inArray(edges.source_id, unique);
-    const result = await this.db
-      .delete(edges)
-      .where(where)
-      .returning({ id: edges.id });
-    return result.length;
+    const conditions = [inArray(edges.source_id, unique)];
+    if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
+    if (spaceId !== undefined) conditions.push(eq(edges.space_id, spaceId));
+    const where = and(...conditions);
+    const removed = await this.db.delete(edges).where(where).returning();
+    return removed.map(rowToEdge);
   }
 
   async deleteByTargetBatch(
     targetIds: string[],
     edgeType?: string,
-  ): Promise<number> {
-    if (targetIds.length === 0) return 0;
+    spaceId?: string,
+  ): Promise<Edge[]> {
+    if (targetIds.length === 0) return [];
     const unique = Array.from(new Set(targetIds));
-    const where = edgeType
-      ? and(inArray(edges.target_id, unique), eq(edges.edge_type, edgeType))
-      : inArray(edges.target_id, unique);
-    const result = await this.db
-      .delete(edges)
-      .where(where)
-      .returning({ id: edges.id });
-    return result.length;
+    const conditions = [inArray(edges.target_id, unique)];
+    if (edgeType) conditions.push(eq(edges.edge_type, edgeType));
+    if (spaceId !== undefined) conditions.push(eq(edges.space_id, spaceId));
+    const where = and(...conditions);
+    const removed = await this.db.delete(edges).where(where).returning();
+    return removed.map(rowToEdge);
   }
 
   async countBySource(

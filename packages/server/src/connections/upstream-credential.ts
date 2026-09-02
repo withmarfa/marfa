@@ -20,6 +20,7 @@
  */
 import type { Item } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
+import { publishEdge } from "../pubsub.js";
 
 /** Page size for the dependent scan. The scan is a full walk, so this is
  *  a round-trip/memory trade-off rather than a ceiling on the answer. */
@@ -85,9 +86,17 @@ export async function purgeCredential(
   if (credential.state !== "revoked") {
     await storage.items.transition(credential.id, "revoked", spaceId);
   }
-  await storage.edges.deleteBySource(credential.id, undefined, spaceId);
-  await storage.edges.deleteByTarget(credential.id, undefined, spaceId);
+  // An uninstall removes real relationships, and the items on the other
+  // end of them are ordinary rows a client is holding. Silence here left
+  // a device showing a connection's edges after the connection was gone.
+  const cascaded = [
+    ...(await storage.edges.deleteBySource(credential.id, undefined, spaceId)),
+    ...(await storage.edges.deleteByTarget(credential.id, undefined, spaceId)),
+  ];
   await storage.items.purge(credential.id, spaceId);
+  for (const edge of cascaded) {
+    await publishEdge({ type: "edge_deleted", edge, spaceId });
+  }
 }
 
 /** What an uninstall did about the connection's upstream credential.
