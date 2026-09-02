@@ -229,6 +229,23 @@ async function processBulkEdge(
       },
     };
   }
+  // The same gate the single-edge door runs on a client-supplied id.
+  // This door declared the field first and stored it verbatim, so an id
+  // that is not an identifier reached the row — and `PATCH` and `DELETE
+  // /edges/{id}` address any string, so nothing downstream would have
+  // objected. Two doors writing one column answer to one rule.
+  if (raw.id !== undefined && !isValidId(raw.id)) {
+    return {
+      result: {
+        index,
+        outcome: "errored",
+        error: {
+          code: ErrorCode.INVALID_ID,
+          message: `Invalid id: ${raw.id}`,
+        },
+      },
+    };
+  }
 
   // Authorize the write before any mutation. Resolve the source item's
   // type space-scoped (getIncludingTrashed so a trashed source still runs
@@ -388,6 +405,17 @@ export function edgesBulkRoutes(storage: Storage) {
               index: i,
               code: ErrorCode.INVALID_ID,
               message: `Invalid target_id: ${raw.target_id}`,
+            },
+          );
+        }
+        if (raw.id !== undefined && !isValidId(raw.id)) {
+          throw new MarfaError(
+            ErrorCode.BULK_ATOMIC_ROLLBACK,
+            `Bulk edges rolled back on edge ${String(i)}`,
+            {
+              index: i,
+              code: ErrorCode.INVALID_ID,
+              message: `Invalid id: ${raw.id}`,
             },
           );
         }

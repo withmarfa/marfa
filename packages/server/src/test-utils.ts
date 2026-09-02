@@ -16,6 +16,8 @@ import type { AppEnv } from "./middleware/auth.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { subscribeEdges } from "./pubsub.js";
+import type { EdgeEventWithId } from "./pubsub.js";
 import { BulkActionWorker } from "./bulk-actions/index.js";
 import type { BulkActionJob, BulkActionResult } from "./bulk-actions/types.js";
 
@@ -972,4 +974,78 @@ export async function readSse(
     );
   }
   return { text, closed };
+}
+
+// ---------------------------------------------------------------------------
+// Edge-event subscription helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Wait for the first edge event matching `predicate`.
+ *
+ * **Call this before the write, and await it after.** The listener has to
+ * be attached before the publish or it hears nothing, and a test built the
+ * other way round passes or fails on scheduling rather than on behaviour.
+ * Attachment happens synchronously inside this call — the generator body
+ * runs as far as its `on()` registration on the first `next()`, and that
+ * `next()` is issued here — so by the time this returns its promise the
+ * subscription is live.
+ *
+ * **No deadline of its own, deliberately.** A hand-rolled budget in a test
+ * body re-emits a timeout as a logic failure, which reads like an
+ * assertion about the code and is really a statement about how loaded the
+ * machine was. An event that never arrives starves rather than being
+ * merely delayed, so vitest's own per-test budget is the right owner and
+ * the failure then names itself as a timeout.
+ */
+export function nextEdgeEvent(
+  predicate: (event: EdgeEventWithId) => boolean,
+): Promise<EdgeEventWithId> {
+  const iter = subscribeEdges()[Symbol.asyncIterator]();
+  return (async () => {
+    for (;;) {
+      const result = await iter.next();
+      if (result.done) {
+        throw new Error("edge pubsub stream closed before the event arrived");
+      }
+      if (predicate(result.value)) return result.value;
+    }
+  })();
+}
+
+/**
+ * Collect every edge event until `signal` aborts.
+ *
+ * For the negative assertion — proving nothing was published — where
+ * there is no event to await and the only honest measure is to listen for
+ * a bounded moment and find the collection empty. Prefer `nextEdgeEvent`
+ * whenever something is expected to arrive.
+ */
+export function collectEdgeEvents(signal: AbortSignal): {
+  events: EdgeEventWithId[];
+  done: Promise<void>;
+} {
+  const events: EdgeEventWithId[] = [];
+  const done = (async () => {
+    try {
+      for await (const event of subscribeEdges({ signal })) {
+        events.push(event);
+      }
+    } catch {
+      // The abort ends the generator; nothing to report.
+    }
+  })();
+  return { events, done };
+}
+
+/**
+ * A short bounded pause, for negative assertions only.
+ *
+ * Paired with `collectEdgeEvents`: "nothing was published" cannot be
+ * awaited, so it is measured by listening briefly and finding nothing.
+ * Never use it to wait for something that is expected — that is what
+ * `nextEdgeEvent` is for.
+ */
+export async function settle(ms = 50): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }

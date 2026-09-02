@@ -2825,3 +2825,33 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
     expect(firstPageIds.has(restBody.data[0]?.id ?? "")).toBe(false);
   });
 });
+
+describe("POST /items — a duplicate explicit id", () => {
+  /**
+   * Reaches the item stores' primary-key trap, which nothing else in the
+   * suite does. That trap is now a shared per-dialect detector taking the
+   * table it is asked about, so a mis-passed argument would report every
+   * collision as "not a primary-key violation" and let the driver error
+   * through as a 500 — while every other test stayed green, because none
+   * of them collides an id on purpose.
+   */
+  it("is a conflict naming the id, not a driver error", async () => {
+    const first = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "holder" } },
+    });
+    expect(first.status).toBe(201);
+    const id = ((await first.json()) as { item: { id: string } }).item.id;
+
+    const second = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", id, properties: { body: "collides" } },
+    });
+    expect(second.status).toBe(409);
+    const body = (await second.json()) as {
+      error: { code: string; details?: { existing_id?: string } };
+    };
+    expect(body.error.code).toBe("conflict");
+    expect(body.error.details?.existing_id).toBe(id);
+  });
+});

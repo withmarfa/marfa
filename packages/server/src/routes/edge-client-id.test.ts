@@ -16,9 +16,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { generateId } from "@withmarfa/shared";
-import { subscribeEdges } from "../pubsub.js";
-import type { EdgeEventWithId } from "../pubsub.js";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  nextEdgeEvent,
+  collectEdgeEvents,
+  settle,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
@@ -41,36 +45,17 @@ async function seedItem(label: string): Promise<string> {
   return ((await res.json()) as { item: { id: string } }).item.id;
 }
 
-function collectEdgeEvents(signal: AbortSignal): {
-  events: EdgeEventWithId[];
-  done: Promise<void>;
-} {
-  const events: EdgeEventWithId[] = [];
-  const done = (async () => {
-    try {
-      for await (const event of subscribeEdges({ signal })) {
-        events.push(event);
-      }
-    } catch {
-      // The abort ends the generator; nothing to report.
-    }
-  })();
-  return { events, done };
-}
-
-async function settle(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 50));
-}
-
 describe("a client-supplied edge id", () => {
   it("is the id the server stores and the id it announces", async () => {
     const source = await seedItem("source");
     const target = await seedItem("target");
     const clientId = generateId();
 
-    const controller = new AbortController();
-    const { events, done } = collectEdgeEvents(controller.signal);
-    await settle();
+    // Attached before the write, awaited after it. No sleep on either
+    // side: the arrival is the signal, and vitest's budget owns the wait.
+    const announced = nextEdgeEvent(
+      (e) => e.type === "edge_created" && e.edge.id === clientId,
+    );
 
     const res = await request(ctx.app, "POST", "/edges", {
       key: ctx.adminKey,
@@ -85,9 +70,6 @@ describe("a client-supplied edge id", () => {
     expect(((await res.json()) as { edge: { id: string } }).edge.id).toBe(
       clientId,
     );
-    await settle();
-    controller.abort();
-    await done;
 
     // Read back rather than trusting the response: the response could
     // echo the request while the row carries a generated id, which is
@@ -102,10 +84,7 @@ describe("a client-supplied edge id", () => {
     // And the id a second device hears. The event is what the creating
     // client joins its local row to, so an id that survived the write but
     // not the announcement leaves the duplicate in place.
-    const created = events.filter(
-      (e) => e.type === "edge_created" && e.edge.id === clientId,
-    );
-    expect(created).toHaveLength(1);
+    expect((await announced).edge.id).toBe(clientId);
   });
 
   it("is refused as a conflict when the id is already taken", async () => {
@@ -129,6 +108,9 @@ describe("a client-supplied edge id", () => {
     // constraint violation surfacing as a 500.
     const second = await seedItem("second-source");
     const secondTarget = await seedItem("second-target");
+    const controller = new AbortController();
+    const { events, done } = collectEdgeEvents(controller.signal);
+
     const res = await request(ctx.app, "POST", "/edges", {
       key: ctx.adminKey,
       body: {
@@ -144,6 +126,17 @@ describe("a client-supplied edge id", () => {
     };
     expect(body.error.code).toBe("conflict");
     expect(body.error.details?.existing_id).toBe(clientId);
+
+    await settle();
+    controller.abort();
+    await done;
+    // A refusal that had already written the row would still answer 409,
+    // so the status alone does not say the write was stopped.
+    const listed = await request(ctx.app, "GET", `/items/${second}/edges`, {
+      key: ctx.adminKey,
+    });
+    expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
+    expect(events.filter((e) => e.edge.id === clientId)).toHaveLength(0);
   });
 
   it("is refused at the door when it is not a valid identifier", async () => {
@@ -162,5 +155,10 @@ describe("a client-supplied edge id", () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
       "invalid_id",
     );
+    // Refused at the door means refused before the write, not after it.
+    const listed = await request(ctx.app, "GET", `/items/${source}/edges`, {
+      key: ctx.adminKey,
+    });
+    expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
   });
 });

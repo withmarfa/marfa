@@ -305,9 +305,12 @@ export function edgeRoutes(storage: Storage) {
     if (!isValidId(body.target_id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid target_id");
     }
-    // Gated at the door like the item id it mirrors. An ungated id is
-    // stored verbatim, so the row would carry something no other route
-    // can address and nothing downstream would object.
+    // Gated at the door like the item id it mirrors. Not because an
+    // ungated id would be unreachable — `PATCH` and `DELETE /edges/{id}`
+    // address any string, so the row would be perfectly usable — but
+    // because an id is an id on every door that mints one, and a
+    // malformed identifier that reaches the wire is one every reader of
+    // it afterwards has to tolerate.
     if (body.id !== undefined && !isValidId(body.id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid edge ID");
     }

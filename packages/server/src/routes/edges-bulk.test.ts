@@ -2,6 +2,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { generateId } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -479,5 +480,115 @@ describe("POST /edges/bulk", () => {
     expect(body.error.code).toBe("bulk_atomic_rollback");
     expect(body.error.details?.index).toBe(1);
     expect(body.error.details?.code).toBe("invalid_id");
+  });
+});
+
+describe("POST /edges/bulk — the client-supplied id", () => {
+  interface BulkBody {
+    results: { index: number; outcome: string; error?: { code: string } }[];
+  }
+
+  it("is refused per entry when it is not a valid identifier", async () => {
+    // This door declared `id` first and stored it verbatim, so the single
+    // door's gate had to reach here too — two doors writing one column
+    // answering to two rules is the shape that lets one of them drift.
+    const pair = await makePair();
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
+      key: ctx.adminKey,
+      body: {
+        atomic: false,
+        edges: [
+          {
+            id: "not-an-identifier",
+            source_id: pair.sourceId,
+            target_id: pair.targetId,
+            edge_type: "about",
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as BulkBody;
+    expect(body.results[0]?.outcome).toBe("errored");
+    expect(body.results[0]?.error?.code).toBe("invalid_id");
+  });
+
+  it("rolls the whole batch back on an invalid id in atomic mode", async () => {
+    // Atomic mode checks id shapes before any write, because SQLite
+    // cannot roll back an async transaction — so the id gate belongs in
+    // that pre-pass beside the source and target ones, not only inside
+    // the per-edge path.
+    const pair = await makePair();
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
+      key: ctx.adminKey,
+      body: {
+        atomic: true,
+        edges: [
+          {
+            source_id: pair.sourceId,
+            target_id: pair.targetId,
+            edge_type: "about",
+          },
+          {
+            id: "still-not-an-identifier",
+            source_id: pair.sourceId,
+            target_id: pair.targetId,
+            edge_type: "references",
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      "bulk_atomic_rollback",
+    );
+    // The first edge was valid and must not have survived the rollback.
+    const listed = await request(
+      ctx.app,
+      "GET",
+      `/items/${pair.sourceId}/edges`,
+      { key: ctx.adminKey },
+    );
+    expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
+  });
+
+  it("reports a reused id as a conflict rather than a driver error", async () => {
+    // The trap lives in `createRaw`, so this door inherits it. Before it
+    // existed the collision reached the driver and was rethrown past the
+    // per-entry handler, which only catches a MarfaError — a 500 for the
+    // whole batch rather than one errored entry.
+    const first = await makePair();
+    const second = await makePair();
+    const shared = generateId();
+
+    const seed = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        id: shared,
+        source_id: first.sourceId,
+        target_id: first.targetId,
+        edge_type: "about",
+      },
+    });
+    expect(seed.status).toBe(201);
+
+    const res = await request(ctx.app, "POST", "/edges/bulk", {
+      key: ctx.adminKey,
+      body: {
+        atomic: false,
+        edges: [
+          {
+            id: shared,
+            source_id: second.sourceId,
+            target_id: second.targetId,
+            edge_type: "about",
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as BulkBody;
+    expect(body.results[0]?.outcome).toBe("errored");
+    expect(body.results[0]?.error?.code).toBe("conflict");
   });
 });
