@@ -398,7 +398,6 @@ async function passesHopBudget(
 
 export async function publish(event: ItemEvent): Promise<bigint | undefined> {
   const cycle = resolveCycleForPublish(event);
-  if (!(await passesHopBudget(event, cycle))) return undefined;
 
   let eventId: bigint | undefined;
 
@@ -418,17 +417,16 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
     });
   }
 
-  if (eventId !== undefined && notifyRemote) {
-    // A failed announcement must not suppress local delivery: outside a
-    // request transaction the append has already committed, and inside
-    // one a failed statement aborts the transaction regardless — either
-    // way this process's own subscribers keep the event they always got.
-    try {
-      await notifyRemote(eventId);
-    } catch (err) {
-      logRemoteNotifyFailure(eventId, err);
-    }
-  }
+  // The append is above this gate deliberately. The budget bounds an
+  // amplification loop, and the loop runs on the emit below: nothing
+  // reacts to a row. Gating the append on it instead would leave a write
+  // that genuinely happened with no entry in the log, so a client
+  // rebuilding its state from the stream would never learn of it — which
+  // is a worse version of the runaway the budget exists to stop. One
+  // over-budget publish therefore costs one row and ends the chain there.
+  if (!(await passesHopBudget(event, cycle))) return eventId;
+
+  await announceRemote(eventId);
 
   emitter.emit("ITEM_CHANGED", {
     ...event,
@@ -449,7 +447,6 @@ export async function publishEdge(
   event: EdgeEvent,
 ): Promise<bigint | undefined> {
   const cycle = resolveCycleForPublish(event);
-  if (!(await passesHopBudget(event, cycle))) return undefined;
 
   let eventId: bigint | undefined;
 
@@ -469,15 +466,10 @@ export async function publishEdge(
     });
   }
 
-  if (eventId !== undefined && notifyRemote) {
-    // Same reasoning as the item path: local delivery survives a failed
-    // announcement.
-    try {
-      await notifyRemote(eventId);
-    } catch (err) {
-      logRemoteNotifyFailure(eventId, err);
-    }
-  }
+  // Append first, gate second — see the item path for why.
+  if (!(await passesHopBudget(event, cycle))) return eventId;
+
+  await announceRemote(eventId);
 
   emitter.emit("EDGE_CHANGED", {
     ...event,
@@ -486,6 +478,24 @@ export async function publishEdge(
     eventId,
   });
   return eventId;
+}
+
+/**
+ * Tell sibling processes an event landed, so their subscribers see the
+ * deployment's events rather than one process's.
+ *
+ * A failed announcement must not suppress local delivery: outside a request
+ * transaction the append has already committed, and inside one a failed
+ * statement aborts the transaction regardless — either way this process's
+ * own subscribers keep the event they always got.
+ */
+async function announceRemote(eventId: bigint | undefined): Promise<void> {
+  if (eventId === undefined || !notifyRemote) return;
+  try {
+    await notifyRemote(eventId);
+  } catch (err) {
+    logRemoteNotifyFailure(eventId, err);
+  }
 }
 
 function logRemoteNotifyFailure(eventId: bigint, err: unknown): void {

@@ -13,6 +13,7 @@ import type { TestContext } from "./test-utils.js";
 import {
   initEventLog,
   publish,
+  subscribe,
   publishEdge,
   nextHopMetadata,
   defaultCycleDetectionWiring,
@@ -168,7 +169,12 @@ describe("publish — persistence", () => {
 // ---------------------------------------------------------------------------
 
 describe("publish — hop budget enforcement", () => {
-  it("drops events whose hopCount exceeds the budget and fires the overflow hook", async () => {
+  it("stops the reaction chain but still logs the write it describes", async () => {
+    // The budget bounds an amplification loop, and the loop is driven by
+    // the emit rather than by the row. Gating the append on it instead
+    // means a write that genuinely happened has no log row, so a client
+    // rebuilding from the stream never learns about it — which is the
+    // failure the budget exists to prevent, one layer down.
     const overflow = vi.fn(() => Promise.resolve());
     initEventLog(ctx.storage.eventLog, {
       getHopBudget: () => Promise.resolve(2),
@@ -180,6 +186,16 @@ describe("publish — hop budget enforcement", () => {
       ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
       : 0n;
 
+    const heard: string[] = [];
+    const controller = new AbortController();
+    const listening = (async () => {
+      for await (const event of subscribe({ signal: controller.signal })) {
+        heard.push(event.item.id);
+      }
+    })();
+    void listening.catch(() => undefined);
+    await Promise.resolve();
+
     const result = await publish({
       type: "created",
       item: fakeItem("item-overflow"),
@@ -187,7 +203,6 @@ describe("publish — hop budget enforcement", () => {
       originatingConnectionId: "conn-overflow",
     });
 
-    expect(result).toBeUndefined();
     expect(overflow).toHaveBeenCalledTimes(1);
     expect(overflow).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -197,13 +212,19 @@ describe("publish — hop budget enforcement", () => {
       2,
     );
 
-    // Verify nothing was appended to event_log.
+    // The row is written, and the id comes back so a caller can name it.
     const after = await ctx.storage.eventLog.getAfter(maxBefore, 1000);
     const matched = after.find(
       (r) =>
         r.originating_connection_id === "conn-overflow" && r.hop_count === 3,
     );
-    expect(matched).toBeUndefined();
+    expect(matched).toBeDefined();
+    expect(result).toBe(matched?.id);
+
+    // Nothing reacted to it, which is what the budget is for.
+    controller.abort();
+    await listening;
+    expect(heard).not.toContain("item-overflow");
   });
 
   it("admits events whose hopCount equals the budget exactly", async () => {
@@ -235,13 +256,14 @@ describe("publish — hop budget enforcement", () => {
     expect(DEFAULT_HOP_BUDGET).toBe(5);
     initEventLog(ctx.storage.eventLog);
 
-    // hopCount = 6 should overflow the default budget of 5.
+    // hopCount = 6 should overflow the default budget of 5, so the event
+    // reaches no subscriber — but the write it describes is still logged.
     const result = await publish({
       type: "created",
       item: fakeItem("item-default-overflow"),
       hopCount: 6,
     });
-    expect(result).toBeUndefined();
+    expect(result).toBeDefined();
   });
 
   it("enforces budget on integration-originated events even when hopCount=0", async () => {
@@ -255,14 +277,13 @@ describe("publish — hop budget enforcement", () => {
       onHopOverflow: overflow,
     });
 
-    const result = await publish({
+    await publish({
       type: "created",
       item: fakeItem("item-misbehaving-integration"),
       hopCount: 0,
       originatingConnectionId: "conn-misbehaving",
     });
 
-    expect(result).toBeUndefined();
     expect(overflow).toHaveBeenCalledTimes(1);
   });
 
@@ -460,18 +481,16 @@ describe("publish — cycle resolution from cycleRequestContext", () => {
       onHopOverflow: overflow,
     });
 
-    let result: bigint | undefined;
     await cycleRequestContext.run(
       { originatingConnectionId: "conn-floor-via-als", hopCount: 0 },
       async () => {
-        result = await publish({
+        await publish({
           type: "created",
           item: fakeItem("item-als-floor"),
         });
       },
     );
 
-    expect(result).toBeUndefined();
     expect(overflow).toHaveBeenCalledTimes(1);
     expect(overflow).toHaveBeenCalledWith(
       expect.objectContaining({
