@@ -85,8 +85,15 @@ function cleanup(): void {
   rmSync(blobDir, { recursive: true, force: true });
 }
 process.on("exit", cleanup);
+// Each of these calls `process.exit`, which is what runs the `exit`
+// handler above — node's own default action for these signals terminates
+// without running it, so the spawned server and its blob directory would
+// survive. `SIGHUP` is on the list for the same reason as everywhere else
+// in this repository: a runner tearing its session down sends it, and it
+// is the one whose default was still being taken.
 process.on("SIGINT", () => process.exit(130));
 process.on("SIGTERM", () => process.exit(143));
+process.on("SIGHUP", () => process.exit(129));
 
 function fail(msg: string, output?: string): never {
   console.error(`[smoke-boot] FAIL: ${msg}`);
