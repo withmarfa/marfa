@@ -48,6 +48,10 @@ export class SqliteEdgeStore implements EdgeStore {
       properties: JSON.stringify(properties),
       created_at: now,
       updated_at: now,
+      // Named rather than left to the column default: this row is also
+      // what the method returns, so a create that let the database fill
+      // the version in would report one it had not read back.
+      version: 1,
     };
     // A client may mint this id, so a collision is a caller error rather
     // than a server fault. Without the trap it surfaced as a 500, which
@@ -174,20 +178,36 @@ export class SqliteEdgeStore implements EdgeStore {
     id: string,
     properties: Record<string, unknown>,
     spaceId?: string,
-  ): Promise<Edge> {
+    expectedVersion?: number,
+  ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }> {
     const now = new Date().toISOString();
-    const where =
+    const identity =
       spaceId !== undefined
         ? and(eq(edges.id, id), eq(edges.space_id, spaceId))
         : eq(edges.id, id);
-    await this.db
+    // The precondition joins the identity in one predicate rather than
+    // replacing it: a caller that names another space's edge must be
+    // refused for the space even when it names that edge's real version.
+    const where =
+      expectedVersion !== undefined
+        ? and(identity, eq(edges.version, expectedVersion))
+        : identity;
+    const [written] = await this.db
       .update(edges)
-      .set({ properties: JSON.stringify(properties), updated_at: now })
+      .set({
+        properties: JSON.stringify(properties),
+        updated_at: now,
+        version: sql`${edges.version} + 1`,
+      })
       .where(where)
-      .run();
-    const row = await this.db.select().from(edges).where(where).get();
-    if (!row) throw new Error(`edge ${id} not found`);
-    return rowToEdge(row);
+      .returning();
+    if (written) return { ok: true, edge: rowToEdge(written) };
+    // Zero rows is ambiguous: the row is gone, or its version moved. Read
+    // it back on identity alone to tell those apart — still space-fenced,
+    // so a cross-space id stays absent rather than becoming a conflict.
+    const current = await this.db.select().from(edges).where(identity).get();
+    if (!current) throw new Error(`edge ${id} not found`);
+    return { ok: false, current: rowToEdge(current) };
   }
 
   async delete(id: string, spaceId?: string): Promise<void> {
@@ -537,9 +557,10 @@ export class SqliteEdgeStore implements EdgeStore {
       properties: string;
       created_at: string;
       updated_at: string;
+      version: number;
     }>(sql`
         SELECT id, space_id, source_id, target_id, edge_type, properties,
-               created_at, updated_at
+               created_at, updated_at, version
         FROM (
           SELECT *,
                  ROW_NUMBER() OVER (
@@ -575,9 +596,10 @@ export class SqliteEdgeStore implements EdgeStore {
       properties: string;
       created_at: string;
       updated_at: string;
+      version: number;
     }>(sql`
         SELECT id, space_id, source_id, target_id, edge_type, properties,
-               created_at, updated_at
+               created_at, updated_at, version
         FROM (
           SELECT *,
                  ROW_NUMBER() OVER (

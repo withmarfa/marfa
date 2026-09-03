@@ -294,11 +294,28 @@ async function processBulkEdge(
     // Space-fenced so a triple that collided with another space's edge
     // (defense-in-depth beyond the space-scoped duplicate lookup) cannot
     // be mutated here.
-    const updated = await storage.edges.updateProperties(
+    //
+    // No precondition. A per-entry version would be a different contract
+    // from the single door's — it needs a partial-failure shape for a
+    // batch where some entries are stale and others are not — and nobody
+    // has asked for one. The write still moves the version on, because
+    // the bump lives in the statement rather than in the route that
+    // reached it.
+    const outcome = await storage.edges.updateProperties(
       existing.id,
       raw.properties ?? {},
       spaceId,
     );
+    if (!outcome.ok) {
+      // Unreachable: a conflict needs a precondition, and this door sends
+      // none. Refused rather than ignored, so that adding one here has to
+      // decide what a batch does about it instead of silently reporting
+      // the entry as updated.
+      throw new Error(
+        "Edge upsert reported a version conflict without a precondition",
+      );
+    }
+    const updated = outcome.edge;
     return {
       result: { index, outcome: "updated", id: updated.id },
       updated,

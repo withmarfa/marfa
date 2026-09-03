@@ -1,4 +1,4 @@
-import type { ConflictSnapshot } from "@withmarfa/shared";
+import type { ConflictSnapshot, Edge } from "@withmarfa/shared";
 
 /**
  * Base error thrown from every SDK HTTP failure path. Consumers catch on
@@ -113,6 +113,34 @@ export class ConflictError extends MarfaError {
     this.ancestor = ancestor;
     this.conflictingFields = conflictingFields;
     this.clientPatch = clientPatch;
+  }
+}
+
+/**
+ * A `PATCH /edges/{id}` carrying a `version` was refused because the edge
+ * had moved on. Carries the edge as the server now holds it.
+ *
+ * Deliberately not `ConflictError`. That one describes an item conflict and
+ * exposes an ancestor snapshot, the fields in conflict, and the client's
+ * patch, all of which come from machinery edges do not have: there is no
+ * per-version history for an edge and no merge policy to consult. An edge
+ * conflict has exactly one useful fact in it, which is the current row.
+ *
+ * Resolution is to re-apply the change over `current` and send again with
+ * `current.version` — there is no route that reads a single edge by id, so
+ * this error is the client's only way back to a version it can retry with.
+ */
+export class EdgeConflictError extends MarfaError {
+  readonly current: Edge;
+
+  constructor(current: Edge) {
+    super(
+      "version_conflict",
+      `Edge version is stale; current version is ${String(current.version)}`,
+      409,
+    );
+    this.name = "EdgeConflictError";
+    this.current = current;
   }
 }
 

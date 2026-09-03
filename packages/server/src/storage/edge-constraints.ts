@@ -469,6 +469,7 @@ export function rowToEdge(row: {
   properties: string;
   created_at: string;
   updated_at: string;
+  version: number;
 }): Edge {
   let properties: Record<string, unknown> = {};
   try {
@@ -488,5 +489,6 @@ export function rowToEdge(row: {
     properties,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    version: row.version,
   };
 }

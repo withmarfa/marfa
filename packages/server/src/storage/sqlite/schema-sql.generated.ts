@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS \`edges\` (
 	\`properties\` text DEFAULT '{}' NOT NULL,
 	\`created_at\` text NOT NULL,
 	\`updated_at\` text NOT NULL
-);
+, \`version\` integer DEFAULT 1 NOT NULL);
 
 CREATE TABLE IF NOT EXISTS "event_log" (
   \`id\` integer PRIMARY KEY AUTOINCREMENT NOT NULL,

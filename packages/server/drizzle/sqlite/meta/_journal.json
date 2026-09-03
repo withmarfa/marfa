@@ -582,6 +582,13 @@
       "when": 1788394888975,
       "tag": "0082_event_log_enable_fanout",
       "breakpoints": true
+    },
+    {
+      "idx": 83,
+      "version": "6",
+      "when": 1788440800890,
+      "tag": "0083_an_edge_carries_a_version",
+      "breakpoints": true
     }
   ]
 }

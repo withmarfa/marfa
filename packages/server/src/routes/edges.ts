@@ -29,6 +29,29 @@ const EdgeSchema = z.object({
   properties: z.record(z.string(), z.unknown()),
   created_at: z.string(),
   updated_at: z.string(),
+  version: z.number(),
+});
+
+/**
+ * A refused update hands back the edge as it now stands.
+ *
+ * Deliberately not the item conflict envelope. That one carries an
+ * ancestor snapshot, the fields in conflict, and the type's merge policy;
+ * edges have no per-version history, no field-level merge, and no policy,
+ * so three of those four slots would be invented. What a client needs here
+ * is the current row and a version to retry against.
+ *
+ * Keyed `edge`, the same as the 200 body, so `res.edge` reads the same
+ * either way — and so that nothing parses it as an item's snapshot. It
+ * matters more than usual because there is no route that reads a single
+ * edge by its id: this body is the only way back to a usable version.
+ */
+const EdgeConflictSchema = z.object({
+  error: z.object({
+    code: z.literal("version_conflict"),
+    status: z.literal(409),
+  }),
+  edge: EdgeSchema,
 });
 
 const EdgeListSchema = z.object({
@@ -220,7 +243,7 @@ const updateEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Update an edge",
   description:
-    "Updates an edge's properties. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one.",
+    "Updates an edge's properties. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one. Passing `version` opts into optimistic concurrency: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that. Omitting it keeps the previous last-writer-wins behavior, and the edge's version moves on either way.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Edge id.") }),
@@ -229,6 +252,14 @@ const updateEdgeRoute = createRoute({
         "application/json": {
           schema: z.object({
             properties: z.record(z.string(), z.unknown()),
+            version: z
+              .number()
+              .int()
+              .min(0)
+              .optional()
+              .describe(
+                "The version the client read. A stale value is refused with 409; omitted, the write is unconditional.",
+              ),
           }),
         },
       },
@@ -240,6 +271,13 @@ const updateEdgeRoute = createRoute({
         "application/json": { schema: z.object({ edge: EdgeSchema }) },
       },
       description: "Edge updated",
+    },
+    409: {
+      content: {
+        "application/json": { schema: EdgeConflictSchema },
+      },
+      description:
+        "The version supplied is stale; the body carries the current edge",
     },
     400: {
       content: {
@@ -466,11 +504,16 @@ export function edgeRoutes(storage: Storage) {
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
     // Reject attempts to change immutable fields — extra insurance beyond
-    // the schema (Zod only accepts `properties` in the body, but guard against
-    // future body-schema relaxation).
+    // the schema (Zod strips anything the body schema does not name, but
+    // guard against future body-schema relaxation).
+    //
+    // `version` is a precondition on the write, not a field of the row, so
+    // it belongs on the allowed side of this guard. Naming it explicitly
+    // rather than reading the schema keeps the guard's list the thing a
+    // reader checks against.
     const bodyKeys = Object.keys(body);
     for (const k of bodyKeys) {
-      if (k !== "properties") {
+      if (k !== "properties" && k !== "version") {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           `Edge ${k} is immutable after creation`,
@@ -478,11 +521,26 @@ export function edgeRoutes(storage: Storage) {
       }
     }
     // Fence the write to the caller's space — belt to the 404-cloak above.
-    const updated = await storage.edges.updateProperties(
+    const result = await storage.edges.updateProperties(
       id,
       body.properties,
       spaceId,
+      body.version,
     );
+    if (!result.ok) {
+      // The edit was computed from a state the server has left. Hand back
+      // the whole current edge: there is no route that reads one edge by
+      // id, so a client refused here has nowhere else to go for the
+      // version it needs to retry against.
+      return c.json(
+        {
+          error: { code: "version_conflict" as const, status: 409 as const },
+          edge: result.current,
+        },
+        409,
+      );
+    }
+    const updated = result.edge;
     // An edit is as observable as a create or a delete. Without this the
     // SDK could change an edge through this route and nothing propagated
     // it, so a second device kept the stale payload with nothing to say
