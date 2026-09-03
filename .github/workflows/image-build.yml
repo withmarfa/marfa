@@ -70,6 +70,11 @@ on:
       # green across the whole matrix and throws at the next image build.
       - "packages/server/src/integrations/load-manifests.ts"
       - "packages/server/src/integrations/client-manifests.ts"
+      # The copy this workflow holds to the real manifest. Without it the
+      # check fires when the pin moves and cannot fire when the copy is
+      # corrected, so a genuine drift stays red until some unrelated merge
+      # happens to touch this set. That is what kept it red for two days.
+      - "packages/server/src/routes/fixtures/google-calendar-manifest.ts"
       # The dispatch fixture the in-image verification runs through. The
       # image builds and stages it exactly as it does an integration entry,
       # so a change to it changes the image the same way one does. Broader
