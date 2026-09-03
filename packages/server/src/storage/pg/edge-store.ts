@@ -5,11 +5,30 @@
  * that says so. Normalizing one is a change of its own: an absent space
  * has to be read call site by call site, and reading it wrong is the
  * defect the helper exists for. Delete this line when you do. */
-import { eq, and, or, desc, inArray, lt, sql, count } from "drizzle-orm";
+import {
+  eq,
+  and,
+  or,
+  asc,
+  desc,
+  inArray,
+  lt,
+  gt,
+  gte,
+  sql,
+  count,
+} from "drizzle-orm";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { Edge, CreateEdgeInput, PaginatedResult } from "@withmarfa/shared";
 import type { EdgeStore, EdgeListFilters } from "../interface.js";
-import { encodeCursor, decodeCursor } from "../interface.js";
+import {
+  encodeCursor,
+  decodeCursor,
+  encodeKeyedCursor,
+  decodeKeyedCursor,
+  normalizeTimeBound,
+} from "../interface.js";
+import type { CursorSortKey } from "../interface.js";
 import { rowToEdge } from "../edge-constraints.js";
 import { edges } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -131,19 +150,45 @@ export class PgEdgeStore implements EdgeStore {
     filters?: EdgeListFilters & { spaceId?: string },
   ): Promise<PaginatedResult<Edge>> {
     const limit = clampLimit(filters?.limit);
+    // Two orderings over one listing. The default is newest-created
+    // first, which is what a person browsing wants; a catch-up needs
+    // `(updated_at, id)` ascending, because that is the only order a
+    // cursor can advance through as rows keep changing underneath it.
+    //
+    // The bound is re-spelled to the shape `updated_at` is written in
+    // before it reaches the comparison, which is lexical over a text
+    // column — see `normalizeTimeBound`.
+    const updatedAfter = normalizeTimeBound(
+      filters?.updated_after,
+      "updated_after",
+    );
+    const catchUp = updatedAfter !== undefined;
+    const key: CursorSortKey = catchUp ? "updated_at" : "created_at";
     const conditions = [];
     if (filters?.spaceId) {
       conditions.push(eq(edges.space_id, filters.spaceId));
     }
     const typed = typeFilter(filters?.edge_type);
     if (typed) conditions.push(typed);
+    if (updatedAfter !== undefined) {
+      conditions.push(gte(edges.updated_at, updatedAfter));
+    }
 
     if (filters?.cursor) {
-      const { v, id } = decodeCursor(filters.cursor);
-      const cursorCondition = or(
-        lt(edges.created_at, v),
-        and(eq(edges.created_at, v), lt(edges.id, id)),
-      );
+      // Keyed, so a cursor issued under the other ordering is refused
+      // rather than honoured against the wrong column. Both columns hold
+      // ISO timestamps, so the wrong one compares perfectly well and
+      // returns a page that is simply not the next page.
+      const { v, id } = decodeKeyedCursor(filters.cursor, key);
+      const cursorCondition = catchUp
+        ? or(
+            gt(edges.updated_at, v),
+            and(eq(edges.updated_at, v), gt(edges.id, id)),
+          )
+        : or(
+            lt(edges.created_at, v),
+            and(eq(edges.created_at, v), lt(edges.id, id)),
+          );
       if (cursorCondition) conditions.push(cursorCondition);
     }
 
@@ -151,7 +196,11 @@ export class PgEdgeStore implements EdgeStore {
       .select()
       .from(edges)
       .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(desc(edges.created_at), desc(edges.id))
+      .orderBy(
+        ...(catchUp
+          ? [asc(edges.updated_at), asc(edges.id)]
+          : [desc(edges.created_at), desc(edges.id)]),
+      )
       .limit(limit + 1);
 
     const hasMore = rows.length > limit;
@@ -159,7 +208,12 @@ export class PgEdgeStore implements EdgeStore {
     let cursor: string | null = null;
     if (hasMore) {
       const last = slice.at(-1);
-      if (last) cursor = encodeCursor(last.created_at, last.id);
+      if (last)
+        cursor = encodeKeyedCursor(
+          catchUp ? last.updated_at : last.created_at,
+          last.id,
+          key,
+        );
     }
     return { data: slice.map(rowToEdge), cursor, has_more: hasMore };
   }

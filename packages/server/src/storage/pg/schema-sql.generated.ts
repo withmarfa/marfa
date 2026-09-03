@@ -1182,6 +1182,8 @@ CREATE INDEX IF NOT EXISTS idx_edges_source ON public.edges USING btree (space_i
 
 CREATE INDEX IF NOT EXISTS idx_edges_target ON public.edges USING btree (space_id, target_id, edge_type);
 
+CREATE INDEX IF NOT EXISTS idx_edges_updated_at_id ON public.edges USING btree (updated_at, id);
+
 CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON public.event_log USING btree (created_at);
 
 CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON public.event_log USING btree (edge_id);
@@ -1213,6 +1215,8 @@ CREATE INDEX IF NOT EXISTS idx_items_state ON public.items USING btree (state);
 CREATE INDEX IF NOT EXISTS idx_items_timestamp ON public.items USING btree ("timestamp");
 
 CREATE INDEX IF NOT EXISTS idx_items_type ON public.items USING btree (type);
+
+CREATE INDEX IF NOT EXISTS idx_items_updated_at_id ON public.items USING btree (updated_at, id);
 
 CREATE INDEX IF NOT EXISTS idx_oauth_device_codes_status ON public.oauth_device_codes USING btree (status);
 

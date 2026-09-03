@@ -753,10 +753,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter by lifecycle state"
+              "description": "Filter by lifecycle state. `any` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows."
             },
             "required": false,
-            "description": "Filter by lifecycle state",
+            "description": "Filter by lifecycle state. `any` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.",
             "name": "state",
             "in": "query"
           },
@@ -833,21 +833,34 @@
           {
             "schema": {
               "type": "string",
-              "description": "Lower bound on the item's effective time (inclusive)"
+              "minLength": 1,
+              "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`."
             },
             "required": false,
-            "description": "Lower bound on the item's effective time (inclusive)",
-            "name": "since",
+            "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+            "name": "timestamp_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Upper bound on the item's effective time (exclusive)"
+              "minLength": 1,
+              "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive)."
             },
             "required": false,
-            "description": "Upper bound on the item's effective time (exclusive)",
-            "name": "until",
+            "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
+            "name": "timestamp_before",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well."
+            },
+            "required": false,
+            "description": "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+            "name": "updated_after",
             "in": "query"
           },
           {
@@ -5477,10 +5490,10 @@
                               "type": "string"
                             }
                           },
-                          "since": {
+                          "timestamp_after": {
                             "type": "string"
                           },
-                          "until": {
+                          "timestamp_before": {
                             "type": "string"
                           },
                           "filter": {
@@ -5552,10 +5565,10 @@
                               "type": "string"
                             }
                           },
-                          "since": {
+                          "timestamp_after": {
                             "type": "string"
                           },
-                          "until": {
+                          "timestamp_before": {
                             "type": "string"
                           },
                           "filter": {
@@ -5624,10 +5637,10 @@
                               "type": "string"
                             }
                           },
-                          "since": {
+                          "timestamp_after": {
                             "type": "string"
                           },
-                          "until": {
+                          "timestamp_before": {
                             "type": "string"
                           },
                           "filter": {
@@ -5702,10 +5715,10 @@
                               "type": "string"
                             }
                           },
-                          "since": {
+                          "timestamp_after": {
                             "type": "string"
                           },
-                          "until": {
+                          "timestamp_before": {
                             "type": "string"
                           },
                           "filter": {
@@ -5776,10 +5789,10 @@
                               "type": "string"
                             }
                           },
-                          "since": {
+                          "timestamp_after": {
                             "type": "string"
                           },
-                          "until": {
+                          "timestamp_before": {
                             "type": "string"
                           },
                           "filter": {
@@ -5849,10 +5862,10 @@
                               "type": "string"
                             }
                           },
-                          "since": {
+                          "timestamp_after": {
                             "type": "string"
                           },
-                          "until": {
+                          "timestamp_before": {
                             "type": "string"
                           },
                           "filter": {
@@ -8322,7 +8335,7 @@
           "Edges"
         ],
         "summary": "List edges",
-        "description": "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.",
+        "description": "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.\n\nEdges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\nRemovals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.",
         "security": [
           {
             "bearerAuth": []
@@ -8337,6 +8350,17 @@
             "required": false,
             "description": "Comma-separated edge types. Up to 10 entries. Omit to list every edge.",
             "name": "edge_type",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect."
+            },
+            "required": false,
+            "description": "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
+            "name": "updated_after",
             "in": "query"
           },
           {
@@ -17033,21 +17057,21 @@
           {
             "schema": {
               "type": "string",
-              "description": "Include only items updated at or after this timestamp"
+              "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or after this (inclusive). Not the modification time, despite what this parameter's previous name suggested."
             },
             "required": false,
-            "description": "Include only items updated at or after this timestamp",
-            "name": "since",
+            "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or after this (inclusive). Not the modification time, despite what this parameter's previous name suggested.",
+            "name": "timestamp_after",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Include only items updated at or before this timestamp"
+              "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or before this (inclusive)."
             },
             "required": false,
-            "description": "Include only items updated at or before this timestamp",
-            "name": "until",
+            "description": "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or before this (inclusive).",
+            "name": "timestamp_before",
             "in": "query"
           },
           {

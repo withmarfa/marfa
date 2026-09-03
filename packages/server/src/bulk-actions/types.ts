@@ -15,8 +15,8 @@ export const BulkActionFilterSchema = z
     source: z.string().optional(),
     tier: z.enum(["library", "feed"]).optional(),
     tags: z.array(z.string()).optional(),
-    since: z.string().optional(),
-    until: z.string().optional(),
+    timestamp_after: z.string().optional(),
+    timestamp_before: z.string().optional(),
     filter: z.string().optional(),
   })
   .optional();

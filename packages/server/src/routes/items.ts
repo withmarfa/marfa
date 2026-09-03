@@ -86,6 +86,17 @@ import {
 import { filterMetadataForCaller } from "./util.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
+import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
+
+/**
+ * The `?state=` value that means "every state, trashed included".
+ *
+ * Deliberately not a member of the lifecycle vocabulary: it is a
+ * widening of the default rather than a state a row can be in, and
+ * nothing may compare it against the column. Named here rather than
+ * spelled inline so the route and its description cannot drift.
+ */
+const ALL_STATES = "any";
 
 // ---------------------------------------------------------------------------
 // Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
@@ -404,7 +415,12 @@ const listItemsRoute = createRoute({
         .string()
         .optional()
         .describe("Type identifier; matches subtypes via inheritance"),
-      state: z.string().optional().describe("Filter by lifecycle state"),
+      state: z
+        .string()
+        .optional()
+        .describe(
+          "Filter by lifecycle state. `any` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.",
+        ),
       source: z.string().optional().describe("Filter by source credential"),
       tier: z
         .enum(["library", "feed", "all"])
@@ -429,14 +445,32 @@ const listItemsRoute = createRoute({
           "Field to sort by: a system column (created_at, updated_at, timestamp) or a naturally-orderable custom field via properties.<field> (e.g. properties.due_at). Enum fields like status/priority are not sortable here — their order is semantic, not lexical.",
         ),
       direction: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
-      since: z
+      timestamp_after: z
         .string()
+        .min(1)
         .optional()
-        .describe("Lower bound on the item's effective time (inclusive)"),
-      until: z
+        .describe(
+          "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time; for that use `updated_after`.",
+        ),
+      timestamp_before: z
         .string()
+        .min(1)
         .optional()
-        .describe("Upper bound on the item's effective time (exclusive)"),
+        .describe(
+          "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
+        ),
+      updated_after: z
+        .string()
+        // Non-empty, because the ordering switches on this parameter
+        // rather than on `sort`: an empty value would order by
+        // `(updated_at, id)` ascending and bound nothing, so a client
+        // building the query before it holds a cursor would walk the
+        // whole corpus under the shape of a narrow catch-up.
+        .min(1)
+        .optional()
+        .describe(
+          "Lower bound on `updated_at`, when the row last changed (inclusive). The catch-up filter: pass the cursor you hold to get everything that changed since. Forces `(updated_at, id)` ascending order, so `sort` and `direction` cannot also be given, and a cursor issued under one ordering is refused under the other. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and note that a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect, which terminates but is not free. This read reports changes, never removals: a purge leaves no row behind, so pruning a local copy needs the event stream as well.",
+        ),
       limit: z.coerce
         .number()
         .int()
@@ -2017,7 +2051,32 @@ export function itemRoutes(storage: Storage) {
   router.openapi(listItemsRoute, async (c) => {
     requireAuth(c);
 
+    // Before anything reads the validated query, because validation has
+    // already dropped the old names by then and a dropped time filter is
+    // indistinguishable from one that was never sent.
+    refuseRenamedTimeQueryParams(c.req.raw.url, {
+      catchUpFilter: "updated_after",
+    });
+
     const query = c.req.valid("query");
+
+    // `updated_after` implies `(updated_at, id)` ascending — it is the
+    // only order a catch-up cursor can advance through. A request that
+    // also names a different sort is contradicting itself, and honouring
+    // one half silently is the same failure as ignoring a renamed
+    // parameter: the caller gets a page that looks right and cannot be
+    // resumed. Refuse instead of picking a winner.
+    if (query.updated_after !== undefined) {
+      const conflicting =
+        (query.sort !== undefined && query.sort !== "updated_at") ||
+        (query.direction !== undefined && query.direction !== "asc");
+      if (conflicting) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          "updated_after orders by (updated_at, id) ascending and cannot be combined with a different sort or direction. Drop sort/direction, or drop updated_after.",
+        );
+      }
+    }
 
     const type = query.type;
     // The value compiles into a `LIKE` predicate, so it has to clear the
@@ -2033,7 +2092,13 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    const state = query.state as ItemState | undefined;
+    // `any` is a widening, not a state, so it never reaches the column
+    // comparison. Resolved before the enum check for that reason: cast
+    // first and it would be validated as a lifecycle value and refused.
+    const allStates = query.state === ALL_STATES;
+    const state = allStates
+      ? undefined
+      : (query.state as ItemState | undefined);
     if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -2117,8 +2182,10 @@ export function itemRoutes(storage: Storage) {
       // `properties.<field>`; the storage layer re-validates via parseSortField.
       sort: (query.sort as ItemSortField | undefined) ?? undefined,
       direction: query.direction ?? undefined,
-      since: query.since,
-      until: query.until,
+      timestamp_after: query.timestamp_after,
+      timestamp_before: query.timestamp_before,
+      updated_after: query.updated_after,
+      all_states: allStates,
       limit: query.limit,
       cursor: query.cursor,
     });

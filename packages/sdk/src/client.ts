@@ -145,7 +145,11 @@ export interface UpdateOptions {
 
 export interface ListFilters {
   type?: string;
-  state?: ItemState;
+  /** Lifecycle state. `"any"` widens the listing to every state including
+   *  trashed, which a resuming client needs in order to see a row reach
+   *  the bin; omitting the field keeps the default, which excludes
+   *  trashed rows. */
+  state?: ItemState | "any";
   source?: string;
   /** Tier filter. `"library"` restricts to library items; `"feed"` restricts
    * to feed items; `"all"` (or omitting the field) returns both. */
@@ -165,8 +169,29 @@ export interface ListFilters {
    */
   sort?: "created_at" | "updated_at" | "timestamp" | `properties.${string}`;
   direction?: "asc" | "desc";
-  since?: string;
-  until?: string;
+  /** Inclusive lower bound on the item's own time — `timestamp`, falling
+   *  back to `created_at`. Named for the field it reads: it says nothing
+   *  about when the row last changed, which is `updated_after`. */
+  timestamp_after?: string;
+  /** Inclusive upper bound on the same field. */
+  timestamp_before?: string;
+  /**
+   * Inclusive lower bound on `updated_at`, when the row last changed.
+   *
+   * The catch-up filter: hand it the cursor you hold and get back
+   * everything that has changed since. Orders by `(updated_at, id)`
+   * ascending and therefore cannot be combined with `sort` or a
+   * descending `direction` — the server refuses that rather than picking
+   * a winner, and a cursor issued under one ordering is refused under the
+   * other. Inclusive, because `updated_at` is a millisecond timestamp
+   * that ties across a bulk write; deduplicate by id, and expect a
+   * high-water mark sitting on a bulk write's instant to re-send that
+   * whole group on every reconnect.
+   *
+   * It reports changes, never removals. A purge leaves no row behind, so
+   * pruning a local copy needs the event stream as well as this read.
+   */
+  updated_after?: string;
   limit?: number;
   cursor?: string;
   /**
@@ -448,8 +473,8 @@ export interface BulkActionFilter {
   source?: string;
   tier?: Tier | "all";
   tags?: string[];
-  since?: string;
-  until?: string;
+  timestamp_after?: string;
+  timestamp_before?: string;
   /** Same grammar as `GET /items?filter=`. `edge[type]=id` shorthand
    *  becomes `edge[type] eq "id"` here. */
   filter?: string;
@@ -1559,6 +1584,12 @@ export class MarfaClient {
      */
     list: async (filters?: {
       edge_type?: string | string[];
+      /** Inclusive lower bound on the edge's `updated_at`. The edge half
+       *  of the catch-up read; orders by `(updated_at, id)` ascending, so
+       *  a cursor issued without it cannot be continued with it. Reports
+       *  changes and never removals: a deleted edge leaves no row and no
+       *  tombstone, so the event stream is the other half. */
+      updated_after?: string;
       limit?: number;
       cursor?: string;
     }): Promise<PaginatedResult<Edge>> => {
@@ -1568,6 +1599,9 @@ export class MarfaClient {
       return this.transport.request<PaginatedResult<Edge>>("GET", "/edges", {
         query: {
           ...(edgeType && { edge_type: edgeType }),
+          ...(filters?.updated_after !== undefined && {
+            updated_after: filters.updated_after,
+          }),
           ...(filters?.limit !== undefined && { limit: filters.limit }),
           ...(filters?.cursor && { cursor: filters.cursor }),
         },
