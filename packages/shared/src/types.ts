@@ -943,10 +943,16 @@ export interface ConnectionUninstallResult {
 }
 
 /**
- * Item-event types the reactive bridge fans out to integrations.
- * Mirrors the `ItemEvent['type']` union in `packages/server/
- * src/pubsub.ts`. Used by `POST /connections/preview-event` for the
- * operator-supplied `event_type` in the preview-event request.
+ * Item-event types the reactive bridge fans out to integrations. Used by
+ * `POST /connections/preview-event` for the operator-supplied
+ * `event_type` in the preview-event request.
+ *
+ * A subset of the `ItemEvent['type']` union in `packages/server/src/
+ * pubsub.ts` rather than a copy of it, and the subset is the point:
+ * `purged` is deliberately absent. A purge is the terminal removal of a
+ * row an integration was already told about when it was trashed, so
+ * fanning one out would fire a `tombstone_mapping` delete-upstream path a
+ * second time for a row that is already gone at the far end.
  */
 export type PreviewEventItemEventType =
   | "created"

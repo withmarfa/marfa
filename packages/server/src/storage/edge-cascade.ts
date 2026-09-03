@@ -10,7 +10,12 @@ import type { EdgeStore } from "./interface.js";
  *   - cascade: recursively add the target item to the cascade set
  *     (e.g. parent-of — deleting the parent cascades to children).
  *   - block: reject the delete; accumulate all blockers for a helpful error.
- *   - orphan: no action (FK cascade cleans up the edge row at the DB level).
+ *   - orphan: no action here. There is no FK cascade to inherit — `edges`
+ *     carries no foreign key to `items` on either endpoint, which the
+ *     schema says in as many words — so the edge row is removed by the
+ *     caller that removes the item, through `deleteBySource` /
+ *     `deleteByTarget`, and announced from there. Believing otherwise is
+ *     how a purge came to leave dangling rows before those calls existed.
  *
  * Also checks inbound block edges: an edge from anywhere with
  * cascade_on_delete = block pointing AT the item under delete rejects too.

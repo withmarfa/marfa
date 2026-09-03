@@ -144,6 +144,7 @@ export function eventFromRow(row: {
     row.event_type === "updated" ||
     row.event_type === "deleted" ||
     row.event_type === "restored" ||
+    row.event_type === "purged" ||
     row.event_type === "state_changed" ||
     row.event_type === "metadata_changed"
   ) {

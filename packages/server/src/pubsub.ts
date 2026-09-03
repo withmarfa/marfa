@@ -106,6 +106,7 @@ export interface ItemEvent extends CycleMetadata, FanoutControl {
     | "updated"
     | "deleted"
     | "restored"
+    | "purged"
     | "state_changed"
     | "metadata_changed";
   item: Item;
@@ -331,7 +332,7 @@ export function defaultCycleDetectionWiring(
 /**
  * Maps an internal event type to its wire string.
  *   item.* for item events (created / updated / deleted / restored /
- *     state_changed)
+ *     purged / state_changed)
  *   metadata.changed (bare, not namespaced) for metadata mutations —
  *     a deliberate exception because it describes a metadata-layer change
  *   edge.created / edge.updated / edge.deleted for edge lifecycle events

@@ -50,6 +50,11 @@ function titles(rows: Iterable<Item>): string[] {
     .sort();
 }
 
+/** For a type whose rows carry no title. */
+function ids(rows: Iterable<Item>): string[] {
+  return [...rows].map((i) => i.id);
+}
+
 describe("createReplicaCollection", () => {
   it("serves reads locally once populated, with no further network calls", async () => {
     await fx.client.items.create({
@@ -114,6 +119,69 @@ describe("createReplicaCollection", () => {
       () => titles(replica.values()),
     );
     replica.utils.stop();
+  });
+
+  it("drops a purged row whose soft-deleted state was never `trashed`", async () => {
+    // The shape reading the state cannot cover, and the reason a purge is
+    // matched by name rather than by what the row said on its way out. A
+    // `system.*` row soft-deletes to `revoked`, so a purge of one carries
+    // `revoked` and a replica deciding on state alone would keep it
+    // forever: nothing later can correct the copy, because the row is
+    // absent rather than changed.
+    //
+    // The credential teardown is the door that produces this: it revokes
+    // and purges in one call, so a holder sees the purge without a
+    // preceding `item.deleted` to remove the row first.
+    //
+    // The row is the server's own, revoked by the server, so the state
+    // under test is not a value this file made up. Only the delivery is
+    // supplied, the same way the initial-read race above is driven.
+    const credential = await fx.client.items.create({
+      type: "system.credential",
+      properties: { label: "replica-purge-probe", kind: "api_token" },
+    });
+    await fx.client.items.delete(credential.id);
+    const revoked = await fx.client.items.get(credential.id);
+    expect(revoked.state).toBe("revoked");
+
+    let deliverPurge!: () => void;
+    const replica = createReplicaCollection(
+      {
+        items: {
+          list: () =>
+            Promise.resolve({
+              data: [revoked],
+              cursor: null,
+              has_more: false,
+            }),
+        },
+      } as unknown as typeof fx.client,
+      {
+        type: "system.credential",
+        subscribe: ({ onEvent }) => {
+          deliverPurge = () => {
+            void onEvent({ type: "item.purged", item: revoked } as never, "1");
+          };
+          return {
+            closed: Promise.resolve(),
+            close: () => undefined,
+            lastEventId: "1",
+          };
+        },
+      },
+    );
+
+    await replica.preload();
+    expect(ids(replica.values())).toContain(credential.id);
+
+    deliverPurge();
+    await until(
+      "dropped the purged credential",
+      () => !ids(replica.values()).includes(credential.id),
+      () => ids(replica.values()),
+    );
+    replica.utils.stop();
+    await fx.client.items.purge(credential.id);
   });
 
   it("does not lose a change that lands during the initial read", async () => {

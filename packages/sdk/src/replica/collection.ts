@@ -103,6 +103,12 @@ type ReplicaCollection = Collection<Item, string, ReplicaUtils>;
  */
 function removesFromReplica(event: { type: string; item: Item }): boolean {
   if (event.type === "item.deleted") return true;
+  // A purge, whatever state the row was in when it went. Reading the state
+  // instead would have covered an ordinary note, which is purged out of
+  // `trashed` — and missed every `system.*` row, whose soft delete is
+  // `revoked` rather than `trashed`, so a purged one would have stayed in
+  // the replica for ever with no later event able to correct it.
+  if (event.type === "item.purged") return true;
   return event.item.state === "trashed";
 }
 

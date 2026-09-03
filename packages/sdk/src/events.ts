@@ -38,13 +38,22 @@
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { HttpTransport } from "./transport.js";
 
-/** An item-shaped event. `metadata.changed` carries the sidecar too. */
+/**
+ * An item-shaped event. `metadata.changed` carries the sidecar too.
+ *
+ * `item.deleted` and `item.purged` are not the same news. The first says
+ * the row was trashed and can come back, so a store that keeps trash keeps
+ * it; the second says the row is gone for good and nothing will ever
+ * correct a copy of it. Both carry the row as it last stood, because there
+ * is nothing left to read once the second has been published.
+ */
 export interface MarfaItemEvent {
   type:
     | "item.created"
     | "item.updated"
     | "item.deleted"
     | "item.restored"
+    | "item.purged"
     | "item.state_changed"
     | "metadata.changed";
   item: Item;

@@ -1056,6 +1056,9 @@ export class PgItemStore implements ItemStore {
       // rather than by space: `ids` is already space-resolved above, and
       // an edge pointing at a purged item is garbage whatever its space
       // stamp. Same statement shape as the bulk-action purge worker.
+      // Nothing is announced for any of it, here or in the two sibling
+      // sweeps: `TrashPurger` carries why, and it is a decision rather
+      // than an omission.
       await tx.delete(edges).where(inArray(edges.source_id, ids));
       await tx.delete(edges).where(inArray(edges.target_id, ids));
       // search_vector cascades — see bulkPurge.

@@ -120,6 +120,10 @@ async function runPurgeChunk({
   // that fails cannot turn a committed purge into an all-errored chunk —
   // and nothing is announced that a rollback took away.
   const cascaded: Edge[] = [];
+  // The rows themselves, read before they are deleted because there is
+  // nothing to read afterwards. Staged the same way and discarded by the
+  // same gate below.
+  const removed: Item[] = [];
   await storage.runInTransaction(async () => {
     // Trashed included: purge is the terminal step after a soft delete, so
     // every id it is handed is trashed. Excluding them left this map empty,
@@ -131,6 +135,7 @@ async function runPurgeChunk({
     });
     for (const item of items.values()) {
       collectBlobHashes(item.properties, blob_hashes);
+      removed.push(item);
     }
     // One DELETE per direction + one DELETE on items = 3 statements
     // instead of 3 × ids.length. The two edge deletes return the rows
@@ -175,6 +180,7 @@ async function runPurgeChunk({
       // errored. This line and the gate below are what make that
       // refactor safe rather than silent.
       cascaded.length = 0;
+      removed.length = 0;
       const entry = toErrorEntry("", err);
       for (const id of ids) {
         errors.push({ id, code: entry.code, message: entry.message });
@@ -187,20 +193,32 @@ async function runPurgeChunk({
   // failed announces nothing. See the `catch` above for why that gate
   // cannot fire today and is kept regardless.
   //
-  // **Edges only. A purge publishes no item event**, on this door or the
-  // single-item one: there is no purge event in the contract, and the
-  // trash transition that precedes a purge already announced the item.
-  // Inventing one here would make a bulk purge noisier than the door it
-  // mirrors.
-  //
   // An edge pointing AT one of these items lives on an item that is NOT
   // being purged, so nothing else tells its holder the relationship is
   // gone — which is why the cascade is announced per edge.
+  //
+  // **The items too, and this door used to announce only the edges.** The
+  // reason given was that a purge was not in the contract and that the
+  // trash transition preceding it had already announced the item — but
+  // `item.deleted` says recoverable, and a client that acted on it holds a
+  // trashed row nothing will ever correct. One event per row, which is what
+  // the trash arm of this same runner already writes, so a purge is no
+  // noisier than the transition it follows.
+  //
+  // Edges first and rows after, the ordering the single-item door states.
   if (errors.length === 0) {
     for (const edge of cascaded) {
       await publishEdge({
         type: "edge_deleted",
         edge,
+        ...(spaceId != null && { spaceId }),
+        enableFanout: fansOutFor(input),
+      });
+    }
+    for (const item of removed) {
+      await publish({
+        type: "purged",
+        item,
         ...(spaceId != null && { spaceId }),
         enableFanout: fansOutFor(input),
       });
