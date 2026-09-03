@@ -47,6 +47,7 @@ export {
   NotFoundError,
   ValidationError,
   ConflictError,
+  EdgeConflictError,
   UnauthorizedError,
   ForbiddenError,
 } from "./errors.js";

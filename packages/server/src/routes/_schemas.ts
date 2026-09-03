@@ -13,6 +13,7 @@ export const EdgeSchema = z.object({
   properties: z.record(z.string(), z.unknown()),
   created_at: z.string(),
   updated_at: z.string(),
+  version: z.number(),
 });
 
 /**

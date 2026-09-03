@@ -68,6 +68,7 @@ function fakeEdge(id: string): Edge {
     properties: {},
     created_at: now,
     updated_at: now,
+    version: 1,
   };
 }
 

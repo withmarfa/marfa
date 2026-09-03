@@ -43,6 +43,7 @@ import { HttpTransport, type TokenProviderLike } from "./transport.js";
 import {
   BulkJobCancelledError,
   BulkJobFailedError,
+  EdgeConflictError,
   MarfaError,
   NotFoundError,
   ValidationError,
@@ -1584,17 +1585,50 @@ export class MarfaClient {
       return res.edge;
     },
 
-    /** Update properties on an existing edge. edge_type / source / target
-     *  are immutable; server rejects with 400. */
+    /**
+     * Update properties on an existing edge. edge_type / source / target
+     * are immutable; server rejects with 400.
+     *
+     * `opts.version` opts into optimistic concurrency: pass the `version`
+     * from the edge the edit was computed against, and a write over a row
+     * that has moved on is refused rather than landing on top of it. The
+     * refusal throws, carrying the current edge — edges have no merge
+     * policy, so resolution is to re-apply the change over that and send
+     * again. Omit it and the write is unconditional, which is what every
+     * caller written before this got.
+     */
     update: async (
       id: string,
       properties: Record<string, unknown>,
+      opts?: { version?: number },
     ): Promise<Edge> => {
-      const res = await this.transport.request<{ edge: Edge }>(
+      // `requestWithConflict` rather than `request`, so the 409 body
+      // survives. The generic path would throw a `MarfaError` built from
+      // the error object alone, and the current edge — the only thing in
+      // that body worth having — would be discarded on the way out.
+      const res = (await this.transport.requestWithConflict<{ edge: Edge }>(
         "PATCH",
         `/edges/${id}`,
-        { body: { properties } },
-      );
+        {
+          body: {
+            properties,
+            ...(opts?.version !== undefined && { version: opts.version }),
+          },
+        },
+      )) as
+        { edge: Edge } | { error: { code: string; status: 409 }; edge?: Edge };
+      if ("error" in res) {
+        // Branch on the shape rather than asserting it. This transport
+        // hands back every 409 body unchanged, and only the stale-version
+        // one carries an edge. A future refusal on this route that used
+        // the ordinary error envelope would otherwise reach the line
+        // below with nothing to read, and the caller would get a
+        // TypeError instead of an error they can handle.
+        if (res.edge === undefined) {
+          throw new MarfaError(res.error.code, "Edge update refused", 409);
+        }
+        throw new EdgeConflictError(res.edge);
+      }
       return res.edge;
     },
 

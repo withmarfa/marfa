@@ -338,6 +338,23 @@ export interface Edge {
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
+  /**
+   * Optimistic-concurrency counter. Starts at 1 and moves on with every
+   * update the server applies, whether or not the new properties differ
+   * from the old — the write is what advances it, not a comparison of
+   * content. So two reads showing the same version mean nothing was
+   * written in between; two showing different versions mean a write
+   * landed, not that anything about the edge is now different.
+   *
+   * Pass it back as the `version` precondition on `PATCH /edges/{id}` to
+   * refuse an edit computed from a state the server has since left. An
+   * update that names no version still lands, and still moves the counter.
+   *
+   * Unlike an item's, an edge's version has no snapshot behind it — there
+   * is no per-version history table for edges and no merge policy — so a
+   * refusal hands back the whole current edge and the client re-applies.
+   */
+  version: number;
 }
 
 /** Input for creating a new edge. */

@@ -207,6 +207,7 @@ export const edges = pgTable(
     properties: text("properties").notNull().default("{}"),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),
+    version: integer("version").notNull().default(1),
   },
   (table) => [
     index("idx_edges_source").on(

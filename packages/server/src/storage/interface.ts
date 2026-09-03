@@ -2109,18 +2109,38 @@ export interface EdgeStore {
     filters?: EdgeListFilters & { spaceId?: string },
   ): Promise<PaginatedResult<Edge>>;
   /**
-   * Replace an edge's properties in place. `source_id` / `target_id` /
-   * `edge_type` are immutable. When `spaceId` is supplied the UPDATE is
-   * additionally fenced to that space so a space-scoped caller cannot
-   * mutate another space's edge by id — a cross-space id matches zero
-   * rows and throws `edge ... not found`. Omitting `spaceId` leaves the
-   * update unscoped (platform-admin / single-space self-host).
+   * Replace an edge's properties in place and move its version on.
+   * `source_id` / `target_id` / `edge_type` are immutable. When `spaceId`
+   * is supplied the UPDATE is additionally fenced to that space so a
+   * space-scoped caller cannot mutate another space's edge by id — a
+   * cross-space id matches zero rows and raises `edge_not_found`, which
+   * the handler answers 404 — a bare error here would reach the generic
+   * tail and cost the caller a 500 for a row that is simply gone.
+   * Omitting `spaceId` leaves the update unscoped (platform-admin /
+   * single-space self-host).
+   *
+   * **This is the only statement in the codebase that changes an edge row
+   * in place**, which is why the version bump lives here rather than in a
+   * route. A version is a property of the statement, not of the door: put
+   * the bump in one caller and every other caller silently stops keeping
+   * the invariant, while all of them still answer 2xx.
+   *
+   * `expectedVersion` makes the write conditional — it joins the id and
+   * the space fence in one WHERE, so the statement is atomic and needs no
+   * surrounding transaction. Edge properties replace rather than merge, so
+   * there is nothing computed from a prior read to protect and none of the
+   * lost-update hazard that forces the item store to lock its row.
+   *
+   * Returns the written edge, or the current one when the precondition did
+   * not hold. A discriminated result rather than a thrown error so a new
+   * call site has to state an answer instead of inheriting one.
    */
   updateProperties(
     id: string,
     properties: Record<string, unknown>,
     spaceId?: string,
-  ): Promise<Edge>;
+    expectedVersion?: number,
+  ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }>;
   /**
    * Delete an edge by id. When `spaceId` is supplied the DELETE is fenced
    * to that space so a space-scoped caller cannot delete another space's

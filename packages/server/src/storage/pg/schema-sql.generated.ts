@@ -327,7 +327,8 @@ CREATE TABLE IF NOT EXISTS public.edges (
     edge_type text NOT NULL,
     properties text DEFAULT '{}'::text NOT NULL,
     created_at text NOT NULL,
-    updated_at text NOT NULL
+    updated_at text NOT NULL,
+    version integer DEFAULT 1 NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.enrichment_state (
