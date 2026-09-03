@@ -41,7 +41,3 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for the full development guide and [CLA
 - Contributor guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
 - Self-hosting and deployment: <https://docs.marfa.so/self-hosting>
 - Product docs and guides: <https://docs.marfa.so>
-
-## License
-
-[MIT](./LICENSE)
