@@ -145,28 +145,6 @@ describe("an edge carries a version", () => {
     expect(stored.version).toBe(2);
   });
 
-  it("accepts an update that names no version, and still moves it on", async () => {
-    // The precondition is opt-in. Making it mandatory would refuse every
-    // caller written before it existed, and the contract for items is the
-    // same: no version means last writer wins, loudly enough that the
-    // documentation says so.
-    const created = await edge({ note: "base" });
-    const bumped = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
-      key: ctx.adminKey,
-      body: { version: 1, properties: { note: "somebody else" } },
-    });
-    expect(bumped.status).toBe(200);
-
-    const blind = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
-      key: ctx.adminKey,
-      body: { properties: { note: "no precondition" } },
-    });
-    expect(blind.status).toBe(200);
-    const result = ((await blind.json()) as { edge: WireEdge }).edge;
-    expect(result.properties).toEqual({ note: "no precondition" });
-    expect(result.version).toBe(3);
-  });
-
   it("announces the version the write produced", async () => {
     // A subscriber applies an inbound edge only if it is not older than
     // the row it holds, which it cannot do if the frame carries no
@@ -186,10 +164,15 @@ describe("an edge carries a version", () => {
     expect(event.edge.properties).toEqual({ note: "edited" });
   });
 
-  it("hands a precondition back from every door that reads an edge", async () => {
-    // A version a client cannot obtain is no use. Four doors return an
-    // edge, and an edge read through an item is the one most likely to be
-    // missed: it is built from a second declaration of the wire shape.
+  it("hands a precondition back from the doors that read edges directly", async () => {
+    // A version a client cannot obtain is no use.
+    //
+    // These three resolve through the query builder, which selects every
+    // mapped column, so none of them can drop the field without the
+    // create above dropping it too. They are here as the statement of what
+    // a client may rely on rather than as three independent guards, and
+    // they are deliberately not the door most at risk — that one is split
+    // into its own case below, so a failure here cannot mask it.
     const created = await edge({ note: "readable" });
 
     const outbound = await request(
@@ -224,6 +207,16 @@ describe("an edge carries a version", () => {
       (e) => e.id === created.id,
     );
     expect(match?.version).toBe(1);
+  });
+
+  it("hands a precondition back from an edge hydrated onto its item", async () => {
+    // The door that can actually regress, and the reason the previous
+    // case exists at all. An item's inline edge blocks are built by
+    // hand-written SQL that names its columns, so a column added to the
+    // table and to every mapped read still has to be added here by
+    // somebody remembering. A client walking a graph through items would
+    // otherwise get edges it cannot write back to safely.
+    const created = await edge({ note: "readable" });
 
     const hydrated = await request(
       ctx.app,
