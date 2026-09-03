@@ -5,18 +5,34 @@
  * it. An event published for a write that then rolls back becomes a row on
  * that client which nothing will ever correct, short of a full re-import: a
  * cached client forgets on reload, a durable one does not. So the ordering
- * is not a nicety — publish is downstream of the write landing, on every
- * door, or the door can manufacture a phantom.
+ * is not a nicety. Publish is downstream of the write landing, or the door
+ * can manufacture a phantom.
  *
- * **The local emitter is the thing to watch, not the event log.** On
- * Postgres the cross-process half already rides the surrounding transaction
- * (`event-replication.ts` announces over `pg_notify`, delivered on commit),
- * and a publish moved inside a transaction would have its `event_log` row
- * rolled back with everything else. The `emitter.emit` inside `publish()` is
- * unconditional and synchronous, so a same-process subscriber — SSE viewers,
- * outbound webhook delivery, the reactive bridges — is exactly who receives
- * the phantom. Every assertion below is therefore made against a live
- * subscriber first and the event log second.
+ * **Scope: the item and edge write doors.** Those are the routes a client
+ * writes its own graph through, and they are what this file speaks for.
+ * Other code publishes too, and its events are not lesser ones: connection
+ * lifecycle, grant projection, the install pipeline, archive restore,
+ * sign-up seeding and the enrichment sweeper all put ordinary item events on
+ * the same stream a durable client persists. They are outside this file as a
+ * boundary decision rather than an oversight, and the census at the bottom
+ * names every one of them so the decision stays visible instead of implied.
+ *
+ * **Both assertions are needed, and which one catches a regression depends
+ * on the door.** The `emitter.emit` inside `publish()` is unconditional and
+ * synchronous, so a same-process subscriber (SSE viewers, outbound webhook
+ * delivery, the reactive bridges) always receives the phantom. The
+ * `event_log` row does not always survive to show it, because the log is
+ * written through the same transaction-aware db the door writes through:
+ *
+ *   - On a door that opens a transaction, a publish moved inside it has its
+ *     `event_log` row rolled back with everything else. The log then looks
+ *     correct and ONLY the subscriber assertion reddens.
+ *   - On a door that opens none, a publish moved above the write commits its
+ *     log row, so BOTH assertions redden.
+ *
+ * Both halves were measured rather than reasoned about. A guard written
+ * against the log alone would pass every transactional case, which is the
+ * half where a rollback is a real event rather than a hypothetical one.
  *
  * **Each door is proved twice.** Once unbroken, so the subscriber is known
  * to hear this door at all — a negative assertion against a probe that could
@@ -24,19 +40,23 @@
  * to come apart. Two shapes of breakage, because the doors are two shapes:
  *
  *   - A door that wraps its write in `storage.runInTransaction` is broken by
- *     rolling that transaction back the instant its last write lands. That
- *     is the ticket's own probe, and the only one that reaches the case
- *     where the write really did happen and really was undone.
+ *     rolling that transaction back the instant its last write lands. It is
+ *     the only probe that reaches the case where the write really did happen
+ *     and really was undone.
  *   - A door that opens no transaction has nothing to roll back. Its write
  *     is a single statement and the property reduces to ordering, so it is
  *     broken by making that write throw. Weaker, and honest about it: it
  *     catches a publish moved above the write and nothing else.
  *
- * Which shape each door is, is measured rather than assumed. The unbroken
- * run counts the transactions the door opens and the table below has to
- * agree, so a door that later grows a transaction reddens here and its
- * publish placement gets looked at rather than inherited.
+ * How many transactions each door opens is measured rather than assumed. The
+ * unbroken run counts them and the table below has to match exactly. A count
+ * rather than a yes-or-no, because a door that grew a preflight transaction
+ * would take the breakage on that one, never reach its real write, and pass
+ * for the wrong reason.
  */
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { generateId } from "@withmarfa/shared";
 import {
@@ -251,11 +271,17 @@ interface Door {
   name: string;
   family: Family;
   /**
-   * Whether the door wraps its write in `storage.runInTransaction`. Asserted
-   * against the count taken on the unbroken run, so this is a record of what
-   * the door does rather than a claim about it.
+   * How many transactions the door opens through `storage.runInTransaction`,
+   * asserted by exact equality against the count taken on the unbroken run.
+   *
+   * A count rather than a yes-or-no. The breakage throws out of the FIRST
+   * transaction it sees, so a door that grew a preflight transaction — a
+   * quota reservation, a lock — would be broken there, never reach the write
+   * this file is about, and pass while proving nothing. Pinning the number
+   * makes that door redden on the unbroken run instead, where the message
+   * says what changed.
    */
-  transactional: boolean;
+  transactions: number;
   setup: () => Promise<Partial<DoorState>>;
   /** Drive the door. Resolves to whether it reported success. */
   act: (s: DoorState) => Promise<boolean>;
@@ -326,7 +352,7 @@ const doors: Door[] = [
   {
     name: "POST /items creates an item",
     family: "item",
-    transactional: true,
+    transactions: 1,
     setup: () => Promise.resolve({ item: generateId() }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/items", {
@@ -348,7 +374,7 @@ const doors: Door[] = [
   {
     name: "POST /items writes the edges named with the item",
     family: "item",
-    transactional: true,
+    transactions: 1,
     setup: async () => ({
       item: generateId(),
       other: await makeNote("target"),
@@ -377,7 +403,7 @@ const doors: Door[] = [
   {
     name: "POST /items upserts on a natural key",
     family: "item",
-    transactional: true,
+    transactions: 1,
     setup: async () => {
       const sourceId = uniq("natural");
       const res = await request(ctx.app, "POST", "/items", {
@@ -410,7 +436,7 @@ const doors: Door[] = [
   {
     name: "PATCH /items/{id} updates properties and replaces edges",
     family: "item",
-    transactional: true,
+    transactions: 1,
     setup: async () => {
       const item = await makeNote("before");
       const other = await makeNote("new target");
@@ -441,7 +467,7 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id} trashes an item",
     family: "item",
-    transactional: true,
+    transactions: 1,
     setup: async () => ({ item: await makeNote("doomed") }),
     act: async (s) => {
       const res = await request(ctx.app, "DELETE", `/items/${s.item}`, {
@@ -458,7 +484,7 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/transition moves an item's state",
     family: "item",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.items, "transition"),
     setup: async () => ({ item: await makeNote("transitioning") }),
     act: async (s) => {
@@ -482,7 +508,7 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/restore brings an item back",
     family: "item",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.items, "restore"),
     setup: async () => {
       const item = await makeNote("to restore");
@@ -503,7 +529,7 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/promote copies an integration's row",
     family: "item",
-    transactional: false,
+    transactions: 0,
     // The edge is the second of two writes and the only thing this door
     // announces, so it is what the breakage has to reach.
     breakage: () => breakWrite(ctx.storage.edges, "createRaw"),
@@ -537,7 +563,7 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id}/purge removes an item and its edges",
     family: "item",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.items, "purge"),
     setup: async () => {
       const item = await makeNote("to purge");
@@ -564,7 +590,7 @@ const doors: Door[] = [
   {
     name: "PUT /items/{id}/metadata replaces the tags",
     family: "metadata",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.metadata, "set"),
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
@@ -582,7 +608,7 @@ const doors: Door[] = [
   {
     name: "PATCH /items/{id}/metadata merges the tags",
     family: "metadata",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.metadata, "merge"),
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
@@ -600,7 +626,7 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/tags adds tags",
     family: "metadata",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.metadata, "addTags"),
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
@@ -618,7 +644,7 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id}/tags/{tag} removes a tag",
     family: "metadata",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.metadata, "removeTag"),
     setup: async () => {
       const item = await makeNote("tagged");
@@ -645,7 +671,7 @@ const doors: Door[] = [
   {
     name: "PUT /items/{id}/extensions/{namespace} writes a sidecar",
     family: "metadata",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.metadata, "setExtension"),
     setup: async () => ({ item: await makeNote("with sidecar") }),
     act: async (s) => {
@@ -666,7 +692,7 @@ const doors: Door[] = [
   {
     name: "DELETE /items/{id}/extensions/{namespace} drops a sidecar",
     family: "metadata",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.metadata, "deleteExtension"),
     setup: async () => {
       const item = await makeNote("with sidecar");
@@ -696,7 +722,7 @@ const doors: Door[] = [
   {
     name: "POST /edges creates an edge",
     family: "edge",
-    transactional: true,
+    transactions: 1,
     setup: async () => ({
       item: await makeNote("edge source"),
       other: await makeNote("edge target"),
@@ -720,7 +746,7 @@ const doors: Door[] = [
   {
     name: "PATCH /edges/{id} edits an edge's properties",
     family: "edge",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.edges, "updateProperties"),
     setup: async () => {
       const item = await makeNote("edge source");
@@ -742,7 +768,7 @@ const doors: Door[] = [
   {
     name: "DELETE /edges/{id} removes an edge",
     family: "edge",
-    transactional: false,
+    transactions: 0,
     breakage: () => breakWrite(ctx.storage.edges, "delete"),
     setup: async () => {
       const item = await makeNote("edge source");
@@ -764,7 +790,7 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk writes an atomic batch",
     family: "bulk",
-    transactional: true,
+    transactions: 1,
     setup: async () => ({
       item: generateId(),
       other: await makeNote("bulk edge target"),
@@ -799,7 +825,7 @@ const doors: Door[] = [
   {
     name: "POST /edges/bulk writes an atomic batch",
     family: "bulk",
-    transactional: true,
+    transactions: 1,
     setup: async () => ({
       item: await makeNote("bulk edge source"),
       other: await makeNote("bulk edge target"),
@@ -829,7 +855,7 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk-actions transitions a filtered set",
     family: "bulk",
-    transactional: true,
+    transactions: 1,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("bulk transition");
@@ -861,7 +887,7 @@ const doors: Door[] = [
   {
     name: "POST /items/bulk-actions purges a filtered set",
     family: "bulk",
-    transactional: true,
+    transactions: 1,
     setup: async () => {
       const tag = uniq("action");
       const item = await makeNote("bulk purge");
@@ -919,15 +945,15 @@ describe("a rolled-back write announces nothing", () => {
         // subscriber can hear this door.
         expect(heard.logged).toBeGreaterThan(0);
         expect(door.attributable(heard, state).length).toBeGreaterThan(0);
-        // Observed rather than assumed — see the table's `transactional`.
-        expect(census.fired() > 0).toBe(door.transactional);
+        // Observed rather than assumed. Exact, so a second transaction is a
+        // finding rather than a shrug — see the table's `transactions`.
+        expect(census.fired()).toBe(door.transactions);
       });
 
       it("announces nothing when the write is forced to come apart", async () => {
         const state = { ...NO_STATE, ...(await door.setup()) };
-        const injection = door.transactional
-          ? rollBackAfterTheWrite()
-          : door.breakage!();
+        const injection =
+          door.transactions > 0 ? rollBackAfterTheWrite() : door.breakage!();
         let succeeded = true;
         let heard: Heard;
         try {
@@ -947,4 +973,150 @@ describe("a rolled-back write announces nothing", () => {
       });
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Coverage
+// ---------------------------------------------------------------------------
+
+/**
+ * Where the server publishes, and how many times each file does it.
+ *
+ * **Over call sites rather than registered routes, and that is the point.**
+ * A route walk answers "did somebody add a route", and the way this guard
+ * actually goes stale is somebody adding a publish to a route that already
+ * has a row: a bulk-action arm that starts announcing, a second event on a
+ * door that emitted one. That is invisible to a route walk and is exactly
+ * what a per-file count catches. The door table above is the human half;
+ * this is the mechanical half that makes it stay honest.
+ *
+ * Definitions are not sites, so `pubsub.ts` is absent by construction.
+ *
+ * When this fails, the number is never the fix on its own. Work out which
+ * door grew the publish, give it a row in `doors` and drive it both ways, or
+ * move the file into `PUBLISHES_OUT_OF_SCOPE` with a reason. Editing the
+ * count to match is how a guard becomes a formality.
+ */
+interface PublishingFile {
+  /** Call sites of `publish` / `publishEdge` / `announceInlineEdges`. */
+  sites: number;
+  why: string;
+}
+
+/** Files whose publishes are driven by a door in the table above. */
+const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
+  "routes/items.ts": {
+    sites: 13,
+    why: "create, upsert, patch, delete, promote, purge, and the four tag and metadata doors",
+  },
+  "routes/items-lifecycle.ts": { sites: 2, why: "transition and restore" },
+  "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
+  "routes/extensions.ts": { sites: 2, why: "the two extension doors" },
+  "routes/bulk.ts": {
+    sites: 2,
+    why: "the atomic item batch and its inline edges",
+  },
+  "routes/edges-bulk.ts": { sites: 2, why: "the atomic edge batch" },
+  "bulk-actions/runner.ts": {
+    sites: 2,
+    why: "the transition and purge arms; the other four arms publish nothing today",
+  },
+  "routes/_edges-inline.ts": {
+    sites: 2,
+    why: "the shared inline-edge announcer, reached only by doors that have a row",
+  },
+};
+
+/**
+ * Files that publish outside this file's scope.
+ *
+ * **Their events are not lesser ones.** Every entry here puts an ordinary
+ * item event on the same stream a durable client persists, so a phantom from
+ * any of them would cost a client exactly what a phantom from a write door
+ * costs. They are excluded because this file speaks for the doors a client
+ * writes its own graph through, which is a boundary drawn on purpose. Listed
+ * rather than omitted so the next reader can see the decision and reopen it.
+ */
+const PUBLISHES_OUT_OF_SCOPE: Record<string, PublishingFile> = {
+  "routes/connections.ts": { sites: 5, why: "connection lifecycle" },
+  "routes/auth-pages.ts": { sites: 2, why: "grant projection at sign-in" },
+  "routes/auth-consent.ts": { sites: 1, why: "grant projection at consent" },
+  "routes/integrations.ts": { sites: 1, why: "the install pipeline" },
+  "routes/admin-archive.ts": {
+    sites: 1,
+    why: "archive restore, an admin surface",
+  },
+  "auth/starter-content.ts": {
+    sites: 1,
+    why: "sign-up seeding, outside a request",
+  },
+  "connections/upstream-credential.ts": {
+    sites: 1,
+    why: "credential teardown",
+  },
+  "enrichment/sweeper.ts": {
+    sites: 1,
+    why: "a background sweeper, outside a request",
+  },
+};
+
+/** Strip comments so a `publish()` written in prose is not counted. */
+function scanForPublishSites(): Map<string, number> {
+  const srcRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const found = new Map<string, number>();
+  const entries = readdirSync(srcRoot, { recursive: true, encoding: "utf8" });
+  for (const entry of entries) {
+    if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) continue;
+    const text = readFileSync(join(srcRoot, entry), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/\/\/[^\n]*/g, "")
+      // A definition is not a call site.
+      .replace(
+        /(?:async\s+)?function\s+(?:publish|publishEdge|announceInlineEdges)\s*\(/g,
+        "DEFINITION(",
+      );
+    const sites =
+      text.match(
+        /(?<![A-Za-z0-9_$.])(?:publish|publishEdge|announceInlineEdges)\s*\(/g,
+      )?.length ?? 0;
+    if (sites > 0) found.set(entry.split(sep).join("/"), sites);
+  }
+  return found;
+}
+
+describe("every publish in the server is accounted for", () => {
+  it("is under a door, or named with a reason it is not", () => {
+    const found = scanForPublishSites();
+
+    for (const [file, sites] of found) {
+      const declared =
+        PUBLISHES_UNDER_GUARD[file] ?? PUBLISHES_OUT_OF_SCOPE[file];
+      // A file nobody classified. Decide which half it belongs in; that
+      // decision is the whole value of this check.
+      expect(declared, `unclassified publishing file: ${file}`).toBeDefined();
+      expect(
+        sites,
+        `publish sites changed in ${file}: give each new one a door row, or move the file out of scope with a reason`,
+      ).toBe(declared?.sites);
+    }
+
+    // The other direction. An entry left behind after its publishes moved
+    // stops covering anything, silently, and the next publish to land in
+    // that file inherits a count that was never about it.
+    for (const file of [
+      ...Object.keys(PUBLISHES_UNDER_GUARD),
+      ...Object.keys(PUBLISHES_OUT_OF_SCOPE),
+    ]) {
+      expect(found.has(file), `stale entry, no longer publishes: ${file}`).toBe(
+        true,
+      );
+    }
+
+    // A file cannot be both guarded and out of scope.
+    for (const file of Object.keys(PUBLISHES_UNDER_GUARD)) {
+      expect(file in PUBLISHES_OUT_OF_SCOPE, `${file} is in both maps`).toBe(
+        false,
+      );
+    }
+  });
 });
