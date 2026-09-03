@@ -35,12 +35,17 @@
  * exactly the move `withConsentLock` already made
  * (`storage/pg/consent-lock-backend.ts`), and the template to copy when
  * that day comes. Deployments today hold the precondition by policy (one
- * web container), and a SQLite deployment is covered by construction. A
- * `CoordinationStore` lock is the wrong tool here for a concrete reason
- * rather than a stylistic one: `withExclusiveLock` holds a pool connection
- * for the length of its callback, and this callback opens a transaction of
- * its own, so every concurrent upload would need two connections and enough
- * of them would exhaust the pool waiting for slots nobody can release.
+ * web container), and a SQLite deployment is covered by construction.
+ *
+ * A `CoordinationStore` lock is still the wrong tool here, for a concrete
+ * reason rather than a stylistic one. `withExclusiveLock` holds one
+ * connection of a single-connection pool for the length of its callback,
+ * and this callback spans a multi-megabyte write to the blob backend. One
+ * upload would therefore serialize every other lock-taker in the process
+ * for as long as its bytes take to land, and uploads of unrelated content
+ * would serialize against each other for no benefit at all: keying on the
+ * hash is what makes this lock free to unrelated uploads, and a shared
+ * pool of one throws that away.
  */
 
 /**

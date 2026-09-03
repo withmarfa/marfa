@@ -14,18 +14,25 @@ import {
  * Postgres-only: the lock is an advisory lock, and SQLite's coordination
  * store queues in process instead.
  *
- * These exist because the bracketing shape took a pool connection of its
- * own for the length of its callback, and the callback then needed the
- * same pool to do its work. Concurrent callers therefore each held one
- * slot while waiting for a slot nobody could release, and postgres.js
- * queues an unavailable reservation with no bound, so the result was a
- * permanent stall rather than a slow patch. Minting a runtime credential
- * ran through that shape on every dispatch of every integration, and
- * production stopped answering.
+ * These exist because a lock that takes a pool connection for the length
+ * of its callback, from the pool that callback then queries, leaves
+ * concurrent callers each holding one slot while waiting for a slot nobody
+ * can release. postgres.js queues an unavailable connection with no bound,
+ * so the result is a permanent stall rather than a slow patch.
  *
- * Both cases below hang rather than fail when the mint path regresses to
- * the bracketing shape, so give them an explicit timeout: an assertion
- * that never runs reports nothing useful.
+ * Both shapes reached it, a year apart and for different reasons. The
+ * mints reached it by running on every dispatch of every integration,
+ * and were moved onto the caller's own transaction. The bracketing shape
+ * reached it because a Connection uninstall on a request that carries no
+ * ambient transaction queries the pool for every step of its pipeline:
+ * three concurrent uninstalls against a three-connection pool took every
+ * slot and the server stopped answering. It now holds its lock on a pool
+ * of its own.
+ *
+ * Every case below hangs rather than fails when its shape regresses, so
+ * each carries an explicit timeout: an assertion that never runs reports
+ * nothing useful. What arrives instead is the runner's own timeout naming
+ * the case, which is why the names say what was being waited on.
  */
 const isPg = process.env.DB_DIALECT === "pg";
 const url = process.env.DATABASE_URL ?? "";
@@ -80,6 +87,69 @@ describe.skipIf(!isPg || !url)("connection lifecycle lock, pool bounds", () => {
           withConnectionLifecycleLockInTransaction(
             storage,
             `pool-bounds-distinct-${String(i)}`,
+            async () => {
+              await storage.keys.count();
+              return i;
+            },
+          ),
+        ),
+      );
+
+      expect(results.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    } finally {
+      await storage.close();
+    }
+  }, 30_000);
+
+  it("completes more concurrent bracketing holders than the pool has slots, on one Connection", async () => {
+    const storage = await createPgStorage(url, { maxPoolSize: POOL });
+    try {
+      let inFlight = 0;
+      let concurrentPeak = 0;
+
+      const results = await Promise.all(
+        Array.from({ length: CALLERS }, (_, i) =>
+          withConnectionLifecycleLock(
+            storage,
+            "pool-bounds-bracketing-single",
+            async () => {
+              inFlight += 1;
+              concurrentPeak = Math.max(concurrentPeak, inFlight);
+              // The callback wants the pool, which is what every lifecycle
+              // pipeline does: an uninstall reads the Connection, revokes
+              // credentials, deletes tokens and writes an audit row, each
+              // on a connection this lock must not be holding.
+              await storage.keys.count();
+              inFlight -= 1;
+              return i;
+            },
+          ),
+        ),
+      );
+
+      expect(results.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+      // Still one at a time. Removing the pool ceiling must not remove the
+      // exclusion, which is the whole reason the lock is here.
+      expect(concurrentPeak).toBe(1);
+    } finally {
+      await storage.close();
+    }
+  }, 30_000);
+
+  it("completes concurrent bracketing holders on distinct Connections", async () => {
+    // The case that says this is a pool defect rather than a locking one.
+    // Distinct keys never contend, so nothing here waits on anything, and
+    // the bracketing shape wedged anyway because the slot is taken before
+    // the key is ever compared. It is also the shape the outage had:
+    // three backends holding three different lifecycle locks, each idle in
+    // transaction, each waiting on a pool the other two had emptied.
+    const storage = await createPgStorage(url, { maxPoolSize: POOL });
+    try {
+      const results = await Promise.all(
+        Array.from({ length: CALLERS }, (_, i) =>
+          withConnectionLifecycleLock(
+            storage,
+            `pool-bounds-bracketing-distinct-${String(i)}`,
             async () => {
               await storage.keys.count();
               return i;

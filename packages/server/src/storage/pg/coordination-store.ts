@@ -68,6 +68,27 @@ export const HOLDER_RESERVE_TIMEOUT_MS = 5_000;
  * to exclude other lock-takers, not to make `fn` atomic, and the callers
  * (`connections/lifecycle-lock.ts`) open their own transactions.
  *
+ * **The lock's transaction therefore comes from `lockClient`, never from the
+ * pool `fn` queries.** Holding a slot of the app pool for the length of a
+ * callback that needs the app pool is the bracketing deadlock: concurrent
+ * callers each hold one slot while waiting for a slot nobody can release,
+ * and postgres.js queues an unavailable connection with no bound, so the
+ * wait is permanent rather than slow. Pool size sets the concurrency at
+ * which that starts, and load has nothing to do with it: callers on
+ * distinct keys deadlock just as readily, because the slot is taken before
+ * the key is ever compared. Three concurrent uninstalls against a
+ * three-connection pool reproduced it twice.
+ *
+ * Exclusion is unaffected by which pool the transaction comes from. A
+ * Postgres advisory lock is held against the database, not against a
+ * session or a client, so two backends contend on the same key whatever
+ * opened them, which is what lets a mint riding a request's own
+ * transaction still block an uninstall bracketing one from here.
+ *
+ * A queue on `lockClient` drains, where a queue on the app pool did not:
+ * every holder it admits runs its critical section on a different pool, so
+ * a holder always makes progress and always releases.
+ *
  * `withJobLock` stays session-scoped, because its `fn` is a background job that
  * can run for minutes and an explicit transaction held that long is a worse
  * trade. What it cannot do is take that lock on the pooled client. The
@@ -91,14 +112,22 @@ export const HOLDER_RESERVE_TIMEOUT_MS = 5_000;
  */
 export class PgCoordinationStore implements CoordinationStore {
   /**
-   * `sessionClient` defaults to `client` for the direct-Postgres case, where
-   * they are the same pool and the distinction does not arise.
+   * `client` is the app pool, and this class deliberately keeps no
+   * reference to it: every lock here is held on a pool the locked work
+   * never queries, so the only thing the app pool is good for is being
+   * the default the other three fall back to. That default suits a test
+   * exercising lock semantics against one pool and suits nothing in
+   * production, where `createConnection` builds a separate pool for each
+   * and `storage/pg/index.ts` passes all three.
+   * `connections/lifecycle-lock-pool.test.ts` drives that wiring
+   * end-to-end rather than trusting this signature.
    */
   constructor(
-    private client: PgClient,
+    client: PgClient,
     private db: PgDb,
     private sessionClient: PgClient = client,
     private jobHolderClient: PgClient = sessionClient,
+    private lockClient: PgClient = client,
     private reserveTimeoutMs: number = JOB_LOCK_RESERVE_TIMEOUT_MS,
   ) {}
 
@@ -121,7 +150,7 @@ export class PgCoordinationStore implements CoordinationStore {
 
   withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
     const key = `marfa:${name}`;
-    return this.client.begin(async (tx) => {
+    return this.lockClient.begin(async (tx) => {
       await tx`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
       return fn();
     }) as Promise<T>;

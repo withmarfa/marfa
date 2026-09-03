@@ -47,6 +47,10 @@ describe.skipIf(!isPg || databaseUrl === "")("session pool bounds", () => {
       drizzle(tiny) as never,
       tiny,
       tiny,
+      // Nothing here takes the bracketing exclusive lock, so the lock
+      // client is left at its default; the budget is the argument that
+      // matters.
+      undefined,
       200,
     );
     const holder = await tiny.reserve();
@@ -152,6 +156,7 @@ describe.skipIf(!isPg || databaseUrl === "")("session pool bounds", () => {
         drizzle(tiny) as never,
         tiny,
         jobHolder,
+        undefined,
         200,
       );
       // Exhaust the shared pool the way concurrent streams would.

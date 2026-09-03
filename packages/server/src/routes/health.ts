@@ -85,7 +85,10 @@ interface DatabaseConnections {
   /** Slots held back by `superuser_reserved_connections`. */
   reserved: number;
   /** Counts by backend state, keyed by client. Marfa's own pools are named
-   *  (`marfa-web:app`, `marfa-worker:lock`); anything else is `other`. */
+   *  (`marfa-web:app`, `marfa-worker:lock`); anything else is `other`.
+   *  A pool of Marfa's own that sets no `application_name` lands in
+   *  `other` too, which reads as another client's traffic rather than as
+   *  a gap here. */
   clients: Record<string, Record<string, number>>;
 }
 
@@ -169,9 +172,12 @@ const CONNECTIONS_CACHE_MS = 15_000;
  * above, which is what a watcher alerts on. The value here is watching the
  * number climb toward the ceiling beforehand.
  */
-/** The `application_name` shape `createConnection` sets: an optional role
- *  suffix on the base label, then the pool that opened the connection. */
-const MARFA_CLIENT = /^marfa(-[a-z]+)?:(app|session|lock)$/;
+/** The `application_name` shape this server sets: an optional role suffix
+ *  on the base label, then the pool that opened the connection. Four come
+ *  from `createConnection`; the fifth, `consent`, is built in `index.ts`,
+ *  so a new pool anywhere needs adding here or it reports as somebody
+ *  else's traffic. */
+const MARFA_CLIENT = /^marfa(-[a-z]+)?:(app|session|lock|exclusive|consent)$/;
 
 async function readDatabaseConnections(
   client: PgClient,

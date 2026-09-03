@@ -70,6 +70,40 @@ const POOL_IDLE_TIMEOUT_SECONDS = 30;
  */
 const POOL_MAX_LIFETIME_SECONDS = 30 * 60;
 
+/**
+ * Connections in the pool that holds bracketing exclusive locks.
+ *
+ * One, and derived rather than picked. A holder's connection does no work
+ * beyond holding the lock, and every critical section it admits needs at
+ * least one main-pool connection of its own, so sizing this above one buys
+ * throughput the main pool has to pay for anyway. What one slot costs is
+ * that lifecycle changes serialize per process, which they already do per
+ * Connection; what it buys is that a deployment's connection sum stays
+ * inside its database tier's ceiling.
+ *
+ * A queue on this pool drains by construction, which is the property the
+ * app pool could not offer: every admitted holder runs its critical
+ * section on a different pool, so it always makes progress. An unbounded
+ * wait here therefore ends, where an unbounded wait on the app pool was
+ * permanent.
+ */
+const LOCK_POOL_MAX_CONNECTIONS = 1;
+
+/**
+ * Seconds the lock pool's connection may sit idle before it is closed.
+ *
+ * Much shorter than the pools above, because this one is budgeted as a
+ * ceiling rather than as a reservation: a deployment's connection sum only
+ * stays under its tier's limit if the slot goes back promptly once a
+ * lifecycle change finishes. Nothing holds this between lifecycle changes,
+ * so steady state is no connection at all.
+ *
+ * Five seconds rather than one, so a caller that walks several Connections
+ * in a row reuses one connection instead of reconnecting per Connection.
+ * The auto-upgrade sweep is that caller.
+ */
+const LOCK_POOL_IDLE_TIMEOUT_SECONDS = 5;
+
 export async function createConnection(
   connectionString: string,
   options?: {
@@ -152,6 +186,16 @@ export async function createConnection(
    * disabled never pays for it.
    */
   jobHolderClient: PgClient;
+  /**
+   * Single-connection client for a blocking lock held across a callback.
+   * Its one caller today is the Connection lifecycle lock behind
+   * `withExclusiveLock`, whose callback runs a multi-step pipeline of
+   * queries on the app pool. The lock's own connection therefore has to
+   * come from somewhere that pipeline never touches, or concurrent
+   * holders deadlock the app pool at its own size. Lazy, and it hands the
+   * slot back within seconds of a lifecycle change finishing.
+   */
+  lockClient: PgClient;
   close: () => Promise<void>;
 }> {
   const directConnectionString = options?.directConnectionString?.trim() ?? "";
@@ -268,6 +312,32 @@ export async function createConnection(
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });
+  // The bracketing exclusive lock's own pool. `withExclusiveLock` holds a
+  // transaction for the whole of its callback, and that callback runs its
+  // own queries on the app pool, so the lock's connection must not come
+  // from there: concurrent callers would each hold an app slot while
+  // waiting for an app slot nobody can release. That is the same
+  // bracketing deadlock the clients above exist to avoid, reached at pool
+  // size rather than at load, and it was reached: three concurrent
+  // Connection uninstalls against a three-connection pool took every slot
+  // and the server stopped answering.
+  //
+  // Session mode rather than the app endpoint for the same reason the two
+  // clients above take it: on a plain Postgres deployment the two URLs are
+  // the same string, and behind a transaction-mode pooler this keeps a
+  // pipeline-length transaction off a pooled server connection. The lock
+  // itself is transaction-scoped and so would be safe on either.
+  //
+  // Lazy, like the others, so a deployment that never changes a Connection
+  // lifecycle never opens it.
+  const lockClient = postgres(sessionModeUrl, {
+    max: LOCK_POOL_MAX_CONNECTIONS,
+    connection: { application_name: `${appName}:exclusive` },
+    idle_timeout: LOCK_POOL_IDLE_TIMEOUT_SECONDS,
+    max_lifetime: POOL_MAX_LIFETIME_SECONDS,
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    onnotice: () => {},
+  });
   const baseDb = drizzle(client, { schema });
   const db = wrapDbWithRequestContext(baseDb);
 
@@ -307,6 +377,7 @@ export async function createConnection(
     client,
     sessionClient,
     jobHolderClient,
+    lockClient,
     close: async () => {
       // Bounded ends: a plain `end()` waits for reserved connections to be
       // released, and shutdown must not depend on every holder having
@@ -315,12 +386,14 @@ export async function createConnection(
       // in-flight writes have already drained by the time this runs (see
       // the storage-level close wrapper). In parallel, so the whole close
       // is bounded by the one-second force rather than their sum — three
-      // serial worst cases exactly consumed the shutdown step's budget
-      // and reproduced the warn this bound exists to remove.
+      // serial worst cases already exactly consumed the shutdown step's
+      // budget and reproduced the warn this bound exists to remove, and
+      // there are four clients now.
       await Promise.all([
         client.end({ timeout: 1 }),
         sessionClient.end({ timeout: 1 }),
         jobHolderClient.end({ timeout: 1 }),
+        lockClient.end({ timeout: 1 }),
       ]);
     },
   };

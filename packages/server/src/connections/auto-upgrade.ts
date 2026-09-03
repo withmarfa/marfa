@@ -335,6 +335,14 @@ export class ConnectionUpgrader {
 
   private async poll(): Promise<void> {
     try {
+      // This job lock holds a session-pool reservation for the whole
+      // sweep, and the sweep calls `performUpgrade`, which takes the
+      // Connection lifecycle lock. The two come from different pools and
+      // must keep doing so: moving the lifecycle lock onto the session
+      // pool would make this a holder of one slot waiting for a second
+      // from the same pool, which is the bracketing deadlock, and the
+      // session pool is also where streams park reservations for as long
+      // as a stream lives.
       const report = this.coordination
         ? await this.coordination.withJobLock("connection-auto-upgrade", () =>
             this.runOnce(),

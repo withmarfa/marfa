@@ -138,6 +138,13 @@ async function main() {
       },
     });
 
+  // Names this process's connections in `pg_stat_activity`. Read by
+  // `/health`, which matches the shape rather than a prefix, so a pool
+  // labeled some other way is attributed to nobody. Declared once because
+  // two places set it: the pools `createConnection` builds, and the
+  // consent lock's own client below.
+  const applicationName = `marfa-${config.processRole ?? "both"}`;
+
   let storage: Storage;
   if (config.storageDialect === "pg") {
     if (!config.databaseUrl) {
@@ -150,10 +157,7 @@ async function main() {
         authMode: config.authMode,
         directConnectionString: directUrl,
         poolMode: config.dbPoolMode,
-        // Names this process's connections in `pg_stat_activity`, which is
-        // what lets `/health` attribute the cluster's connection usage to a
-        // role rather than reporting one undifferentiated number.
-        applicationName: `marfa-${config.processRole ?? "both"}`,
+        applicationName,
         ...(config.dbPoolSize !== undefined && {
           maxPoolSize: config.dbPoolSize,
         }),
@@ -236,6 +240,11 @@ async function main() {
           : config.databaseUrl;
       consentLockClient = postgresCtor(sessionModeUrl, {
         max: 2,
+        // Labeled like every pool `createConnection` builds, so `/health`
+        // attributes these backends to this deployment. Without it they
+        // counted toward the ceiling under `other`, alongside whatever
+        // else happens to be connected.
+        connection: { application_name: `${applicationName}:consent` },
         idle_timeout: 30,
         max_lifetime: 30 * 60,
         onnotice: () => {
