@@ -25,6 +25,27 @@ import {
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
+/**
+ * How many replayed ids one catch-up remembers, so a live event already
+ * on its way to this client is not also sent by the replay.
+ *
+ * **Derived, and not a function of the backlog.** An id can be delivered
+ * twice only if the replay sent it AND the live subscription buffered
+ * it, and an event is buffered only when it was emitted after this
+ * connection subscribed. The ids at risk are therefore exactly those
+ * published while the replay was running, and they always sit at the top
+ * of the replayed range. The replay walks that range one
+ * `REPLAY_BATCH_SIZE` at a time and already holds a batch of rows in
+ * memory, so remembering one batch of ids covers every collision unless
+ * more than that many events both committed during the replay and were
+ * read by it — and it costs the same order as the read it accompanies.
+ *
+ * A hundred thousand replayed rows still cost five hundred remembered
+ * ids: the backlog is not what this window measures, so raising it buys
+ * nothing against a long one. Lowering it starts re-sending events a
+ * fast writer produced mid-catch-up.
+ */
+const REPLAY_DEDUPE_WINDOW = REPLAY_BATCH_SIZE;
 
 /**
  * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
@@ -432,6 +453,30 @@ export function eventRoutes(
                   }
 
                   let lastReplayedId: bigint = afterIdResolved;
+                  // The cursor above paginates `getAfter` and advances
+                  // past every row this loop walks, rows a filter
+                  // withheld included. That makes it the wrong thing to
+                  // dedupe the live buffer against. Postgres assigns
+                  // `event_log.id` from an identity column before
+                  // commit, so a transaction holding a lower id can
+                  // commit after one holding a higher id; comparing a
+                  // buffered live event against a high-water mark then
+                  // discards an event this client has never seen, with
+                  // its cursor already past it, so it never asks again.
+                  // What is safe to discard is an id this replay
+                  // actually sent, so that is what is recorded.
+                  const replayedIds = new Set<bigint>();
+                  // Insertion order, for eviction. Replayed ids arrive
+                  // ascending, so the front is always the oldest.
+                  const replayedOrder: bigint[] = [];
+                  const rememberReplayed = (id: bigint): void => {
+                    replayedIds.add(id);
+                    replayedOrder.push(id);
+                    if (replayedOrder.length > REPLAY_DEDUPE_WINDOW) {
+                      const evicted = replayedOrder.shift();
+                      if (evicted !== undefined) replayedIds.delete(evicted);
+                    }
+                  };
                   while (!state.closed) {
                     const batch = await storage.eventLog.getAfter(
                       lastReplayedId,
@@ -536,6 +581,9 @@ export function eventRoutes(
                       send(
                         `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
                       );
+                      // Only here. A row the loop skipped above was not
+                      // sent, so its live copy is not a duplicate.
+                      rememberReplayed(event.id);
                       lastReplayedId = event.id;
                     }
 
@@ -543,11 +591,25 @@ export function eventRoutes(
                   }
 
                   replaying = false;
+                  // Withheld against the ids this replay sent, not
+                  // against the cursor. Two consequences worth naming.
+                  //
+                  // A row the loop skipped is no longer suppressed here,
+                  // and that discloses nothing: the drain sends through
+                  // `sendEvent`, whose first act is the same permission
+                  // narrowing the replay applied, so the buffered copy
+                  // meets that filter whatever this decides.
+                  //
+                  // An id evicted from the window is sent a second time
+                  // carrying the same `id:`, which a client applying a
+                  // payload by id already absorbs. The comparison this
+                  // replaces failed the other way, by dropping an event
+                  // the client had no way to learn it was missing.
                   for (const event of liveBuffer) {
                     if (state.closed) return;
                     if (
                       event.eventId !== undefined &&
-                      event.eventId <= lastReplayedId
+                      replayedIds.has(event.eventId)
                     )
                       continue;
                     sendEvent(event.eventId, event);
@@ -557,12 +619,18 @@ export function eventRoutes(
                     if (state.closed) return;
                     if (
                       event.eventId !== undefined &&
-                      event.eventId <= lastReplayedId
+                      replayedIds.has(event.eventId)
                     )
                       continue;
                     sendEdgeEvent(event.eventId, event);
                   }
                   liveEdgeBuffer.length = 0;
+                  // Nothing dedupes past this point — live events now go
+                  // straight out — and a caught-up viewer can hold the
+                  // stream open for hours, so the window is released
+                  // rather than carried for the life of the connection.
+                  replayedIds.clear();
+                  replayedOrder.length = 0;
                 } catch {
                   replaying = false;
                   liveBuffer.length = 0;
