@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TypeSchema } from "@withmarfa/types";
 import { hydrateTypeRegistry } from "./hydrate-type-registry.js";
 import {
-  TYPE_REGISTRY,
   getTypeSchema,
   listTypes,
   unregisterTypeSchema,
@@ -32,8 +31,11 @@ function hydrate(payload: readonly TypeSchema[]) {
 
 describe("hydrateTypeRegistry", () => {
   it("resolves a payload that lists a child before its parent", () => {
-    // The shape the ticket names: `GET /types` makes no ordering promise, and
-    // a space that registered the child first gets it back first.
+    // `GET /types` makes no ordering promise, and a space that registered
+    // the child first gets it back first. What this pins is that such a
+    // payload does not corrupt resolution — not that the order is what
+    // saves it. Nothing here would fail if the order suddenly mattered;
+    // the registration-order test below is the only place that shows.
     hydrate([
       { id: "acme.child", version: 1, parent: "acme.parent", fields: {} },
       {
@@ -73,14 +75,16 @@ describe("hydrateTypeRegistry", () => {
   });
 
   it("leaves the shipped vocabulary alone", () => {
-    // `GET /types` returns the platform set too. Copying it into a space's
-    // overlay would shadow the shipped schema with whatever the payload
-    // carried, so those entries are reported and skipped.
+    // `GET /types` returns the platform set too, and a shipped type written
+    // into the overlay is listed twice, because `listTypes` concatenates the
+    // two maps and deduplicates neither. The count below is what detects
+    // that; a leak takes it to `before + 2`.
+    //
+    // Resolution is not at risk and no assertion here pretends otherwise:
+    // `resolveSchema` reads the platform registry first, so an overlay entry
+    // under a shipped id is unreachable whatever it contains.
     const before = listTypes(SPACE).length;
 
-    // The platform entry is deliberately stripped of its fields. Were it
-    // registered, `core.note` would resolve for this space carrying nothing,
-    // and the shipped requirement asserted below would be gone.
     const result = hydrate([
       { id: "core.note", version: 1, fields: {} },
       { id: "acme.own", version: 1, fields: {} },
@@ -89,15 +93,14 @@ describe("hydrateTypeRegistry", () => {
     expect(result.skippedPlatform).toEqual(["core.note"]);
     expect(result.registered).toEqual(["acme.own"]);
     expect(listTypes(SPACE).length).toBe(before + 1);
-    expect(TYPE_REGISTRY.get("core.note")?.fields).toHaveProperty("body");
-    expect(
-      validateProperties("core.note", {}, { spaceId: SPACE }).success,
-    ).toBe(false);
   });
 
   it("registers a closed parent chain and names its members", () => {
-    // The server holds such rows too and resolves them the same way, so the
-    // client agreeing with it beats the client reporting an unknown type.
+    // The load-bearing part is that both members come back in `cycles` AND
+    // in `registered`, parent links intact: hydration does not quietly drop
+    // a closed chain, which would have the client report an unknown type for
+    // a type the server holds. The raise below is a sanity check rather than
+    // the new thing — the registry's own suite already covers it.
     const result = hydrate([
       { id: "acme.ouro", version: 1, parent: "acme.boros", fields: {} },
       { id: "acme.boros", version: 1, parent: "acme.ouro", fields: {} },

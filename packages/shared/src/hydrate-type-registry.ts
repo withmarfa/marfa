@@ -21,9 +21,12 @@ export interface TypeRegistryHydration {
   registered: string[];
   /**
    * Payload entries the platform registry already ships. They are left
-   * alone: the shipped vocabulary resolves globally, and copying it into a
-   * space's overlay would shadow it with whatever the payload happened to
-   * carry.
+   * alone because `listTypes` concatenates the platform registry with the
+   * space's own map and deduplicates neither, so a shipped type written
+   * into the overlay is listed twice — once from each side. Lookups are
+   * unaffected: `resolveSchema` reads the platform registry first and
+   * returns, so an overlay entry under a shipped id is unreachable rather
+   * than authoritative.
    */
   skippedPlatform: string[];
   /**
