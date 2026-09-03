@@ -81,9 +81,11 @@ describe("GET /events?type= on the live stream", () => {
     // to stop on before anything is written.
     const reading = readSse(stream, {
       until: (t) => t.includes("ZZmediaZZ"),
-      // Under the suite's own 20s budget deliberately. Left at the
-      // helper's default the two are equal, vitest expires first, and the
-      // failure arrives as a bare test timeout naming no condition.
+      // Below the helper's own 20s ceiling, which already sits under this
+      // package's test budget — so the helper is what expires, and it
+      // reports the condition it was waiting on. A shorter budget reaches
+      // that message sooner, which is the whole benefit: a frame that is
+      // genuinely never delivered costs ten seconds to say so.
       timeoutMs: 10_000,
     });
     // The read is already running; this lets the subscription attach, so
@@ -134,8 +136,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
 
     const { text } = await readSse(res, {
       until: (t) => t.includes(mediaId),
-      // See the live case above: equal budgets mean vitest wins and the
-      // helper's self-naming message is unreachable.
+      // Same shortened budget as the live case above, for the same reason.
       timeoutMs: 10_000,
     });
 
