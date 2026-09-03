@@ -310,6 +310,9 @@ interface Door {
 
 const NAMESPACE = "testapp";
 
+/** Far enough from now that a door leaving the row alone cannot match it. */
+const RESTAMPED_AT = "2020-01-01T00:00:00.000Z";
+
 function uniq(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -800,7 +803,6 @@ const doors: Door[] = [
         key: ctx.adminKey,
         body: {
           atomic: true,
-          emit_events: true,
           items: [
             {
               id: s.item,
@@ -835,7 +837,6 @@ const doors: Door[] = [
         key: ctx.adminKey,
         body: {
           atomic: true,
-          emit_events: true,
           edges: [
             {
               source_id: s.item,
@@ -871,7 +872,6 @@ const doors: Door[] = [
         {
           action: "transition",
           state: "archived",
-          emit_events: true,
           filter: { tags: [s.tag] },
         },
         ctx.adminKey,
@@ -906,7 +906,6 @@ const doors: Door[] = [
         {
           action: "purge",
           confirm: "PURGE",
-          emit_events: true,
           filter: { tags: [s.tag], state: "trashed" },
         },
         ctx.adminKey,
@@ -915,6 +914,123 @@ const doors: Door[] = [
     },
     attributable: (h, s) => edgeEventsTouching(h, [s.item, s.other]),
     landed: async (s) => (await ctx.storage.edges.get(s.edge)) === null,
+    survivesBreakage: false,
+  },
+  {
+    // The four arms below announce what they wrote unconditionally. They used
+    // to write in silence, so a client rebuilding from the stream never
+    // learned about a bulk retag or retier at all. Being announced is what
+    // puts them in reach of this file: an announcement that can be wrong is
+    // the only kind worth guarding.
+    name: "POST /items/bulk-actions retags a filtered set",
+    family: "bulk",
+    transactions: 1,
+    setup: async () => {
+      const tag = uniq("action");
+      const item = await makeNote("bulk retag");
+      await request(ctx.app, "POST", `/items/${item}/tags`, {
+        key: ctx.adminKey,
+        body: { tags: [tag] },
+      });
+      return { item, tag };
+    },
+    act: async (s) => {
+      const { result } = await runBulkActionAsync(
+        ctx,
+        { action: "update_tags", add: ["retagged"], filter: { tags: [s.tag] } },
+        ctx.adminKey,
+      );
+      return result?.succeeded === 1;
+    },
+    attributable: (h, s) => itemEventsFor(h, s.item),
+    landed: async (s) =>
+      (await ctx.storage.metadata.get(s.item)).tags.includes("retagged"),
+    survivesBreakage: false,
+  },
+  {
+    name: "POST /items/bulk-actions retiers a filtered set",
+    family: "bulk",
+    transactions: 1,
+    setup: async () => {
+      const tag = uniq("action");
+      const item = await makeNote("bulk retier");
+      await request(ctx.app, "POST", `/items/${item}/tags`, {
+        key: ctx.adminKey,
+        body: { tags: [tag] },
+      });
+      return { item, tag };
+    },
+    act: async (s) => {
+      const { result } = await runBulkActionAsync(
+        ctx,
+        { action: "update_tier", tier: "feed", filter: { tags: [s.tag] } },
+        ctx.adminKey,
+      );
+      return result?.succeeded === 1;
+    },
+    attributable: (h, s) => itemEventsFor(h, s.item),
+    landed: async (s) =>
+      (await ctx.storage.items.getIncludingTrashed(s.item))?.tier === "feed",
+    survivesBreakage: false,
+  },
+  {
+    name: "POST /items/bulk-actions patches properties on a filtered set",
+    family: "bulk",
+    transactions: 1,
+    setup: async () => {
+      const tag = uniq("action");
+      const item = await makeNote("before");
+      await request(ctx.app, "POST", `/items/${item}/tags`, {
+        key: ctx.adminKey,
+        body: { tags: [tag] },
+      });
+      return { item, tag };
+    },
+    act: async (s) => {
+      const { result } = await runBulkActionAsync(
+        ctx,
+        {
+          action: "update_properties",
+          patch: { body: "after" },
+          filter: { tags: [s.tag] },
+        },
+        ctx.adminKey,
+      );
+      return result?.succeeded === 1;
+    },
+    attributable: (h, s) => itemEventsFor(h, s.item),
+    landed: async (s) => (await itemBody(s.item)) === "after",
+    survivesBreakage: false,
+  },
+  {
+    name: "POST /items/bulk-actions restamps a filtered set",
+    family: "bulk",
+    transactions: 1,
+    setup: async () => {
+      const tag = uniq("action");
+      const item = await makeNote("bulk restamp");
+      await request(ctx.app, "POST", `/items/${item}/tags`, {
+        key: ctx.adminKey,
+        body: { tags: [tag] },
+      });
+      return { item, tag };
+    },
+    act: async (s) => {
+      const { result } = await runBulkActionAsync(
+        ctx,
+        {
+          action: "update_timestamp",
+          timestamp: RESTAMPED_AT,
+          filter: { tags: [s.tag] },
+        },
+        ctx.adminKey,
+      );
+      return result?.succeeded === 1;
+    },
+    attributable: (h, s) => itemEventsFor(h, s.item),
+    landed: async (s) =>
+      (await ctx.storage.items.getIncludingTrashed(s.item))?.timestamp ===
+      RESTAMPED_AT,
     survivesBreakage: false,
   },
 ];
@@ -992,6 +1108,13 @@ describe("a rolled-back write announces nothing", () => {
  *
  * Definitions are not sites, so `pubsub.ts` is absent by construction.
  *
+ * **A site is not a door.** A file that routes several doors through one
+ * local fan-out helper spends one site on all of them, so these numbers
+ * are smaller than the door count and move differently. That is why a
+ * changed number sends you to the file rather than to arithmetic: what it
+ * tells you is that the publishing shape moved, not how many doors moved
+ * with it.
+ *
  * When this fails, the number is never the fix on its own. Work out which
  * door grew the publish, give it a row in `doors` and drive it both ways, or
  * move the file into `PUBLISHES_OUT_OF_SCOPE` with a reason. Editing the
@@ -1018,8 +1141,8 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   },
   "routes/edges-bulk.ts": { sites: 2, why: "the atomic edge batch" },
   "bulk-actions/runner.ts": {
-    sites: 2,
-    why: "the transition and purge arms; the other four arms publish nothing today",
+    sites: 4,
+    why: "six arms through four sites: transition, purge and update_tags publish for themselves, and the three property-shaped arms share one local helper",
   },
   "routes/_edges-inline.ts": {
     sites: 2,
