@@ -26,6 +26,7 @@ import type { Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
+import { log } from "../middleware/logger.js";
 
 export interface ChunkOutcome {
   succeeded: string[];
@@ -231,6 +232,12 @@ async function runUpdateTagsChunk({
           metadata = await storage.metadata.addTags(id, add);
         }
         for (const tag of remove) {
+          // Announced whether or not the tag was there to remove. That is
+          // deliberate: the doors report on the request rather than on the
+          // diff, a caller cannot tell the two apart from the response
+          // either, and comparing before and after per tag would cost a
+          // read per row to suppress an event a subscriber treats as
+          // idempotent anyway.
           metadata = await storage.metadata.removeTag(id, tag);
         }
         if (metadata) changed.set(id, metadata);
@@ -243,14 +250,35 @@ async function runUpdateTagsChunk({
   // A tag change is a metadata-layer change, and the single-item tag doors
   // announce it as one. The item is fetched in a single batch read because
   // the tag stores return the metadata row alone.
+  //
+  // `includeTrashed` is load-bearing rather than defensive. `addTags` has no
+  // trashed guard, so the write lands on a trashed row and the id is
+  // reported as succeeded; without this the read comes back empty and the
+  // publish is skipped, which is a write with no event-log row — the exact
+  // shape this whole change exists to remove. Two ordinary paths reach it:
+  // the filter accepts `state: "trashed"` outright, and the match set is
+  // frozen at job creation while the worker runs later, so anything trashed
+  // in that window arrives here trashed. The same omission has now cost the
+  // purge runner a four-thousand-row miscount; see `getMany`'s own comment.
   if (changed.size > 0) {
     const items = await storage.items.getMany(
       [...changed.keys()],
       spaceId ?? undefined,
+      { includeTrashed: true },
     );
     for (const [id, metadata] of changed) {
       const item = items.get(id);
-      if (!item) continue;
+      if (!item) {
+        // Reachable only if the row was hard-deleted between the write and
+        // this read. Said out loud rather than skipped silently: the write
+        // happened and nothing will ever announce it, so a client rebuilding
+        // from the stream is now behind by one row with no way to find out.
+        log("warn", "Bulk tag update wrote a row it could not announce", {
+          item_id: id,
+          reason: "item absent at publish time",
+        });
+        continue;
+      }
       await publish({
         type: "metadata_changed",
         item,

@@ -299,6 +299,44 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     expect(payload.metadata?.tags).toContain("added-by-bulk");
   });
 
+  it("logs a metadata change when update_tags lands on a trashed item", async () => {
+    // `addTags` has no trashed guard, so the write lands and the id is
+    // reported as succeeded. The publish read excluded trashed rows by
+    // default, so the event never happened — a write with no log row,
+    // reachable two ways: this filter, and any item trashed between the
+    // match set being frozen and the worker running.
+    const tag = `tt-${uniq()}`;
+    const doomed = await note("tagged while trashed", [tag]);
+
+    // A soft delete is the transition to trashed.
+    const trashed = await request(ctx.app, "DELETE", `/items/${doomed}`, {
+      key: ctx.adminKey,
+    });
+    expect(trashed.status).toBeLessThan(300);
+
+    const cursor = await logCursor();
+    const run = await runBulkActionAsync(
+      ctx,
+      {
+        action: "update_tags",
+        add: ["added-while-trashed"],
+        filter: { tags: [tag], state: "trashed" },
+      },
+      ctx.adminKey,
+    );
+    expect(run.result?.succeeded).toBe(1);
+
+    const rows = await logSince(cursor);
+    const changed = rows.filter(
+      (r) => r.event_type === "metadata_changed" && r.item_id === doomed,
+    );
+    expect(changed).toHaveLength(1);
+    const payload = JSON.parse(changed[0]!.payload) as {
+      metadata?: { tags?: string[] };
+    };
+    expect(payload.metadata?.tags).toContain("added-while-trashed");
+  });
+
   it("logs an update for every item update_tier moved", async () => {
     const tag = `ti-${uniq()}`;
     const item = await note("retiered", [tag]);
