@@ -79,14 +79,14 @@ describe("GET /events?type= on the live stream", () => {
 
     // Markers rather than item ids, because the read has to be told what
     // to stop on before anything is written.
+    //
+    // No explicit budget. The three writes below land inside this read's
+    // window, and one `POST /items` has been recorded taking four seconds
+    // on this machine when it is busy, so any number tight enough to be
+    // worth setting would report on the runner rather than on delivery.
+    // `readSse` names the condition it gave up on either way.
     const reading = readSse(stream, {
       until: (t) => t.includes("ZZmediaZZ"),
-      // Below the helper's own 20s ceiling, which already sits under this
-      // package's test budget — so the helper is what expires, and it
-      // reports the condition it was waiting on. A shorter budget reaches
-      // that message sooner, which is the whole benefit: a frame that is
-      // genuinely never delivered costs ten seconds to say so.
-      timeoutMs: 10_000,
     });
     // The read is already running; this lets the subscription attach, so
     // nothing published below lands before there is a listener for it.
@@ -136,8 +136,6 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
 
     const { text } = await readSse(res, {
       until: (t) => t.includes(mediaId),
-      // Same shortened budget as the live case above, for the same reason.
-      timeoutMs: 10_000,
     });
 
     // The filter admits the type it names. Asserted so a fix that simply
@@ -174,7 +172,6 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     const filteredText = (
       await readSse(filtered, {
         until: (t) => t.includes(anchorId),
-        timeoutMs: 10_000,
       })
     ).text;
     // A row the filter cannot classify is not handed to a filtering
@@ -189,7 +186,6 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     const unfilteredText = (
       await readSse(unfiltered, {
         until: (t) => t.includes(anchorId),
-        timeoutMs: 10_000,
       })
     ).text;
     // With nothing to filter on there is nothing to withhold it for.
