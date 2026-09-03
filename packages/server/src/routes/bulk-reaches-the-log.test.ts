@@ -374,6 +374,45 @@ describe("POST /items/bulk-actions reaches the event log", () => {
   });
 });
 
+describe("the response carries the wire shape and nothing more", () => {
+  /**
+   * The written row travels beside the wire entry so the publish loop does
+   * not read back what it just wrote. It must not travel *in* it: a
+   * response is documented rather than validated, so nothing strips an
+   * extra key, and five thousand entries each carrying a full item would
+   * more than undo the saving that motivated carrying it at all.
+   */
+  it("does not return the written item on a bulk entry", async () => {
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: {
+              body: "secret enough to notice",
+              huge: "x".repeat(64),
+            },
+            source_id: `wire-${uniq()}`,
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      results: Record<string, unknown>[];
+    };
+    expect(body.results).toHaveLength(1);
+    const entry = body.results[0]!;
+    expect(entry.outcome).toBe("created");
+    expect(entry.id).toBeDefined();
+    expect(Object.hasOwn(entry, "item")).toBe(false);
+    // Named explicitly as well as by key count: an entry that gained the
+    // row under some other name is the same leak.
+    expect(Object.keys(entry).sort()).toEqual(["id", "index", "outcome"]);
+  });
+});
+
 describe("the flag governs fan-out, not the log", () => {
   /**
    * The control that separates the two possible fixes.
