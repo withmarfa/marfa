@@ -15,14 +15,25 @@
  * transaction surrounds it, so the REMOTE half is delivered only on
  * commit and never for a write that rolled back.
  *
- * The local emit is no longer inside the write's own transaction either.
- * Every door publishes after the transaction carrying its write has
- * committed, so a rollback takes the event_log row with it and the
- * emitter is never reached. `routes/rollback-event-doors.test.ts` holds
- * that door by door, and it asserts against the emitter rather than
- * against event_log for a reason worth knowing: a publish moved back
- * inside a transaction has its event_log row rolled back too, so the log
- * looks correct and only a live subscriber sees the phantom.
+ * The local emit is no longer inside a door's write transaction either.
+ * Among the item and edge write doors, some wrap their write in a
+ * transaction and publish once it has committed; the rest open no
+ * transaction and publish after their single write returns. Neither shape
+ * holds a transaction of its own open at the moment it publishes, so there
+ * is no rollback left that could take the event back. (Under RLS a
+ * space-scoped request is inside the middleware's transaction throughout,
+ * but that one commits even when the handler errors, because the error is
+ * caught inside the composed chain rather than propagating out of it. It is
+ * not a rollback boundary, and a door wanting atomicity has to open its
+ * own.)
+ *
+ * `routes/rollback-event-doors.test.ts` holds those doors, and it asserts
+ * against the emitter as well as against event_log because the two catch
+ * different regressions. On a door with a transaction, a publish moved
+ * inside it has its log row rolled back with everything else, so the log
+ * still looks correct and only a live subscriber sees the phantom. On a
+ * door without one, a publish moved above the write commits its log row and
+ * both assertions redden.
  *
  * Each process holds one LISTEN connection on the session-mode client (a
  * NOTIFY subscription is session state, which a transaction-mode pooler
