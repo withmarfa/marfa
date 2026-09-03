@@ -1,13 +1,18 @@
 /**
  * `GET /events?type=` resolves the same subtree live and on replay.
  *
- * The filter names a type and covers that type's subtypes, exactly as
- * `/items`, `/search` and `/export` resolve the same parameter. Live
- * delivery goes through `eventMatchesTypeFilter`, which walks the
- * inheritance chain. The `Last-Event-ID` replay compared the stored
- * type string with `!==`, so a subscriber narrowing to a parent type
- * received a subtype's event while connected and lost the same event on
- * every reconnect.
+ * The filter names a type and covers that type's declared-parent
+ * subtree: a type whose `parent` chain reaches the named one answers for
+ * it. Live delivery goes through `eventMatchesTypeFilter`, which walks
+ * that chain. The `Last-Event-ID` replay compared the stored type string
+ * with `!==`, so a subscriber narrowing to a parent type received a
+ * subtype's event while connected and lost the same event on every
+ * reconnect.
+ *
+ * Narrower than the `type` parameter on the list surfaces, which also
+ * take a `parent.*` wildcard, match on name prefix and resolve a space's
+ * own types. The stream does none of those. What is pinned here is the
+ * agreement between its two halves, not agreement with those.
  *
  * That is the worst shape a delivery gap can take, because the client
  * cannot see it: replay reports no error and closes no stream, so the
@@ -74,7 +79,13 @@ describe("GET /events?type= on the live stream", () => {
 
     // Markers rather than item ids, because the read has to be told what
     // to stop on before anything is written.
-    const reading = readSse(stream, { until: (t) => t.includes("ZZmediaZZ") });
+    const reading = readSse(stream, {
+      until: (t) => t.includes("ZZmediaZZ"),
+      // Under the suite's own 20s budget deliberately. Left at the
+      // helper's default the two are equal, vitest expires first, and the
+      // failure arrives as a bare test timeout naming no condition.
+      timeoutMs: 10_000,
+    });
     // The read is already running; this lets the subscription attach, so
     // nothing published below lands before there is a listener for it.
     await settle();
@@ -123,6 +134,9 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
 
     const { text } = await readSse(res, {
       until: (t) => t.includes(mediaId),
+      // See the live case above: equal budgets mean vitest wins and the
+      // helper's self-naming message is unreachable.
+      timeoutMs: 10_000,
     });
 
     // The filter admits the type it names. Asserted so a fix that simply
@@ -132,5 +146,52 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     expect(text).toContain(songId);
     // And the filter still filters.
     expect(text).not.toContain(noteId);
+  });
+
+  it("withholds a stored row naming no item type, and sends it unfiltered", async () => {
+    // The one behavior in the replay condition that is not the shared
+    // matcher. `publish` always attaches the item, so nothing in the tree
+    // writes this row: it stands for an older stored shape or a
+    // hand-written one, and the filter has to decide about it rather than
+    // throw. Asserted both ways, because "withheld" alone is equally true
+    // of a row that was never replayed at all.
+    await createItem("core.note", { body: "seed-typeless" });
+    const cursor = await latestEventId();
+
+    await ctx.storage.eventLog.append({
+      event_type: "item.created",
+      payload: JSON.stringify({ type: "item.created", note: "ZZtypelessZZ" }),
+    });
+    // Written after, so reaching it means the row above was already decided.
+    const anchorId = await createItem("core.media", { title: "ZZanchorZZ" });
+
+    const filtered = await request(ctx.app, "GET", "/events?type=core.media", {
+      key: ctx.adminKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(filtered.status).toBe(200);
+    const filteredText = (
+      await readSse(filtered, {
+        until: (t) => t.includes(anchorId),
+        timeoutMs: 10_000,
+      })
+    ).text;
+    // A row the filter cannot classify is not handed to a filtering
+    // subscriber.
+    expect(filteredText).not.toContain("ZZtypelessZZ");
+
+    const unfiltered = await request(ctx.app, "GET", "/events", {
+      key: ctx.adminKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(unfiltered.status).toBe(200);
+    const unfilteredText = (
+      await readSse(unfiltered, {
+        until: (t) => t.includes(anchorId),
+        timeoutMs: 10_000,
+      })
+    ).text;
+    // With nothing to filter on there is nothing to withhold it for.
+    expect(unfilteredText).toContain("ZZtypelessZZ");
   });
 });
