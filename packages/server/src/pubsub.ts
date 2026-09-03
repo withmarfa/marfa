@@ -86,9 +86,15 @@ export interface FanoutControl {
 }
 
 /**
- * Whether an event should drive outbound side effects. Absent reads as
- * yes — only an explicit `false` suppresses, so an event rebuilt from a
- * persisted row (which does not carry the field) behaves as it always did.
+ * Whether an event should drive outbound side effects. Absent reads as yes,
+ * so every ordinary write door needs to say nothing.
+ *
+ * An event rebuilt from a persisted row carries the answer its writer gave,
+ * because `event_log` stores it. That is load-bearing rather than tidy: the
+ * reactive bridge's drainer is elected across the cluster, so on a split
+ * deployment the process that reacts is routinely not the process that
+ * wrote, and it knows only what the row tells it. Rows written before the
+ * column read as fanning out, which is what they did.
  */
 export function fansOut(event: FanoutControl): boolean {
   return event.enableFanout !== false;
@@ -441,6 +447,7 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
       payload,
       originating_connection_id: cycle.originatingConnectionId,
       hop_count: cycle.hopCount,
+      enable_fanout: fansOut(event),
     });
   }
 
@@ -490,6 +497,7 @@ export async function publishEdge(
       payload,
       originating_connection_id: cycle.originatingConnectionId,
       hop_count: cycle.hopCount,
+      enable_fanout: fansOut(event),
     });
   }
 

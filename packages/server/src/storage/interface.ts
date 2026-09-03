@@ -2000,6 +2000,15 @@ export interface PersistedEvent {
   originating_connection_id: string | null;
   /** Hop number from the originating event. 0 = first event in a chain. */
   hop_count: number;
+  /**
+   * Whether this event drives outbound side effects — webhook delivery and
+   * the integration reactions the bridge enqueues. Persisted so the
+   * instruction survives replication: the bridge's drainer is elected across
+   * the cluster and rebuilds the event from this row, so a process other
+   * than the writer has to be able to read it. True on every row written
+   * before the column existed.
+   */
+  enable_fanout: boolean;
   created_at: string;
 }
 
@@ -2017,6 +2026,9 @@ export interface EventLogStore {
     /** Cycle-detection metadata. */
     originating_connection_id?: string | null;
     hop_count?: number;
+    /** Whether the event drives outbound side effects. Absent means yes,
+     *  which is what every ordinary write door wants. */
+    enable_fanout?: boolean;
   }): Promise<bigint>;
 
   /** Retrieve events after a given ID, optionally filtered by space. */
