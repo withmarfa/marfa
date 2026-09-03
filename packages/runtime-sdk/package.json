@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/runtime-sdk",
-  "version": "2.2.0",
+  "version": "3.0.0",
   "type": "module",
   "description": "SDK that Connections integrations import. Typed handler API, per-connection state, ConnectionClient (wraps @withmarfa/sdk), echo suppression, system.activity emission.",
   "license": "Apache-2.0",

@@ -1,6 +1,6 @@
 {
   "@withmarfa/runtime-sdk": {
-    "version": "2.2.0",
+    "version": "3.0.0",
     "hash": "a8d917967f1316f23bb0991bb3fd92cead797aed353eab248f417990b72ac77f",
     "exports": 83
   },
