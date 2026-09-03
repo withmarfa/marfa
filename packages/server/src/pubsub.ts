@@ -67,7 +67,34 @@ function resolveCycleForPublish(event: CycleMetadata): {
   return { originatingConnectionId: null, hopCount: 0 };
 }
 
-export interface ItemEvent extends CycleMetadata {
+/**
+ * Whether this event drives outbound side effects as well as being logged
+ * and streamed: outbound webhook delivery, and the integration reactions
+ * the reactive bridge enqueues.
+ *
+ * Absent means yes, so every ordinary write door is unchanged. The bulk
+ * doors default it off, because one call there writes thousands of rows
+ * and a delivery per row per subscriber is work nobody asked for.
+ *
+ * It never governs the event log or the stream. Those are what a client
+ * rebuilding its state reads, so a write kept out of them is a write that
+ * client can never learn about; the expense being managed here is the
+ * outbound work, not the record.
+ */
+export interface FanoutControl {
+  enableFanout?: boolean;
+}
+
+/**
+ * Whether an event should drive outbound side effects. Absent reads as
+ * yes — only an explicit `false` suppresses, so an event rebuilt from a
+ * persisted row (which does not carry the field) behaves as it always did.
+ */
+export function fansOut(event: FanoutControl): boolean {
+  return event.enableFanout !== false;
+}
+
+export interface ItemEvent extends CycleMetadata, FanoutControl {
   type:
     | "created"
     | "updated"
@@ -80,7 +107,7 @@ export interface ItemEvent extends CycleMetadata {
   spaceId?: string;
 }
 
-export interface EdgeEvent extends CycleMetadata {
+export interface EdgeEvent extends CycleMetadata, FanoutControl {
   type: "edge_created" | "edge_updated" | "edge_deleted";
   edge: Edge;
   spaceId?: string;

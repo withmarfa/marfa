@@ -377,7 +377,7 @@ export class ConnectionClient {
       items,
       mode: "upsert",
       atomic: false,
-      emit_events: options.announce ?? true,
+      enable_fanout: options.announce ?? true,
       // Only ever sent while a mapping re-apply is live. Without it the
       // server refuses an entry that resolves a row of another type, and
       // that refusal is what stops an ordinary sync bug from moving a

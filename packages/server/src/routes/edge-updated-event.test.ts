@@ -128,7 +128,7 @@ describe("edge.updated", () => {
       key: ctx.adminKey,
       body: {
         mode: "upsert",
-        emit_events: true,
+        enable_fanout: true,
         edges: [
           {
             source_id: edge.source_id,

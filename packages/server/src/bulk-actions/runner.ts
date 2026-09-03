@@ -11,10 +11,19 @@
  * to every storage method. RLS, if enforced, is belt-and-braces —
  * matched_ids were resolved at job-create-time inside a request
  * context with full type-permission narrowing.
+ *
+ * Every chunk publishes what it wrote, on every action. The publish is
+ * what appends to the event log, and the log is what a client rebuilding
+ * its state replays — so a chunk that stayed quiet wrote rows no client
+ * could ever learn about. The job's `enable_fanout` decides only whether
+ * those events also drive outbound work, never whether they are logged.
+ *
+ * Each publish happens after the chunk's transaction commits, and reuses
+ * the rows the writes returned rather than reading them back.
  */
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import type { Storage } from "../storage/interface.js";
-import type { Edge, Item } from "@withmarfa/shared";
+import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
 
@@ -86,14 +95,13 @@ async function runTransitionChunk({
       }
     }
   });
-  if (input.emit_events ?? false) {
-    for (const item of moved) {
-      await publish({
-        type: "state_changed",
-        item,
-        ...(spaceId != null && { spaceId }),
-      });
-    }
+  for (const item of moved) {
+    await publish({
+      type: "state_changed",
+      item,
+      ...(spaceId != null && { spaceId }),
+      enableFanout: fansOutFor(input),
+    });
   }
   return { succeeded, errors };
 }
@@ -187,12 +195,13 @@ async function runPurgeChunk({
   // An edge pointing AT one of these items lives on an item that is NOT
   // being purged, so nothing else tells its holder the relationship is
   // gone — which is why the cascade is announced per edge.
-  if ((input.emit_events ?? false) && errors.length === 0) {
+  if (errors.length === 0) {
     for (const edge of cascaded) {
       await publishEdge({
         type: "edge_deleted",
         edge,
         ...(spaceId != null && { spaceId }),
+        enableFanout: fansOutFor(input),
       });
     }
   }
@@ -201,6 +210,7 @@ async function runPurgeChunk({
 
 async function runUpdateTagsChunk({
   storage,
+  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -210,21 +220,46 @@ async function runUpdateTagsChunk({
   const errors: BulkActionErrorEntry[] = [];
   const add = input.add ?? [];
   const remove = input.remove ?? [];
+  // Collected inside the transaction and published after it commits, so a
+  // subscriber is never told about a change a rollback took away.
+  const changed = new Map<string, Metadata>();
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
+        let metadata: Metadata | undefined;
         if (add.length > 0) {
-          await storage.metadata.addTags(id, add);
+          metadata = await storage.metadata.addTags(id, add);
         }
         for (const tag of remove) {
-          await storage.metadata.removeTag(id, tag);
+          metadata = await storage.metadata.removeTag(id, tag);
         }
+        if (metadata) changed.set(id, metadata);
         succeeded.push(id);
       } catch (err) {
         errors.push(toErrorEntry(id, err));
       }
     }
   });
+  // A tag change is a metadata-layer change, and the single-item tag doors
+  // announce it as one. The item is fetched in a single batch read because
+  // the tag stores return the metadata row alone.
+  if (changed.size > 0) {
+    const items = await storage.items.getMany(
+      [...changed.keys()],
+      spaceId ?? undefined,
+    );
+    for (const [id, metadata] of changed) {
+      const item = items.get(id);
+      if (!item) continue;
+      await publish({
+        type: "metadata_changed",
+        item,
+        metadata,
+        ...(spaceId != null && { spaceId }),
+        enableFanout: fansOutFor(input),
+      });
+    }
+  }
   return { succeeded, errors };
 }
 
@@ -238,6 +273,8 @@ async function runUpdateTierChunk({
     throw new Error("runUpdateTierChunk: wrong action");
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
+  // Collected inside the transaction, published after it commits.
+  const updated: Item[] = [];
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -253,6 +290,7 @@ async function runUpdateTierChunk({
             message: "Version conflict during bulk update_tier",
           });
         } else {
+          updated.push(result);
           succeeded.push(id);
         }
       } catch (err) {
@@ -260,6 +298,7 @@ async function runUpdateTierChunk({
       }
     }
   });
+  await publishUpdated(updated, spaceId, input);
   return { succeeded, errors };
 }
 
@@ -273,6 +312,8 @@ async function runUpdatePropertiesChunk({
     throw new Error("runUpdatePropertiesChunk: wrong action");
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
+  // Collected inside the transaction, published after it commits.
+  const updated: Item[] = [];
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -288,6 +329,7 @@ async function runUpdatePropertiesChunk({
             message: "Version conflict during bulk update_properties",
           });
         } else {
+          updated.push(result);
           succeeded.push(id);
         }
       } catch (err) {
@@ -295,6 +337,7 @@ async function runUpdatePropertiesChunk({
       }
     }
   });
+  await publishUpdated(updated, spaceId, input);
   return { succeeded, errors };
 }
 
@@ -308,6 +351,8 @@ async function runUpdateTimestampChunk({
     throw new Error("runUpdateTimestampChunk: wrong action");
   const succeeded: string[] = [];
   const errors: BulkActionErrorEntry[] = [];
+  // Collected inside the transaction, published after it commits.
+  const updated: Item[] = [];
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
@@ -323,6 +368,7 @@ async function runUpdateTimestampChunk({
             message: "Version conflict during bulk update_timestamp",
           });
         } else {
+          updated.push(result);
           succeeded.push(id);
         }
       } catch (err) {
@@ -330,7 +376,33 @@ async function runUpdateTimestampChunk({
       }
     }
   });
+  await publishUpdated(updated, spaceId, input);
   return { succeeded, errors };
+}
+
+/**
+ * Whether this job's events drive outbound side effects. Absent reads as
+ * off: the bulk doors default that way, and an input stored by an earlier
+ * build carries no such field.
+ */
+function fansOutFor(input: BulkActionInput): boolean {
+  return input.enable_fanout ?? false;
+}
+
+/** The `item.updated` announcement the three property-shaped chunks share. */
+async function publishUpdated(
+  items: Item[],
+  spaceId: string | null,
+  input: BulkActionInput,
+): Promise<void> {
+  for (const item of items) {
+    await publish({
+      type: "updated",
+      item,
+      ...(spaceId != null && { spaceId }),
+      enableFanout: fansOutFor(input),
+    });
+  }
 }
 
 function toErrorEntry(id: string, err: unknown): BulkActionErrorEntry {

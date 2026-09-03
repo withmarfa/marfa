@@ -5164,7 +5164,7 @@
                   "atomic": {
                     "type": "boolean"
                   },
-                  "emit_events": {
+                  "enable_fanout": {
                     "type": "boolean"
                   },
                   "retype": {
@@ -5456,7 +5456,7 @@
                         "minimum": 0,
                         "exclusiveMinimum": true
                       },
-                      "emit_events": {
+                      "enable_fanout": {
                         "type": "boolean"
                       },
                       "action": {
@@ -5531,7 +5531,7 @@
                         "minimum": 0,
                         "exclusiveMinimum": true
                       },
-                      "emit_events": {
+                      "enable_fanout": {
                         "type": "boolean"
                       },
                       "action": {
@@ -5603,7 +5603,7 @@
                         "minimum": 0,
                         "exclusiveMinimum": true
                       },
-                      "emit_events": {
+                      "enable_fanout": {
                         "type": "boolean"
                       },
                       "action": {
@@ -5681,7 +5681,7 @@
                         "minimum": 0,
                         "exclusiveMinimum": true
                       },
-                      "emit_events": {
+                      "enable_fanout": {
                         "type": "boolean"
                       },
                       "action": {
@@ -5755,7 +5755,7 @@
                         "minimum": 0,
                         "exclusiveMinimum": true
                       },
-                      "emit_events": {
+                      "enable_fanout": {
                         "type": "boolean"
                       },
                       "action": {
@@ -5828,7 +5828,7 @@
                         "minimum": 0,
                         "exclusiveMinimum": true
                       },
-                      "emit_events": {
+                      "enable_fanout": {
                         "type": "boolean"
                       },
                       "action": {
@@ -9122,7 +9122,7 @@
                   "atomic": {
                     "type": "boolean"
                   },
-                  "emit_events": {
+                  "enable_fanout": {
                     "type": "boolean"
                   }
                 },

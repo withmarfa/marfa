@@ -188,9 +188,11 @@ describe("edge events on every door", () => {
     await inboundHeard;
   });
 
-  it("a bulk purge follows its own emit_events flag, and emits edges only", async () => {
-    // This door carries an `emit_events` flag and consulted it for
-    // nothing. The cascade answers to it now.
+  it("a bulk purge announces its cascade, and emits edges only", async () => {
+    // The cascade is announced whether or not the caller asked for
+    // fan-out: publishing is what appends the event log row, so a silent
+    // cascade left a client that was offline unable to learn the edge was
+    // gone. `enable_fanout` decides what happens downstream of that row.
     //
     // **No item event, deliberately.** There is no purge event in the
     // contract, the trash transition that precedes a purge already
@@ -232,7 +234,7 @@ describe("edge events on every door", () => {
           action: "purge",
           confirm: "PURGE",
           filter: { tags: [tag] },
-          ...(emit ? { emit_events: true } : {}),
+          ...(emit ? { enable_fanout: true } : {}),
         },
         ctx.adminKey,
       );
@@ -260,11 +262,11 @@ describe("edge events on every door", () => {
     expect(loud.items).toHaveLength(0);
 
     const quiet = await purgeOne(false);
-    // The documented default. A batch this size does not reach
-    // subscribers unless the caller says so, and that answer covers both
-    // families rather than half of one.
+    // Same events either way: an edge nobody can see disappear is one a
+    // durable client keeps forever. The flag governs the outbound work
+    // downstream of these events, which the bus cannot observe.
+    expect(quiet.edges).toHaveLength(1);
     expect(quiet.items).toHaveLength(0);
-    expect(quiet.edges).toHaveLength(0);
   });
 
   it("a bulk transition announces the state it moved items to", async () => {
@@ -289,7 +291,7 @@ describe("edge events on every door", () => {
         action: "transition",
         state: "archived",
         filter: { tags: [tag] },
-        emit_events: true,
+        enable_fanout: true,
       },
       ctx.adminKey,
     );
@@ -303,9 +305,10 @@ describe("edge events on every door", () => {
     expect(seen[0]?.item.state).toBe("archived");
   });
 
-  it("a bulk transition is silent when the flag is unset", async () => {
-    // The other direction of the same flag. Without it "honours the flag"
-    // is satisfied by a door that always emits.
+  it("a bulk transition announces the move with no flag set", async () => {
+    // The other direction. This asserted silence, which is what let a
+    // whole bulk action write rows no client replaying the stream could
+    // ever see: publishing is what appends the event log row.
     const tag = `bulkquiet-${Math.random().toString(36).slice(2, 8)}`;
     const seed = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
@@ -332,12 +335,14 @@ describe("edge events on every door", () => {
     controller.abort();
     await watcher.done;
 
-    expect(watcher.events.filter((e) => e.item.id === moved)).toHaveLength(0);
+    const heard = watcher.events.filter((e) => e.item.id === moved);
+    expect(heard.map((e) => e.type)).toEqual(["state_changed"]);
+    expect(heard[0]?.item.state).toBe("archived");
   });
 
-  it("POST /items/bulk follows its own emit_events flag", async () => {
+  it("POST /items/bulk announces an inline edge with or without fan-out", async () => {
     const target = await note("bulk-inline-target");
-    const silent = await edgeEventsDuring(async () => {
+    const quiet = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "POST", "/items/bulk", {
         key: ctx.adminKey,
         body: {
@@ -353,16 +358,15 @@ describe("edge events on every door", () => {
       });
       expect(res.status).toBe(200);
     });
-    // The bulk contract already governs whether its items publish; an
-    // inline edge follows the item it was written with rather than
-    // inventing a second answer.
-    expect(silent.filter((e) => e.type === "edge_created")).toHaveLength(0);
+    // An inline edge follows the item it was written with rather than
+    // inventing a second answer, and that item is always announced now.
+    expect(quiet.filter((e) => e.type === "edge_created")).toHaveLength(1);
 
     const loud = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "POST", "/items/bulk", {
         key: ctx.adminKey,
         body: {
-          emit_events: true,
+          enable_fanout: true,
           items: [
             {
               type: "core.note",
@@ -530,7 +534,7 @@ describe("an announcement never outlives the write it describes", () => {
       const res = await request(ctx.app, "POST", "/items/bulk", {
         key: ctx.adminKey,
         body: {
-          emit_events: true,
+          enable_fanout: true,
           items: [
             {
               type: "core.note",
@@ -638,7 +642,7 @@ describe("the properties the announcement itself has to hold", () => {
           action: "purge",
           confirm: "PURGE",
           filter: { tags: [tag] },
-          emit_events: true,
+          enable_fanout: true,
         },
         ctx.adminKey,
       );

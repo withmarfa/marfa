@@ -14,8 +14,15 @@
  *                             update_timestamp).
  *
  * Both endpoints write one aggregate audit entry per call (never N per-item
- * rows). Both default `emit_events: false` so per-item webhook fanout is
- * opt-in — bulk calls should not flood subscribers.
+ * rows), and both append to the event log for every row they write. That
+ * append is unconditional: the log is what a client rebuilding its state
+ * replays, so a write missing from it is one that client can never learn
+ * about.
+ *
+ * `enable_fanout` governs the outbound work instead — webhook delivery and
+ * the integration reactions the bridge enqueues — and defaults off, because
+ * one call here writes thousands of rows and a delivery per row per
+ * subscriber is not what the caller asked for.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -31,7 +38,7 @@ import {
   ITEM_STATES,
   validateProperties,
 } from "@withmarfa/shared";
-import type { Item } from "@withmarfa/shared";
+import type { Item, Metadata } from "@withmarfa/shared";
 import { mergeUpdateProperties } from "../storage/merge-properties.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
@@ -144,7 +151,7 @@ const BulkActionBaseSchema = z.object({
   filter: BulkFilterSchema,
   dry_run: z.boolean().optional(),
   max_items: z.number().int().positive().optional(),
-  emit_events: z.boolean().optional(),
+  enable_fanout: z.boolean().optional(),
 });
 
 const BulkActionRequestSchema = z.discriminatedUnion("action", [
@@ -216,7 +223,7 @@ const bulkRoute = createRoute({
             items: z.array(BulkInputItemSchema),
             mode: z.enum(["upsert", "create_only"]).optional(),
             atomic: z.boolean().optional(),
-            emit_events: z.boolean().optional(),
+            enable_fanout: z.boolean().optional(),
             retype: z.boolean().optional(),
           }),
         },
@@ -443,6 +450,10 @@ interface BulkItemResult {
   index: number;
   outcome: "created" | "updated" | "skipped" | "errored";
   id?: string;
+  /** The row as written, carried out of the batch so the publish loop does
+   *  not read back what it just wrote. Absent on an outcome that wrote
+   *  nothing. Never serialized: the wire shape is `BulkResultEntrySchema`. */
+  item?: Item;
   reason?: string;
   error?: { code: string; message: string };
 }
@@ -841,7 +852,7 @@ async function processBulkItem(
       }
     }
 
-    return { index, outcome: "updated", id: updated.id };
+    return { index, outcome: "updated", id: updated.id, item: updated };
   }
 
   // No match → create. Stamp source from credential; caller-supplied source
@@ -888,7 +899,7 @@ async function processBulkItem(
     if (raw.edges) {
       await reconcileEdges(created.id, raw.edges);
     }
-    return { index, outcome: "created", id: created.id };
+    return { index, outcome: "created", id: created.id, item: created };
   } catch (err) {
     if (err instanceof MarfaError) {
       return {
@@ -970,13 +981,11 @@ export function bulkRoutes(storage: Storage) {
     // fleet declares one on nearly every write, so inference would move a
     // corpus on an ordinary sync bug.
     const retype = body.retype === true;
-    const emitEvents = body.emit_events ?? false;
+    const enableFanout = body.enable_fanout ?? false;
     // Filled by each item's edge reconciliation and drained after the
-    // batch commits, under the request's `emit_events` — which already
-    // governs whether the items in the same batch publish, so an inline
-    // edge and the item that owns it are announced together or not at
-    // all. Declared here so an atomic rollback discards it along with
-    // the writes it describes.
+    // batch commits, so an inline edge and the item that owns it reach
+    // the log together. Declared here so an atomic rollback discards it
+    // along with the writes it describes.
     const inlineEdgeChanges: InlineEdgeChanges[] = [];
 
     if (items.length > MAX_BULK_ITEMS) {
@@ -1090,30 +1099,44 @@ export function bulkRoutes(storage: Storage) {
     const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
     for (const r of results) counts[r.outcome] += 1;
 
-    // Events fire only after the batch commits (or on each item in
-    // non-atomic mode). Missing from the /import precedent because
-    // /import never had the opt-in switch.
-    if (emitEvents) {
-      for (const r of results) {
-        if (r.id && (r.outcome === "created" || r.outcome === "updated")) {
-          const item = await storage.items.get(r.id, spaceId);
-          if (item) {
-            const metadata = await storage.metadata.get(r.id);
-            await publish({
-              type: r.outcome === "created" ? "created" : "updated",
-              item,
-              metadata,
-              spaceId,
-            });
-          }
-        }
+    // Published only after the batch commits, so a subscriber is never
+    // told about a write a rollback then took away — an atomic batch that
+    // rolled back throws and never reaches here.
+    //
+    // Every written row publishes. `enable_fanout` decides what happens
+    // downstream of the log, not whether the row is logged.
+    //
+    // The rows come from the batch that wrote them rather than from a
+    // second read: re-reading each item and its metadata put two queries
+    // per row on a door that accepts five thousand of them, a cost the
+    // old opt-in default kept out of sight.
+    const published = results.filter(
+      (r): r is BulkItemResult & { item: Item } =>
+        r.item !== undefined &&
+        (r.outcome === "created" || r.outcome === "updated"),
+    );
+    const metadataById = new Map<string, Metadata>();
+    if (published.length > 0) {
+      for (const m of await storage.metadata.getMany(
+        published.map((r) => r.item.id),
+      )) {
+        metadataById.set(m.item_id, m);
       }
-      // Edges after the items, and after the batch committed. An atomic
-      // batch that rolled back never reaches here, so a subscriber is
-      // never told about an edge whose write was undone.
-      for (const changes of inlineEdgeChanges) {
-        await announceInlineEdges(changes, spaceId);
-      }
+    }
+    for (const r of published) {
+      const metadata = metadataById.get(r.item.id);
+      await publish({
+        type: r.outcome === "created" ? "created" : "updated",
+        item: r.item,
+        ...(metadata && { metadata }),
+        spaceId,
+        enableFanout,
+      });
+    }
+    // Edges after the items, so a subscriber sees the endpoints before the
+    // relationship naming them.
+    for (const changes of inlineEdgeChanges) {
+      await announceInlineEdges(changes, spaceId, enableFanout);
     }
 
     await storage.audit.log({
@@ -1139,7 +1162,7 @@ export function bulkRoutes(storage: Storage) {
     const action = body.action;
     const filter = body.filter ?? {};
     const dryRun = body.dry_run ?? false;
-    const emitEvents = body.emit_events ?? false;
+    const enableFanout = body.enable_fanout ?? false;
 
     const cap = Math.min(
       body.max_items ?? MAX_BULK_ACTION_ITEMS,
@@ -1353,12 +1376,11 @@ export function bulkRoutes(storage: Storage) {
     // (packages/server/src/bulk-actions/worker.ts) picks the row up and
     // runs it.
     //
-    // `emit_events` is stored on the row (worker honors it) but not
-    // fired here. The synchronous endpoint fired per-item events after
-    // every mutation; the worker does the same once implemented in
-    // `runChunk`. For now, emit_events is a no-op — runner.ts
-    // intentionally drops the flag.
-    void emitEvents;
+    // Publishing belongs to whoever performs the write, and the write
+    // happens in the worker: this handler freezes a match set and answers
+    // 202. The flag travels to the worker inside the stored input, which
+    // is the request body verbatim.
+    void enableFanout;
     const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
     const apiKeyId = c.get("apiKey")?.id ?? null;
     const job = await storage.bulkActionJobs.create({
