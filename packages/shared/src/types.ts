@@ -340,8 +340,11 @@ export interface Edge {
   updated_at: string;
   /**
    * Optimistic-concurrency counter. Starts at 1 and moves on with every
-   * write that changes the row, so a client comparing two reads can tell
-   * whether anything happened in between.
+   * update the server applies, whether or not the new properties differ
+   * from the old — the write is what advances it, not a comparison of
+   * content. So two reads showing the same version mean nothing was
+   * written in between; two showing different versions mean a write
+   * landed, not that anything about the edge is now different.
    *
    * Pass it back as the `version` precondition on `PATCH /edges/{id}` to
    * refuse an edit computed from a state the server has since left. An

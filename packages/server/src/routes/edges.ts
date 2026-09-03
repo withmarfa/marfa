@@ -243,7 +243,7 @@ const updateEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Update an edge",
   description:
-    "Updates an edge's properties. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one. Passing `version` opts into optimistic concurrency: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that. Omitting it keeps the previous last-writer-wins behavior, and the edge's version moves on either way.",
+    "Updates an edge's properties. The identity fields (edge type, source, and target) are immutable, so re-pointing an edge means deleting it and creating a new one. Passing `version` opts into optimistic concurrency: a stale value returns 409 carrying the edge as it now stands, and the client re-applies its change over that. Omitting it keeps the previous last-writer-wins behavior. The version moves on either way, and on every update applied rather than only on one that changes the properties — so a bulk upsert that rewrites identical properties still invalidates a version another client is holding.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Edge id.") }),

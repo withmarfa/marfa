@@ -206,7 +206,14 @@ export class SqliteEdgeStore implements EdgeStore {
     // it back on identity alone to tell those apart — still space-fenced,
     // so a cross-space id stays absent rather than becoming a conflict.
     const current = await this.db.select().from(edges).where(identity).get();
-    if (!current) throw new Error(`edge ${id} not found`);
+    // Typed, because this is a race a client hits legitimately: it held a
+    // version, somebody else moved the row on and then removed it. A bare
+    // Error fails the handler's duck-type and leaves for the caller a 500
+    // and an operator alert, for an outcome that is simply the row being
+    // gone.
+    if (!current) {
+      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+    }
     return { ok: false, current: rowToEdge(current) };
   }
 

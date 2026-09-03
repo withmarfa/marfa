@@ -1616,9 +1616,19 @@ export class MarfaClient {
           },
         },
       )) as
-        | { edge: Edge }
-        | { error: { code: "version_conflict"; status: 409 }; edge: Edge };
-      if ("error" in res) throw new EdgeConflictError(res.edge);
+        { edge: Edge } | { error: { code: string; status: 409 }; edge?: Edge };
+      if ("error" in res) {
+        // Branch on the shape rather than asserting it. This transport
+        // hands back every 409 body unchanged, and only the stale-version
+        // one carries an edge. A future refusal on this route that used
+        // the ordinary error envelope would otherwise reach the line
+        // below with nothing to read, and the caller would get a
+        // TypeError instead of an error they can handle.
+        if (res.edge === undefined) {
+          throw new MarfaError(res.error.code, "Edge update refused", 409);
+        }
+        throw new EdgeConflictError(res.edge);
+      }
       return res.edge;
     },
 

@@ -301,11 +301,31 @@ async function processBulkEdge(
     // has asked for one. The write still moves the version on, because
     // the bump lives in the statement rather than in the route that
     // reached it.
-    const outcome = await storage.edges.updateProperties(
-      existing.id,
-      raw.properties ?? {},
-      spaceId,
-    );
+    //
+    // Wrapped for the same reason the authorization step above is: one
+    // entry's failure is that entry's result, not the batch's. The store
+    // refuses a row that has gone since the duplicate lookup read it,
+    // which a concurrent delete produces, and an unwrapped refusal would
+    // fail every other entry in the request along with it.
+    let outcome;
+    try {
+      outcome = await storage.edges.updateProperties(
+        existing.id,
+        raw.properties ?? {},
+        spaceId,
+      );
+    } catch (err) {
+      if (err instanceof MarfaError) {
+        return {
+          result: {
+            index,
+            outcome: "errored",
+            error: { code: err.code, message: err.message },
+          },
+        };
+      }
+      throw err;
+    }
     if (!outcome.ok) {
       // Unreachable: a conflict needs a precondition, and this door sends
       // none. Refused rather than ignored, so that adding one here has to

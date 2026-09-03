@@ -2113,7 +2113,9 @@ export interface EdgeStore {
    * `source_id` / `target_id` / `edge_type` are immutable. When `spaceId`
    * is supplied the UPDATE is additionally fenced to that space so a
    * space-scoped caller cannot mutate another space's edge by id — a
-   * cross-space id matches zero rows and throws `edge ... not found`.
+   * cross-space id matches zero rows and raises `edge_not_found`, which
+   * the handler answers 404 — a bare error here would reach the generic
+   * tail and cost the caller a 500 for a row that is simply gone.
    * Omitting `spaceId` leaves the update unscoped (platform-admin /
    * single-space self-host).
    *
