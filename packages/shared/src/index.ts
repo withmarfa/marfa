@@ -4,6 +4,7 @@ export * from "./ids.js";
 export * from "./validation.js";
 export * from "./type-patterns.js";
 export * from "./type-registry.js";
+export * from "./hydrate-type-registry.js";
 export * from "./edge-registry.js";
 export * from "./scopes.js";
 export * from "./query-parser.js";
