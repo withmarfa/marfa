@@ -44,6 +44,11 @@ const REPLAY_BATCH_SIZE = 500;
  * ids: the backlog is not what this window measures, so raising it buys
  * nothing against a long one. Lowering it starts re-sending events a
  * fast writer produced mid-catch-up.
+ *
+ * Sufficient, precisely, whenever fewer than a batch of further rows are
+ * sent after a buffered event's id is recorded. Past that boundary the
+ * guarantee degrades to a second copy rather than to a drop, which is
+ * what lets the number be a judgment instead of a proof.
  */
 const REPLAY_DEDUPE_WINDOW = REPLAY_BATCH_SIZE;
 
@@ -591,46 +596,51 @@ export function eventRoutes(
                   }
 
                   replaying = false;
+                  // Both buffers drain through one function, item and
+                  // edge alike. The rule below is a property of the
+                  // stream rather than of either buffer, and written at
+                  // two sites it is one site that gets updated: a revert
+                  // of the edge copy alone would restore this defect for
+                  // edges while every item-side test stayed green. There
+                  // is no second site to diverge.
+                  //
                   // Withheld against the ids this replay sent, not
                   // against the cursor. Two consequences worth naming.
                   //
-                  // A row the loop skipped is no longer suppressed here,
-                  // and that discloses nothing: the drain sends through
-                  // `sendEvent`, whose first act is the same permission
-                  // narrowing the replay applied, so the buffered copy
-                  // meets that filter whatever this decides.
+                  // A row the replay skipped is no longer suppressed
+                  // here, and that discloses nothing: delivery goes
+                  // through `sendEvent`, whose first act is the same
+                  // permission narrowing the replay applied, so the
+                  // buffered copy meets that filter whatever this
+                  // decides.
                   //
                   // An id evicted from the window is sent a second time
                   // carrying the same `id:`, which a client applying a
                   // payload by id already absorbs. The comparison this
                   // replaces failed the other way, by dropping an event
                   // the client had no way to learn it was missing.
-                  for (const event of liveBuffer) {
-                    if (state.closed) return;
-                    if (
-                      event.eventId !== undefined &&
-                      replayedIds.has(event.eventId)
-                    )
-                      continue;
-                    sendEvent(event.eventId, event);
-                  }
-                  liveBuffer.length = 0;
-                  for (const event of liveEdgeBuffer) {
-                    if (state.closed) return;
-                    if (
-                      event.eventId !== undefined &&
-                      replayedIds.has(event.eventId)
-                    )
-                      continue;
-                    sendEdgeEvent(event.eventId, event);
-                  }
-                  liveEdgeBuffer.length = 0;
-                  // Nothing dedupes past this point — live events now go
-                  // straight out — and a caught-up viewer can hold the
-                  // stream open for hours, so the window is released
-                  // rather than carried for the life of the connection.
-                  replayedIds.clear();
-                  replayedOrder.length = 0;
+                  //
+                  // Returns false when the stream closed mid-drain, so
+                  // the caller stops rather than draining the next
+                  // buffer into a controller that is gone.
+                  const drainBuffered = <T extends { eventId?: bigint }>(
+                    buffer: T[],
+                    deliver: (eventId: bigint | undefined, event: T) => void,
+                  ): boolean => {
+                    for (const event of buffer) {
+                      if (state.closed) return false;
+                      if (
+                        event.eventId !== undefined &&
+                        replayedIds.has(event.eventId)
+                      )
+                        continue;
+                      deliver(event.eventId, event);
+                    }
+                    buffer.length = 0;
+                    return true;
+                  };
+                  if (!drainBuffered(liveBuffer, sendEvent)) return;
+                  if (!drainBuffered(liveEdgeBuffer, sendEdgeEvent)) return;
                 } catch {
                   replaying = false;
                   liveBuffer.length = 0;
