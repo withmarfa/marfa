@@ -37,7 +37,7 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { waitForHealth } from "./wait-for-health.js";
+import { waitForHealth, attemptTimeoutMs } from "./wait-for-health.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = resolve(HERE, "..");
@@ -192,11 +192,25 @@ async function bootRole(role: (typeof ROLES)[number]): Promise<void> {
   const health = await waitForHealth({
     url: `http://127.0.0.1:${String(port)}/health`,
     budgetMs: Math.max(0, deadline - Date.now()),
+    // From the whole readiness budget, not from what the listen-line wait
+    // left of it. The two share one deadline, so a slow boot shrinks the
+    // remainder — and deriving the per-attempt ceiling from that remainder
+    // narrows it exactly when the machine is loaded enough for a healthy
+    // endpoint to be slow. A boot that spent eighty of ninety seconds
+    // reaching its listen line would give each health attempt a third of a
+    // second to answer in.
+    attemptTimeoutMs: attemptTimeoutMs(READY_BUDGET_MS),
     shouldStop: () =>
       child.exitCode === null
         ? null
         : `the process exited ${String(child.exitCode)} after its listen line`,
   });
+  if (health.stoppedEarly) {
+    // A process that died is a different failure from an endpoint that
+    // never answered, and reporting it as the latter is what sent a
+    // previous diagnosis to the wrong place.
+    fail(`role=${role} ${health.lastOutcome}`, output);
+  }
   if (!health.ok) {
     fail(
       `role=${role} /health never answered 200 ` +

@@ -14,15 +14,27 @@
  */
 
 /**
- * How long one attempt may hang, derived from the caller's budget rather
- * than chosen: a single stuck request must not be able to eat the whole
- * readiness window, so it is capped at a thirtieth of it. That leaves at
- * least thirty samples in the worst case where every attempt hangs to its
- * ceiling, which is what makes the reported last attempt a description of
- * a steady state rather than of one unlucky moment.
+ * How long one attempt may hang, derived from a budget rather than chosen:
+ * a single stuck request must not be able to eat the whole readiness
+ * window, so it is capped at a thirtieth of it. That leaves at least thirty
+ * samples in the worst case where every attempt hangs to its ceiling, which
+ * is what makes the reported last attempt a description of a steady state
+ * rather than of one unlucky moment.
+ *
+ * Floored rather than rounded, so thirty attempts genuinely fit. Rounding
+ * up puts the ceiling over a thirtieth and the guarantee becomes false for
+ * every budget that is not a multiple of thirty. The 1ms lower bound is the
+ * one exception, and it only bites below 30ms, where a readiness budget is
+ * not a meaningful thing to have set.
+ *
+ * Derive this from the budget the caller configured, not from what is left
+ * of it. A wait that starts with most of its window already spent still
+ * needs a ceiling wide enough for a healthy endpoint to answer under, and
+ * the moment a machine is loaded enough to have burned that window is the
+ * moment the endpoint is slowest.
  */
 export function attemptTimeoutMs(budgetMs: number): number {
-  return Math.max(1, Math.round(budgetMs / 30));
+  return Math.max(1, Math.floor(budgetMs / 30));
 }
 
 /**
@@ -74,11 +86,18 @@ export interface HealthWaitResult {
 export async function waitForHealth(opts: {
   url: string;
   budgetMs: number;
+  /**
+   * How long one attempt may hang. Defaults to a thirtieth of `budgetMs`,
+   * which is right when the wait owns its whole window and wrong when it
+   * has been handed the remainder of somebody else's — see
+   * ``attemptTimeoutMs``.
+   */
+  attemptTimeoutMs?: number;
   pollIntervalMs?: number;
   shouldStop?: () => string | null;
 }): Promise<HealthWaitResult> {
   const { url, budgetMs, pollIntervalMs = 250, shouldStop } = opts;
-  const perAttempt = attemptTimeoutMs(budgetMs);
+  const perAttempt = opts.attemptTimeoutMs ?? attemptTimeoutMs(budgetMs);
   const deadline = Date.now() + budgetMs;
   const sleep = (ms: number): Promise<void> =>
     new Promise((r) => setTimeout(r, ms));
@@ -107,6 +126,15 @@ export async function waitForHealth(opts: {
       lastOutcome = describeAttempt(err);
     }
     await sleep(pollIntervalMs);
+  }
+
+  // Once more, because a stop reason can become true while the last attempt
+  // is still in flight. Consulting it only at the top of the loop reports
+  // that case as an endpoint that never answered, which is precisely the
+  // wrong diagnosis and the one this module exists to stop producing.
+  const stop = shouldStop?.();
+  if (stop !== undefined && stop !== null) {
+    return { ok: false, attempts, lastOutcome: stop, stoppedEarly: true };
   }
 
   return { ok: false, attempts, lastOutcome, stoppedEarly: false };
