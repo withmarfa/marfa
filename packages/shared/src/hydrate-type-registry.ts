@@ -1,5 +1,7 @@
 import type { TypeSchema } from "@withmarfa/types";
+import { ErrorCode, MarfaError } from "./errors.js";
 import {
+  MAX_RESOLUTION_DEPTH,
   TYPE_REGISTRY,
   getTypeSchema,
   registerTypeSchema,
@@ -72,6 +74,17 @@ export interface TypeRegistryHydration {
  * rather than correctness — and anyone tempted to rely on it should know the
  * map does not.
  *
+ * **Pass the whole listing, not a slice of one.** Within a single call every
+ * type is re-registered after its ancestors, and each registration drops its
+ * own compiled schema, so a full payload leaves nothing stale. A subset does
+ * not: registering an ancestor that has become visible, while a descendant of
+ * it sits outside the payload and already has a compiled schema, leaves that
+ * descendant validating against the narrower field set with nothing to evict
+ * it. The shortfall is silent and it is the one this helper exists to prevent
+ * — a requirement the ancestor declares goes unenforced, so the client accepts
+ * a write the server refuses. `GET /types` returns the whole vocabulary, which
+ * is why this is a precondition rather than a parameter.
+ *
  * **The payload is not re-validated.** These schemas are what the server
  * accepted at registration, and a client running an older `@withmarfa/shared`
  * than the server would refuse types the server holds — then refuse the
@@ -107,6 +120,20 @@ export function hydrateTypeRegistry(
 
   const visit = (id: string): void => {
     if (placed.has(id)) return;
+    // Bounded like every other chain walk in this package, and against the
+    // same constant. Two failures, one guard. A chain past this bound is one
+    // `getResolvedFields` already refuses, so admitting it here would hand
+    // back a registry whose every write fails and say nothing at the point a
+    // caller could act. And the walk takes one frame per ancestor, so a
+    // chain far past the bound exhausts the stack instead — a named error
+    // rather than a RangeError with no type in it.
+    if (stack.length >= MAX_RESOLUTION_DEPTH) {
+      throw new MarfaError(
+        ErrorCode.TYPE_CHAIN_UNRESOLVABLE,
+        `Inheritance chain deeper than ${String(MAX_RESOLUTION_DEPTH)} while ordering type "${id}" for hydration`,
+        { type_id: id },
+      );
+    }
     if (onStack.has(id)) {
       // A back edge to something still open: every id from there to the top
       // of the stack sits on the closed chain.
@@ -122,7 +149,7 @@ export function hydrateTypeRegistry(
     if (!schema) return;
     stack.push(id);
     onStack.add(id);
-    if (schema.parent !== undefined) visit(schema.parent);
+    if (schema.parent) visit(schema.parent);
     stack.pop();
     onStack.delete(id);
     placed.add(id);
@@ -140,7 +167,13 @@ export function hydrateTypeRegistry(
   // that inherits the break.
   const unresolvedParents: string[] = [];
   for (const schema of order) {
-    if (schema.parent === undefined) continue;
+    // Truthy rather than a test against `undefined`, matching every other
+    // parent test in this package. A payload is JSON somebody else produced,
+    // and a `parent: null` in one resolves as a root everywhere else while an
+    // `undefined` test would name it here — sending a caller to refetch
+    // for ever over a break that does not exist. This field is the one the
+    // report tells callers to act on, so a false entry in it is expensive.
+    if (!schema.parent) continue;
     if (getTypeSchema(schema.parent, spaceId) === undefined) {
       unresolvedParents.push(schema.id);
     }

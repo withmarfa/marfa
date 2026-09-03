@@ -4,6 +4,10 @@ import {
   unregisterTypeSchema,
   validateProperties,
 } from "@withmarfa/shared";
+import {
+  hydrateTypeRegistry as hydrateFromPackageRoot,
+  validateProperties as validateFromPackageRoot,
+} from "./index.js";
 import { createKeysModeFixture } from "./test-harness.js";
 import type { MarfaClient } from "./client.js";
 
@@ -96,6 +100,23 @@ async function serverAccepts(
   });
   return res.ok;
 }
+
+describe("the package root", () => {
+  // Everything else in this file imports from `@withmarfa/shared`, so the
+  // re-export could be missing entirely and every assertion below would still
+  // pass. `index.test.ts` makes the same argument about namespaces.
+  //
+  // Identity, not just reachability. These two read and write one
+  // module-level registry, so a consumer whose tree resolved two copies of
+  // the shared package would hydrate one and validate against the other, and
+  // every type would come back unknown with nothing reporting an error.
+  // Re-exporting both from this root is what puts them beyond that, and this
+  // is the assertion that says they are the same instance.
+  it("offers the pair, and offers the same instances", () => {
+    expect(hydrateFromPackageRoot).toBe(hydrateTypeRegistry);
+    expect(validateFromPackageRoot).toBe(validateProperties);
+  });
+});
 
 describe("hydrateTypeRegistry against a live type payload", () => {
   it("validates a hydrated custom type exactly as the server does", async () => {

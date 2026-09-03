@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { TypeSchema } from "@withmarfa/types";
 import { hydrateTypeRegistry } from "./hydrate-type-registry.js";
 import {
+  MAX_RESOLUTION_DEPTH,
   getTypeSchema,
   listTypes,
   unregisterTypeSchema,
@@ -130,6 +131,77 @@ describe("hydrateTypeRegistry", () => {
     ]);
 
     expect(result.unresolvedParents).toEqual(["acme.orphan"]);
+  });
+
+  it("treats a null parent as no parent, the way every other walk does", () => {
+    // The payload is JSON produced elsewhere, and `parent: null` is what a
+    // permissive serializer emits for an absent optional. It resolves as a
+    // root everywhere else in this package, so naming it here would send a
+    // caller to refetch for ever over a break that does not exist — and
+    // `unresolvedParents` is the entry the report tells callers to act on.
+    const result = hydrate([
+      {
+        id: "acme.nulled",
+        version: 1,
+        parent: null,
+        fields: { headline: { type: "string", required: true } },
+      },
+    ] as unknown as TypeSchema[]);
+
+    expect(result.unresolvedParents).toEqual([]);
+    expect(result.cycles).toEqual([]);
+    // Resolution already treated it as a root; the report now agrees.
+    expect(
+      validateProperties("acme.nulled", {}, { spaceId: SPACE }).success,
+    ).toBe(false);
+    expect(
+      validateProperties("acme.nulled", { headline: "set" }, { spaceId: SPACE })
+        .success,
+    ).toBe(true);
+  });
+
+  it("refuses a chain deeper than resolution will follow, by name", () => {
+    // Listed deepest-first, which is what makes the bound reachable at all:
+    // the walk only stacks a frame for an ancestor it has not placed yet, so
+    // an ancestors-first payload never nests. Descendant-first is the shape
+    // this helper exists to cope with, so it is also the shape that nests.
+    //
+    // At this depth an unbounded walk does not overflow — it accepts the
+    // chain and hands back a registry whose every write then fails, because
+    // `getResolvedFields` refuses the same chain at the same constant. So
+    // what this pins is the refusal arriving at hydration, where a caller
+    // can act on it, rather than at each write. The overflow the frame-per-
+    // ancestor recursion can also produce needs a chain orders of magnitude
+    // deeper than this, and the same bound is what stops it.
+    const link = (n: number) => `acme.deep_${String(n)}`;
+    const payload: TypeSchema[] = [];
+    for (let n = MAX_RESOLUTION_DEPTH + 1; n >= 1; n -= 1) {
+      payload.push({
+        id: link(n),
+        version: 1,
+        parent: link(n - 1),
+        fields: {},
+      });
+    }
+    payload.push({ id: link(0), version: 1, fields: {} });
+
+    const before = listTypes(SPACE).length;
+    let caught: unknown;
+    try {
+      // Not `expect(...).toThrow()`: the code carried on the error is the
+      // assertion, and a bare throw check would pass on the RangeError this
+      // bound exists to replace.
+      hydrateTypeRegistry(payload, { spaceId: SPACE });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(MarfaError);
+    expect((caught as MarfaError).code).toBe(ErrorCode.TYPE_CHAIN_UNRESOLVABLE);
+    // Ordering runs to completion before anything is registered, so a refusal
+    // leaves the registry untouched rather than half-filled. Nothing to clean
+    // up here, and that is the property rather than an omission.
+    expect(listTypes(SPACE).length).toBe(before);
   });
 
   it("does not report a parent the platform registry already ships", () => {
