@@ -144,12 +144,17 @@ describe("a replicated event carries the writer's fan-out decision", () => {
       expect(warm).not.toBeNull();
 
       /** Append a row and deliver it the way a sibling process's would arrive. */
-      const replicate = async (enableFanout: boolean): Promise<void> => {
+      const replicate = async (
+        eventType: "updated" | "state_changed",
+        enableFanout: boolean,
+      ): Promise<void> => {
+        const wire =
+          eventType === "updated" ? "item.updated" : "item.state_changed";
         const eventId = await ctx.storage.eventLog.append({
-          event_type: "updated",
+          event_type: eventType,
           item_id: warm!.id,
           space_id: space.id,
-          payload: JSON.stringify({ type: "item.updated", item: warm }),
+          payload: JSON.stringify({ type: wire, item: warm }),
           enable_fanout: enableFanout,
         });
         // A foreign origin, so this takes the hydrate-and-re-emit path a
@@ -161,22 +166,37 @@ describe("a replicated event carries the writer's fan-out decision", () => {
         );
       };
 
-      const beforeDeclined = enqueued.length;
-      await replicate(false);
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      expect(enqueued.length).toBe(beforeDeclined);
+      const typesSeen = (): string[] =>
+        enqueued.map(
+          (e) => (e.message as { event_type?: string }).event_type ?? "",
+        );
 
-      // The control. Without it a bridge that had simply stopped reacting
-      // to replicated events would satisfy the assertion above.
-      await replicate(true);
+      // Declined first, then an ordinary one behind it as a sentinel.
+      //
+      // The absence is proven by ordering rather than by a clock: the
+      // drainer is a single sequential loop over one iterator, so by the
+      // time the sentinel's envelope exists the declined event has already
+      // been through the same loop and decided. A wall-clock wait would
+      // have asserted the same thing while also being able to pass for the
+      // wrong reason on a loaded machine.
+      await replicate("updated", false);
+      await replicate("state_changed", true);
+
       await vi.waitFor(
         () => {
-          expect(enqueued.length).toBeGreaterThan(beforeDeclined);
-          const last = enqueued[enqueued.length - 1];
-          expect(last?.message.connection_id).toBe(connection.id);
+          expect(typesSeen()).toContain("item.state_changed");
         },
         { timeout: 10_000 },
       );
+
+      // The sentinel arrived, so the declined event is decided: it fanned
+      // out or it did not, and there is no third state left pending.
+      expect(typesSeen()).not.toContain("item.updated");
+      // And the sentinel is the control — without it, a bridge that had
+      // simply stopped reacting to replicated events would satisfy the
+      // assertion above.
+      const sentinel = enqueued[enqueued.length - 1];
+      expect(sentinel?.message.connection_id).toBe(connection.id);
     } finally {
       await bridge.stop();
     }

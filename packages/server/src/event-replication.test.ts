@@ -23,6 +23,7 @@ import {
   PROCESS_ORIGIN,
 } from "./event-replication.js";
 import {
+  fansOut,
   initEventLog,
   publish,
   subscribe,
@@ -224,5 +225,39 @@ describe("eventFromRow", () => {
         payload: "{}",
       }),
     ).toBeNull();
+  });
+
+  it("fans out a row written before the column existed", () => {
+    // The one case the fallback exists for, and the only one a
+    // pre-migration row produces. Every other test here supplies the
+    // column, so a fallback flipped to `false` would silence the whole
+    // estate's history — every event logged before the migration, on
+    // every deployment — while this file stayed green.
+    //
+    // The column is omitted rather than passed as undefined: that is the
+    // shape a row selected from a table that predates it actually has.
+    const item = makeItem("01976f00-0000-7000-8000-00000000eeee");
+    const event = eventFromRow({
+      ...base,
+      event_type: "updated",
+      payload: JSON.stringify({ type: "item.updated", item }),
+    });
+    expect(event?.enableFanout).toBe(true);
+    expect(fansOut(event!)).toBe(true);
+  });
+
+  it("carries an explicit decision through unchanged", () => {
+    // The control. Without it the assertion above is satisfied by a
+    // function that hardcodes true and ignores the row entirely, which is
+    // precisely the defect the column was added to fix.
+    const item = makeItem("01976f00-0000-7000-8000-00000000ffff");
+    const declined = eventFromRow({
+      ...base,
+      event_type: "updated",
+      payload: JSON.stringify({ type: "item.updated", item }),
+      enable_fanout: false,
+    });
+    expect(declined?.enableFanout).toBe(false);
+    expect(fansOut(declined!)).toBe(false);
   });
 });

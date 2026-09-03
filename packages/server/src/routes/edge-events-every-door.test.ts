@@ -199,7 +199,7 @@ describe("edge events on every door", () => {
     // announced the item, and the single-item purge door emits none —
     // so publishing one here would make a bulk purge noisier than the
     // door it mirrors.
-    async function purgeOne(emit: boolean): Promise<{
+    async function purgeOne(enableFanout: boolean): Promise<{
       items: string[];
       edges: string[];
     }> {
@@ -234,7 +234,7 @@ describe("edge events on every door", () => {
           action: "purge",
           confirm: "PURGE",
           filter: { tags: [tag] },
-          ...(emit ? { enable_fanout: true } : {}),
+          ...(enableFanout ? { enable_fanout: true } : {}),
         },
         ctx.adminKey,
       );
