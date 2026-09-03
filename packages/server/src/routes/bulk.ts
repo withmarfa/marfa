@@ -69,6 +69,7 @@ import {
   BulkActionJobSchema,
   type BulkActionResult as BulkActionResultType,
 } from "../bulk-actions/types.js";
+import { refuseRenamedTimeFilterKeys } from "./_renamed-time-filters.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -140,8 +141,8 @@ const BulkFilterSchema = z
     source: z.string().optional(),
     tier: z.enum(["library", "feed"]).optional(),
     tags: z.array(z.string()).optional(),
-    since: z.string().optional(),
-    until: z.string().optional(),
+    timestamp_after: z.string().optional(),
+    timestamp_before: z.string().optional(),
     /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
     filter: z.string().optional(),
   })
@@ -1229,6 +1230,34 @@ export function bulkRoutes(storage: Storage) {
       requireAuth(c);
     }
 
+    // Read from the raw body rather than the validated one, which has
+    // already had an unknown key stripped from it.
+    //
+    // This is the door where silence costs the most. The filter *is* the
+    // match set, so a dropped bound does not narrow anything: `{"action":
+    // "purge", "filter": {"since": "..."}}` becomes a purge with an empty
+    // filter, matching every item in the space. Under the match cap it
+    // does not even error — it succeeds, against everything.
+    //
+    // The refusal names no modification-time filter: this door's filter
+    // schema has none, and sending a caller to one it would strip is the
+    // silence the refusal exists to prevent.
+    //
+    // After the auth gates rather than before them, matching the other
+    // two doors. Nothing leaked either way — schema validation already
+    // ran ahead of both — but a request that has not been authorized has
+    // no claim on the shape of its own refusal.
+    const rawBody: unknown = await c.req.json().catch(() => undefined);
+    if (
+      typeof rawBody === "object" &&
+      rawBody !== null &&
+      "filter" in rawBody
+    ) {
+      refuseRenamedTimeFilterKeys((rawBody as { filter?: unknown }).filter, {
+        catchUpFilter: "none",
+      });
+    }
+
     // Validate filter fields up-front so a caller with a bad filter gets
     // a 400 before any matching happens.
     if (filter.type && !isValidTypeIdentifier(filter.type)) {
@@ -1314,8 +1343,8 @@ export function bulkRoutes(storage: Storage) {
         filter: filter.filter,
         allowed_types: allowedTypes,
         excluded_types: excludedTypes,
-        since: filter.since,
-        until: filter.until,
+        timestamp_after: filter.timestamp_after,
+        timestamp_before: filter.timestamp_before,
         limit: Math.min(200, cap + 1 - matched.length),
         cursor,
       });

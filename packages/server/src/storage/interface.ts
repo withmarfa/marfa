@@ -31,7 +31,7 @@ import type {
   TypeOrigin,
   TypeSchema,
 } from "@withmarfa/shared";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
 import type { SourceFilterSettings } from "./filter-sql.js";
 
 // ---------------------------------------------------------------------------
@@ -139,8 +139,45 @@ export interface ItemFilters {
   excluded_types?: string[];
   sort?: ItemSortField;
   direction?: SortDirection;
-  since?: string;
-  until?: string;
+  /** Inclusive lower bound on the item's own user-meaningful time —
+   *  `timestamp`, falling back to `created_at`. Named for the field it
+   *  reads. It says nothing about when the row was last written, which
+   *  is what `updated_after` is for; the two are easy to confuse and the
+   *  cost of confusing them is a catch-up that silently returns the
+   *  wrong set. */
+  timestamp_after?: string;
+  /** Inclusive upper bound on the same column. Inclusive, matching its
+   *  lower twin: a bounded window that is closed at one end and open at
+   *  the other loses a row on the boundary in one direction only, which
+   *  is the harder failure to spot. */
+  timestamp_before?: string;
+  /** Inclusive lower bound on `updated_at`, the row's modification time.
+   *
+   *  This is the catch-up filter: a client that has been away asks what
+   *  changed after the cursor it holds. Inclusive because `updated_at`
+   *  is a millisecond text timestamp and a bulk write ties many rows on
+   *  one instant — a strict comparison drops every row sharing the
+   *  cursor's millisecond, which is silent and unrecoverable. The client
+   *  dedupes by id, which is what makes the overlap harmless.
+   *
+   *  What the overlap costs is worth stating plainly, because "dedupe by
+   *  id" understates it: the bound is inclusive and there is no way to
+   *  resume just after one row within a tie, so a high-water mark that
+   *  lands on an instant a large bulk write shares re-transfers that
+   *  whole group on every reconnect. It terminates, so this is cost
+   *  rather than a loop, but a client reconnecting often against a
+   *  corpus written in bulk pays it every time.
+   *
+   *  Implies an `(updated_at, id)` ascending order; see the stores. */
+  updated_after?: string;
+  /** Suppress the default exclusion of trashed rows and return every
+   *  lifecycle state.
+   *
+   *  A separate flag rather than a sentinel value on `state`, because
+   *  `state` compiles to an equality against the column and a magic
+   *  string reaching that comparison would match no row while looking
+   *  like a filter. A boolean cannot be passed to `eq` by accident. */
+  all_states?: boolean;
   /** Inclusive lower bound on the normalized `starts_at_utc` column, and
    *  so implicitly `starts_at_utc IS NOT NULL`. Serves the calendar's
    *  window scan: the column is written in the exact shape
@@ -183,6 +220,62 @@ export interface SearchFilters {
   excluded_types?: string[];
   limit?: number;
   offset?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Time-bound normalization
+// ---------------------------------------------------------------------------
+
+/** A date and a time with no zone at all. Valid RFC 3339 is not, strictly,
+ *  but `isValidTimestamp` accepts it and callers send it. */
+const ZONELESS_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
+/**
+ * Re-spell a caller's time bound in the exact shape the stored columns
+ * carry, or refuse it.
+ *
+ * Every time column here is text, and every one the server stamps is
+ * written as `new Date().toISOString()` emits: twenty-four characters,
+ * always `.sssZ`. The bounds compile to a text comparison against that,
+ * and text comparison is lexical — so a spelling that names the right
+ * instant at a different width answers the wrong question. `Z` is 90, `.`
+ * is 46 and `+` is 43, so `2026-03-01T12:00:00Z` excludes a row stamped
+ * `2026-03-01T12:00:00.500Z` and `2026-03-01T12:00:00-01:00` includes
+ * every row of the hour before the instant it names. Both return a 200
+ * and a well-formed page, which is the silent loss the catch-up filter
+ * exists to remove.
+ *
+ * Re-spelling rather than refusing, because second precision is valid
+ * RFC 3339 and is the form a hand-written client reaches for first;
+ * refusing it would be hostile. A value that is not a timestamp at all
+ * is still refused.
+ *
+ * A date-time carrying no zone is read as UTC rather than handed to
+ * `Date`, which reads it as the server's local time. The comparison it
+ * used to reach was against UTC-stamped text, so UTC preserves what the
+ * caller already meant; local time would move the bound by whatever
+ * offset the deployment happens to run in.
+ *
+ * One column is not server-stamped: the item listing's `timestamp_*`
+ * bounds read `COALESCE(timestamp, created_at)`, and `timestamp` is
+ * whatever the caller wrote. So this makes the comparison exact against
+ * every row the server stamped, and leaves it no worse than it already
+ * was against one a caller spelled its own way.
+ */
+export function normalizeTimeBound(
+  value: string | undefined,
+  field: string,
+): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isValidTimestamp(value)) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Invalid ${field}: expected an RFC 3339 timestamp`,
+      { field, value },
+    );
+  }
+  const instant = new Date(ZONELESS_DATETIME.test(value) ? `${value}Z` : value);
+  return instant.toISOString();
 }
 
 // ---------------------------------------------------------------------------
@@ -244,6 +337,90 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
       "Invalid pagination cursor",
     );
   }
+}
+
+/**
+ * A cursor that records which ordering issued it.
+ *
+ * The plain cursor above carries the last row's sort value and its id and
+ * says nothing about which column the value came from. That is survivable
+ * while a listing has exactly one ordering. Both listings that take
+ * `updated_after` now have two — the door's own default, and
+ * `(updated_at, id)` ascending under the filter — and every column
+ * involved holds an ISO timestamp, so a cursor issued under one ordering
+ * and replayed under the other decodes cleanly, compares successfully,
+ * and returns a page bounded by the wrong column. Nothing errors; the
+ * page is simply not the next page, and rows are skipped or repeated with
+ * no signal anywhere.
+ *
+ * So the key travels with the cursor and a mismatch is refused. A cursor
+ * carrying no key at all is read as the created-at ordering, which is the
+ * only one that existed before this: an in-flight page keeps working, and
+ * the same cursor handed to the new ordering is refused rather than
+ * silently honoured.
+ *
+ * The key names the catch-up ordering against everything else, rather
+ * than naming each of the item listing's several sorts. That is the split
+ * worth drawing, because it is the one a caller can cross without meaning
+ * to: `sort` is set explicitly, so dropping it between pages is a visible
+ * caller error, while `updated_after` is a filter and dropping a filter
+ * while keeping the cursor is the ordinary client mistake.
+ */
+export type CursorSortKey = "created_at" | "updated_at";
+
+export function encodeKeyedCursor(
+  sortValue: string | null,
+  id: string,
+  key: CursorSortKey,
+): string {
+  return Buffer.from(JSON.stringify({ v: sortValue, id, k: key })).toString(
+    "base64url",
+  );
+}
+
+/** Refuse a cursor whose recorded ordering is not the one about to page.
+ *  Called after the payload decode, so a malformed cursor still reports
+ *  as malformed rather than as the wrong ordering. */
+function assertCursorKey(cursor: string, expected: CursorSortKey): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf-8"));
+  } catch {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid pagination cursor",
+    );
+  }
+  const key =
+    typeof parsed === "object" && parsed !== null && "k" in parsed
+      ? parsed.k
+      : "created_at";
+  if (key !== expected) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `This cursor was issued for a different ordering and cannot be continued here. Re-read the first page with the same parameters.`,
+    );
+  }
+}
+
+export function decodeKeyedCursor(
+  cursor: string,
+  expected: CursorSortKey,
+): CursorPayload {
+  const payload = decodeCursor(cursor);
+  assertCursorKey(cursor, expected);
+  return payload;
+}
+
+/** The keyed decode for a listing whose sort value may be `null` — the
+ *  item list's `properties.<field>` sort, in its NULLS-LAST tail. */
+export function decodeKeyedCursorNullable(
+  cursor: string,
+  expected: CursorSortKey,
+): NullableCursorPayload {
+  const payload = decodeCursorNullable(cursor);
+  assertCursorKey(cursor, expected);
+  return payload;
 }
 
 // ---------------------------------------------------------------------------
@@ -2082,6 +2259,16 @@ export interface EdgeListFilters {
   edge_type?: string | string[];
   limit?: number;
   cursor?: string;
+  /** Inclusive lower bound on `updated_at`, the edge's modification
+   *  time. The edge half of the catch-up read; same inclusivity and same
+   *  reasoning as {@link ItemFilters.updated_after}.
+   *
+   *  Setting it changes the listing's order from newest-created-first to
+   *  `(updated_at, id)` ascending, which is what makes a resuming client
+   *  able to advance a cursor through it. Because that is a second
+   *  ordering over one opaque cursor, the cursor records which ordering
+   *  issued it and a mismatch is refused — see `encodeKeyedCursor`. */
+  updated_after?: string;
 }
 
 export interface EdgeStore {

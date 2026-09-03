@@ -28,6 +28,7 @@ import {
   StreamPoolExhaustedError,
 } from "../storage/pg/streaming-rls.js";
 import type { StreamRlsContext } from "../storage/pg/streaming-rls.js";
+import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 
 /**
  * Acquire the stream's RLS connection, mapping pool exhaustion to the
@@ -145,14 +146,18 @@ const exportRoute = createRoute({
         .describe("Filter to a single type identifier"),
       state: z.string().optional().describe("Filter by item state"),
       source: z.string().optional().describe("Filter by source credential"),
-      since: z
+      timestamp_after: z
         .string()
         .optional()
-        .describe("Include only items updated at or after this timestamp"),
-      until: z
+        .describe(
+          "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or after this (inclusive). Not the modification time, despite what this parameter's previous name suggested.",
+        ),
+      timestamp_before: z
         .string()
         .optional()
-        .describe("Include only items updated at or before this timestamp"),
+        .describe(
+          "Include only items whose own time — `timestamp`, falling back to `created_at` — is at or before this (inclusive).",
+        ),
       format: z
         .string()
         .optional()
@@ -209,6 +214,17 @@ export function exportRoutes(
 
   router.openapi(exportRoute, async (c) => {
     requireAuth(c);
+
+    // Covers the archive path too: it is reached from inside this handler,
+    // so refusing here refuses for both. An export narrowed by a filter
+    // that was silently dropped writes the whole space to a file the
+    // caller believes is a slice of it.
+    //
+    // This door has no modification-time filter, so the refusal must not
+    // offer one: its query schema strips an unknown key, and a caller
+    // following that advice would land back in the silence the refusal is
+    // here to prevent.
+    refuseRenamedTimeQueryParams(c.req.raw.url, { catchUpFilter: "none" });
 
     const query = c.req.valid("query");
 
@@ -282,8 +298,8 @@ export function exportRoutes(
       );
     }
 
-    const since = query.since;
-    const until = query.until;
+    const timestampAfter = query.timestamp_after;
+    const timestampBefore = query.timestamp_before;
     const source = query.source;
 
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
@@ -312,8 +328,8 @@ export function exportRoutes(
                 type,
                 state,
                 source,
-                since,
-                until,
+                timestamp_after: timestampAfter,
+                timestamp_before: timestampBefore,
                 allowed_types: allowedTypes,
                 excluded_types: excludedTypes,
                 source_filter: sourceFilter,
@@ -441,8 +457,8 @@ async function handleArchiveExport(
   if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
     throw new MarfaError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
   }
-  const since = c.req.query("since");
-  const until = c.req.query("until");
+  const timestampAfter = c.req.query("timestamp_after");
+  const timestampBefore = c.req.query("timestamp_before");
   const source = c.req.query("source");
   const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
 
@@ -469,8 +485,8 @@ async function handleArchiveExport(
           type,
           state,
           source,
-          since,
-          until,
+          timestamp_after: timestampAfter,
+          timestamp_before: timestampBefore,
           allowed_types: allowedTypes,
           excluded_types: excludedTypes,
           source_filter: sourceFilter,

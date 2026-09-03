@@ -110,6 +110,27 @@ export const items = sqliteTable(
     index("idx_items_state").on(table.state),
     index("idx_items_created_at").on(table.created_at),
     index("idx_items_timestamp").on(table.timestamp),
+    // Serves the catch-up read: "what changed after T", walked in
+    // `(updated_at, id)` order. Both halves matter — an index on the
+    // column alone answers the predicate and still leaves the sort, and
+    // the sort is the expensive half on the read a resuming client makes
+    // most often. `id` is in the index rather than left to the ORDER BY,
+    // because the keyset cursor compares both to page through the rows
+    // that share a millisecond, and a bulk write produces many.
+    //
+    // **Not led by `space_id`, and that was measured rather than
+    // assumed.** A space-leading composite is the better index for a
+    // multi-space deployment and cannot serve a self-host at all:
+    // `AUTH_MODE=keys` is the default, nothing carries a space there, so
+    // no predicate constrains the leading column and neither planner will
+    // walk it for the ordering — the read falls back to a scan plus a
+    // sort, which is what this index exists to prevent. Leading on
+    // `updated_at` serves both deployment shapes; the space becomes a
+    // filter on the rows the walk already visits, bounded by how much
+    // changed since T rather than by the size of the corpus. Revisit when
+    // one deployment holds enough spaces for that filter to bite, and add
+    // the composite alongside rather than instead.
+    index("idx_items_updated_at_id").on(table.updated_at, table.id),
     // Provenance identity is per space: two spaces syncing the same
     // integration against the same upstream record are two corpora, not
     // one. COALESCE rather than a plain (space_id, source, source_id)
@@ -184,6 +205,9 @@ export const edges = sqliteTable(
       table.target_id,
       table.edge_type,
     ),
+    // The edge half of the catch-up read, same shape and same reasoning
+    // as `idx_items_updated_at_id`.
+    index("idx_edges_updated_at_id").on(table.updated_at, table.id),
   ],
 );
 

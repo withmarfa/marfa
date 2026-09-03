@@ -687,6 +687,13 @@
       "when": 1788440800890,
       "tag": "0097_an_edge_carries_a_version",
       "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1788442100000,
+      "tag": "0098_catch_up_read_indexes",
+      "breakpoints": true
     }
   ]
 }

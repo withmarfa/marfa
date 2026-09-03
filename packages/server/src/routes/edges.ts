@@ -96,7 +96,9 @@ const listEdgesRoute = createRoute({
   tags: ["Edges"],
   summary: "List edges",
   description:
-    "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.",
+    "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.\n\n" +
+    "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
+    "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -105,6 +107,16 @@ const listEdgesRoute = createRoute({
         .optional()
         .describe(
           "Comma-separated edge types. Up to 10 entries. Omit to list every edge.",
+        ),
+      updated_after: z
+        .string()
+        // Non-empty for the same reason as the item listing: this
+        // parameter chooses the ordering, so an empty value would order
+        // for a catch-up and bound nothing.
+        .min(1)
+        .optional()
+        .describe(
+          "Lower bound on `updated_at`, when the edge last changed (inclusive). The catch-up filter, matching `GET /items`. An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Changes the order from newest-created-first to `(updated_at, id)` ascending, so a cursor from one ordering cannot be continued under the other and is refused if tried. Inclusive because `updated_at` ties across a bulk write, so deduplicate by id — and a high-water mark landing on an instant a large bulk write shares means that whole group is re-sent on every reconnect.",
         ),
       limit: z.coerce
         .number()
@@ -341,6 +353,7 @@ export function edgeRoutes(storage: Storage) {
     const result = await storage.edges.list({
       spaceId,
       edge_type: parseEdgeTypeFilter(q.edge_type),
+      updated_after: q.updated_after,
       limit: q.limit,
       cursor: q.cursor,
     });

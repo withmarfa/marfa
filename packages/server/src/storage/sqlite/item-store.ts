@@ -6,6 +6,7 @@ import {
   or,
   lt,
   gt,
+  gte,
   desc,
   asc,
   sql,
@@ -53,10 +54,17 @@ import type {
   ItemState,
   PaginatedResult,
 } from "@withmarfa/shared";
-import type { ItemStore, ItemFilters, ItemGetOptions } from "../interface.js";
+import type {
+  ItemStore,
+  ItemFilters,
+  ItemGetOptions,
+  SortDirection,
+  CursorSortKey,
+} from "../interface.js";
 import {
-  encodeCursor,
-  decodeCursorNullable,
+  encodeKeyedCursor,
+  decodeKeyedCursorNullable,
+  normalizeTimeBound,
   parseSortField,
 } from "../interface.js";
 import { buildPropertySortExpr, propertySortValue } from "../property-sort.js";
@@ -429,8 +437,47 @@ export class SqliteItemStore implements ItemStore {
   }
 
   async list(filters: ItemFilters): Promise<PaginatedResult<Item>> {
-    const sort = parseSortField(filters.sort);
-    const dir = filters.direction ?? "desc";
+    // A catch-up read owns its own ordering. `updated_after` is only
+    // resumable over `(updated_at, id)` ascending — that is the order the
+    // cursor walks and the order the index is built for — so the filter
+    // implies it here rather than trusting every caller to ask for it.
+    // The route refuses a request that asks for both this filter and a
+    // contradicting sort, so the override below is never a caller's
+    // explicit choice being discarded; holding the invariant in the store
+    // as well is what makes it true for internal callers too.
+    //
+    // Every bound is re-spelled to the shape the stored columns carry
+    // before it reaches a comparison: they are text columns and the
+    // comparison is lexical, so a valid RFC 3339 instant at the wrong
+    // width silently answers a different question. See
+    // `normalizeTimeBound`.
+    const updatedAfter = normalizeTimeBound(
+      filters.updated_after,
+      "updated_after",
+    );
+    const timestampAfter = normalizeTimeBound(
+      filters.timestamp_after,
+      "timestamp_after",
+    );
+    const timestampBefore = normalizeTimeBound(
+      filters.timestamp_before,
+      "timestamp_before",
+    );
+
+    // One test of the field decides both the ordering and the bound. Two
+    // tests is what let an empty value order by `(updated_at, id)`
+    // ascending and bound nothing, so a request that asked for a narrow
+    // catch-up walked the whole corpus instead.
+    const catchUp = updatedAfter !== undefined;
+    const sort = catchUp
+      ? ({ kind: "system", column: "updated_at" } as const)
+      : parseSortField(filters.sort);
+    const dir: SortDirection = catchUp ? "asc" : (filters.direction ?? "desc");
+    // The cursor records which of the two orderings issued it, so one
+    // taken from a catch-up cannot be replayed against the default —
+    // both compare ISO timestamps, so the wrong column compares cleanly
+    // and returns a page that is simply not the next page.
+    const cursorKey: CursorSortKey = catchUp ? "updated_at" : "created_at";
     const limit = Math.min(filters.limit ?? 50, 200);
 
     // For a property sort, the ORDER BY / cursor comparison runs against a
@@ -460,7 +507,12 @@ export class SqliteItemStore implements ItemStore {
 
     if (filters.state) {
       conditions.push(eq(items.state, filters.state));
-    } else {
+    } else if (!filters.all_states) {
+      // The default hides the bin. `all_states` suppresses that and adds
+      // nothing else: a catch-up has to see a row go to the bin, because
+      // that transition is how a client learns to prune its local copy,
+      // and a listing that moves the modification time and then hides the
+      // row reports that nothing changed.
       conditions.push(ne(items.state, "trashed"));
     }
 
@@ -492,15 +544,18 @@ export class SqliteItemStore implements ItemStore {
       conditions.push(sql`${items.type} NOT LIKE 'system.%'`);
     }
 
-    if (filters.since) {
+    if (timestampAfter !== undefined) {
       conditions.push(
-        sql`COALESCE(${items.timestamp}, ${items.created_at}) >= ${filters.since}`,
+        sql`COALESCE(${items.timestamp}, ${items.created_at}) >= ${timestampAfter}`,
       );
     }
-    if (filters.until) {
+    if (timestampBefore !== undefined) {
       conditions.push(
-        sql`COALESCE(${items.timestamp}, ${items.created_at}) <= ${filters.until}`,
+        sql`COALESCE(${items.timestamp}, ${items.created_at}) <= ${timestampBefore}`,
       );
+    }
+    if (updatedAfter !== undefined) {
+      conditions.push(gte(items.updated_at, updatedAfter));
     }
 
     // The normalized instant columns compare as text because they are
@@ -576,7 +631,7 @@ export class SqliteItemStore implements ItemStore {
         : null;
 
     if (filters.cursor) {
-      const { v, id } = decodeCursorNullable(filters.cursor);
+      const { v, id } = decodeKeyedCursorNullable(filters.cursor, cursorKey);
       if (propertySort) {
         // Keyset over a nullable, NULLS-LAST expression. `id` is an ascending
         // tiebreak in both directions, so the page boundary is a total order.
@@ -653,7 +708,7 @@ export class SqliteItemStore implements ItemStore {
             : sort.column === "timestamp"
               ? last.timestamp
               : last.created_at;
-      cursor = encodeCursor(sortValue, last.id);
+      cursor = encodeKeyedCursor(sortValue, last.id, cursorKey);
     }
 
     return { data, cursor, has_more: hasMore };
