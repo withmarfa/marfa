@@ -7,6 +7,10 @@
  * an app that stored sidecar state through them changed a record no
  * second device was ever told about.
  *
+ * The last case here is about the item the event carries rather than
+ * the metadata: the doors read the item to authorize the request, and
+ * that snapshot predates the write.
+ *
  * **Asserted through a live subscriber rather than through the route's
  * return value.** The route already answered 200 with the new extensions
  * while nobody heard, which is precisely the shape a response-shaped
@@ -59,6 +63,33 @@ function metadataEventsFor(
   return events.filter(
     (e) => e.type === "metadata_changed" && e.item.id === itemId,
   );
+}
+
+/** Old enough that no clock skew could produce it, so "the payload is
+ *  not the pre-write value" has one possible answer. */
+const PINNED = "2000-01-01T00:00:00.000Z";
+
+/** Forces an item's `updated_at` through the dialect escape hatch. Every
+ *  write path stamps `now`, so a contrived value is the only way to make
+ *  the pre-write and post-write timestamps reliably distinguishable. */
+async function forceUpdatedAt(itemId: string, iso: string): Promise<void> {
+  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
+      iso,
+      itemId,
+    ]);
+    return;
+  }
+  const s = ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  await s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
+    iso,
+    itemId,
+  ]);
 }
 
 describe("metadata.changed on an extension write", () => {
@@ -261,5 +292,56 @@ describe("the reserved connection namespaces", () => {
     await done;
 
     expect(metadataEventsFor(events, connection.id)).toHaveLength(0);
+  });
+});
+
+describe("the item the event carries is the item after the write", () => {
+  /**
+   * Every metadata door reads the item first, to authorize against it,
+   * and that read happens before the write. Publishing that snapshot
+   * tells a subscriber the item last changed before the change it is
+   * being told about, so a second device merging the frame over its own
+   * copy records a modification time the server has already passed —
+   * and a later catch-up from that time asks for work already done.
+   *
+   * One case rather than six: `itemAfterMetadataWrite` is the same
+   * helper on all four tag doors and both extension doors.
+   *
+   * The item is pinned to a contrived past timestamp first, so "the
+   * payload is not the pre-write value" is a stable question rather than
+   * a race against millisecond resolution.
+   */
+  it("publishes the modification time the write produced, not the one it read", async () => {
+    const itemId = await seedTaggedItem();
+    await forceUpdatedAt(itemId, PINNED);
+
+    const before = await ctx.storage.items.get(itemId, undefined);
+    expect(before?.updated_at).toBe(PINNED);
+
+    const controller = new AbortController();
+    const { events, done } = collectItemEvents(controller.signal);
+    await settle();
+
+    const res = await request(
+      ctx.app,
+      "PUT",
+      `/items/${itemId}/extensions/reader`,
+      { key: ctx.adminKey, body: { offset: 99 } },
+    );
+    expect(res.status).toBe(200);
+    await settle();
+    controller.abort();
+    await done;
+
+    const changes = metadataEventsFor(events, itemId);
+    expect(changes).toHaveLength(1);
+
+    const stored = await ctx.storage.items.get(itemId, undefined);
+    // The write moved it, so the two candidate answers are distinct and
+    // the assertion below is deciding between them rather than passing
+    // on a coincidence.
+    expect(stored?.updated_at).not.toBe(PINNED);
+    expect(changes[0]?.item.updated_at).toBe(stored?.updated_at);
+    expect(changes[0]?.item.updated_at).not.toBe(PINNED);
   });
 });

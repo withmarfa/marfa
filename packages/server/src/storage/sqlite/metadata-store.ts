@@ -6,9 +6,11 @@ import {
   type Metadata,
 } from "@withmarfa/shared";
 import type { MetadataStore } from "../interface.js";
-import { metadata } from "./schema.js";
+import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
+import { announcesMetadataChange } from "../../metadata-namespaces.js";
 
 export class SqliteMetadataStore implements MetadataStore {
   constructor(private db: DrizzleDb) {}
@@ -90,6 +92,55 @@ export class SqliteMetadataStore implements MetadataStore {
     return rows;
   }
 
+  /**
+   * The one place this store writes the sidecar, so the item's
+   * modification time cannot be left behind by a door added later.
+   *
+   * A metadata write a client can learn about moves the item's
+   * modification time; one that is deliberately invisible does not. Tags
+   * always announce, so tags always bump. An extension bumps exactly
+   * when it announces, decided by the same predicate the publish door
+   * consults rather than by a second list of namespaces here — silent on
+   * the stream and loud on catch-up is a worse disagreement than either
+   * half alone.
+   *
+   * The bump matters because an incremental catch-up filters on
+   * `items.updated_at`. Leaving it where it was hands a resuming client
+   * a short list that looks complete.
+   */
+  private async writeSidecar(
+    tx: SqliteTxContext,
+    itemId: string,
+    write: { tags: string } | { extensions: string; namespace: string },
+  ): Promise<void> {
+    // **The item is written first, and the order is load-bearing.** It
+    // reads backwards — this method is about the sidecar, and the item is
+    // the afterthought — so it invites being swapped back.
+    //
+    // SQLite admits one writer at a time, so the deadlock this order
+    // prevents is not reachable here; the Postgres store carries the same
+    // order because there it is. Kept identical deliberately. These two
+    // files are read as a pair, and an ordering that mattered in only one
+    // of them would leave the next reader working out which — the answer
+    // being easy to get wrong and nothing failing when it is.
+    if ("tags" in write || announcesMetadataChange(write.namespace)) {
+      await tx
+        .update(items)
+        .set({ updated_at: new Date().toISOString() })
+        .where(eq(items.id, itemId))
+        .run();
+    }
+    await tx
+      .update(metadata)
+      .set(
+        "tags" in write
+          ? { tags: write.tags }
+          : { extensions: write.extensions },
+      )
+      .where(eq(metadata.item_id, itemId))
+      .run();
+  }
+
   async getMany(itemIds: string[]): Promise<Metadata[]> {
     if (itemIds.length === 0) return [];
     const rows = await this.db
@@ -120,11 +171,9 @@ export class SqliteMetadataStore implements MetadataStore {
   }
 
   async set(itemId: string, tags: string[]): Promise<Metadata> {
-    await this.db
-      .update(metadata)
-      .set({ tags: JSON.stringify(tags) })
-      .where(eq(metadata.item_id, itemId))
-      .run();
+    await this.db.transaction(async (tx) => {
+      await this.writeSidecar(tx, itemId, { tags: JSON.stringify(tags) });
+    });
     return this.get(itemId);
   }
 
@@ -141,11 +190,9 @@ export class SqliteMetadataStore implements MetadataStore {
       const mergedTags = tags
         ? [...new Set([...current.tags, ...tags])]
         : current.tags;
-      await tx
-        .update(metadata)
-        .set({ tags: JSON.stringify(mergedTags) })
-        .where(eq(metadata.item_id, itemId))
-        .run();
+      await this.writeSidecar(tx, itemId, {
+        tags: JSON.stringify(mergedTags),
+      });
       const after = await tx
         .select()
         .from(metadata)
@@ -167,11 +214,7 @@ export class SqliteMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const merged = [...new Set([...current.tags, ...tags])];
-      await tx
-        .update(metadata)
-        .set({ tags: JSON.stringify(merged) })
-        .where(eq(metadata.item_id, itemId))
-        .run();
+      await this.writeSidecar(tx, itemId, { tags: JSON.stringify(merged) });
       const after = await tx
         .select()
         .from(metadata)
@@ -193,11 +236,9 @@ export class SqliteMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const filtered = current.tags.filter((t) => t !== tag);
-      await tx
-        .update(metadata)
-        .set({ tags: JSON.stringify(filtered) })
-        .where(eq(metadata.item_id, itemId))
-        .run();
+      await this.writeSidecar(tx, itemId, {
+        tags: JSON.stringify(filtered),
+      });
       const after = await tx
         .select()
         .from(metadata)
@@ -253,11 +294,10 @@ export class SqliteMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const extensions = { ...current.extensions, [namespace]: data };
-      await tx
-        .update(metadata)
-        .set({ extensions: JSON.stringify(extensions) })
-        .where(eq(metadata.item_id, itemId))
-        .run();
+      await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(extensions),
+        namespace,
+      });
       return extensions;
     });
   }
@@ -266,6 +306,10 @@ export class SqliteMetadataStore implements MetadataStore {
    * SQLite has no row-level lock to take; the write transaction is the
    * serialization point, since SQLite admits one writer at a time. The
    * Postgres implementation adds `FOR UPDATE` for the same guarantee.
+   *
+   * That is also why the Postgres side claims the item row before its
+   * metadata lock and this one does not: with no row locks here there is
+   * no order between two of them to get wrong.
    */
   async mutateExtension(
     itemId: string,
@@ -283,11 +327,10 @@ export class SqliteMetadataStore implements MetadataStore {
         : { item_id: itemId, tags: [], extensions: {} };
       const next = mutate(current.extensions[namespace] ?? {});
       const extensions = { ...current.extensions, [namespace]: next };
-      await tx
-        .update(metadata)
-        .set({ extensions: JSON.stringify(extensions) })
-        .where(eq(metadata.item_id, itemId))
-        .run();
+      await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(extensions),
+        namespace,
+      });
       return next;
     });
   }
@@ -308,11 +351,10 @@ export class SqliteMetadataStore implements MetadataStore {
       const rest = Object.fromEntries(
         Object.entries(current.extensions).filter(([k]) => k !== namespace),
       );
-      await tx
-        .update(metadata)
-        .set({ extensions: JSON.stringify(rest) })
-        .where(eq(metadata.item_id, itemId))
-        .run();
+      await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(rest),
+        namespace,
+      });
       return rest;
     });
   }
