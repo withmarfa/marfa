@@ -169,12 +169,19 @@ describe("publish — persistence", () => {
 // ---------------------------------------------------------------------------
 
 describe("publish — hop budget enforcement", () => {
-  it("stops the reaction chain but still logs the write it describes", async () => {
-    // The budget bounds an amplification loop, and the loop is driven by
-    // the emit rather than by the row. Gating the append on it instead
-    // means a write that genuinely happened has no log row, so a client
-    // rebuilding from the stream never learns about it — which is the
-    // failure the budget exists to prevent, one layer down.
+  it("stops the reaction chain by declining fan-out, and logs the write", async () => {
+    // The budget bounds an amplification loop, and the loop is the
+    // outbound work rather than the row or the emit. So it decides
+    // `enable_fanout` and nothing else:
+    //
+    //   - the row is written, because the write genuinely happened and a
+    //     client rebuilding from the stream has to see it;
+    //   - the event is emitted, because it is in the log and a client
+    //     replaying from a cursor gets it either way — suppressing the
+    //     live emit made one event id behave two ways depending on when
+    //     you connected;
+    //   - the fan-out is declined, and rides the row, so the replicator's
+    //     reconnect catch-up cannot re-drive the reaction later.
     const overflow = vi.fn(() => Promise.resolve());
     initEventLog(ctx.storage.eventLog, {
       getHopBudget: () => Promise.resolve(2),
@@ -221,10 +228,12 @@ describe("publish — hop budget enforcement", () => {
     expect(matched).toBeDefined();
     expect(result).toBe(matched?.id);
 
-    // Nothing reacted to it, which is what the budget is for.
+    // Delivered to subscribers, and marked as driving no outbound work,
+    // which is what the budget is actually for.
     controller.abort();
     await listening;
-    expect(heard).not.toContain("item-overflow");
+    expect(heard).toContain("item-overflow");
+    expect(matched?.enable_fanout).toBe(false);
   });
 
   it("admits events whose hopCount equals the budget exactly", async () => {
@@ -277,13 +286,16 @@ describe("publish — hop budget enforcement", () => {
       onHopOverflow: overflow,
     });
 
-    await publish({
+    const result = await publish({
       type: "created",
       item: fakeItem("item-misbehaving-integration"),
       hopCount: 0,
       originatingConnectionId: "conn-misbehaving",
     });
 
+    // Logged even though the budget stopped it going anywhere: the write
+    // happened, so a client rebuilding from the stream has to see it.
+    expect(result).toBeDefined();
     expect(overflow).toHaveBeenCalledTimes(1);
   });
 
@@ -481,16 +493,19 @@ describe("publish — cycle resolution from cycleRequestContext", () => {
       onHopOverflow: overflow,
     });
 
+    let result: bigint | undefined;
     await cycleRequestContext.run(
       { originatingConnectionId: "conn-floor-via-als", hopCount: 0 },
       async () => {
-        await publish({
+        result = await publish({
           type: "created",
           item: fakeItem("item-als-floor"),
         });
       },
     );
 
+    // Logged despite the overflow — see the sibling test above.
+    expect(result).toBeDefined();
     expect(overflow).toHaveBeenCalledTimes(1);
     expect(overflow).toHaveBeenCalledWith(
       expect.objectContaining({

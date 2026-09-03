@@ -94,28 +94,6 @@ async function nextCreatedMatching(
   }
 }
 
-/**
- * Wait a bounded time and assert nothing matching arrives.
- *
- * A negative assertion needs a deadline — you cannot wait forever for an
- * absence — but it is the one shape that fails in the *passing* direction: a
- * loaded machine makes a late event more likely to be missed, so too tight a
- * bound reports success for the wrong reason. This is deliberately far longer
- * than the publish path takes, so an event the gate should have dropped has
- * every chance to show up and fail the test.
- */
-async function noCreatedMatchingWithin(
-  predicate: (event: ItemEventWithId) => boolean,
-  withinMs: number,
-): Promise<ItemEventWithId | null> {
-  const timeout = new Promise<null>((r) => {
-    setTimeout(() => {
-      r(null);
-    }, withinMs);
-  });
-  return Promise.race([nextCreatedMatching(predicate), timeout]);
-}
-
 describe("cycle multi-hop A→B→A→… loop", () => {
   it("propagates the same originator across alternating integration hops and trips the budget at the tail", async () => {
     // Install the production cycle-detection wiring so overflow emits
@@ -164,15 +142,19 @@ describe("cycle multi-hop A→B→A→… loop", () => {
       expect(event?.hopCount).toBe(hop);
     }
 
-    // Final hop: one beyond the budget. The HTTP write itself still
-    // succeeds (item is created via storage), but `publish()` drops
-    // the event under the budget gate and `defaultCycleDetectionWiring`
-    // emits a system.activity row in its place.
+    // Final hop: one beyond the budget. The write succeeds and the event
+    // is still delivered — what the budget takes away is the fan-out that
+    // would continue the loop, and `defaultCycleDetectionWiring` records a
+    // system.activity row alongside it.
+    //
+    // Delivering it is the consistent answer: the row is in the event log,
+    // so a client replaying from a cursor receives it regardless, and
+    // suppressing only the live emit made one event id behave two ways
+    // depending on when the subscriber connected.
     const overflowHop = DEFAULT_HOP_BUDGET + 1;
     const overflowTitle = `${baseTitle}-hop-${String(overflowHop)}`;
-    const overflowEventP = noCreatedMatchingWithin(
+    const overflowEventP = nextCreatedMatching(
       (e) => (e.item.properties as { title?: string }).title === overflowTitle,
-      2_000,
     );
     const overflowRes = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
@@ -187,9 +169,13 @@ describe("cycle multi-hop A→B→A→… loop", () => {
     });
     expect(overflowRes.status).toBe(201);
 
-    // No `created` event observed for the overflow hop — the budget
-    // gate dropped the publish before the EventEmitter emit.
-    expect(await overflowEventP).toBeNull();
+    // Delivered, and marked as driving no outbound work. That mark rides
+    // the event-log row, so the replicator's reconnect catch-up cannot
+    // re-drive the reaction the budget just refused.
+    const overflowEvent = await overflowEventP;
+    expect(overflowEvent).not.toBeNull();
+    expect(overflowEvent?.hopCount).toBe(overflowHop);
+    expect(overflowEvent?.enableFanout).toBe(false);
 
     // The overflow hook writes a system.activity row. Poll for it — the
     // write is async (best-effort, fire-and-forget inside the hook). The
