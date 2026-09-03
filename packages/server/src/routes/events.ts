@@ -6,7 +6,12 @@ import {
   computeTypeFilter,
   roleBypassesPermissionMaps,
 } from "../middleware/auth.js";
-import { subscribe, subscribeEdges, wireEventName } from "../pubsub.js";
+import {
+  eventMatchesTypeFilter,
+  subscribe,
+  subscribeEdges,
+  wireEventName,
+} from "../pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { PgClient } from "../storage/pg/connection.js";
@@ -488,7 +493,20 @@ export function eventRoutes(
                         typeof parsedItem === "object" && parsedItem !== null
                           ? (parsedItem as { type?: string }).type
                           : undefined;
-                      if (typeParam && itemType !== typeParam) {
+                      // The same function the live path filters on, and
+                      // called here rather than reimplemented: `?type=`
+                      // names a subtree, so a string comparison drops a
+                      // subtype the live stream delivers, and the client
+                      // has no way to see that its view narrowed on
+                      // reconnect. Passed the arguments live passes, so
+                      // the two cannot resolve the same filter
+                      // differently. A row whose payload carries no item
+                      // type is withheld, as it was before.
+                      if (
+                        typeParam &&
+                        (itemType === undefined ||
+                          !eventMatchesTypeFilter(itemType, typeParam))
+                      ) {
                         lastReplayedId = event.id;
                         continue;
                       }
