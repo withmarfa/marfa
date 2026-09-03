@@ -34,12 +34,20 @@ function lifecycleLockName(connectionId: string): string {
  * Connection state after acquiring the lock rather than relying on an
  * earlier check.
  *
- * This shape brackets `fn` from a transaction of its own, so `fn` is free
- * to do network I/O and to open transactions of its own. Uninstall, pause
- * and upgrade all run multi-step pipelines while holding the lock, and a
- * database transaction held open across a whole pipeline is the worse
- * trade. Mints take {@link withConnectionLifecycleLockInTransaction}
- * instead: they are pure database work and they run on every dispatch.
+ * This shape brackets `fn` rather than running it inside the transaction
+ * holding the lock, so `fn` opens transactions of its own and is not held
+ * to what is safe inside somebody else's. Uninstall, pause and upgrade
+ * all run multi-step pipelines while holding the lock, and a database
+ * transaction held open across a whole pipeline is the worse trade. Mints
+ * take {@link withConnectionLifecycleLockInTransaction} instead: they are
+ * pure database work and they run on every dispatch.
+ *
+ * The shape also permits network I/O in the critical section, where the
+ * transaction-riding one forbids it. **None of these pipelines does any,
+ * and adding one is a decision rather than a detail.** The lock's pool
+ * holds a single connection, so a callback that blocks on a network call
+ * head-of-line-blocks every other lifecycle change in the process, on a
+ * queue with no timeout.
  *
  * The connection that holds the lock comes from a pool of its own, and
  * that is load-bearing rather than incidental. `fn` queries the app pool,

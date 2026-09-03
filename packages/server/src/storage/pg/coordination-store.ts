@@ -83,11 +83,19 @@ export const HOLDER_RESERVE_TIMEOUT_MS = 5_000;
  * Postgres advisory lock is held against the database, not against a
  * session or a client, so two backends contend on the same key whatever
  * opened them, which is what lets a mint riding a request's own
- * transaction still block an uninstall bracketing one from here.
+ * transaction still block an uninstall bracketing one from here. Which
+ * **database** does matter, and it is why `lockClient` is built on the
+ * app connection string rather than the session-mode one the clients
+ * below take: on the direct endpoint the two shapes would take this key
+ * against two endpoints that nothing proves are one database.
  *
- * A queue on `lockClient` drains, where a queue on the app pool did not:
- * every holder it admits runs its critical section on a different pool, so
- * a holder always makes progress and always releases.
+ * A queue on `lockClient` drains where a queue on the app pool did not,
+ * though the guarantee is weaker than "a different pool" suggests: a
+ * holder progresses while the app pool can still serve its critical
+ * section, and enough transaction-riding takers of this same key, each
+ * holding an app connection, can be what stops it. That needs mints and
+ * bracketing holders in one process, so it is unconstructible where web
+ * and worker are split and constructible under `both`.
  *
  * `withJobLock` stays session-scoped, because its `fn` is a background job that
  * can run for minutes and an explicit transaction held that long is a worse
@@ -113,21 +121,23 @@ export const HOLDER_RESERVE_TIMEOUT_MS = 5_000;
 export class PgCoordinationStore implements CoordinationStore {
   /**
    * `client` is the app pool, and this class deliberately keeps no
-   * reference to it: every lock here is held on a pool the locked work
-   * never queries, so the only thing the app pool is good for is being
-   * the default the other three fall back to. That default suits a test
-   * exercising lock semantics against one pool and suits nothing in
-   * production, where `createConnection` builds a separate pool for each
-   * and `storage/pg/index.ts` passes all three.
-   * `connections/lifecycle-lock-pool.test.ts` drives that wiring
-   * end-to-end rather than trusting this signature.
+   * reference to it beyond seeding the two session-mode defaults: every
+   * lock taken here is held on a pool the locked work never queries.
+   *
+   * `lockClient` is required rather than defaulted, and that asymmetry is
+   * the point. Defaulting it to `client` would make the defect this class
+   * was fixed for the thing a caller gets by saying nothing, so a
+   * regression would be a deletion rather than a substitution. Required,
+   * it cannot be expressed. A caller with genuinely one pool, which is
+   * every test exercising lock semantics rather than pool bounds, passes
+   * `client` and says so at the call site.
    */
   constructor(
     client: PgClient,
     private db: PgDb,
+    private lockClient: PgClient,
     private sessionClient: PgClient = client,
     private jobHolderClient: PgClient = sessionClient,
-    private lockClient: PgClient = client,
     private reserveTimeoutMs: number = JOB_LOCK_RESERVE_TIMEOUT_MS,
   ) {}
 

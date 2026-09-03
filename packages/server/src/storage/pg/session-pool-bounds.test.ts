@@ -45,12 +45,11 @@ describe.skipIf(!isPg || databaseUrl === "")("session pool bounds", () => {
     const store = new PgCoordinationStore(
       tiny,
       drizzle(tiny) as never,
+      // Nothing here takes the bracketing exclusive lock; this suite is
+      // about the session pool, and one client stands in for every role.
       tiny,
       tiny,
-      // Nothing here takes the bracketing exclusive lock, so the lock
-      // client is left at its default; the budget is the argument that
-      // matters.
-      undefined,
+      tiny,
       200,
     );
     const holder = await tiny.reserve();
@@ -113,6 +112,7 @@ describe.skipIf(!isPg || databaseUrl === "")("session pool bounds", () => {
         tiny,
         drizzle(tiny) as never,
         tiny,
+        tiny,
         jobHolder,
       );
       // Nothing else can reserve from a one-connection client that is
@@ -155,8 +155,8 @@ describe.skipIf(!isPg || databaseUrl === "")("session pool bounds", () => {
         tiny,
         drizzle(tiny) as never,
         tiny,
+        tiny,
         jobHolder,
-        undefined,
         200,
       );
       // Exhaust the shared pool the way concurrent streams would.

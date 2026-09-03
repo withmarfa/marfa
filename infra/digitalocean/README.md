@@ -49,10 +49,20 @@ point of the private network.
 ## The connection budget
 
 The smallest managed-Postgres tier allows 22 usable backend connections,
-and nothing here may assume more. Steady state today: the server's main
-pool (10) plus the streaming/job pool it derives, the reactive-run
-drainer's single connection, and pg-boss's own pool once scheduled work
-moves onto it. The worker split adds a second process with its own pools.
-Before raising any pool size or adding a process, redo this sum against
-the tier's limit and leave headroom for the one-shot migrate step and an
-operator psql session. The env example carries the current arithmetic.
+and nothing here may assume more. Each process runs several pools rather
+than one: a main pool capped by `MARFA_DB_POOL_SIZE`, the streaming/job
+pool it derives, the reactive-run drainer's single connection, a
+single-connection pool for the Connection lifecycle lock, pg-boss's own
+pool, and on the web role a small client for the consent lock. The
+compose files set the main pool to 3 on the web container and 2 on the
+worker, not the built-in default of 10, precisely so the two processes
+fit.
+
+**The sum now lands exactly on the tier's limit at worst case**, so there
+is no headroom left to promise. Anything that opens a connection during a
+deploy is therefore the case to watch, the one-shot migrate step
+included: it runs against the full running stack. Before raising any pool
+size or adding a process or a pool, redo the sum against the tier's limit
+and raise the tier if it does not fit. The env example carries the
+current arithmetic and the reasoning for why the worst case is not
+reached in practice.

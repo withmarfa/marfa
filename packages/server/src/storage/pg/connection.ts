@@ -81,11 +81,15 @@ const POOL_MAX_LIFETIME_SECONDS = 30 * 60;
  * Connection; what it buys is that a deployment's connection sum stays
  * inside its database tier's ceiling.
  *
- * A queue on this pool drains by construction, which is the property the
- * app pool could not offer: every admitted holder runs its critical
- * section on a different pool, so it always makes progress. An unbounded
- * wait here therefore ends, where an unbounded wait on the app pool was
- * permanent.
+ * A queue here drains where a queue on the app pool did not, but the
+ * guarantee is weaker than "different pool" makes it sound: a holder
+ * progresses only while the app pool can still hand it a connection.
+ * What could remove that is enough transaction-riding lock-takers, which
+ * is what every mint is, blocked on the same advisory key while each
+ * holds an app connection of its own. Splitting web from worker makes
+ * that unconstructible, because the mints then queue against a different
+ * process's pool than the bracketing holder draws from; `both`, the
+ * single-container self-host default, is where it can be built.
  */
 const LOCK_POOL_MAX_CONNECTIONS = 1;
 
@@ -191,9 +195,10 @@ export async function createConnection(
    * Its one caller today is the Connection lifecycle lock behind
    * `withExclusiveLock`, whose callback runs a multi-step pipeline of
    * queries on the app pool. The lock's own connection therefore has to
-   * come from somewhere that pipeline never touches, or concurrent
-   * holders deadlock the app pool at its own size. Lazy, and it hands the
-   * slot back within seconds of a lifecycle change finishing.
+   * come from a pool that pipeline never draws from, or concurrent
+   * holders deadlock the app pool at its own size. Same endpoint as the
+   * app pool, deliberately, and a separate pool on it. Lazy, and it hands
+   * the slot back within seconds of a lifecycle change finishing.
    */
   lockClient: PgClient;
   close: () => Promise<void>;
@@ -322,19 +327,37 @@ export async function createConnection(
   // Connection uninstalls against a three-connection pool took every slot
   // and the server stopped answering.
   //
-  // Session mode rather than the app endpoint for the same reason the two
-  // clients above take it: on a plain Postgres deployment the two URLs are
-  // the same string, and behind a transaction-mode pooler this keeps a
-  // pipeline-length transaction off a pooled server connection. The lock
-  // itself is transaction-scoped and so would be safe on either.
+  // **The app endpoint, unlike its two neighbours above.** They take the
+  // session-mode URL because they need a real session: streaming holds
+  // `SET ROLE` on a reserved backend, and the election holds one lock for
+  // the process lifetime. This lock needs neither. It is transaction-
+  // scoped, and a transaction is the unit a pooler keeps on one backend,
+  // so it is correct on a pooled endpoint by construction.
+  //
+  // Taking the session-mode URL instead would put this key on a different
+  // endpoint from the mints, which take it on the app pool through the
+  // caller's own transaction. Two endpoints exclude each other only if
+  // they reach the same database, and nothing establishes that:
+  // `endpoint.ts` compares host and port, so a direct URL naming another
+  // database on the same host passes every check. Exclusion would stop
+  // being structural and become an unchecked invariant whose failure is
+  // silent — a mint and an uninstall both believing they hold the lock.
+  // Sharing the app endpoint keeps the two on one database because it is
+  // one string.
   //
   // Lazy, like the others, so a deployment that never changes a Connection
   // lifecycle never opens it.
-  const lockClient = postgres(sessionModeUrl, {
+  const lockClient = postgres(connectionString, {
     max: LOCK_POOL_MAX_CONNECTIONS,
     connection: { application_name: `${appName}:exclusive` },
     idle_timeout: LOCK_POOL_IDLE_TIMEOUT_SECONDS,
     max_lifetime: POOL_MAX_LIFETIME_SECONDS,
+    // Same reasoning as the app client, and it applies here for the same
+    // reason the endpoint choice is safe: this client shares that
+    // endpoint. A named prepared statement lives on the backend that saw
+    // the PREPARE, and behind a transaction-mode pooler this client's
+    // next transaction need not land there.
+    prepare: options?.poolMode !== "transaction",
     // eslint-disable-next-line @typescript-eslint/no-empty-function
     onnotice: () => {},
   });

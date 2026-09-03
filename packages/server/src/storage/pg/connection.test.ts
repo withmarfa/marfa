@@ -132,6 +132,12 @@ describe("createConnection pool-mode guard", () => {
       expect(prepareOf(conn.client)).toBe(false);
       expect(prepareOf(conn.sessionClient)).toBe(true);
       expect(prepareOf(conn.jobHolderClient)).toBe(true);
+      // The lock client sits on the app endpoint rather than the direct
+      // one, so it inherits the app client's hazard and must inherit its
+      // setting: a named prepared statement lives on the backend that saw
+      // the PREPARE, and this client's next transaction need not land
+      // there.
+      expect(prepareOf(conn.lockClient)).toBe(false);
     } finally {
       await conn.close();
     }
@@ -165,7 +171,7 @@ describe("createConnection pool-mode guard", () => {
       skipBootstrap: true,
     });
     try {
-      for (const client of [conn.client, conn.sessionClient]) {
+      for (const client of [conn.client, conn.sessionClient, conn.lockClient]) {
         const { idle_timeout: idleTimeout, max_lifetime: maxLifetime } = (
           client as unknown as {
             options: { idle_timeout: number; max_lifetime: number };
@@ -177,6 +183,59 @@ describe("createConnection pool-mode guard", () => {
         expect(idleTimeout).toBeLessThanOrEqual(60);
         expect(maxLifetime).toBeGreaterThan(idleTimeout);
       }
+    } finally {
+      await conn.close();
+    }
+  });
+
+  it("gives the lock pool one connection on the app endpoint, returned promptly", async () => {
+    // Every number here is load-bearing somewhere else.
+    //
+    // `max: 1` is what bounds the deployment's connection sum: the budget
+    // in `infra/digitalocean/server.env.example` adds one per process for
+    // this pool and lands exactly on the tier's ceiling, so a second slot
+    // would put a two-role deployment over it.
+    //
+    // The idle timeout is what makes that ceiling a ceiling rather than a
+    // reservation. Nothing holds this pool between lifecycle changes, so
+    // the slot has to go back promptly for steady state to be no
+    // connection at all — and the shared pools' 30s is far too long to
+    // call this transient. Asserted well under them rather than at a
+    // literal, so tuning it stays possible and drifting it into their
+    // range does not.
+    //
+    // The endpoint is what keeps exclusion structural: the mints take this
+    // same advisory key on the app pool through the caller's transaction,
+    // and two endpoints exclude only if they reach one database, which
+    // nothing checks.
+    const conn = await createConnection(POOLED, {
+      poolMode: "transaction",
+      directConnectionString: DIRECT,
+      skipBootstrap: true,
+    });
+    try {
+      const optionsOf = (c: unknown): { max: number; idle_timeout: number } =>
+        (c as { options: { max: number; idle_timeout: number } }).options;
+      const lock = optionsOf(conn.lockClient);
+      expect(lock.max).toBe(1);
+      expect(lock.idle_timeout).toBeGreaterThan(0);
+      expect(lock.idle_timeout).toBeLessThan(
+        optionsOf(conn.client).idle_timeout,
+      );
+      expect(lock.idle_timeout).toBeLessThanOrEqual(10);
+      // A pool of its own, on the endpoint the app pool uses. Both halves
+      // matter and each without the other is a defect: the same client
+      // would be the deadlock, and a different endpoint would make
+      // exclusion an unchecked invariant.
+      expect(conn.lockClient).not.toBe(conn.client);
+      const hostOf = (c: unknown): string => {
+        const { host, port } = (
+          c as { options: { host: string[]; port: number[] } }
+        ).options;
+        return `${host[0] ?? ""}:${String(port[0] ?? "")}`;
+      };
+      expect(hostOf(conn.lockClient)).toBe(hostOf(conn.client));
+      expect(hostOf(conn.lockClient)).not.toBe(hostOf(conn.sessionClient));
     } finally {
       await conn.close();
     }

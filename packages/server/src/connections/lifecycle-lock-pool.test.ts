@@ -102,35 +102,36 @@ describe.skipIf(!isPg || !url)("connection lifecycle lock, pool bounds", () => {
   }, 30_000);
 
   it("completes more concurrent bracketing holders than the pool has slots, on one Connection", async () => {
+    // Completion is the whole assertion, and deliberately the only one.
+    // A peak-concurrency check belongs here by instinct and cannot fail:
+    // the lock pool holds one connection, so one-at-a-time is forced
+    // whether or not an advisory lock is ever taken, and the check would
+    // read as covering exclusion while covering the pool's own ceiling
+    // twice. Exclusion is measured where it can actually break — the
+    // mixed-shape case below, whose two holders draw from different
+    // pools, and `storage/pg/coordination-store.test.ts`.
     const storage = await createPgStorage(url, { maxPoolSize: POOL });
     try {
-      let inFlight = 0;
-      let concurrentPeak = 0;
-
       const results = await Promise.all(
         Array.from({ length: CALLERS }, (_, i) =>
           withConnectionLifecycleLock(
             storage,
             "pool-bounds-bracketing-single",
             async () => {
-              inFlight += 1;
-              concurrentPeak = Math.max(concurrentPeak, inFlight);
               // The callback wants the pool, which is what every lifecycle
               // pipeline does: an uninstall reads the Connection, revokes
               // credentials, deletes tokens and writes an audit row, each
               // on a connection this lock must not be holding.
               await storage.keys.count();
-              inFlight -= 1;
               return i;
             },
           ),
         ),
       );
 
-      expect(results.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-      // Still one at a time. Removing the pool ceiling must not remove the
-      // exclusion, which is the whole reason the lock is here.
-      expect(concurrentPeak).toBe(1);
+      expect(results.sort((a, b) => a - b)).toEqual(
+        Array.from({ length: CALLERS }, (_, i) => i),
+      );
     } finally {
       await storage.close();
     }
@@ -158,7 +159,9 @@ describe.skipIf(!isPg || !url)("connection lifecycle lock, pool bounds", () => {
         ),
       );
 
-      expect(results.sort((a, b) => a - b)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+      expect(results.sort((a, b) => a - b)).toEqual(
+        Array.from({ length: CALLERS }, (_, i) => i),
+      );
     } finally {
       await storage.close();
     }
@@ -170,6 +173,13 @@ describe.skipIf(!isPg || !url)("connection lifecycle lock, pool bounds", () => {
     // and a transaction held open across the whole pipeline is the
     // worse trade. They must still exclude each other, which they do by
     // taking the same advisory key.
+    //
+    // This is where the peak assertion earns its place, and the reason is
+    // that the two holders draw from different pools: the bracketing one
+    // from the single-connection lock pool, the transaction-riding one
+    // from the app pool. Nothing but the shared key can hold the peak at
+    // one, so removing the key fails this case where it would leave the
+    // same-Connection case above green.
     const storage = await createPgStorage(url, { maxPoolSize: POOL });
     try {
       let inFlight = 0;

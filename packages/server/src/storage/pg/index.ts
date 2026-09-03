@@ -195,9 +195,9 @@ export async function createPgStorage(
     coordination: new PgCoordinationStore(
       client,
       db,
+      lockClient,
       sessionClient,
       jobHolderClient,
-      lockClient,
     ),
     // Async substrate for bulk_action. Wired on the wrapped instance so
     // RLS scopes its space_id reads/writes per request; the worker runs
