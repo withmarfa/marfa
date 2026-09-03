@@ -2411,22 +2411,30 @@ export interface CoordinationStore {
    * transactions of their own. The Postgres implementation is transaction-
    * scoped for the pooler reasons in `pg/coordination-store.ts`, so a lock
    * held here survives exactly as long as this call and no longer.
+   *
+   * **An implementation must hold the lock on a connection `fn` can never
+   * need.** Holding one from the pool `fn` queries deadlocks that pool at
+   * its own size: concurrent callers each hold a slot while waiting for a
+   * slot nobody can release, and it takes no contention for the lock to do
+   * it, because the slot is taken before the key is compared. Postgres
+   * gives this its own single-connection pool; SQLite queues callers in
+   * process and reserves nothing.
    */
   withExclusiveLock<T>(name: string, fn: () => Promise<T>): Promise<T>;
   /**
    * Take a named lock on the caller's **current** transaction, releasing it
    * when that transaction ends. Must be called inside `runInTransaction`.
    *
-   * This exists because `withExclusiveLock` cannot guard a write. It holds
-   * its own connection for the length of `fn`, so a request that already
-   * holds one needs a second — and once enough concurrent requests each hold
-   * one and wait for another, the pool is exhausted by callers who will never
-   * release. `runInTransaction` avoids that by routing through the ambient
-   * transaction; a lock guarding a write has to do the same. It also has to,
-   * for correctness: `withExclusiveLock` releases before the caller's
-   * transaction commits, so the next lock-holder can read a count that does
-   * not yet include the write it was meant to be excluded from. A lock that
-   * ends with the transaction cannot have that gap.
+   * This exists because `withExclusiveLock` cannot guard a write, and the
+   * reason is correctness rather than capacity: it releases before the
+   * caller's transaction commits, so the next lock-holder can read a count
+   * that does not yet include the write it was meant to be excluded from.
+   * A lock that ends with the transaction cannot have that gap.
+   *
+   * It is also the cheaper shape, costing no connection of its own where
+   * `withExclusiveLock` costs one from a pool sized for holding locks and
+   * nothing else. That is a reason to prefer it on a hot path; it is not
+   * what makes it correct here.
    */
   lockInTransaction(name: string): Promise<void>;
 }

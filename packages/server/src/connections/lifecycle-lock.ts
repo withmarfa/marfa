@@ -34,12 +34,26 @@ function lifecycleLockName(connectionId: string): string {
  * Connection state after acquiring the lock rather than relying on an
  * earlier check.
  *
- * This shape holds a pool connection of its own for the length of `fn`,
- * which is why it is reserved for the rare paths. They earn it: uninstall
- * and pause both run multi-step pipelines while holding the lock,
- * and a database transaction held open across the whole pipeline is the
- * worse trade. Mints take {@link withConnectionLifecycleLockInTransaction}
- * instead — they are pure database work and they run on every dispatch.
+ * This shape brackets `fn` rather than running it inside the transaction
+ * holding the lock, so `fn` opens transactions of its own and is not held
+ * to what is safe inside somebody else's. Uninstall, pause and upgrade
+ * all run multi-step pipelines while holding the lock, and a database
+ * transaction held open across a whole pipeline is the worse trade. Mints
+ * take {@link withConnectionLifecycleLockInTransaction} instead: they are
+ * pure database work and they run on every dispatch.
+ *
+ * The shape also permits network I/O in the critical section, where the
+ * transaction-riding one forbids it. **None of these pipelines does any,
+ * and adding one is a decision rather than a detail.** The lock's pool
+ * holds a single connection, so a callback that blocks on a network call
+ * head-of-line-blocks every other lifecycle change in the process, on a
+ * queue with no timeout.
+ *
+ * The connection that holds the lock comes from a pool of its own, and
+ * that is load-bearing rather than incidental. `fn` queries the app pool,
+ * so a lock held from the app pool deadlocks it at its own size, with no
+ * contention for the lock required. The bound lives with the pool, in
+ * `storage/pg/connection.ts`.
  */
 export function withConnectionLifecycleLock<T>(
   storage: Storage,

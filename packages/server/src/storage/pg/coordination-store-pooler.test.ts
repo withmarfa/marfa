@@ -65,7 +65,11 @@ import type { PgClient, PgDb } from "./connection.js";
  * constructs it.
  */
 const storeOn = (client: PgClient): PgCoordinationStore =>
-  new PgCoordinationStore(client, drizzle(client));
+  // One client in every role. These cases are about what a pooler does to
+  // an advisory lock, not about which pool holds it, so the separation
+  // production keeps between the app pool and the lock pool would only
+  // obscure what is being measured.
+  new PgCoordinationStore(client, drizzle(client), client);
 
 /**
  * Run `fn` inside a Drizzle transaction with `name` locked on it, which is
@@ -84,6 +88,7 @@ async function withLockOnTransaction<T>(
     await new PgCoordinationStore(
       client,
       tx as unknown as PgDb,
+      client,
     ).lockInTransaction(name);
     return await fn();
   });

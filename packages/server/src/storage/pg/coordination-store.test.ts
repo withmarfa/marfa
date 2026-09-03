@@ -240,9 +240,15 @@ describe.skipIf(!isPg || !url)("pg CoordinationStore endpoint choice", () => {
           },
         });
 
+      // One proxy for both app-endpoint roles. The lock client sits on
+      // the app connection string in production, so counting its
+      // reservations alongside the app pool's is the right shape: either
+      // one serving a job tick is the failure this asserts against.
+      const pooledSpy = spy(pooled.client, () => (pooledReserves += 1));
       const store = new PgCoordinationStore(
-        spy(pooled.client, () => (pooledReserves += 1)),
+        pooledSpy,
         drizzle(pooled.client),
+        pooledSpy,
         spy(session.client, () => (sessionReserves += 1)),
       );
 

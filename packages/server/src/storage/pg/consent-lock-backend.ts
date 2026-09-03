@@ -17,9 +17,10 @@
  * a pool the critical section's own queries run on. The section queries
  * the app pool (grant reads, the Better Auth proxy), so reserving its
  * lock connection from that same pool means enough concurrent consent
- * flows hold every slot while each waits for a slot nobody can release —
- * the documented bracketing deadlock, reached at pool size rather than at
- * load. index.ts constructs the small dedicated client.
+ * flows hold every slot while each waits for a slot nobody can release:
+ * the bracketing deadlock, reached at pool size rather than at load, and
+ * the same rule `PgCoordinationStore.withExclusiveLock` obeys with its
+ * own client. index.ts constructs the small dedicated client.
  *
  * Reservation is bounded (`reserveWithTimeout`): exhaustion answers a
  * clean 503-shaped refusal rather than queueing callers forever.

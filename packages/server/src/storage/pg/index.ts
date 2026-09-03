@@ -70,14 +70,21 @@ export async function createPgStorage(
     applicationName?: string;
   },
 ): Promise<Storage> {
-  const { db, baseDb, client, sessionClient, jobHolderClient, close } =
-    await createConnection(connectionString, {
-      maxPoolSize: options?.maxPoolSize,
-      skipBootstrap: options?.skipBootstrap,
-      directConnectionString: options?.directConnectionString,
-      poolMode: options?.poolMode,
-      applicationName: options?.applicationName,
-    });
+  const {
+    db,
+    baseDb,
+    client,
+    sessionClient,
+    jobHolderClient,
+    lockClient,
+    close,
+  } = await createConnection(connectionString, {
+    maxPoolSize: options?.maxPoolSize,
+    skipBootstrap: options?.skipBootstrap,
+    directConnectionString: options?.directConnectionString,
+    poolMode: options?.poolMode,
+    applicationName: options?.applicationName,
+  });
 
   const versionStore = new PgVersionStore(db);
   const searchStore = new PgSearchStore(db, client);
@@ -188,6 +195,7 @@ export async function createPgStorage(
     coordination: new PgCoordinationStore(
       client,
       db,
+      lockClient,
       sessionClient,
       jobHolderClient,
     ),

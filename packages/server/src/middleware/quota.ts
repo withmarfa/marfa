@@ -19,15 +19,12 @@ import type { AppEnv } from "./auth.js";
  * could not do that: N concurrent writers each read the same pre-write count,
  * each saw room, and the space settled at `limit + N - 1`.
  *
- * **The lock rides the caller's transaction; it must not bracket it.** Two
- * reasons, both pointing the same way. A lock released before the write
- * commits leaves the next holder counting rows that do not include it, which
- * is the race this closes. And a lock holding a pool connection of its own
- * while the request already holds one deadlocks the pool once enough
- * concurrent writers each wait for a second slot — pool size, not load, sets
- * the concurrency at which every quota-gated write stops. `withExclusiveLock`
- * is that shape and is the wrong tool here; see
- * `CoordinationStore.lockInTransaction`.
+ * **The lock rides the caller's transaction; it must not bracket it.** A
+ * lock released before the write commits leaves the next holder counting
+ * rows that do not include it, which is the race this closes.
+ * `withExclusiveLock` releases at the end of its callback rather than at
+ * the caller's commit, so it cannot guard a write however it is pooled;
+ * see `CoordinationStore.lockInTransaction`.
  *
  * **This does not open a transaction of its own**, deliberately. Wrapping the
  * caller would nest one transaction inside another where the caller already
