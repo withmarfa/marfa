@@ -74,6 +74,16 @@ export type {
 // Type authoring helper
 export { defineType } from "./define-type.js";
 
+// Local type-graph cache. Registers a `client.types.list()` payload into the
+// shared registry so `validateProperties` answers the way the server does
+// without a round trip — the piece a durable client needs to check a write
+// against a space's custom types before it queues one.
+export { hydrateTypeRegistry } from "@withmarfa/shared";
+export type {
+  HydrateTypeRegistryOptions,
+  TypeRegistryHydration,
+} from "@withmarfa/shared";
+
 // Webhook signature verification (inbound — for receivers)
 export { verifyWebhookSignature } from "./webhooks.js";
 export type {
