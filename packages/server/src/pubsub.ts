@@ -67,7 +67,40 @@ function resolveCycleForPublish(event: CycleMetadata): {
   return { originatingConnectionId: null, hopCount: 0 };
 }
 
-export interface ItemEvent extends CycleMetadata {
+/**
+ * Whether this event drives outbound side effects as well as being logged
+ * and streamed: outbound webhook delivery, and the integration reactions
+ * the reactive bridge enqueues.
+ *
+ * Absent means yes, so every ordinary write door is unchanged. The bulk
+ * doors default it off, because one call there writes thousands of rows
+ * and a delivery per row per subscriber is work nobody asked for.
+ *
+ * It never governs the event log or the stream. Those are what a client
+ * rebuilding its state reads, so a write kept out of them is a write that
+ * client can never learn about; the expense being managed here is the
+ * outbound work, not the record.
+ */
+export interface FanoutControl {
+  enableFanout?: boolean;
+}
+
+/**
+ * Whether an event should drive outbound side effects. Absent reads as yes,
+ * so every ordinary write door needs to say nothing.
+ *
+ * An event rebuilt from a persisted row carries the answer its writer gave,
+ * because `event_log` stores it. That is load-bearing rather than tidy: the
+ * reactive bridge's drainer is elected across the cluster, so on a split
+ * deployment the process that reacts is routinely not the process that
+ * wrote, and it knows only what the row tells it. Rows written before the
+ * column read as fanning out, which is what they did.
+ */
+export function fansOut(event: FanoutControl): boolean {
+  return event.enableFanout !== false;
+}
+
+export interface ItemEvent extends CycleMetadata, FanoutControl {
   type:
     | "created"
     | "updated"
@@ -80,7 +113,7 @@ export interface ItemEvent extends CycleMetadata {
   spaceId?: string;
 }
 
-export interface EdgeEvent extends CycleMetadata {
+export interface EdgeEvent extends CycleMetadata, FanoutControl {
   type: "edge_created" | "edge_updated" | "edge_deleted";
   edge: Edge;
   spaceId?: string;
@@ -368,37 +401,77 @@ export function computeEffectiveHopCount(cycle: {
   return isIntegrationOriginated ? Math.max(cycle.hopCount, 1) : cycle.hopCount;
 }
 
-async function passesHopBudget(
+/**
+ * Whether this event is inside the space's hop budget.
+ *
+ * A pure question, deliberately: the answer is needed *before* the event log
+ * append, because the append records it, while the overflow hook it used to
+ * fire is a write of its own and must happen once. Splitting them is what
+ * lets the budget decide `enable_fanout` rather than decide whether to emit.
+ */
+async function withinHopBudget(
+  event: PubsubEvent,
+  cycle: { originatingConnectionId: string | null; hopCount: number },
+): Promise<{ within: boolean; budget: number }> {
+  const isIntegrationOriginated = cycle.originatingConnectionId != null;
+  const budget = await getHopBudget(event.spaceId);
+  // Human-originated events (no origin, no hops) bypass the budget.
+  if (!isIntegrationOriginated && cycle.hopCount === 0) {
+    return { within: true, budget };
+  }
+  return { within: computeEffectiveHopCount(cycle) <= budget, budget };
+}
+
+/** Record an overflow. Best-effort; a failure here never reaches the caller. */
+async function recordHopOverflow(
+  event: PubsubEvent,
+  cycle: { originatingConnectionId: string | null; hopCount: number },
+  budget: number,
+): Promise<void> {
+  if (!onHopOverflow) return;
+  try {
+    // The overflow hook receives the event annotated with the
+    // resolved cycle so the system.activity row carries the right
+    // origin / hopCount even when the caller relied on ALS / sentinel.
+    const annotated: PubsubEvent = {
+      ...event,
+      originatingConnectionId: cycle.originatingConnectionId,
+      hopCount: cycle.hopCount,
+    };
+    await onHopOverflow(annotated, budget);
+  } catch {
+    // Swallow — overflow handler errors don't propagate.
+  }
+}
+
+/**
+ * What the budget decides, and what it does not.
+ *
+ * It decides whether the event drives outbound work — the integration
+ * reactions that are the loop it exists to bound. It does not decide whether
+ * the event is logged, and no longer decides whether it is emitted.
+ *
+ * Emitting it is what makes the stream consistent: an over-budget row is in
+ * the log, so a client replaying from a cursor receives it, and suppressing
+ * the live emit meant the same event id behaved differently depending on
+ * when you connected. Suppressing only the fan-out is the property actually
+ * wanted, and because it rides the row it survives replication — the
+ * replicator's reconnect catch-up re-emits every row it finds above its
+ * anchor with no budget check of its own, which was quietly advancing every
+ * stalled chain one hop per reconnect.
+ */
+async function resolveFanout(
   event: PubsubEvent,
   cycle: { originatingConnectionId: string | null; hopCount: number },
 ): Promise<boolean> {
-  const isIntegrationOriginated = cycle.originatingConnectionId != null;
-  // Human-originated events (no origin, no hops) bypass the budget.
-  if (!isIntegrationOriginated && cycle.hopCount === 0) return true;
-  const effectiveHopCount = computeEffectiveHopCount(cycle);
-  const budget = await getHopBudget(event.spaceId);
-  if (effectiveHopCount <= budget) return true;
-  if (onHopOverflow) {
-    try {
-      // The overflow hook receives the event annotated with the
-      // resolved cycle so the system.activity row carries the right
-      // origin / hopCount even when the caller relied on ALS / sentinel.
-      const annotated: PubsubEvent = {
-        ...event,
-        originatingConnectionId: cycle.originatingConnectionId,
-        hopCount: cycle.hopCount,
-      };
-      await onHopOverflow(annotated, budget);
-    } catch {
-      // Swallow — overflow handler errors don't propagate.
-    }
-  }
-  return false;
+  const { within, budget } = await withinHopBudget(event, cycle);
+  if (!within) await recordHopOverflow(event, cycle, budget);
+  return fansOut(event) && within;
 }
 
 export async function publish(event: ItemEvent): Promise<bigint | undefined> {
   const cycle = resolveCycleForPublish(event);
-  if (!(await passesHopBudget(event, cycle))) return undefined;
+  const enableFanout = await resolveFanout(event, cycle);
 
   let eventId: bigint | undefined;
 
@@ -415,25 +488,17 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
       payload,
       originating_connection_id: cycle.originatingConnectionId,
       hop_count: cycle.hopCount,
+      enable_fanout: enableFanout,
     });
   }
 
-  if (eventId !== undefined && notifyRemote) {
-    // A failed announcement must not suppress local delivery: outside a
-    // request transaction the append has already committed, and inside
-    // one a failed statement aborts the transaction regardless — either
-    // way this process's own subscribers keep the event they always got.
-    try {
-      await notifyRemote(eventId);
-    } catch (err) {
-      logRemoteNotifyFailure(eventId, err);
-    }
-  }
+  await announceRemote(eventId);
 
   emitter.emit("ITEM_CHANGED", {
     ...event,
     originatingConnectionId: cycle.originatingConnectionId,
     hopCount: cycle.hopCount,
+    enableFanout,
     eventId,
   });
   return eventId;
@@ -449,7 +514,7 @@ export async function publishEdge(
   event: EdgeEvent,
 ): Promise<bigint | undefined> {
   const cycle = resolveCycleForPublish(event);
-  if (!(await passesHopBudget(event, cycle))) return undefined;
+  const enableFanout = await resolveFanout(event, cycle);
 
   let eventId: bigint | undefined;
 
@@ -466,26 +531,38 @@ export async function publishEdge(
       payload,
       originating_connection_id: cycle.originatingConnectionId,
       hop_count: cycle.hopCount,
+      enable_fanout: enableFanout,
     });
   }
 
-  if (eventId !== undefined && notifyRemote) {
-    // Same reasoning as the item path: local delivery survives a failed
-    // announcement.
-    try {
-      await notifyRemote(eventId);
-    } catch (err) {
-      logRemoteNotifyFailure(eventId, err);
-    }
-  }
+  await announceRemote(eventId);
 
   emitter.emit("EDGE_CHANGED", {
     ...event,
     originatingConnectionId: cycle.originatingConnectionId,
     hopCount: cycle.hopCount,
+    enableFanout,
     eventId,
   });
   return eventId;
+}
+
+/**
+ * Tell sibling processes an event landed, so their subscribers see the
+ * deployment's events rather than one process's.
+ *
+ * A failed announcement must not suppress local delivery: outside a request
+ * transaction the append has already committed, and inside one a failed
+ * statement aborts the transaction regardless — either way this process's
+ * own subscribers keep the event they always got.
+ */
+async function announceRemote(eventId: bigint | undefined): Promise<void> {
+  if (eventId === undefined || !notifyRemote) return;
+  try {
+    await notifyRemote(eventId);
+  } catch (err) {
+    logRemoteNotifyFailure(eventId, err);
+  }
 }
 
 function logRemoteNotifyFailure(eventId: bigint, err: unknown): void {

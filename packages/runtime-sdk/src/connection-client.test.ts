@@ -360,14 +360,14 @@ describe("ConnectionClient.bulkUpsertItems", () => {
     expect(sent.items?.map((i) => i.source_id)).toEqual(["up_1", "up_2"]);
   });
 
-  // The route defaults `emit_events` off, so moving a sweep from POST /items
-  // to this endpoint silently stopped its mirrors announcing themselves and
-  // nothing in the space reacted to them any more. The route's default is
-  // right for a caller sending five thousand rows; a sweep is not that, and
-  // the caller is the only one who can tell the difference.
+  // The route defaults fan-out off, so moving a sweep from POST /items to
+  // this endpoint silently stopped anything in the space reacting to its
+  // mirrors. That default is right for a caller sending five thousand
+  // rows; a sweep is not that, and the caller is the only one who can tell
+  // the difference. The writes themselves reach the event log either way.
   const bodyOf = async (
     call: (c: ConnectionClient) => Promise<unknown>,
-  ): Promise<{ emit_events?: boolean }> => {
+  ): Promise<{ enable_fanout?: boolean }> => {
     const captured: Captured[] = [];
     const client = new ConnectionClient({
       apiUrl: "https://api.example.com",
@@ -388,13 +388,13 @@ describe("ConnectionClient.bulkUpsertItems", () => {
       ),
     });
     await call(client);
-    return JSON.parse(captured[0]?.body ?? "{}") as { emit_events?: boolean };
+    return JSON.parse(captured[0]?.body ?? "{}") as { enable_fanout?: boolean };
   };
 
   const ONE = [{ type: "core.note", source_id: "up_1" }];
 
   it("announces its writes by default", async () => {
-    expect((await bodyOf((c) => c.bulkUpsertItems(ONE))).emit_events).toBe(
+    expect((await bodyOf((c) => c.bulkUpsertItems(ONE))).enable_fanout).toBe(
       true,
     );
   });
@@ -402,7 +402,7 @@ describe("ConnectionClient.bulkUpsertItems", () => {
   it("lets a genuine import say so", async () => {
     expect(
       (await bodyOf((c) => c.bulkUpsertItems(ONE, { announce: false })))
-        .emit_events,
+        .enable_fanout,
     ).toBe(false);
   });
 
@@ -412,8 +412,8 @@ describe("ConnectionClient.bulkUpsertItems", () => {
     // wants, and that is the coupling this exists to remove.
     for (const announce of [true, false]) {
       const sent = await bodyOf((c) => c.bulkUpsertItems(ONE, { announce }));
-      expect(Object.hasOwn(sent, "emit_events")).toBe(true);
-      expect(sent.emit_events).toBe(announce);
+      expect(Object.hasOwn(sent, "enable_fanout")).toBe(true);
+      expect(sent.enable_fanout).toBe(announce);
     }
   });
 

@@ -25,7 +25,7 @@ const BulkActionBaseSchema = z.object({
   filter: BulkActionFilterSchema,
   dry_run: z.boolean().optional(),
   max_items: z.number().int().positive().optional(),
-  emit_events: z.boolean().optional(),
+  enable_fanout: z.boolean().optional(),
 });
 
 export const BulkActionInputSchema = z.discriminatedUnion("action", [

@@ -691,23 +691,17 @@ describe("POST /items/bulk", () => {
 /**
  * Whether a bulk write announces itself.
  *
- * The route defaults `emit_events` off so a five-thousand-row import does
- * not flood every subscriber, and that default is right for the caller it
- * was written for. It is the wrong one for an integration's inbound sweep,
- * which is the integration doing its ordinary job a page at a time, and
- * moving those writes onto this endpoint silently stopped their mirrors
- * announcing themselves. Nothing in the space reacted to them any more.
+ * It always does, and `enable_fanout` does not change that. The flag
+ * decides whether those events also drive outbound work — webhook
+ * delivery, integration reactions — and defaults off, because one call
+ * here writes thousands of rows.
  *
- * The runtime client now asks for `true`, so this is the half that proves
- * asking for it does something. Neither direction had a test.
- *
- * The negative case is proven with a sentinel rather than a timeout: a
- * single-item create always publishes, so if the first event to arrive
- * after a quiet bulk write is the sentinel, the bulk write published
- * nothing. A wall-clock wait would have said the same thing less reliably
- * on a loaded machine.
+ * These watch the emitter, which every published event reaches whatever
+ * the flag says. What the flag gates sits downstream of it, and the
+ * durable half is held in `bulk-reaches-the-log.test.ts`, which reads the
+ * event log rather than the bus.
  */
-describe("POST /items/bulk — emit_events", () => {
+describe("POST /items/bulk — announcing writes", () => {
   const noteBatch = (suffix: string) => [
     {
       type: "core.note",
@@ -744,13 +738,13 @@ describe("POST /items/bulk — emit_events", () => {
     return { ids, close: () => void iter.return(undefined) };
   };
 
-  it("publishes one event per written item when asked to", async () => {
+  it("publishes one event per written item when fan-out is asked for", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const stream = collect(2);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: ctx.adminKey,
-      body: { items: noteBatch(suffix), emit_events: true },
+      body: { items: noteBatch(suffix), enable_fanout: true },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { results: { id?: string }[] };
@@ -765,20 +759,31 @@ describe("POST /items/bulk — emit_events", () => {
     );
   });
 
-  it("publishes nothing by default", async () => {
+  it("publishes one event per written item with no flag set", async () => {
+    // This asserted silence once. A bulk write that published nothing
+    // wrote nothing to the event log either, because publishing is what
+    // appends the row — so a five-thousand-row import was invisible to
+    // every client rebuilding its state from the stream, permanently.
+    //
+    // The sentinel technique survives the inversion and is what makes the
+    // count exact: the marker is published after the batch, so its arrival
+    // proves the batch's own events are all in already. A test asserting
+    // "at least two" would pass on a route that published one.
     const suffix = Math.random().toString(36).slice(2, 8);
-    const stream = collect(1);
+    const stream = collect(3);
 
     const quiet = await request(ctx.app, "POST", "/items/bulk", {
       key: ctx.adminKey,
       body: { items: noteBatch(suffix) },
     });
     expect(quiet.status).toBe(200);
+    const written = (
+      (await quiet.json()) as { results: { id?: string }[] }
+    ).results
+      .map((r) => r.id)
+      .filter((id): id is string => Boolean(id));
+    expect(written).toHaveLength(2);
 
-    // A single-item create always publishes, so it is the first thing to
-    // arrive unless the bulk write put something in front of it. A sentinel
-    // rather than a timeout, so the assertion does not depend on how loaded
-    // the machine is.
     const marker = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
@@ -793,7 +798,7 @@ describe("POST /items/bulk — emit_events", () => {
 
     const seen = await stream.ids;
     stream.close();
-    expect(seen).toEqual([markerId]);
+    expect(seen).toEqual([...written, markerId]);
   });
 });
 

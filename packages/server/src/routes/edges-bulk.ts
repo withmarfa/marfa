@@ -9,11 +9,16 @@
  * inside a single batch, which is not the case during multi-batch space
  * migration.
  *
- * One aggregate audit row per call (never N per edge). `emit_events`
- * defaults off and fires `edge.created` for newly-created edges and
- * `edge.updated` for upsert-updates to existing edge properties. The
- * update half was silent while the pubsub enum had no `edge_updated`
- * variant; it does now, and a bulk edit propagates like a single one.
+ * One aggregate audit row per call (never N per edge). Every created or
+ * updated edge appends to the event log, unconditionally: the log is what
+ * a client rebuilding its state replays, so an edge missing from it is one
+ * that client can never learn about. The update half was silent while the
+ * pubsub enum had no `edge_updated` variant; it does now, and a bulk edit
+ * propagates like a single one.
+ *
+ * `enable_fanout` governs the outbound work instead — webhook delivery and
+ * the integration reactions the bridge enqueues — and defaults off, so a
+ * multi-batch migration does not call out once per edge it moves.
  *
  * Authorization mirrors single-edge `POST /edges`: the caller needs write
  * on the source item's type AND write on the edge type (admin /
@@ -106,7 +111,7 @@ const edgesBulkRoute = createRoute({
             edges: z.array(BulkEdgeInputItemSchema),
             mode: z.enum(["upsert", "create_only"]).optional(),
             atomic: z.boolean().optional(),
-            emit_events: z.boolean().optional(),
+            enable_fanout: z.boolean().optional(),
           }),
         },
       },
@@ -358,7 +363,7 @@ export function edgesBulkRoutes(storage: Storage) {
     const rawEdges = body.edges;
     const mode = body.mode ?? "upsert";
     const atomic = body.atomic ?? true;
-    const emitEvents = body.emit_events ?? false;
+    const enableFanout = body.enable_fanout ?? false;
 
     if (rawEdges.length > MAX_BULK_EDGES) {
       throw new MarfaError(
@@ -499,19 +504,17 @@ export function edgesBulkRoutes(storage: Storage) {
     const counts = { created: 0, updated: 0, skipped: 0, errored: 0 };
     for (const r of results) counts[r.outcome] += 1;
 
-    // Both outcomes emit. An upsert that replaces an existing edge's
+    // Both outcomes publish. An upsert that replaces an existing edge's
     // properties is an edit, and a subscriber has no way to tell it apart
-    // from one made through `PATCH /edges/:id` — so emitting for one and
+    // from one made through `PATCH /edges/:id` — so publishing for one and
     // not the other would make propagation depend on which route the
     // writer happened to use. `skipped` and `errored` wrote nothing and
-    // emit nothing.
-    if (emitEvents) {
-      for (const edge of createdEdges) {
-        await publishEdge({ type: "edge_created", edge, spaceId });
-      }
-      for (const edge of updatedEdges) {
-        await publishEdge({ type: "edge_updated", edge, spaceId });
-      }
+    // publish nothing.
+    for (const edge of createdEdges) {
+      await publishEdge({ type: "edge_created", edge, spaceId, enableFanout });
+    }
+    for (const edge of updatedEdges) {
+      await publishEdge({ type: "edge_updated", edge, spaceId, enableFanout });
     }
 
     await storage.audit.log({

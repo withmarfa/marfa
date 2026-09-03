@@ -351,7 +351,8 @@ CREATE TABLE IF NOT EXISTS public.event_log (
     created_at text NOT NULL,
     edge_id text,
     originating_connection_id text,
-    hop_count integer DEFAULT 0 NOT NULL
+    hop_count integer DEFAULT 0 NOT NULL,
+    enable_fanout boolean DEFAULT true NOT NULL
 );
 
 DO $$

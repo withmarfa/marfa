@@ -13,6 +13,7 @@ import type { TestContext } from "./test-utils.js";
 import {
   initEventLog,
   publish,
+  subscribe,
   publishEdge,
   nextHopMetadata,
   defaultCycleDetectionWiring,
@@ -168,7 +169,19 @@ describe("publish — persistence", () => {
 // ---------------------------------------------------------------------------
 
 describe("publish — hop budget enforcement", () => {
-  it("drops events whose hopCount exceeds the budget and fires the overflow hook", async () => {
+  it("stops the reaction chain by declining fan-out, and logs the write", async () => {
+    // The budget bounds an amplification loop, and the loop is the
+    // outbound work rather than the row or the emit. So it decides
+    // `enable_fanout` and nothing else:
+    //
+    //   - the row is written, because the write genuinely happened and a
+    //     client rebuilding from the stream has to see it;
+    //   - the event is emitted, because it is in the log and a client
+    //     replaying from a cursor gets it either way — suppressing the
+    //     live emit made one event id behave two ways depending on when
+    //     you connected;
+    //   - the fan-out is declined, and rides the row, so the replicator's
+    //     reconnect catch-up cannot re-drive the reaction later.
     const overflow = vi.fn(() => Promise.resolve());
     initEventLog(ctx.storage.eventLog, {
       getHopBudget: () => Promise.resolve(2),
@@ -180,6 +193,16 @@ describe("publish — hop budget enforcement", () => {
       ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b), 0n)
       : 0n;
 
+    const heard: string[] = [];
+    const controller = new AbortController();
+    const listening = (async () => {
+      for await (const event of subscribe({ signal: controller.signal })) {
+        heard.push(event.item.id);
+      }
+    })();
+    void listening.catch(() => undefined);
+    await Promise.resolve();
+
     const result = await publish({
       type: "created",
       item: fakeItem("item-overflow"),
@@ -187,7 +210,6 @@ describe("publish — hop budget enforcement", () => {
       originatingConnectionId: "conn-overflow",
     });
 
-    expect(result).toBeUndefined();
     expect(overflow).toHaveBeenCalledTimes(1);
     expect(overflow).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -197,13 +219,21 @@ describe("publish — hop budget enforcement", () => {
       2,
     );
 
-    // Verify nothing was appended to event_log.
+    // The row is written, and the id comes back so a caller can name it.
     const after = await ctx.storage.eventLog.getAfter(maxBefore, 1000);
     const matched = after.find(
       (r) =>
         r.originating_connection_id === "conn-overflow" && r.hop_count === 3,
     );
-    expect(matched).toBeUndefined();
+    expect(matched).toBeDefined();
+    expect(result).toBe(matched?.id);
+
+    // Delivered to subscribers, and marked as driving no outbound work,
+    // which is what the budget is actually for.
+    controller.abort();
+    await listening;
+    expect(heard).toContain("item-overflow");
+    expect(matched?.enable_fanout).toBe(false);
   });
 
   it("admits events whose hopCount equals the budget exactly", async () => {
@@ -235,13 +265,14 @@ describe("publish — hop budget enforcement", () => {
     expect(DEFAULT_HOP_BUDGET).toBe(5);
     initEventLog(ctx.storage.eventLog);
 
-    // hopCount = 6 should overflow the default budget of 5.
+    // hopCount = 6 should overflow the default budget of 5, so the event
+    // reaches no subscriber — but the write it describes is still logged.
     const result = await publish({
       type: "created",
       item: fakeItem("item-default-overflow"),
       hopCount: 6,
     });
-    expect(result).toBeUndefined();
+    expect(result).toBeDefined();
   });
 
   it("enforces budget on integration-originated events even when hopCount=0", async () => {
@@ -262,7 +293,9 @@ describe("publish — hop budget enforcement", () => {
       originatingConnectionId: "conn-misbehaving",
     });
 
-    expect(result).toBeUndefined();
+    // Logged even though the budget stopped it going anywhere: the write
+    // happened, so a client rebuilding from the stream has to see it.
+    expect(result).toBeDefined();
     expect(overflow).toHaveBeenCalledTimes(1);
   });
 
@@ -471,7 +504,8 @@ describe("publish — cycle resolution from cycleRequestContext", () => {
       },
     );
 
-    expect(result).toBeUndefined();
+    // Logged despite the overflow — see the sibling test above.
+    expect(result).toBeDefined();
     expect(overflow).toHaveBeenCalledTimes(1);
     expect(overflow).toHaveBeenCalledWith(
       expect.objectContaining({

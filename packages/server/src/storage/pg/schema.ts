@@ -743,6 +743,14 @@ export const eventLog = pgTable(
     payload: text("payload").notNull(),
     originating_connection_id: text("originating_connection_id"),
     hop_count: integer("hop_count").notNull().default(0),
+    // Whether this event drives outbound side effects: webhook delivery and
+    // the integration reactions the reactive bridge enqueues. Persisted
+    // rather than carried only on the emitted event, because the bridge's
+    // drainer is elected across the cluster and may be a different process
+    // from the writer — it rebuilds the event from this row, so the
+    // instruction has to survive the round trip. Defaults true: that is what
+    // every row written before the column did.
+    enable_fanout: boolean("enable_fanout").notNull().default(true),
     created_at: text("created_at").notNull(),
   },
   (table) => [

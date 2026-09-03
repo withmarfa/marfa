@@ -365,9 +365,11 @@ export interface BulkInput {
   /** Default: `true`. When false, errors are collected per item and the
    *  batch continues past failures. */
   atomic?: boolean;
-  /** Default: `false`. Per-item events are suppressed on bulk writes
-   *  unless the caller opts in. */
-  emit_events?: boolean;
+  /** Default: `false`. Whether the batch's writes also drive outbound work
+   *  — webhook delivery and integration reactions. Never governs the event
+   *  log: every bulk write is logged, so a client replaying the stream sees
+   *  the batch whatever this is set to. */
+  enable_fanout?: boolean;
 }
 
 export type BulkOutcome = "created" | "updated" | "skipped" | "errored";
@@ -411,9 +413,11 @@ export interface BulkEdgeInput {
   /** Default: `true`. When false, errors are collected per edge and the
    *  batch continues past failures. */
   atomic?: boolean;
-  /** Default: `false`. Per-edge `edge.created` / `edge.deleted` webhook
-   *  events are suppressed on bulk writes unless the caller opts in. */
-  emit_events?: boolean;
+  /** Default: `false`. Whether the batch's writes also drive outbound work
+   *  — webhook delivery and integration reactions. Never governs the event
+   *  log: every bulk write is logged, so a client replaying the stream sees
+   *  the batch whatever this is set to. */
+  enable_fanout?: boolean;
 }
 
 export interface BulkEdgeResultEntry {
@@ -455,7 +459,10 @@ interface BulkActionBase {
   filter?: BulkActionFilter;
   dry_run?: boolean;
   max_items?: number;
-  emit_events?: boolean;
+  /** Default: `false`. Whether the action's writes also drive outbound work
+   *  — webhook delivery and integration reactions. Never governs the event
+   *  log: every write the action makes is logged either way. */
+  enable_fanout?: boolean;
 }
 
 /** Discriminated union over the six bulk actions. The compiler pins the

@@ -1,0 +1,24 @@
+-- The event log records whether an event drives outbound side effects.
+--
+-- Webhook delivery and the integration reactions the reactive bridge
+-- enqueues are opt-in on the bulk doors: one call there writes thousands of
+-- rows, and a delivery per row per subscriber is not what the caller asked
+-- for. The instruction travelled only on the in-memory event, which is
+-- enough for webhooks — that consumer skips replicated events, so it only
+-- ever sees the publishing process's own copy — and not enough for the
+-- bridge, whose drainer is elected across the cluster and treats a
+-- replicated event exactly like a local one. On a deployment running web
+-- and worker as separate containers the drainer is routinely not the
+-- process that wrote, so the instruction was lost in transit and the
+-- reactions fired anyway.
+--
+-- A column rather than a field in `payload`: the payload is re-sent to
+-- subscribers verbatim on `Last-Event-ID` replay, so a field there is a
+-- change to the public wire shape rather than an internal one.
+--
+-- Additive with a default, so there is nothing to backfill. Existing rows
+-- read as fanning out, which is what they did. The build serving this
+-- migration never names the column, so it is safe to land ahead of the code
+-- that reads it; an old replica writing during the roll that follows gets
+-- the default, which is the pre-column behavior.
+ALTER TABLE `event_log` ADD `enable_fanout` integer DEFAULT 1 NOT NULL;

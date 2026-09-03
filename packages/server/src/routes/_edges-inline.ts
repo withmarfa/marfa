@@ -148,11 +148,15 @@ export async function applyInlineEdges(
 export async function announceInlineEdges(
   changes: InlineEdgeChanges,
   spaceId: string | undefined,
+  /** Whether these edges drive outbound side effects. Defaults to yes, so
+   *  the single-item doors read unchanged; the bulk door passes the
+   *  batch's own answer, which is off unless asked for. */
+  enableFanout = true,
 ): Promise<void> {
   for (const edge of changes.deleted) {
-    await publishEdge({ type: "edge_deleted", edge, spaceId });
+    await publishEdge({ type: "edge_deleted", edge, spaceId, enableFanout });
   }
   for (const edge of changes.created) {
-    await publishEdge({ type: "edge_created", edge, spaceId });
+    await publishEdge({ type: "edge_created", edge, spaceId, enableFanout });
   }
 }

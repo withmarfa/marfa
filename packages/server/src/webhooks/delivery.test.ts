@@ -755,3 +755,139 @@ describe("WebhookConsumer remote-event skip", () => {
     expect(scheduled).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WebhookConsumer — a write that declined fan-out is logged, not delivered
+// ---------------------------------------------------------------------------
+
+describe("WebhookConsumer fan-out gate", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  function harness(events: string[]) {
+    let scheduled = 0;
+    const store: WebhookDeliveryStore = {
+      log: () => Promise.resolve(),
+      list: () => Promise.resolve([] as WebhookDelivery[]),
+      schedule: () => {
+        scheduled += 1;
+        return Promise.resolve(`del_fan_${String(scheduled)}`);
+      },
+      getPending: () => Promise.resolve([]),
+      claimById: () => Promise.resolve(null),
+      markSuccess: () => Promise.resolve(),
+      markFailed: () => Promise.resolve(),
+      markDeadLetter: () => Promise.resolve(),
+    };
+    const webhook: Webhook = {
+      id: "wh_fanout",
+      url: "https://example.test/hook",
+      secret: "s",
+      events,
+      active: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    const webhookStore: WebhookStore = {
+      create: () => Promise.resolve(webhook),
+      list: () => Promise.resolve([webhook]),
+      get: () => Promise.resolve(webhook),
+      update: () => Promise.resolve(webhook),
+      delete: () => Promise.resolve(),
+      listActive: () => Promise.resolve([webhook]),
+      count: () => Promise.resolve(1),
+    };
+    return {
+      consumer: new WebhookConsumer(webhookStore, store),
+      scheduledCount: () => scheduled,
+    };
+  }
+
+  const drain = async (): Promise<void> => {
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  };
+
+  const item = (id: string) =>
+    ({
+      id,
+      type: "core.note",
+      version: 1,
+      state: "active",
+      tier: "library",
+      source: "test",
+      properties: { title: "bulk row" },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }) as unknown as ItemEvent["item"];
+
+  it("does not deliver an item event that declined fan-out, but still delivers one that did not", async () => {
+    // The bulk doors publish every row they write so the event log has it,
+    // and decline fan-out so five thousand rows do not become five
+    // thousand deliveries. The second half is the control: a gate that
+    // suppressed everything would satisfy the first assertion alone.
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy;
+    const { consumer, scheduledCount } = harness(["item.created"]);
+    consumer.start();
+
+    await publish({
+      type: "created",
+      item: item("01HCCCCCCCCCCCCCCCCCCCCCCC"),
+      enableFanout: false,
+    });
+    await drain();
+    const afterQuiet = scheduledCount();
+
+    await publish({
+      type: "created",
+      item: item("01HDDDDDDDDDDDDDDDDDDDDDDD"),
+    });
+    await drain();
+    consumer.stop();
+
+    expect(afterQuiet).toBe(0);
+    expect(scheduledCount()).toBe(1);
+  });
+
+  it("applies the same gate to edge events", async () => {
+    const fetchSpy = vi.fn(() =>
+      Promise.resolve(new Response(null, { status: 200 })),
+    );
+    globalThis.fetch = fetchSpy;
+    const { consumer, scheduledCount } = harness(["edge.created"]);
+    consumer.start();
+
+    const edge = (id: string) =>
+      ({
+        id,
+        edge_type: "references",
+        source_id: "01HAAAAAAAAAAAAAAAAAAAAAAA",
+        target_id: "01HBBBBBBBBBBBBBBBBBBBBBBB",
+        created_at: new Date().toISOString(),
+      }) as unknown as EdgeEventWithId["edge"];
+
+    await publishEdge({
+      type: "edge_created",
+      edge: edge("edge_quiet"),
+      enableFanout: false,
+    });
+    await drain();
+    const afterQuiet = scheduledCount();
+
+    await publishEdge({ type: "edge_created", edge: edge("edge_loud") });
+    await drain();
+    consumer.stop();
+
+    expect(afterQuiet).toBe(0);
+    expect(scheduledCount()).toBe(1);
+  });
+});

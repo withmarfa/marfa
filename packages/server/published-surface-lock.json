@@ -1,6 +1,6 @@
 {
   "@withmarfa/runtime-sdk": {
-    "version": "2.2.0",
+    "version": "3.0.0",
     "hash": "a8d917967f1316f23bb0991bb3fd92cead797aed353eab248f417990b72ac77f",
     "exports": 83
   },
@@ -10,8 +10,8 @@
     "exports": 9
   },
   "@withmarfa/sdk": {
-    "version": "2.6.0",
-    "hash": "7abe3cb51ab88200951e9a68145fd29f03b98250bbd109db41b4df9d3f76e726",
+    "version": "3.0.0",
+    "hash": "fb175f0bbb229d76a76b711f7be402437cf13025693d93125a0d42d146fb792b",
     "exports": 125
   },
   "@withmarfa/shared": {

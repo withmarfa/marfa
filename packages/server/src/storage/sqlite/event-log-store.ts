@@ -21,10 +21,11 @@ export class SqliteEventLogStore implements EventLogStore {
     payload: string;
     originating_connection_id?: string | null;
     hop_count?: number;
+    enable_fanout?: boolean;
   }): Promise<bigint> {
     const result = await this.db.run(sql`
-      INSERT INTO event_log (event_type, item_id, edge_id, space_id, payload, originating_connection_id, hop_count, created_at)
-      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.space_id ?? null}, ${entry.payload}, ${entry.originating_connection_id ?? null}, ${entry.hop_count ?? 0}, ${new Date().toISOString()})
+      INSERT INTO event_log (event_type, item_id, edge_id, space_id, payload, originating_connection_id, hop_count, enable_fanout, created_at)
+      VALUES (${entry.event_type}, ${entry.item_id ?? null}, ${entry.edge_id ?? null}, ${entry.space_id ?? null}, ${entry.payload}, ${entry.originating_connection_id ?? null}, ${entry.hop_count ?? 0}, ${(entry.enable_fanout ?? true) ? 1 : 0}, ${new Date().toISOString()})
     `);
     // libsql returns lastInsertRowid as `bigint`. Match better-sqlite3's prior
     // behavior of normalizing to bigint either way so the public wire shape
@@ -64,6 +65,7 @@ export class SqliteEventLogStore implements EventLogStore {
       payload: row.payload,
       originating_connection_id: row.originating_connection_id,
       hop_count: row.hop_count,
+      enable_fanout: row.enable_fanout,
       created_at: row.created_at,
     }));
   }

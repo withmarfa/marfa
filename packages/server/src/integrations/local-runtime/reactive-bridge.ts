@@ -18,7 +18,12 @@
  * delete-safe by construction: an item's type is fixed for its life, so the
  * payload's type is as sound to judge on a delete as on an update.
  */
-import { emitWake, subscribe, type ItemEventWithId } from "../../pubsub.js";
+import {
+  emitWake,
+  fansOut,
+  subscribe,
+  type ItemEventWithId,
+} from "../../pubsub.js";
 import type { Storage } from "../../storage/interface.js";
 import {
   buildEntryForConnection,
@@ -179,6 +184,11 @@ export function createLocalReactiveBridge(
         if (next.done) break;
         if (stopRequested) break;
         if (!isItemEvent(next.value)) continue;
+        // A bulk import declines fan-out by default: it writes thousands
+        // of rows in one call, and a reaction per row per subscribed
+        // connection is work the caller did not ask for. The row is in the
+        // log either way, so nothing is lost that a catch-up cannot see.
+        if (!fansOut(next.value)) continue;
         await fanoutEvent(next.value);
       }
     } finally {
