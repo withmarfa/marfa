@@ -17,9 +17,16 @@
  * Live filtering happens inside the subscription; the replay re-reads
  * `event_log` and decides for itself. They agree only by calling one
  * function, which is what this pins.
+ *
+ * The live case is here for the wiring rather than the rule. A unit test
+ * over the matcher proves the function answers correctly and says nothing
+ * about who calls it, so an inline comparison reintroduced in the
+ * subscription would pass every other test in the repository and mirror
+ * this same defect onto the other path. Only a request through the route
+ * observes that.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, readSse } from "../test-utils.js";
+import { createTestContext, request, readSse, settle } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 
@@ -57,6 +64,34 @@ async function createItem(
   expect(res.status).toBe(201);
   return ((await res.json()) as { item: { id: string } }).item.id;
 }
+
+describe("GET /events?type= on the live stream", () => {
+  it("delivers a subtype of the filtered type, and nothing outside it", async () => {
+    const stream = await request(ctx.app, "GET", "/events?type=core.media", {
+      key: ctx.adminKey,
+    });
+    expect(stream.status).toBe(200);
+
+    // Markers rather than item ids, because the read has to be told what
+    // to stop on before anything is written.
+    const reading = readSse(stream, { until: (t) => t.includes("ZZmediaZZ") });
+    // The read is already running; this lets the subscription attach, so
+    // nothing published below lands before there is a listener for it.
+    await settle();
+
+    // Same ordering as the replay case, for the same two reasons: the
+    // unrelated type is decided before the read can stop, and the exact
+    // match arrives whether or not the subtype does.
+    await createItem("core.note", { body: "ZZnoteZZ" });
+    await createItem("core.media.song", { title: "ZZsongZZ" });
+    await createItem("core.media", { title: "ZZmediaZZ" });
+
+    const { text } = await reading;
+    expect(text).toContain("ZZmediaZZ");
+    expect(text).toContain("ZZsongZZ");
+    expect(text).not.toContain("ZZnoteZZ");
+  });
+});
 
 describe("GET /events?type= on the Last-Event-ID replay", () => {
   it("delivers a subtype of the filtered type, and nothing outside it", async () => {
