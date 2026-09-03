@@ -11,14 +11,23 @@
  * Mechanism: `publish()` already appends the full wire payload to
  * event_log before emitting. The announcement is therefore just the
  * event_log id plus the publishing process's identity, sent as
- * `pg_notify` on the request-context connection — inside the surrounding
- * transaction, so the REMOTE half is delivered only on commit and never
- * for a write that rolled back (the local emit fires inside the
- * transaction, as it always has). Each process holds one LISTEN
- * connection on the session-mode client (a NOTIFY subscription is
- * session state, which a transaction-mode pooler cannot carry); on a
- * notification from another process it hydrates the event from event_log
- * and re-emits it locally, marked `remote: true`.
+ * `pg_notify` on the request-context connection, inside whatever
+ * transaction surrounds it, so the REMOTE half is delivered only on
+ * commit and never for a write that rolled back.
+ *
+ * The local emit is no longer inside the write's own transaction either.
+ * Every door publishes after the transaction carrying its write has
+ * committed, so a rollback takes the event_log row with it and the
+ * emitter is never reached. `routes/rollback-event-doors.test.ts` holds
+ * that door by door, and it asserts against the emitter rather than
+ * against event_log for a reason worth knowing: a publish moved back
+ * inside a transaction has its event_log row rolled back too, so the log
+ * looks correct and only a live subscriber sees the phantom.
+ *
+ * Each process holds one LISTEN connection on the session-mode client (a
+ * NOTIFY subscription is session state, which a transaction-mode pooler
+ * cannot carry); on a notification from another process it hydrates the
+ * event from event_log and re-emits it locally, marked `remote: true`.
  *
  * Exactly-once side effects survive because the mark travels with the
  * event: the webhook consumer skips remote events (the origin process
