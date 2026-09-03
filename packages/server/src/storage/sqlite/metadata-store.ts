@@ -113,6 +113,23 @@ export class SqliteMetadataStore implements MetadataStore {
     itemId: string,
     write: { tags: string } | { extensions: string; namespace: string },
   ): Promise<void> {
+    // **The item is written first, and the order is load-bearing.** It
+    // reads backwards — this method is about the sidecar, and the item is
+    // the afterthought — so it invites being swapped back.
+    //
+    // SQLite admits one writer at a time, so the deadlock this order
+    // prevents is not reachable here; the Postgres store carries the same
+    // order because there it is. Kept identical deliberately. These two
+    // files are read as a pair, and an ordering that mattered in only one
+    // of them would leave the next reader working out which — the answer
+    // being easy to get wrong and nothing failing when it is.
+    if ("tags" in write || announcesMetadataChange(write.namespace)) {
+      await tx
+        .update(items)
+        .set({ updated_at: new Date().toISOString() })
+        .where(eq(items.id, itemId))
+        .run();
+    }
     await tx
       .update(metadata)
       .set(
@@ -121,12 +138,6 @@ export class SqliteMetadataStore implements MetadataStore {
           : { extensions: write.extensions },
       )
       .where(eq(metadata.item_id, itemId))
-      .run();
-    if (!("tags" in write) && !announcesMetadataChange(write.namespace)) return;
-    await tx
-      .update(items)
-      .set({ updated_at: new Date().toISOString() })
-      .where(eq(items.id, itemId))
       .run();
   }
 
@@ -295,6 +306,10 @@ export class SqliteMetadataStore implements MetadataStore {
    * SQLite has no row-level lock to take; the write transaction is the
    * serialization point, since SQLite admits one writer at a time. The
    * Postgres implementation adds `FOR UPDATE` for the same guarantee.
+   *
+   * That is also why the Postgres side claims the item row before its
+   * metadata lock and this one does not: with no row locks here there is
+   * no order between two of them to get wrong.
    */
   async mutateExtension(
     itemId: string,

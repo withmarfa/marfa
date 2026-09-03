@@ -115,6 +115,24 @@ export class PgMetadataStore implements MetadataStore {
     itemId: string,
     write: { tags: string } | { extensions: string; namespace: string },
   ): Promise<void> {
+    // **The item is written first, and the order is load-bearing.** It
+    // reads backwards — this method is about the sidecar, and the item is
+    // the afterthought — so it invites being swapped back.
+    //
+    // `ItemStore.update` opens by locking the item row, and two routes
+    // call a metadata write inside that same transaction: the
+    // natural-key upsert on `POST /items` and the atomic bulk path. Those
+    // hold `items` and then want `metadata`. Taking `metadata` first here
+    // would leave each holding what the other wants, and Postgres would
+    // resolve it by aborting one after `deadlock_timeout` — an
+    // intermittent 500 on a write that is otherwise fine. Writing the
+    // item first means every path takes the two rows in one order.
+    if ("tags" in write || announcesMetadataChange(write.namespace)) {
+      await tx
+        .update(items)
+        .set({ updated_at: new Date().toISOString() })
+        .where(eq(items.id, itemId));
+    }
     await tx
       .update(metadata)
       .set(
@@ -123,11 +141,6 @@ export class PgMetadataStore implements MetadataStore {
           : { extensions: write.extensions },
       )
       .where(eq(metadata.item_id, itemId));
-    if (!("tags" in write) && !announcesMetadataChange(write.namespace)) return;
-    await tx
-      .update(items)
-      .set({ updated_at: new Date().toISOString() })
-      .where(eq(items.id, itemId));
   }
 
   async getMany(itemIds: string[]): Promise<Metadata[]> {
@@ -272,6 +285,19 @@ export class PgMetadataStore implements MetadataStore {
     mutate: (current: Record<string, unknown>) => Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     return this.db.transaction(async (tx) => {
+      // The lock below is taken on `metadata`, so on the one path that
+      // also writes `items` it would invert the order `writeSidecar`
+      // exists to hold. Claim the item row first there. Only reached for
+      // an announcing namespace: where nothing writes `items`, there are
+      // not two rows to order, and the reserved runtime namespaces stay
+      // on the single-lock path they have always had.
+      if (announcesMetadataChange(namespace)) {
+        await tx
+          .select({ id: items.id })
+          .from(items)
+          .where(eq(items.id, itemId))
+          .for("update");
+      }
       const [row] = await tx
         .select()
         .from(metadata)
