@@ -209,7 +209,7 @@ CREATE TABLE IF NOT EXISTS "event_log" (
   "space_id" text,
   \`payload\` text NOT NULL,
   \`created_at\` text NOT NULL
-, \`originating_connection_id\` text, \`hop_count\` integer NOT NULL DEFAULT 0);
+, \`originating_connection_id\` text, \`hop_count\` integer NOT NULL DEFAULT 0, \`enable_fanout\` integer DEFAULT 1 NOT NULL);
 
 CREATE TABLE IF NOT EXISTS \`auth_user\` (
 	\`id\` text PRIMARY KEY NOT NULL,

@@ -673,6 +673,13 @@
       "when": 1788262474472,
       "tag": "0095_items_written_by_connection",
       "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1788394888975,
+      "tag": "0096_event_log_enable_fanout",
+      "breakpoints": true
     }
   ]
 }
