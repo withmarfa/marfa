@@ -37,6 +37,7 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForHealth } from "./wait-for-health.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = resolve(HERE, "..");
@@ -188,25 +189,21 @@ async function bootRole(role: (typeof ROLES)[number]): Promise<void> {
 
   // Health must answer 200 — and for the worker role this is the same
   // endpoint the container image's HEALTHCHECK polls.
-  let healthy = false;
-  while (!healthy && Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      fail(
-        `role=${role} exited ${String(child.exitCode)} after its listen line`,
-        output,
-      );
-    }
-    try {
-      const res = await fetch(`http://127.0.0.1:${String(port)}/health`, {
-        signal: AbortSignal.timeout(3_000),
-      });
-      if (res.ok) healthy = true;
-      else await sleep(250);
-    } catch {
-      await sleep(250);
-    }
+  const health = await waitForHealth({
+    url: `http://127.0.0.1:${String(port)}/health`,
+    budgetMs: Math.max(0, deadline - Date.now()),
+    shouldStop: () =>
+      child.exitCode === null
+        ? null
+        : `the process exited ${String(child.exitCode)} after its listen line`,
+  });
+  if (!health.ok) {
+    fail(
+      `role=${role} /health never answered 200 ` +
+        `(${String(health.attempts)} attempts; last: ${health.lastOutcome})`,
+      output,
+    );
   }
-  if (!healthy) fail(`role=${role} /health never answered 200`, output);
 
   if (!output.includes(ROLE_MARKER[role])) {
     fail(
