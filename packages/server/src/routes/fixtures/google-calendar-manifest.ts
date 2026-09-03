@@ -32,7 +32,8 @@ export const DEFAULT_WRITE_FAMILY: WriteFamily = "google";
 
 export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   name: "google/calendar",
-  version: "0.5.0",
+  display_name: "Google Calendar",
+  version: "0.6.0",
   manifest_schema_version: "2.0.0",
   configuration_schema: {
     write_family: {
