@@ -6,18 +6,29 @@ export default defineConfig({
   // root path don't pull the auth subpath; browser apps that need OAuth pull
   // ./auth but never ./auth/node, which is the only entry touching node:fs
   // (the shared ~/.marfa credential store).
+  //
+  // The two electron entries split for a harder reason than tree-shaking. A
+  // sandboxed preload is bundled into one file and given a `require` that
+  // resolves `electron` and a few builtins and nothing else, so it cannot
+  // load a native addon under any circumstances. An app bundling its preload
+  // against a single combined entry would pull the store — and
+  // `@libsql/client` with it — into exactly that context.
   entry: [
     "src/index.ts",
     "src/auth/index.ts",
     "src/auth/node/index.ts",
     "src/replica/index.ts",
     "src/local/index.ts",
+    "src/electron/index.ts",
+    "src/electron/preload/index.ts",
   ],
   format: ["esm"],
   // Optional peers: bundling one would defeat the point of the subpath, and
   // for the two the local engine takes it would also duplicate a native
-  // addon and drizzle's module-level state.
-  external: ["@tanstack/db", "@libsql/client", "drizzle-orm"],
+  // addon and drizzle's module-level state. `electron` is not a package that
+  // can be bundled at all — the host process supplies it — so the preload
+  // entry has to reach it by name.
+  external: ["@tanstack/db", "@libsql/client", "drizzle-orm", "electron"],
   dts: true,
   clean: true,
   target: "node20",
