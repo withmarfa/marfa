@@ -36,6 +36,7 @@ export type {
   DeadLetterLayer,
   ServerStateLayer,
   SyncStateLayer,
+  TypeCacheLayer,
   VisibleLayer,
   EnqueueInput,
   StoreRecovery,
@@ -73,6 +74,11 @@ export type { ImportOptions, ImportResult } from "./import.js";
 
 export { classifyFailure } from "./classify.js";
 export type { Verdict } from "./classify.js";
+
+export { createTypeGraph } from "./type-graph.js";
+export type { LocalTypeGraph, TypeGraphOptions } from "./type-graph.js";
+
+export { LocalSchemaRefusal } from "./validate.js";
 
 export { SINGLE_ACCOUNT, SINGLE_SPACE } from "./types.js";
 export type {

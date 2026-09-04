@@ -92,6 +92,19 @@ export interface OutboxEntry {
   blockedReason: BlockedReason | null;
   attempts: number;
   lastError: string | null;
+  /**
+   * When this mutation's schema refusal was answered with one registry
+   * refresh, or null when none has been.
+   *
+   * Rule 5 allows exactly one, and this is what makes "one" mean once
+   * ever rather than once per pass. A local type graph can be stale — a
+   * type registered on another device an hour ago is a type this client
+   * has never read — so a schema refusal is worth one look at the
+   * server's current vocabulary before it is believed. It is worth
+   * exactly one: the second refusal is the server saying the same thing
+   * about a graph the client has just confirmed.
+   */
+  schemaRefreshedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

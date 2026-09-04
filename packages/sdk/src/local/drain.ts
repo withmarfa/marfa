@@ -3,6 +3,8 @@ import type { MarfaClient } from "../client.js";
 import { putEdgeIfNotOlder, putItemIfNotOlder } from "./apply.js";
 import { classifyFailure, type Verdict } from "./classify.js";
 import type { LocalStore } from "./store/index.js";
+import type { LocalTypeGraph } from "./type-graph.js";
+import { localRefusalFor } from "./validate.js";
 import type {
   LocalEngineEvent,
   LocalEngineEventListener,
@@ -22,6 +24,15 @@ export const DEFAULT_RETRY_CEILING = 5;
 export interface DrainOptions {
   store: LocalStore;
   client: MarfaClient;
+  /**
+   * The local type graph, for the one refresh a schema refusal buys.
+   *
+   * Optional, and its absence is a real configuration rather than an
+   * oversight: an engine wired without it treats a schema refusal as
+   * final on the first answer, which is the older behavior and the right
+   * one when there is no graph to be stale.
+   */
+  types?: LocalTypeGraph;
   /** Transient attempts a mutation gets before it parks. */
   retryCeiling?: number;
   /**
@@ -328,6 +339,38 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
     return { events, removed };
   };
 
+  /**
+   * The type and the whole property bag this mutation would present to the
+   * server, for revalidating against a refreshed graph.
+   *
+   * Undefined for anything that has no item type to validate against: an
+   * edge write, a delete, or an update whose row this store no longer
+   * holds. The caller sends again rather than guessing, which is the
+   * conservative direction — the server is the authority and a second
+   * refusal costs one request.
+   */
+  const validatable = async (
+    entry: OutboxEntry,
+  ): Promise<
+    { type: string; properties: Record<string, unknown> } | undefined
+  > => {
+    if (entry.kind === "item.create") {
+      const payload = entry.payload as {
+        type?: string;
+        properties?: Record<string, unknown>;
+      };
+      if (payload.type === undefined) return undefined;
+      return { type: payload.type, properties: payload.properties ?? {} };
+    }
+    if (entry.kind !== "item.update") return undefined;
+    // The visible row, which is server state with this very update already
+    // replayed over it — so it is the merged bag the server will validate,
+    // not the patch.
+    const held = await store.visible.getItem(entry.targetId);
+    if (held === undefined) return undefined;
+    return { type: held.type, properties: held.properties };
+  };
+
   const finish = async (
     sent: number,
     parked: boolean,
@@ -427,6 +470,75 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
               reason: "needs_review",
               message: verdict.message,
             });
+            waiting.add(entry.targetId);
+            break;
+          }
+
+          case "schema": {
+            const asPermanent = {
+              class: "permanent" as const,
+              code: verdict.code,
+              httpStatus: verdict.httpStatus,
+              message: verdict.message,
+            };
+
+            // The refresh has already been spent on this mutation, or
+            // there is no graph to refresh. Either way the server's answer
+            // is the last word.
+            if (
+              entry.schemaRefreshedAt !== null ||
+              options.types === undefined
+            ) {
+              const cascade = await deadLetter(entry, asPermanent);
+              for (const seq of cascade.removed) gone.add(seq);
+              for (const event of cascade.events) emit(event);
+              break;
+            }
+
+            try {
+              await options.types.refresh();
+            } catch (refreshError) {
+              // The graph could not be read, so nothing has been learned
+              // and nothing is recorded against the mutation. An
+              // unreachable server ends the pass exactly as an unreachable
+              // write does; anything else leaves the write pending to be
+              // tried again, because a refusal this engine has not
+              // finished thinking about must not become a dead letter.
+              const why = classifyFailure(refreshError, entry.kind);
+              if (why.class === "offline") return finish(sent, false, true);
+              waiting.add(entry.targetId);
+              break;
+            }
+            await store.outbox.markSchemaRefreshed(entry.seq, now());
+
+            // Revalidation, the second half of the allowance. A write the
+            // refreshed graph still refuses is refused for good, and
+            // sending it again would spend a request to be told what this
+            // client now knows.
+            const subject = await validatable(entry);
+            const stillRefused =
+              subject === undefined
+                ? undefined
+                : localRefusalFor(
+                    subject.type,
+                    subject.properties,
+                    store.identity.spaceId,
+                  );
+            if (stillRefused !== undefined) {
+              const cascade = await deadLetter(entry, {
+                ...asPermanent,
+                message: `${verdict.message} — and the refreshed type graph refuses it too: ${stillRefused.message}`,
+              });
+              for (const seq of cascade.removed) gone.add(seq);
+              for (const event of cascade.events) emit(event);
+              break;
+            }
+
+            // The graph moved and the write now looks valid, so it is
+            // owed another send — on the next pass rather than this one.
+            // This drain is one pass by design, and a mutation that
+            // re-sent itself here would be a retry loop the caller never
+            // asked for.
             waiting.add(entry.targetId);
             break;
           }

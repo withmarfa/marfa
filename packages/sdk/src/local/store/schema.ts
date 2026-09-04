@@ -107,6 +107,17 @@ export const outbox = sqliteTable(
     blockedReason: text("blocked_reason"),
     attempts: integer("attempts").notNull().default(0),
     lastError: text("last_error"),
+    /**
+     * When this mutation's schema refusal was answered with a registry
+     * refresh, or null when none has been.
+     *
+     * On the row rather than in the drain, because the drain is one pass
+     * and the guarantee is "once, ever" rather than "once per pass". A
+     * counter held in memory would let a restart spend a second refresh on
+     * the same refusal, and a queue of a hundred refused writes would spend
+     * a hundred — against a server that has already given its answer.
+     */
+    schemaRefreshedAt: text("schema_refreshed_at"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -168,6 +179,30 @@ export const syncState = sqliteTable(
   ],
 );
 
+/**
+ * The custom types this store has seen the server hold.
+ *
+ * Platform types ship with `@withmarfa/shared` and are never written here:
+ * caching a type the build already compiles in would let a stale row
+ * shadow the shipped one, and `hydrateTypeRegistry` skips them for the
+ * same reason.
+ *
+ * No space column. A store belongs to one origin, space and account — that
+ * is what `sync_state` records and what `openLocalStore` refuses to open
+ * against a mismatch — so every row here belongs to that space and a
+ * column saying so could only ever disagree with it.
+ *
+ * The whole table is replaced on a refresh rather than merged, because
+ * `GET /types` answers with the whole vocabulary. Merging would keep a
+ * type the server has since deleted, and the client would go on validating
+ * writes against a type nothing will accept.
+ */
+export const cachedTypes = sqliteTable("cached_types", {
+  id: text("id").primaryKey().notNull(),
+  payload: text("payload").notNull(),
+  cachedAt: text("cached_at").notNull(),
+});
+
 export const localSchema = {
   serverItems,
   serverEdges,
@@ -175,4 +210,5 @@ export const localSchema = {
   outbox,
   deadLetters,
   syncState,
+  cachedTypes,
 };

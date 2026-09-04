@@ -46,6 +46,15 @@ export interface MutationDeps {
   outbox: OutboxLayer;
   visible: VisibleLayer;
   now: () => string;
+  /**
+   * Refuse a write the type forbids, before anything is queued.
+   *
+   * A hook rather than a direct call so the store keeps no opinion about
+   * where the type graph comes from — and so a caller that has a reason to
+   * queue an unvalidated write has somewhere to say so, rather than
+   * reaching around the mutation layer entirely.
+   */
+  refuse: (type: string, properties: Record<string, unknown>) => void;
 }
 
 function missing(kind: string, id: string): Error {
@@ -55,10 +64,14 @@ function missing(kind: string, id: string): Error {
 }
 
 export function createMutationLayer(deps: MutationDeps): MutationLayer {
-  const { server, outbox, visible, now } = deps;
+  const { server, outbox, visible, now, refuse } = deps;
 
   return {
     createItem: async (input) => {
+      // Before the id is minted and before anything is written. A refusal
+      // that arrives after the row exists locally has already put a ghost
+      // on screen that has to be taken away again.
+      refuse(input.type, input.properties);
       const id = input.id ?? generateId();
       const at = now();
       const payload: Record<string, unknown> = {
@@ -91,6 +104,19 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
     updateItem: async (id, properties) => {
       const held = await visible.getItem(id);
       if (held === undefined) throw missing("item", id);
+      // Validated as the merged row rather than as the patch, which is
+      // what the server does on this door too: an update carries only what
+      // changed, so validating the patch alone would fail every required
+      // field the edit did not touch and refuse writes the server accepts.
+      //
+      // A shallow merge is the whole of it, because the reading of a null
+      // is already inside the validator both sides call: on an optional
+      // field a null means "leave unset" and validates, so nothing has to
+      // be coerced here to keep this from being stricter than the server.
+      // That direction is the one that must never be wrong — a local
+      // validator stricter than the server refuses work a person would
+      // have kept.
+      refuse(held.type, { ...held.properties, ...properties });
       // The version the row was read at, from server state. Null while the
       // row's own create is still queued: there is no server version to
       // name yet, and the drain resolves one from the create's response.

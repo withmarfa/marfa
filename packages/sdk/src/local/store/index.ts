@@ -16,7 +16,9 @@ import {
   type ServerStateLayer,
 } from "./server-state.js";
 import { createSyncStateLayer, type SyncStateLayer } from "./sync-state.js";
+import { createTypeCacheLayer, type TypeCacheLayer } from "./types-cache.js";
 import { createVisibleLayer, type VisibleLayer } from "./visible.js";
+import { refuseIfTypeForbids } from "../validate.js";
 
 /** Everything the store can do against one executor — the database itself,
  *  or an open transaction. */
@@ -30,6 +32,9 @@ export interface LocalStoreScope {
   deadLetters: DeadLetterLayer;
   /** Cursor and identity. */
   syncState: SyncStateLayer;
+  /** The custom types this store has seen the server hold, as rows. The
+   *  registry they hydrate into is `type-graph.ts`'s business. */
+  cachedTypes: TypeCacheLayer;
   /** Server state with this client's queued mutations replayed over it. */
   visible: VisibleLayer;
   /** The writes an app makes. */
@@ -139,14 +144,39 @@ function readOnly(db: LocalDb, holder: string): LocalDb {
   });
 }
 
-function buildScope(exec: Executor, now: () => string): LocalStoreScope {
+function buildScope(
+  exec: Executor,
+  now: () => string,
+  spaceId: string,
+): LocalStoreScope {
   const server = createServerStateLayer(exec);
   const outbox = createOutboxLayer(exec);
   const deadLetters = createDeadLetterLayer(exec);
   const syncState = createSyncStateLayer(exec);
+  const cachedTypes = createTypeCacheLayer(exec);
   const visible = createVisibleLayer(server, outbox);
-  const mutations = createMutationLayer({ server, outbox, visible, now });
-  return { server, outbox, deadLetters, syncState, visible, mutations };
+  const mutations = createMutationLayer({
+    server,
+    outbox,
+    visible,
+    now,
+    // The graph is process-global and space-scoped, so the space this
+    // store belongs to is the whole of what the mutation layer needs to
+    // know about it. Nothing here reaches a transport: a store opened with
+    // no network validates against what it cached last time.
+    refuse: (type, properties) => {
+      refuseIfTypeForbids(type, properties, spaceId);
+    },
+  });
+  return {
+    server,
+    outbox,
+    deadLetters,
+    syncState,
+    cachedTypes,
+    visible,
+    mutations,
+  };
 }
 
 /**
@@ -217,7 +247,7 @@ export async function openLocalStore(
       );
 
   try {
-    const scope = buildScope(db, now);
+    const scope = buildScope(db, now, options.identity.spaceId);
 
     // Whose store this is, before anything reads or writes it. A store
     // holds one corpus and one cursor; opened as somebody else it would
@@ -244,7 +274,9 @@ export async function openLocalStore(
       transaction: <T>(
         fn: (scope: LocalStoreScope) => Promise<T>,
       ): Promise<T> =>
-        db.transaction(async (tx: LocalTransaction) => fn(buildScope(tx, now))),
+        db.transaction(async (tx: LocalTransaction) =>
+          fn(buildScope(tx, now, options.identity.spaceId)),
+        ),
       close: () => {
         close();
         lock.release();
@@ -264,6 +296,7 @@ export type { EnqueueInput, OutboxLayer } from "./outbox.js";
 export type { DeadLetterLayer } from "./dead-letters.js";
 export type { ServerStateLayer } from "./server-state.js";
 export type { SyncStateLayer } from "./sync-state.js";
+export type { TypeCacheLayer } from "./types-cache.js";
 export type { VisibleLayer } from "./visible.js";
 export { acquireStoreLock } from "./lock.js";
 export type { StoreLock } from "./lock.js";

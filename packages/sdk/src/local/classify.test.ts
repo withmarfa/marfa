@@ -31,8 +31,15 @@ describe("the failure classification", () => {
   });
 
   it("dead-letters a refusal a retry cannot change", () => {
+    // A 400 that is not about properties against a type. A registry
+    // refresh cannot help here: this one says the *server* has no such
+    // type, and reading the server's vocabulary again returns the same
+    // answer.
     expect(
-      classifyFailure(new ValidationError("bad"), "item.create"),
+      classifyFailure(
+        new ValidationError("no such type", undefined, "unknown_type"),
+        "item.create",
+      ),
     ).toMatchObject({ class: "permanent", httpStatus: 400 });
     expect(
       classifyFailure(new NotFoundError("gone"), "item.delete"),
@@ -43,6 +50,26 @@ describe("the failure classification", () => {
         "item.update",
       ),
     ).toMatchObject({ class: "permanent", httpStatus: 403 });
+  });
+
+  it("reads a schema refusal under either code the server answers it with", () => {
+    // One refusal, two codes, and which one arrives depends on the door.
+    // Creating an item raises the storage layer's generic validation code;
+    // updating, upserting, bulk-writing and the strict-mode pre-check raise
+    // the route layer's specific one. A classification taught only one of
+    // them dead-letters a schema refusal from the other door without the
+    // registry refresh the contract owes it — silently, because a dead
+    // letter is what a permanent refusal is supposed to produce.
+    for (const [code, kind] of [
+      ["validation_error", "item.create"],
+      ["invalid_properties", "item.update"],
+      ["invalid_properties", "item.create"],
+      ["validation_error", "item.update"],
+    ] as const) {
+      expect(
+        classifyFailure(new MarfaError(code, "Invalid properties", 400), kind),
+      ).toMatchObject({ class: "schema", code, httpStatus: 400 });
+    }
   });
 
   it("reads a 409 by what was being written", () => {

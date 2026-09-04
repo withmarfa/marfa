@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { unregisterTypeSchema } from "@withmarfa/shared";
 import { MarfaClient } from "../client.js";
 import {
   createKeysModeFixture,
@@ -18,6 +19,7 @@ import {
 import { createOutboxDrain, type OutboxDrain } from "./drain.js";
 import { createOfflineSeam, type OfflineSeam } from "./offline-seam.js";
 import { openLocalStore, type LocalStore } from "./store/index.js";
+import { createTypeGraph } from "./type-graph.js";
 import {
   SINGLE_ACCOUNT,
   SINGLE_SPACE,
@@ -684,5 +686,393 @@ describe("an update whose answer was lost (seam: lost_response, then online)", (
     // update options do not yet carry. Merging makes the outcome right; it
     // does not make the write a no-op.
     expect(onServer.data[0]?.version).toBeGreaterThan(2);
+  });
+});
+
+/**
+ * The local type graph refuses before the queue, and a schema refusal from
+ * the server buys exactly one look at the server's vocabulary.
+ *
+ * These validate in a space of their own rather than in the server's, and
+ * that is what makes the assertions mean anything. `@withmarfa/shared` is
+ * external to the server's bundle, so the in-process server and this file
+ * share one module-level registry: a type registered over `POST /types` is
+ * already in the registry a local validation would read. Hydrating into a
+ * different space is the only way to tell a graph this client fetched from
+ * one the server happened to leave lying about.
+ */
+const CLIENT_SPACE = "01a02000-0000-7000-8000-0000000000c6";
+const RECIPE = "lm.recipe";
+
+const clientIdentity = {
+  origin: "http://localhost",
+  spaceId: CLIENT_SPACE,
+  accountId: SINGLE_ACCOUNT,
+};
+
+describe("a write the type forbids (seam: offline)", () => {
+  let scoped: LocalStore;
+
+  beforeEach(async () => {
+    scoped = await openLocalStore({
+      path: join(dir, "typed.db"),
+      identity: clientIdentity,
+    });
+  });
+
+  afterEach(() => {
+    scoped.close();
+    // The registry outlives this file inside a reused worker, and both
+    // spaces are written during these tests: the client's by hydration,
+    // the server's by its own `POST /types`.
+    unregisterTypeSchema(RECIPE, CLIENT_SPACE);
+    unregisterTypeSchema(RECIPE, null);
+  });
+
+  it("refuses a platform type's required field before anything is queued", async () => {
+    // Offline throughout: whatever refuses this cannot be the server.
+    seam.mode = "offline";
+
+    await expect(
+      scoped.mutations.createItem({
+        type: "core.note",
+        properties: { title: "a note with no body" },
+      }),
+    ).rejects.toThrow(
+      /body: Invalid input: expected string, received undefined/,
+    );
+
+    // The point of rule 13 is the queue, not the message. A write that is
+    // enqueued and refused an hour later reaches a person long after the
+    // edit left their hands, as a dead letter to read rather than a field
+    // to fix.
+    expect(await scoped.outbox.count()).toBe(0);
+    expect(await scoped.deadLetters.list()).toEqual([]);
+    expect(seam.calls).toEqual([]);
+
+    // The control. A refusal that also refused good writes would satisfy
+    // every assertion above.
+    const good = await scoped.mutations.createItem({
+      type: "core.note",
+      properties: { body: "a note with a body" },
+    });
+    expect(await scoped.outbox.count()).toBe(1);
+    expect(await scoped.visible.getItem(good.id)).toBeDefined();
+  });
+
+  it("refuses an edit that would break the row, and leaves the row alone", async () => {
+    seam.mode = "offline";
+    const note = await scoped.mutations.createItem({
+      type: "core.note",
+      properties: { body: "as written" },
+    });
+
+    await expect(
+      scoped.mutations.updateItem(note.id, { body: 42 }),
+    ).rejects.toThrow(/body: Invalid input: expected string, received number/);
+
+    expect(await scoped.outbox.count()).toBe(1);
+    expect(await scoped.visible.getItem(note.id)).toMatchObject({
+      properties: { body: "as written" },
+    });
+
+    // Validated as the merged row rather than as the patch: this edit names
+    // no `body` at all, and the row's own `body` is what satisfies the
+    // type's required field. Refusing it would refuse every partial edit
+    // ever made against a type with a required field.
+    await scoped.mutations.updateItem(note.id, { title: "named later" });
+    expect(await scoped.visible.getItem(note.id)).toMatchObject({
+      properties: { body: "as written", title: "named later" },
+    });
+  });
+
+  it("does not refuse a type it has never heard of", async () => {
+    seam.mode = "offline";
+
+    // A store whose cache is cold — a fresh install opened on a plane, a
+    // space whose custom types have not been read yet — must still be able
+    // to write. The server is the authority on what types exist, and a
+    // client that refused everything it did not recognize would be unusable
+    // exactly where the local engine is supposed to earn its place.
+    const queued = await scoped.mutations.createItem({
+      type: "lm.never_hydrated",
+      properties: { anything: true },
+    });
+    expect(await scoped.visible.getItem(queued.id)).toBeDefined();
+    expect(await scoped.outbox.count()).toBe(1);
+  });
+
+  it("refuses what a hydrated custom type forbids, and did not before hydrating", async () => {
+    await client.types.register({
+      id: RECIPE,
+      version: 1,
+      fields: {
+        title: { type: "string", required: true },
+        servings: { type: "integer" },
+      },
+    });
+
+    // The control, and the reason the assertion after it is about
+    // hydration rather than about the server's own registration sitting in
+    // the shared registry: before the graph is read this space has no such
+    // type, so the write goes to the queue.
+    const beforeHydration = await scoped.mutations.createItem({
+      type: RECIPE,
+      properties: { servings: 4 },
+    });
+    expect(await scoped.visible.getItem(beforeHydration.id)).toBeDefined();
+
+    const graph = createTypeGraph({ store: scoped, client });
+    expect((await graph.refresh()).registered).toContain(RECIPE);
+    expect((await scoped.cachedTypes.list()).map((held) => held.id)).toEqual([
+      RECIPE,
+    ]);
+
+    seam.reset();
+    seam.mode = "offline";
+    await expect(
+      scoped.mutations.createItem({
+        type: RECIPE,
+        properties: { servings: 6 },
+      }),
+    ).rejects.toThrow(
+      /title: Invalid input: expected string, received undefined/,
+    );
+    expect(seam.calls).toEqual([]);
+  });
+
+  it("validates against the cached graph on a later open, with no network", async () => {
+    await client.types.register({
+      id: RECIPE,
+      version: 1,
+      fields: {
+        title: { type: "string", required: true },
+        servings: { type: "integer" },
+      },
+    });
+    await createTypeGraph({ store: scoped, client }).refresh();
+    scoped.close();
+
+    // Out of the registry entirely, so what follows proves the store put it
+    // back rather than finding it still there.
+    unregisterTypeSchema(RECIPE, CLIENT_SPACE);
+    const reopened = await openLocalStore({
+      path: join(dir, "typed.db"),
+      identity: clientIdentity,
+    });
+    try {
+      seam.reset();
+      seam.mode = "offline";
+      const unguarded = await reopened.mutations.createItem({
+        type: RECIPE,
+        properties: { servings: 8 },
+      });
+      expect(await reopened.visible.getItem(unguarded.id)).toBeDefined();
+
+      expect(await createTypeGraph({ store: reopened, client }).load()).toBe(1);
+      await expect(
+        reopened.mutations.createItem({
+          type: RECIPE,
+          properties: { servings: 9 },
+        }),
+      ).rejects.toThrow(/title: Invalid input/);
+      expect(seam.calls).toEqual([]);
+    } finally {
+      reopened.close();
+      // The outer `afterEach` closes `scoped`, which this test already did.
+      // Reopened so that close has something to close.
+      scoped = await openLocalStore({
+        path: join(dir, "typed.db"),
+        identity: clientIdentity,
+      });
+    }
+  });
+});
+
+describe("a schema refusal from the server (seam: online)", () => {
+  let scoped: LocalStore;
+  let graph: ReturnType<typeof createTypeGraph>;
+  let graphed: OutboxDrain;
+
+  beforeEach(async () => {
+    scoped = await openLocalStore({
+      path: join(dir, "refusal.db"),
+      identity: clientIdentity,
+    });
+    graph = createTypeGraph({ store: scoped, client });
+    graphed = createOutboxDrain({
+      store: scoped,
+      client,
+      types: graph,
+      onEvent: (event) => events.push(event),
+    });
+  });
+
+  afterEach(() => {
+    scoped.close();
+    unregisterTypeSchema(RECIPE, CLIENT_SPACE);
+    unregisterTypeSchema(RECIPE, null);
+  });
+
+  it("refreshes the graph once, revalidates, and dead-letters what the fresh graph still forbids", async () => {
+    await client.types.register({
+      id: RECIPE,
+      version: 1,
+      fields: {
+        title: { type: "string", required: true },
+        servings: { type: "integer" },
+      },
+    });
+
+    // Queued because this space's graph has never been read, which is the
+    // stale-cache case rule 5 exists for rather than a contrivance: a type
+    // registered on another device is a type this store has not seen.
+    const doomed = await scoped.mutations.createItem({
+      type: RECIPE,
+      properties: { servings: 4 },
+    });
+
+    seam.reset();
+    const pass = await graphed.drain();
+    expect(pass).toMatchObject({ sent: 0, remaining: 0 });
+
+    // The refusal, then the one read of the server's vocabulary it buys.
+    // No second `POST /items`: the refreshed graph answers the question
+    // the server already answered, so sending again would spend a request
+    // to be told what this client now knows.
+    expect(seam.calls).toEqual(["POST /items", "GET /types"]);
+
+    const refused = await scoped.deadLetters.list();
+    expect(refused).toHaveLength(1);
+    expect(refused[0]).toMatchObject({
+      kind: "item.create",
+      reason: "refused",
+      httpStatus: 400,
+      // The create door's code, which is not the code the update door
+      // gives for the same refusal. A classification that recognized only
+      // the update door's would have treated this as an ordinary 400 and
+      // spent no refresh at all.
+      code: "validation_error",
+    });
+    expect(refused[0]?.message).toMatch(
+      /refreshed type graph refuses it too.*title: Invalid input/s,
+    );
+
+    // The ghost is gone and the graph is cached, so the next write of this
+    // shape is refused before it is queued rather than after.
+    expect(await scoped.visible.getItem(doomed.id)).toBeUndefined();
+    expect((await scoped.cachedTypes.list()).map((held) => held.id)).toEqual([
+      RECIPE,
+    ]);
+    await expect(
+      scoped.mutations.createItem({
+        type: RECIPE,
+        properties: { servings: 5 },
+      }),
+    ).rejects.toThrow(/title: Invalid input/);
+  });
+
+  it("spends the refresh once when the refusal survives it", async () => {
+    // Strict mode: the space refuses properties the type does not declare.
+    // It is the honest shape of a refusal a registry refresh cannot resolve,
+    // because the strictness is not in the type graph at all — it is space
+    // configuration, and reading the vocabulary again returns exactly what
+    // this client already holds. Without the guard the engine would refresh
+    // on every refusal for ever and never settle the write.
+    const space = await client.admin.spaces.create({ name: "strict-space" });
+    const minted = await client.admin.keys.create(space.id, {
+      label: "strict-space-admin",
+      source: "sdk-test-local",
+      role: "space_admin",
+    });
+    const spaceClient = new MarfaClient({
+      url: "http://localhost",
+      apiKey: minted.key,
+      fetch: seam.fetch,
+    });
+    await spaceClient.spaces.setConfig({
+      enforcement: { strict_mode: { types: ["core.note"] } },
+    });
+
+    const spaceStore = await openLocalStore({
+      path: join(dir, "strict.db"),
+      identity: {
+        origin: "http://localhost",
+        spaceId: space.id,
+        accountId: SINGLE_ACCOUNT,
+      },
+    });
+    try {
+      const strictDrain = createOutboxDrain({
+        store: spaceStore,
+        client: spaceClient,
+        types: createTypeGraph({ store: spaceStore, client: spaceClient }),
+        onEvent: (event) => events.push(event),
+      });
+
+      // Accepted locally, and rightly: loose validation is what the
+      // server's own create path applies, and a client stricter than the
+      // server refuses work a person would have kept.
+      await spaceStore.mutations.createItem({
+        type: "core.note",
+        properties: { body: "held", undeclared: true },
+      });
+
+      seam.reset();
+      const first = await strictDrain.drain();
+      expect(first).toMatchObject({ sent: 0, remaining: 1 });
+      expect(seam.calls).toEqual(["POST /items", "GET /types"]);
+      // Kept rather than refused: the graph has been read afresh and the
+      // write still looks valid against it, so it is owed another send.
+      // Nothing about the row has been decided yet.
+      expect(await spaceStore.deadLetters.list()).toEqual([]);
+      expect(
+        (await spaceStore.outbox.list())[0]?.schemaRefreshedAt,
+      ).not.toBeNull();
+
+      seam.reset();
+      const second = await strictDrain.drain();
+      expect(second).toMatchObject({ sent: 0, remaining: 0 });
+      // The send, and no second `GET /types`. One refresh per refusal for
+      // the life of the mutation — a queue of a hundred writes refused on
+      // the same grounds must not ask the server a hundred times for the
+      // vocabulary it has already given.
+      expect(seam.calls).toEqual(["POST /items"]);
+      expect(await spaceStore.deadLetters.list()).toMatchObject([
+        {
+          kind: "item.create",
+          reason: "refused",
+          httpStatus: 400,
+          // The other of the two codes one refusal answers under. This
+          // door raises the route layer's; the create-with-bad-properties
+          // door above raises the storage layer's.
+          code: "invalid_properties",
+        },
+      ]);
+    } finally {
+      spaceStore.close();
+    }
+  });
+
+  it("is final on the first answer when no graph is wired", async () => {
+    await client.types.register({
+      id: RECIPE,
+      version: 1,
+      fields: { title: { type: "string", required: true } },
+    });
+    await scoped.mutations.createItem({
+      type: RECIPE,
+      properties: {},
+    });
+
+    // No `types`, which is a real configuration rather than an oversight:
+    // with no local graph there is nothing that could be stale, so the
+    // server's first answer is the only one there is.
+    const ungraphed = createOutboxDrain({ store: scoped, client });
+    seam.reset();
+    await ungraphed.drain();
+
+    expect(seam.calls).toEqual(["POST /items"]);
+    expect(await scoped.deadLetters.list()).toHaveLength(1);
   });
 });
