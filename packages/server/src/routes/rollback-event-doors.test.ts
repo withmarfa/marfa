@@ -602,10 +602,7 @@ const doors: Door[] = [
   {
     name: "POST /items/{id}/promote copies an integration's row",
     family: "item",
-    transactions: 0,
-    // The edge is the second of two writes and the only thing this door
-    // announces, so it is what the breakage has to reach.
-    breakage: () => breakWrite(ctx.storage.edges, "createRaw"),
+    transactions: 1,
     setup: async () => {
       // Promotion is defined against a row an integration wrote, and no
       // route stamps that source, so the mirror is planted through storage.
@@ -621,23 +618,29 @@ const doors: Door[] = [
       const res = await request(ctx.app, "POST", `/items/${s.item}/promote`, {
         key: ctx.adminKey,
       });
-      return res.status === 201;
+      if (res.status !== 201) return false;
+      // The promoted copy's id, which only the response carries: the door
+      // announces an item event for it as well as the edge, and `setup`
+      // cannot know an id the door has not minted yet. `other` is otherwise
+      // unused by this door.
+      s.other = ((await res.json()) as { item: { id: string } }).item.id;
+      return true;
     },
-    attributable: (h, s) => edgeEventsTouching(h, [s.item]),
+    // Both halves. The item is announced first and the edge behind it, so
+    // guarding one would leave the other free to move inside the
+    // transaction and describe a promotion that rolled back.
+    attributable: (h, s) => [
+      ...itemEventsFor(h, s.other),
+      ...edgeEventsTouching(h, [s.item]),
+    ],
     landed: async (s) =>
       (await ctx.storage.edges.listToTarget(s.item)).data.length > 0,
-    // The edge is the announcement's whole subject and it never exists, so
-    // there is nothing for a subscriber to have been told about. The
-    // promoted item does survive — it is written first, outside any
-    // transaction — which is an atomicity defect in this door rather than an
-    // announcement one, and is not what this file is holding.
     survivesBreakage: false,
   },
   {
     name: "DELETE /items/{id}/purge removes an item and its edges",
     family: "item",
-    transactions: 0,
-    breakage: () => breakWrite(ctx.storage.items, "purge"),
+    transactions: 1,
     setup: async () => {
       const item = await makeNote("to purge");
       const other = await makeNote("pointing at it");
@@ -659,10 +662,7 @@ const doors: Door[] = [
       ...edgeEventsTouching(h, [s.item, s.other]),
     ],
     landed: async (s) => (await ctx.storage.edges.get(s.edge)) === null,
-    // The cascade deletes the edges before it purges the item, with nothing
-    // holding the two together, so a failure at the purge leaves the edges
-    // gone and their holders never told. Recorded, not fixed here.
-    survivesBreakage: true,
+    survivesBreakage: false,
   },
 
   // --- metadata -----------------------------------------------------------
@@ -1209,8 +1209,8 @@ interface PublishingFile {
 /** Files whose publishes are driven by a door in the table above. */
 const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   "routes/items.ts": {
-    sites: 15,
-    why: "create, upsert, patch, the conflicted copy a resolving patch spawns, delete, promote, the two the purge door emits, and the four tag and metadata doors",
+    sites: 16,
+    why: "create, upsert, patch, the conflicted copy a resolving patch spawns, delete, the two promote emits, the two the purge door emits, and the four tag and metadata doors",
   },
   "routes/items-lifecycle.ts": { sites: 2, why: "transition and restore" },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },

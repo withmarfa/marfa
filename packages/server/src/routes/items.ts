@@ -1989,43 +1989,63 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, mirror.type, "write");
     requireEdgePermission(c, "derived-from", "write");
 
-    // The copy is yours: caller-stamped provenance, no natural key (the
-    // upstream record's identity stays with the mirror), library tier.
-    const promoted = await storage.items.create(
-      {
-        type: mirror.type,
-        properties: { ...mirror.properties },
-        tier: "library",
-        ...(itemProvenanceSource(credential) !== undefined
-          ? { source: itemProvenanceSource(credential) }
-          : {}),
-        // Null for a person, which is the ordinary case here and is why the
-        // column is nullable. A runtime credential promoting a mirror does
-        // become the copy's writer, so the copy answers the orphan question
-        // by the same rule as every other row that credential wrote.
-        written_by_connection_id: writerConnectionOf(credential),
+    // One transaction, because the copy without its edge is not a partial
+    // promotion — it is an untraceable duplicate that no query relates to
+    // its origin, and nothing in the space says where it came from. The
+    // caller is told the promotion failed either way, so a copy that
+    // outlives the failure is a row nobody asked for and nobody is looking
+    // for. The wrapper the request already runs inside is not a rollback
+    // boundary: a handler that throws still commits, because the error is
+    // caught inside the composed chain and the transaction closes normally.
+    const { promoted, promotionEdge } = await storage.runInTransaction(
+      async () => {
+        // The copy is yours: caller-stamped provenance, no natural key (the
+        // upstream record's identity stays with the mirror), library tier.
+        const created = await storage.items.create(
+          {
+            type: mirror.type,
+            properties: { ...mirror.properties },
+            tier: "library",
+            ...(itemProvenanceSource(credential) !== undefined
+              ? { source: itemProvenanceSource(credential) }
+              : {}),
+            // Null for a person, which is the ordinary case here and is why
+            // the column is nullable. A runtime credential promoting a
+            // mirror does become the copy's writer, so the copy answers the
+            // orphan question by the same rule as every other row that
+            // credential wrote.
+            written_by_connection_id: writerConnectionOf(credential),
+          },
+          spaceId,
+        );
+        // derived-from is many-to-many with orphan cascade and the source is
+        // a freshly minted node, so the raw write cannot violate cardinality
+        // or create a cycle.
+        const edge = await storage.edges.createRaw(
+          {
+            source_id: created.id,
+            target_id: mirror.id,
+            edge_type: "derived-from",
+            properties: {},
+          },
+          spaceId,
+        );
+        return { promoted: created, promotionEdge: edge };
       },
-      spaceId,
     );
-    // derived-from is many-to-many with orphan cascade and the source is
-    // a freshly minted node, so the raw write cannot violate cardinality
-    // or create a cycle.
-    const promotionEdge = await storage.edges.createRaw(
-      {
-        source_id: promoted.id,
-        target_id: mirror.id,
-        edge_type: "derived-from",
-        properties: {},
-      },
-      spaceId,
-    );
-    // The join back to the mirror is the whole point of a promotion, and
-    // this edge is the only thing announcing it: **this door publishes no
-    // item event for the promoted item**, so a subscriber learns of the
-    // promotion from the edge or not at all. That asymmetry is the
-    // route's, not this line's — adding an `item.created` here would be a
-    // new contract rather than a fix — but a reader who assumes an item
-    // event precedes this one will be wrong.
+    // The item first, then the edge that joins it back to the mirror, which
+    // is the ordering `POST /items` states for the same pair: an edge
+    // arrives behind the item it belongs to, so a subscriber resolving an
+    // edge's endpoints has already been told the new one exists.
+    //
+    // This door used to announce the edge alone, on the reasoning that an
+    // item event here would be a new contract. It is the other way round —
+    // a subscriber was handed an `edge_created` naming a `source_id` it had
+    // never heard of and could not resolve, and a durable client persisting
+    // the stream never learned the row existed at all, short of a full
+    // re-import. The promoted copy is a new row written by an ordinary
+    // write door, and every other such door announces one.
+    await publish({ type: "created", item: promoted, spaceId });
     await publishEdge({
       type: "edge_created",
       edge: promotionEdge,
@@ -3105,15 +3125,32 @@ export function itemRoutes(storage: Storage) {
       );
     }
 
-    const metadata = await storage.metadata.merge(id, tags);
-
-    // Post-merge bounds check (incoming may be small but merge could exceed)
-    if (metadata.tags.length > 100) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 tags per item (including existing tags)",
-      );
+    // Projected before the write, not checked after it. The bound used to
+    // be enforced on the merged result the store had already stored, so a
+    // request over it returned 400 with its tags durably applied: a refusal
+    // that has already changed state is the shape a client cannot recover
+    // from, because it rolls nothing back locally having been told the
+    // write failed. Nothing announced it either, and since a tag write
+    // moves the item's modification time the leaked write also surfaced in
+    // a resuming client's catch-up.
+    //
+    // The projection mirrors `metadata.merge`, which set-unions the
+    // incoming tags into the existing ones — the same prediction the
+    // sibling `addTags` door makes for the same reason. `tags` is optional
+    // on this door and a merge without it changes nothing, so there is
+    // nothing to project when it is absent.
+    if (Array.isArray(tags)) {
+      const existingMeta = await storage.metadata.get(id);
+      const projectedCount = new Set([...existingMeta.tags, ...tags]).size;
+      if (projectedCount > 100) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          "Maximum 100 tags per item (including existing tags)",
+        );
+      }
     }
+
+    const metadata = await storage.metadata.merge(id, tags);
 
     await publish({
       type: "metadata_changed",
@@ -3243,11 +3280,23 @@ export function itemRoutes(storage: Storage) {
     // subscriber holding a graph cannot infer these from the item's own
     // removal: an edge pointing AT the purged item lives on another item,
     // and nothing else tells that item's holder it lost a relationship.
-    const cascaded = [
-      ...(await storage.edges.deleteBySource(id, undefined, spaceId)),
-      ...(await storage.edges.deleteByTarget(id, undefined, spaceId)),
-    ];
-    await storage.items.purge(id, spaceId);
+    //
+    // All three writes in one transaction. Edges are the only record that
+    // two items were related, so losing them while the row survives is not
+    // recoverable from anything the caller holds — and the caller was told
+    // the purge failed, so its own copy still has both. The wrapper the
+    // request already runs inside is not a rollback boundary: a handler
+    // that throws still commits, because the error is caught inside the
+    // composed chain and the transaction closes normally. A door that wants
+    // atomicity has to open its own.
+    const cascaded = await storage.runInTransaction(async () => {
+      const removed = [
+        ...(await storage.edges.deleteBySource(id, undefined, spaceId)),
+        ...(await storage.edges.deleteByTarget(id, undefined, spaceId)),
+      ];
+      await storage.items.purge(id, spaceId);
+      return removed;
+    });
     for (const edge of cascaded) {
       await publishEdge({ type: "edge_deleted", edge, spaceId });
     }
