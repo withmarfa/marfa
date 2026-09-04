@@ -1,0 +1,190 @@
+# Runs the local engine's contract against a server that is actually running.
+#
+# The scenario suite runs against an in-process server on every push, which is
+# the right trade for a suite that gates a merge and is also the reason this
+# exists: an in-process server shares a process, a clock and a filesystem with
+# the client driving it, so what it cannot show is exactly what a deployment
+# breaks on — a reconnect over a real socket, a Postgres event log rather than
+# SQLite, backpressure, and a proxy in front of all of it.
+#
+# **It runs hosted, against a publicly reachable target.** The self-hosted pool
+# can reach more instances than a hosted runner can, and that is the wrong
+# trade here for two reasons: a check that lives on the pool cannot report that
+# the pool is broken, and this suite's assertions are about a server rather
+# than about a machine, so a busy runner turns a healthy instance red. An
+# instance a hosted runner cannot reach is a by-hand target: `pnpm --filter
+# @withmarfa/sdk smoke` with the URL and key in the environment.
+#
+# The name below is half the alert key. Renaming it re-keys every alert this
+# sends, so whatever is open under the old key never resolves. Rename it
+# deliberately or not at all.
+name: Local engine smoke
+
+on:
+  schedule:
+    # Off the hour: the top of the hour is the busiest slot in the account,
+    # and nothing here needs to be the first thing to run.
+    - cron: "37 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    # Skipped when no target is configured, so a fork runs nothing and a
+    # repository that has not set this up is not told it is failing. The
+    # gate is on a variable rather than a secret because `secrets` cannot
+    # be read in an `if` at any level, while an unset `vars` entry is the
+    # empty string.
+    if: vars.LOCAL_ENGINE_SMOKE_URL != ''
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.run.outputs.verdict }}
+      detail: ${{ steps.run.outputs.detail }}
+      fields: ${{ steps.run.outputs.fields }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter "@withmarfa/sdk..." run build
+
+      - name: Run the engine's contract against the target
+        id: run
+        # `always()` is not needed on the step, but the outputs have to be
+        # written on the failing path as well as the passing one, or the
+        # notifier below has nothing to state and reports the check itself
+        # as inconclusive rather than reporting the failure.
+        continue-on-error: true
+        env:
+          MARFA_API_URL: ${{ vars.LOCAL_ENGINE_SMOKE_URL }}
+          MARFA_API_KEY: ${{ secrets.LOCAL_ENGINE_SMOKE_KEY }}
+        run: |
+          set -o pipefail
+          if [ -z "${MARFA_API_KEY:-}" ]; then
+            echo "verdict=inconclusive" >> "$GITHUB_OUTPUT"
+            echo "detail=a target is configured but LOCAL_ENGINE_SMOKE_KEY is not set" >> "$GITHUB_OUTPUT"
+            echo 'fields={}' >> "$GITHUB_OUTPUT"
+            echo "::error::LOCAL_ENGINE_SMOKE_URL is set and LOCAL_ENGINE_SMOKE_KEY is not."
+            exit 1
+          fi
+
+          # The output is read rather than the exit status: the run prints the
+          # server's own SHA, and a verdict that does not say what it tested
+          # against is not worth carrying into an alert.
+          pnpm --filter @withmarfa/sdk run smoke 2>&1 | tee smoke.log
+          STATUS=${PIPESTATUS[0]}
+
+          SHA="$(sed -n 's/^server : //p' smoke.log | head -1)"
+          SUMMARY="$(grep -E '^[0-9]+/[0-9]+ green' smoke.log | head -1)"
+          [ -n "$SHA" ] || SHA=unknown
+          [ -n "$SUMMARY" ] || SUMMARY="the run produced no summary line"
+
+          {
+            echo "fields<<EOF"
+            jq -n --arg s "$SHA" --arg t "${MARFA_API_URL}" \
+              '{"Server SHA":$s,Target:$t}'
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ "$STATUS" -eq 0 ]; then
+            echo "verdict=green" >> "$GITHUB_OUTPUT"
+            echo "detail=$SUMMARY" >> "$GITHUB_OUTPUT"
+          else
+            echo "verdict=failed" >> "$GITHUB_OUTPUT"
+            echo "detail=$SUMMARY" >> "$GITHUB_OUTPUT"
+            exit "$STATUS"
+          fi
+
+  notify:
+    # A scheduled check has no audience, so this job is the finding. Hosted,
+    # like the job above, and for the same reason.
+    needs: [smoke]
+    # Skipped when no alert destination is configured, so a fork sends nothing.
+    if: >-
+      always() && (github.event_name == 'schedule'
+      || (github.event_name == 'workflow_dispatch'
+      && github.ref == 'refs/heads/main'))
+      && vars.ALERT_WEBHOOK_URL != ''
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the finding
+        env:
+          ALERT_URL: ${{ vars.ALERT_WEBHOOK_URL }}
+          ALERT_TOKEN: ${{ secrets.ALERT_WEBHOOK_TOKEN }}
+          VERDICT: ${{ needs.smoke.outputs.verdict }}
+          DETAIL: ${{ needs.smoke.outputs.detail }}
+          EXTRA_FIELDS: ${{ needs.smoke.outputs.fields }}
+          RESULTS: ${{ join(needs.*.result, ',') }}
+          WORKFLOW: ${{ github.workflow }}
+          REPO: ${{ github.repository }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # The verdict comes from the job's outputs rather than its result.
+          # A cancelled or skipped job leaves no outputs at all, and both mean
+          # nothing was established — named here so a reader does not have to
+          # work that out from a fall-through.
+          case ",$RESULTS," in
+            *,cancelled,*|*,skipped,*) VERDICT=inconclusive ;;
+          esac
+
+          if [ -z "${DETAIL:-}" ] && [ "${VERDICT:-}" != green ]; then
+            VERDICT=inconclusive
+          fi
+
+          case "${VERDICT:-}" in
+            green)
+              STATE=resolved
+              TITLE="Local engine smoke: green"
+              ;;
+            failed)
+              STATE=open
+              TITLE="Local engine smoke: $DETAIL"
+              ;;
+            *)
+              # The subject deliberately changes to the check rather than the
+              # engine: nothing here is a statement about the engine.
+              STATE=open
+              TITLE="Local engine smoke: inconclusive"
+              ;;
+          esac
+
+          # The destination may or may not need a credential, so the header is
+          # built rather than hardcoded: an empty token would otherwise be sent
+          # as "Bearer " with nothing after it, which reads as a malformed
+          # request rather than an unauthenticated one.
+          AUTH=()
+          if [ -n "${ALERT_TOKEN:-}" ]; then
+            AUTH=(-H "Authorization: Bearer $ALERT_TOKEN")
+          fi
+
+          EXTRA="${EXTRA_FIELDS:-}"
+          [ -n "$EXTRA" ] || EXTRA='{}'
+
+          BODY="$(
+            jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
+                  --arg u "$RUN_URL" --arg r "[$REPO]($REPO_URL)" --arg j "$RESULTS" \
+                  --argjson x "$EXTRA" \
+              '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
+                fields:({Repository:$r} + $x + {Jobs:$j})}'
+          )" || {
+            echo "::error::The alert body could not be built. Nothing was sent."
+            exit 1
+          }
+          if [ -z "$BODY" ]; then
+            echo "::error::The alert body came out empty. Nothing was sent."
+            exit 1
+          fi
+
+          printf '%s' "$BODY" \
+          | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
+              "${AUTH[@]}" \
+              -H "Content-Type: application/json" --data @- \
+          || echo "Alert POST did not succeed (see above); not failing the run over it."

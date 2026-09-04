@@ -50,16 +50,23 @@
     "build": "tsup",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "smoke": "tsx scripts/live-smoke.ts",
+    "smoke:local": "MARFA_SMOKE_LOCAL=1 tsx scripts/live-smoke.ts"
   },
   "dependencies": {
     "@withmarfa/shared": "workspace:^",
     "oauth4webapi": "^3.8.7"
   },
   "devDependencies": {
+    "@hono/node-server": "^2.1.1",
+    "@libsql/client": "^0.17.4",
+    "@tanstack/db": "^0.8.0",
     "@types/node": "^26.2.0",
     "@withmarfa/server": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "tsup": "^8.5.1",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "@tanstack/db": "^0.8.0",
     "@libsql/client": "^0.17.4",
