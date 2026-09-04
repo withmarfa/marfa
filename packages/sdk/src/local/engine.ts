@@ -2,24 +2,13 @@ import type { MarfaClient } from "../client.js";
 import { createOutboxDrain, type OutboxDrain } from "./drain.js";
 import { createLocalSync, type LocalSync } from "./sync.js";
 import type { LocalStore } from "./store/index.js";
+import { ReadOnlyStoreError } from "./store/index.js";
 import type {
+  ConnectionState,
   LocalEngineEvent,
   LocalEngineEventListener,
   StoreIdentity,
 } from "./types.js";
-
-/** Whether the engine is reaching the server, and how it knows. */
-export type ConnectionState =
-  /** Nothing has been started yet. */
-  | "idle"
-  /** A connection is being opened, or reopened after one dropped. */
-  | "connecting"
-  /** A connection is open and carrying frames. */
-  | "online"
-  /** The last attempt did not reach the server. */
-  | "offline"
-  /** Stopped deliberately. */
-  | "stopped";
 
 /**
  * What the engine will tell an app about itself.
@@ -66,6 +55,8 @@ export interface LocalEngineOptions {
   retryCeiling?: number;
   /** First reconnect backoff in ms. */
   initialRetryMs?: number;
+  /** How long `start` waits for the stream's opening announcement. */
+  connectTimeoutMs?: number;
   now?: () => string;
 }
 
@@ -109,16 +100,26 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
   const emit = (event: LocalEngineEvent): void => {
     // Connection state is derived from what the engine reports rather than
     // tracked beside it, so the two cannot disagree — there is only one
-    // record of what happened and this reads it.
+    // record of what happened and this reads it. The stream is what
+    // reports it, because the stream is the only part continuously in
+    // contact: derived from the drain instead, a queue with nothing in it
+    // never fails to send, so the field reads healthy through an entire
+    // backoff loop.
     if (event.type === "hydration.progress") {
       hydrationItems = event.items;
       hydrationEdges = event.edges;
       totalItems = event.totalItems;
     }
-    if (event.type === "drain.finished" || event.type === "catchup.finished") {
-      connection = "online";
-    }
+    if (event.type === "connection.changed") connection = event.state;
     for (const listener of listeners) listener(event);
+  };
+
+  /** Refuse the two things a handle another engine holds cannot do. */
+  const requireWriter = (): void => {
+    if (store.writer) return;
+    throw new ReadOnlyStoreError(
+      "another engine, so this handle can read but not sync or send",
+    );
   };
 
   const drain: OutboxDrain = createOutboxDrain({
@@ -139,6 +140,9 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
     ...(options.initialRetryMs === undefined
       ? {}
       : { initialRetryMs: options.initialRetryMs }),
+    ...(options.connectTimeoutMs === undefined
+      ? {}
+      : { connectTimeoutMs: options.connectTimeoutMs }),
     ...(options.now === undefined ? {} : { now: options.now }),
   });
 
@@ -146,28 +150,23 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
     store,
 
     start: async () => {
-      connection = "connecting";
-      try {
-        await sync.start();
-        connection = "online";
-      } catch (error) {
-        connection = "offline";
-        throw error;
-      }
+      requireWriter();
+      await sync.start();
     },
 
     stop: () => {
       sync.stop();
-      connection = "stopped";
     },
 
     drain: async () => {
+      requireWriter();
       const result = await drain.drain();
-      // The drain is the one thing here that reports reachability
-      // directly, because it is the only part that gets an answer rather
-      // than a stream that may simply be quiet.
+      // The drain corroborates the stream rather than replacing it: it is
+      // the only part that gets a direct answer, so an offline pass is
+      // evidence even when the stream has not noticed yet. A successful
+      // pass says nothing the stream is not already saying, so it does not
+      // overwrite a state the stream owns.
       if (result.offline) connection = "offline";
-      else if (connection !== "stopped") connection = "online";
     },
 
     status: async () => {

@@ -50,7 +50,6 @@ export type { LocalSync, LocalSyncOptions } from "./sync.js";
 
 export { createLocalEngine } from "./engine.js";
 export type {
-  ConnectionState,
   LocalEngine,
   LocalEngineOptions,
   LocalEngineStatus,
@@ -78,6 +77,7 @@ export type { Verdict } from "./classify.js";
 export { SINGLE_ACCOUNT, SINGLE_SPACE } from "./types.js";
 export type {
   BlockedReason,
+  ConnectionState,
   DeadLetterEntry,
   DeadLetterReason,
   LocalEngineEvent,

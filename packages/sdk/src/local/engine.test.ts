@@ -171,11 +171,17 @@ describe("what the engine reports (seam: offline, then online)", () => {
     await engine.drain();
 
     status = await engine.status();
-    expect(status).toMatchObject({
-      connection: "online",
-      pending: 0,
-      blocked: { needs_review: 1 },
-    });
+    expect(status).toMatchObject({ pending: 0, blocked: { needs_review: 1 } });
+
+    // The drain reached the server, and that still does not make the
+    // engine online. The evidence is asymmetric: a pass that could not
+    // reach the server proves the engine is not reaching it, while a pass
+    // that succeeded says only that one request worked — the stream is
+    // what is continuously in contact, and it has not reconnected. Read
+    // the other way round, this field says "online" through an entire
+    // permanent backoff loop, because a queue with nothing in it never
+    // fails to send.
+    expect(status.connection).toBe("offline");
     expect(status.lastDrainedAt).toBeNull();
   });
 });

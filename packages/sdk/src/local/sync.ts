@@ -4,7 +4,20 @@ import { applyEvent } from "./apply.js";
 import type { OutboxDrain } from "./drain.js";
 import { importAll } from "./import.js";
 import type { LocalStore } from "./store/index.js";
+import { ReadOnlyStoreError } from "./store/index.js";
 import type { LocalEngineEventListener, LocalEngineEvent } from "./types.js";
+
+/**
+ * How long `start` waits for the stream to say where the log stands.
+ *
+ * Matches the transport's own request budget: a connection that has not
+ * opened in that time is not slow, it is not happening. Bounded at all
+ * because the alternative is a promise that never settles — an engine
+ * pointed at a server that is down would sit in `connecting` for the life
+ * of the process, with nothing for the caller to catch and nothing to
+ * render.
+ */
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 
 export interface LocalSyncOptions {
   store: LocalStore;
@@ -24,6 +37,9 @@ export interface LocalSyncOptions {
   /** First reconnect backoff in ms. Lowered by tests; the default is the
    *  subscription's own. */
   initialRetryMs?: number;
+  /** How long `start` waits for the stream's opening announcement before
+   *  giving up. Defaults to {@link DEFAULT_CONNECT_TIMEOUT_MS}. */
+  connectTimeoutMs?: number;
   now?: () => string;
 }
 
@@ -73,7 +89,8 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
   }
 
   let subscription: Subscription | undefined;
-  /** Resolves on the connection that carried the announced cursor. */
+  /** Settles the wait in `start`: resolved by the announcement, rejected
+   *  by a stop or by the connect budget running out. */
   let announceOnce: (() => void) | undefined;
 
   /**
@@ -226,9 +243,23 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       signal: controller.signal,
       onOpen: () => {
         opens += 1;
+        emit({ type: "connection.changed", state: "online" });
         // Not on the first: that connection's gap is what `start`'s own
         // read covers, and running both would read the corpus twice.
         if (opens > 1) detached("catchup", catchUp);
+      },
+      onError: (error: unknown) => {
+        // Reconnecting is right; saying nothing about it is not. Without
+        // this a store that refuses an event stops the stream there — as
+        // it should — and then reconnects into the same refusal for ever,
+        // looking from outside exactly like a quiet server.
+        emit({ type: "connection.changed", state: "offline" });
+        emit({
+          type: "sync.error",
+          scope: "stream",
+          message: error instanceof Error ? error.message : String(error),
+          error,
+        });
       },
       onCursor: (cursor) => {
         // Recorded only when the store has none. A resuming store keeps
@@ -265,17 +296,83 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
 
   return {
     start: async () => {
+      // Following the stream means recording where it has reached, and a
+      // handle another engine is holding cannot write. Refused here, with
+      // the reason, rather than left to surface as a failed cursor write
+      // from somewhere far from the cause.
+      if (!store.writer) {
+        throw new ReadOnlyStoreError(
+          "another engine, so this handle cannot record a cursor",
+        );
+      }
+
+      const budget = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+      let giveUp: ReturnType<typeof setTimeout> | undefined;
+      let stopWaiting: (() => void) | undefined;
+      const announced = new Promise<void>((resolve, reject) => {
+        announceOnce = resolve;
+
+        // The abort signal rather than a callback the stop reaches for,
+        // because a stop can land before this promise exists: `start` is
+        // async and does a read first, so a caller that starts and stops
+        // without awaiting would leave a callback unset and the wait
+        // never settled. The controller is already the one record of
+        // whether this subscription is running, and it is set from the
+        // moment the engine is built.
+        const abandon = (): void => {
+          reject(
+            new Error(
+              "@withmarfa/sdk/local: the engine was stopped before the stream announced its position.",
+            ),
+          );
+        };
+        if (controller.signal.aborted) abandon();
+        else {
+          controller.signal.addEventListener("abort", abandon);
+          stopWaiting = () => {
+            controller.signal.removeEventListener("abort", abandon);
+          };
+        }
+
+        giveUp = setTimeout(() => {
+          // Rejected before the abort, so this reports the budget rather
+          // than the stop that enforces it — a promise settles once, and
+          // aborting first would relabel every timeout as a stop.
+          reject(
+            new Error(
+              `@withmarfa/sdk/local: the engine did not connect within ${String(budget)}ms. ` +
+                `The store is still readable and its queue is intact; start again when the server is reachable.`,
+            ),
+          );
+          emit({ type: "connection.changed", state: "offline" });
+          // The subscription goes with the rejection. Leaving one running
+          // behind a start that failed is a background reconnect loop
+          // nobody asked for and nobody can see.
+          controller.abort();
+        }, budget);
+      });
+
+      // The read comes after the wait is armed, not before. Everything
+      // above is synchronous with the call, so a caller that starts and
+      // stops without awaiting cannot land its stop in a gap where
+      // nothing is listening — and the budget covers the whole of `start`
+      // rather than only the part after a database read.
       const state = await store.syncState.read(store.identity);
       const resume = state?.cursor ?? undefined;
+      if (controller.signal.aborted) await announced;
 
-      const announced = new Promise<void>((resolve) => {
-        announceOnce = resolve;
-      });
+      emit({ type: "connection.changed", state: "connecting" });
       subscription = subscribe(resume);
       // The stream is open and has told us where it stands before a single
       // row is read. Everything the read then misses is something the
       // subscription is already holding.
-      await announced;
+      try {
+        await announced;
+      } finally {
+        clearTimeout(giveUp);
+        stopWaiting?.();
+        announceOnce = undefined;
+      }
 
       if (state?.hydratedAt == null) {
         // What the server says it holds, read once before the walk so the
@@ -312,6 +409,9 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
     stop: () => {
       controller.abort();
       subscription?.close();
+      // The abort above is what settles a `start` still waiting on an
+      // announcement that is now never coming.
+      emit({ type: "connection.changed", state: "stopped" });
     },
 
     get closed() {

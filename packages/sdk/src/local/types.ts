@@ -171,6 +171,15 @@ export type LocalEngineEvent =
       totalItems: number | undefined;
     }
   /**
+   * Whether the engine is reaching the server.
+   *
+   * Reported from the stream, which is the only part that knows: it is
+   * the one thing continuously in contact, and a status derived from the
+   * queue instead reads healthy through an entire backoff loop because a
+   * queue with nothing in it never fails to send.
+   */
+  | { type: "connection.changed"; state: ConnectionState }
+  /**
    * Something the engine started on its own did not finish.
    *
    * The stream's callbacks are synchronous, so the work they begin — a
@@ -218,6 +227,19 @@ export type LocalEngineEvent =
       prunedItems: number;
       prunedEdges: number;
     };
+
+/** Whether the engine is reaching the server, and how it knows. */
+export type ConnectionState =
+  /** Nothing has been started yet. */
+  | "idle"
+  /** A connection is being opened, or reopened after one dropped. */
+  | "connecting"
+  /** A connection is open. */
+  | "online"
+  /** The last attempt did not reach the server. */
+  | "offline"
+  /** Stopped deliberately. */
+  | "stopped";
 
 export type LocalEngineEventListener = (event: LocalEngineEvent) => void;
 
