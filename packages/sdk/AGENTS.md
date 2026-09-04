@@ -14,9 +14,9 @@ TypeScript HTTP client for the Marfa API. Public package, published to npm via O
 
 ## Subpaths with optional peers
 
-`./auth`, `./auth/node`, `./replica`, `./local`, `./electron` and
-`./electron/preload` each have their own tsup entry, so a consumer pays only
-for what it imports. `@tanstack/db`, `@libsql/client`, `drizzle-orm` and
+`./auth`, `./auth/node`, `./replica`, `./local`, `./electron`,
+`./electron/preload` and `./electron/renderer` each have their own tsup entry,
+so a consumer pays only for what it imports. `@tanstack/db`, `@libsql/client`, `drizzle-orm` and
 `electron` are optional peers and externalized in the bundle.
 
 **`electron` is also a devDependency**, which the others are too but for a
@@ -26,13 +26,20 @@ the subpath cannot typecheck without the real declarations. A stand-in has to
 be kept in step with the thing it stands for, and the version that is not is
 the one that compiles while the application does not.
 
-**The two electron entries split for a harder reason than tree-shaking.** A
+**The three electron entries split for a harder reason than tree-shaking.** A
 sandboxed Electron preload is bundled into one CommonJS file and given a
 `require` that resolves `electron` and a few builtins and nothing off disk, so
 it can never load a native addon. An application bundling its preload against
 a combined entry would pull the store — and `@libsql/client` with it — into
 exactly that context. `./electron` is the main-process half;
 `./electron/preload` touches nothing but `contextBridge` and `ipcRenderer`.
+
+`./electron/renderer` is the third because a renderer can import neither of
+the others: one pulls the store, the other imports `electron`. It carries the
+channel names, the bridge's type and `refusalNameOf`, and its chunk imports
+nothing at all. A renderer needs that helper rather than reading `error.name`
+directly, because `contextBridge` discards an Error's own properties on the
+way across, so the class survives only in the message.
 
 ## Surface design
 

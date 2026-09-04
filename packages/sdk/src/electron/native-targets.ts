@@ -153,9 +153,15 @@ export interface NativeTargetReport {
  */
 export class MissingNativeBinaryError extends Error {
   readonly missing: NativeTargetFinding[];
-  constructor(missing: NativeTargetFinding[]) {
+  /**
+   * `checked` is the number of targets asked about, not the number that
+   * failed. Deriving it from `missing` reads "3 of 3" whatever happened,
+   * which is the one number a reader uses to tell "everything is wrong"
+   * from "one platform is".
+   */
+  constructor(missing: NativeTargetFinding[], checked: number) {
     super(
-      `@withmarfa/sdk/electron: this machine's install has no loadable SQLite binding for ${String(missing.length)} of ${String(missing.length)} named targets.\n` +
+      `@withmarfa/sdk/electron: this machine's install has no loadable SQLite binding for ${String(missing.length)} of ${String(checked)} named targets.\n` +
         missing
           .map(
             (finding) =>
@@ -516,5 +522,6 @@ export function verifyNativeTargets(
  */
 export function assertNativeTargets(options: VerifyNativeTargetsOptions): void {
   const report = verifyNativeTargets(options);
-  if (!report.ok) throw new MissingNativeBinaryError(report.missing);
+  if (!report.ok)
+    throw new MissingNativeBinaryError(report.missing, report.findings.length);
 }

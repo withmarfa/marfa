@@ -160,6 +160,29 @@ function tree(
   return join(root, "resolve-from.js");
 }
 
+describe("what the refusal says it counted", () => {
+  it("names how many targets were asked about, not how many failed", () => {
+    // The count was derived from the failures at both ends of the sentence,
+    // so it read "3 of 3" whatever had happened. That is the one number a
+    // reader uses to tell "every platform is broken" from "one is", and it
+    // always said the first.
+    const error = new MissingNativeBinaryError(
+      [
+        {
+          target: "win32-x64-msvc",
+          package: "@libsql/win32-x64-msvc",
+          path: "node_modules/@libsql/win32-x64-msvc",
+          problem: "not installed",
+        },
+      ],
+      5,
+    );
+
+    expect(error.message).toContain("1 of 5 named targets");
+    expect(error.message).not.toContain("1 of 1");
+  });
+});
+
 describe("what libsql ships its native binding as", () => {
   it("knows exactly the packages libsql declares", () => {
     // The registry is a copy of somebody else's list, so it is held to the
