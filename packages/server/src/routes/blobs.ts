@@ -461,8 +461,19 @@ export function blobRoutes(
     return c.json({ hash, mime_type: mimeType, size: data.length }, 201);
   });
 
-  // HEAD /blobs/:hash — check blob existence without downloading
-  // HEAD is not supported by createRoute, use .on() directly
+  // HEAD /blobs/:hash — check blob existence without downloading.
+  // HEAD is not supported by createRoute, so this is mounted with .on().
+  //
+  // **Unreachable as mounted.** A HEAD request is answered by the GET
+  // handler below, not here: a HEAD for a missing blob returns the error
+  // handler's JSON envelope with `X-Error-Code: blob_not_found`, where this
+  // branch would return a bare 404 with neither. Confirmed three ways — a
+  // marker header set here never appears on the wire, removing the GET
+  // handler's own header merge changes what a HEAD response carries, and
+  // the 400 branch behaves the same way. Left exactly as it is rather than
+  // deleted or repaired, because which of those is right is a question for
+  // whoever owns this route; noting it is what stops the next reader
+  // assuming it runs.
   router.on("HEAD", "/:hash", async (c) => {
     const apiKey = requireAuth(c);
 
@@ -471,25 +482,22 @@ export function blobRoutes(
       hash = `sha256:${hash}`;
     }
     if (!isValidBlobHash(hash)) {
-      return withPreparedHeaders(c, new Response(null, { status: 400 }));
+      return new Response(null, { status: 400 });
     }
 
     // Space-scoped lookup. Cross-space probes return 404.
     const record = await resolveBlobForReader(storage, apiKey, hash);
     if (!record) {
-      return withPreparedHeaders(c, new Response(null, { status: 404 }));
+      return new Response(null, { status: 404 });
     }
 
-    return withPreparedHeaders(
-      c,
-      new Response(null, {
-        status: 200,
-        headers: {
-          "Content-Type": record.mime_type,
-          "Content-Length": String(record.size),
-        },
-      }),
-    );
+    return new Response(null, {
+      status: 200,
+      headers: {
+        "Content-Type": record.mime_type,
+        "Content-Length": String(record.size),
+      },
+    });
   });
 
   // GET /blobs/:hash — download blob binary

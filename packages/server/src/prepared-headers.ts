@@ -40,14 +40,18 @@
  * the `GET` that was fixed.
  *
  * Wrapped, because they are the API surface a client calls: the SSE stream,
- * both export shapes, and the blob download — plus two that are part of that
- * surface and undeclared only because the typed-route plumbing cannot carry
- * them. `HEAD /blobs/:hash` is mounted with `.on()` because `createRoute`
- * has no HEAD, and `GET /profile/placeholder/:filename` is a plain route
- * because its body is SVG rather than JSON. Neither is in the specification,
- * so neither contradicts what the document claims — but both are answers to
- * an API request, and a caller correlating one with a log line needs the
- * same id as on any other.
+ * both export shapes, the blob download, and `GET
+ * /profile/placeholder/:filename` — a plain route only because its body is
+ * SVG rather than JSON, undeclared for that reason alone. It is not in the
+ * specification, so it contradicts nothing the document claims, but it is an
+ * answer to an API request and a caller correlating it with a log line needs
+ * the same id as on any other.
+ *
+ * Not wrapped, having been read and found unreachable: the `.on("HEAD",
+ * "/:hash")` handler in `routes/blobs.ts`. A HEAD is answered by the GET
+ * route, so a HEAD response already carries these headers through the merge
+ * above and wrapping that handler would only decorate dead code. The reason
+ * is recorded at the handler itself.
  *
  * Deliberately not wrapped: the browser and protocol surfaces. The auth HTML
  * pages and their redirects, the OAuth discovery documents, the MCP

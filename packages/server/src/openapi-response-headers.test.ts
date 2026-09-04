@@ -330,11 +330,17 @@ describe("the server sends the headers the spec declares", () => {
       await res.body?.cancel();
     });
 
-    it("sends them on a blob HEAD, which is mounted outside the typed routes", async () => {
-      // The sibling three lines above the download in the same file, and the
-      // one the first pass at this fix missed. `createRoute` has no HEAD, so
-      // it is mounted with `.on()` and is invisible to the specification —
-      // which is exactly why nothing else here would have covered it.
+    it("sends them on a blob HEAD, whichever handler answers it", async () => {
+      // A HEAD is a request clients make, so what it carries is worth
+      // pinning — but be precise about what this covers. The file mounts a
+      // separate `.on("HEAD", "/:hash")` handler, and that handler never
+      // runs: a HEAD is answered by the GET route above, which is why this
+      // case reddens when the GET merge is removed and not when the HEAD
+      // branch's is. The dead handler is noted at its definition.
+      //
+      // So this asserts the client-visible behavior and deliberately not
+      // the handler behind it. A test naming a handler it does not reach is
+      // worse than no test: it reads as coverage.
       const res = await request(ctx.app, "HEAD", `/blobs/${blobHash}`, {
         key: ctx.adminKey,
       });
