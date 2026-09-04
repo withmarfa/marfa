@@ -9,7 +9,11 @@ import type { BlobBackend } from "../storage/blob-backend.js";
 import type { AppConfig } from "../config.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OidcProviderHealth } from "../auth/oidc-availability.js";
-import type { PgClient } from "../storage/pg/connection.js";
+import {
+  DEFAULT_POOL_MAX_CONNECTIONS,
+  pgApplicationName,
+  type PgClient,
+} from "../storage/pg/connection.js";
 
 interface ComponentStatus {
   status: "ok" | "degraded" | "down";
@@ -90,6 +94,39 @@ interface DatabaseConnections {
    *  `other` too, which reads as another client's traffic rather than as
    *  a gap here. */
   clients: Record<string, Record<string, number>>;
+  /**
+   * This process's own query pool, which is the one a request competes
+   * for. The figures above are the whole database and answer a different
+   * question: a cluster with plenty of headroom can still be serving a
+   * container whose own three slots are all taken.
+   */
+  pool: PoolUsage;
+}
+
+/** How much of one process's query pool is spoken for. */
+interface PoolUsage {
+  /** `MARFA_DB_POOL_SIZE`, or the built-in default. */
+  size: number;
+  /**
+   * Connections this pool holds in any state but `idle`. A connection
+   * sitting `idle` is in the pool and free; anything else is spoken for,
+   * including one not yet opened, which is why this is counted rather
+   * than subtracted from the number of sockets.
+   */
+  in_use: number;
+  /**
+   * Of those, the ones an open transaction holds without running a query.
+   *
+   * The distinction that separates busy from wedged, and the reason state
+   * is read rather than a bare count. A pool full of `active` backends is
+   * doing work and will hand the slots back. A pool full of these is
+   * holding connections while waiting on something that is not the
+   * database — which is what the RLS request transaction does for the
+   * whole of a handler, including any wait on a third party inside it.
+   */
+  idle_in_transaction: number;
+  /** `size - in_use`. Zero is the pool fully held: the next query queues. */
+  free: number;
 }
 
 /**
@@ -179,8 +216,16 @@ const CONNECTIONS_CACHE_MS = 15_000;
  *  else's traffic. */
 const MARFA_CLIENT = /^marfa(-[a-z]+)?:(app|session|lock|exclusive|consent)$/;
 
+/** A backend sitting in the pool, free to be handed out. */
+const IDLE_STATE = "idle";
+/** `idle in transaction` and `idle in transaction (aborted)`. */
+const IDLE_IN_TRANSACTION_PREFIX = "idle in transaction";
+
 async function readDatabaseConnections(
   client: PgClient,
+  /** This process's own app-pool label, to find its row among the rest. */
+  appClient: string,
+  poolSize: number,
 ): Promise<DatabaseConnections> {
   const rows = (await client`
     select
@@ -217,13 +262,78 @@ async function readDatabaseConnections(
     maxConnections = row.max_connections;
     reserved = row.reserved;
   }
+  const own = clients[appClient] ?? {};
+  let inUse = 0;
+  let idleInTransaction = 0;
+  for (const [state, count] of Object.entries(own)) {
+    if (state === IDLE_STATE) continue;
+    inUse += count;
+    if (state.startsWith(IDLE_IN_TRANSACTION_PREFIX))
+      idleInTransaction += count;
+  }
+
   return {
     total,
     ceiling: Math.max(0, maxConnections - reserved),
     max_connections: maxConnections,
     reserved,
     clients,
+    pool: {
+      size: poolSize,
+      in_use: inUse,
+      idle_in_transaction: idleInTransaction,
+      // Floored, because the reading and the size come from different
+      // places: a pool mid-recycle can briefly hold one more backend than
+      // its size, and a negative free slot count is not a thing to publish.
+      free: Math.max(0, poolSize - inUse),
+    },
   };
+}
+
+/**
+ * Why the database component may report `degraded` while the probe itself
+ * still answers.
+ *
+ * Deciding between `ok` and `degraded` on whether one probe came back inside
+ * its budget makes the first signal of exhaustion arrive after exhaustion. A
+ * pool with one slot left answers exactly as fast as an idle one, so the
+ * endpoint stayed green right up to the point where it could say nothing at
+ * all — by which time every other request had been queuing for minutes. The
+ * counts needed to do better were already being gathered and published; what
+ * was missing was a verdict on them.
+ *
+ * **The verdict is that the pool has no free slot while the probe still
+ * answers.** That is a state strictly between healthy and gone: the database
+ * is reachable and quick, and the next query still has to wait for a slot
+ * rather than getting one. It is also unambiguous in a way a threshold is
+ * not — a pool holding one idle connection, or with one slot it has not
+ * opened, reports `ok`, so nothing here fires on a pool that is merely busy.
+ *
+ * **Why not a threshold, when the ticket's own words are "one slot left".**
+ * The pools here are three and two, so every threshold between "some" and
+ * "none" is one request wide, and a component that degrades on one
+ * concurrent request is one an operator learns to ignore — which this file
+ * already has a rule about. The climb toward the limit is published instead,
+ * as `database_connections.pool`, where a watcher can graph `free` falling
+ * and `idle_in_transaction` rising without the endpoint having to shout.
+ * Reporting a number and degrading on a state is the split this file draws
+ * everywhere else.
+ *
+ * Returns the reason, or `null` when there is nothing to report. A pool with
+ * no size to compare against is not a reading and says nothing either way.
+ */
+function poolExhausted(connections: DatabaseConnections): string | null {
+  const pool = connections.pool;
+  if (pool.size <= 0) return null;
+  if (pool.free > 0) return null;
+  const held =
+    pool.idle_in_transaction > 0
+      ? `, ${String(pool.idle_in_transaction)} of them held by an open transaction rather than running a query`
+      : "";
+  return (
+    `all ${String(pool.size)} pool connections are in use` +
+    `${held} — further queries queue for a slot rather than getting one`
+  );
 }
 
 export function healthRoutes(
@@ -246,6 +356,11 @@ export function healthRoutes(
   // consumer site, matching how the other escape hatches on `Storage` are
   // consumed.
   const pgClient = storage.pgClient as PgClient | undefined;
+  // This process's own app-pool label and size, resolved once. Both are
+  // fixed for the life of the process, and the label has to match what the
+  // pools actually stamp or the reading attributes this server to `other`.
+  const appPoolClient = `${pgApplicationName(config.processRole)}:app`;
+  const appPoolSize = config.dbPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS;
   let connectionsCache: { at: number; value: DatabaseConnections } | null =
     null;
   let deadLettersCache: { at: number; value: number } | null = null;
@@ -273,26 +388,83 @@ export function healthRoutes(
     const components: Record<string, ComponentStatus> = {};
     let overall: "ok" | "degraded" = "ok";
 
+    // How much of the connection ceiling this deployment is holding. Pool
+    // exhaustion has taken this deployment down twice and nothing published
+    // the number that would have shown either coming — the provider offers
+    // no connection-count metric at all, so the server that owns the pools
+    // is the only thing that can say.
+    //
+    // Read before the database component below, because that component's
+    // verdict is taken from these figures. It used to sit after them, when
+    // it was a report nothing consulted.
+    //
+    // The reading is still published as a block of its own carrying no
+    // status, which it keeps: `components.database` is where the verdict
+    // belongs, and two places saying the same thing in different words is
+    // how a watcher ends up keyed on the wrong one.
+    let databaseConnections: DatabaseConnections | undefined;
+    if (pgClient) {
+      const cached = connectionsCache;
+      if (cached && performance.now() - cached.at < CONNECTIONS_CACHE_MS) {
+        databaseConnections = cached.value;
+      } else {
+        try {
+          const outcome = await withBudget(
+            readDatabaseConnections(pgClient, appPoolClient, appPoolSize),
+          );
+          if (outcome !== TIMED_OUT) {
+            databaseConnections = outcome;
+            connectionsCache = { at: performance.now(), value: outcome };
+          }
+        } catch {
+          // Omitted rather than guessed. Whatever stopped this from
+          // answering is what the database component below reports on, and
+          // it falls back to the probe's own answer when there is no
+          // reading to judge.
+        }
+      }
+    }
+
     // Database. `down` and `degraded` are different answers and the
     // difference is the useful part: `down` means the database refused,
     // `degraded` means we could not get an answer inside the budget, which
     // is what pool exhaustion looks like from here.
+    //
+    // Latency rides every branch rather than only the healthy one. A probe
+    // that failed after 1.9 seconds and one that failed in 5ms are different
+    // faults, and the branch that reported no number was the one where the
+    // number said most. On the timed-out branch it is the budget by
+    // construction, which is worth publishing anyway: a watcher graphing this
+    // sees the climb and then the cap rather than a gap.
     const dbStart = performance.now();
     try {
       const outcome = await withBudget(storage.keys.count());
-      components.database =
-        outcome === TIMED_OUT
-          ? {
-              status: "degraded",
-              error: `no answer within ${String(PROBE_TIMEOUT_MS)}ms — the connection pool may be fully held`,
-            }
-          : {
-              status: "ok",
-              latency_ms: Math.round(performance.now() - dbStart),
-            };
+      const latencyMs = Math.round(performance.now() - dbStart);
+      if (outcome === TIMED_OUT) {
+        components.database = {
+          status: "degraded",
+          latency_ms: latencyMs,
+          error: `no answer within ${String(PROBE_TIMEOUT_MS)}ms — the connection pool may be fully held`,
+        };
+      } else {
+        // The probe answered, which used to be the whole question. It is
+        // now the first of two: a pool with no slot left answers just as
+        // quickly as an idle one, so the answer alone cannot tell them
+        // apart. The reading may be up to `CONNECTIONS_CACHE_MS` old, so a
+        // pool that has since cleared can still be reported held for that
+        // long — the alternative is taking a slot per health check to
+        // measure the slots, which is the probe this cache exists to avoid.
+        const exhausted = databaseConnections
+          ? poolExhausted(databaseConnections)
+          : null;
+        components.database = exhausted
+          ? { status: "degraded", latency_ms: latencyMs, error: exhausted }
+          : { status: "ok", latency_ms: latencyMs };
+      }
     } catch (err) {
       components.database = {
         status: "down",
+        latency_ms: Math.round(performance.now() - dbStart),
         error: err instanceof Error ? err.message : "unknown",
       };
     }
@@ -467,31 +639,6 @@ export function healthRoutes(
       rows: scan.values.reduce((sum, v) => sum + v.count, 0),
       scanned: scan.scanned,
     };
-
-    // How much of the connection ceiling this deployment is holding. Not a
-    // component: it carries no status and never degrades the response. Pool
-    // exhaustion has taken this deployment down twice and nothing published
-    // the number that would have shown either coming — the provider offers
-    // no connection-count metric at all, so the server that owns the pools
-    // is the only thing that can say.
-    let databaseConnections: DatabaseConnections | undefined;
-    if (pgClient) {
-      const cached = connectionsCache;
-      if (cached && performance.now() - cached.at < CONNECTIONS_CACHE_MS) {
-        databaseConnections = cached.value;
-      } else {
-        try {
-          const outcome = await withBudget(readDatabaseConnections(pgClient));
-          if (outcome !== TIMED_OUT) {
-            databaseConnections = outcome;
-            connectionsCache = { at: performance.now(), value: outcome };
-          }
-        } catch {
-          // Omitted rather than guessed. The database component above has
-          // already reported whatever stopped this from answering.
-        }
-      }
-    }
 
     const version = await readVersion();
     const placement = readPlacement();

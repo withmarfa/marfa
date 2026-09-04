@@ -51,7 +51,11 @@ import {
 } from "./event-replication.js";
 import { setConsentLockBackend } from "./auth/consent-lock.js";
 import { createPgConsentLockBackend } from "./storage/pg/consent-lock-backend.js";
-import type { PgClient, PgDb } from "./storage/pg/connection.js";
+import {
+  pgApplicationName,
+  type PgClient,
+  type PgDb,
+} from "./storage/pg/connection.js";
 import {
   tryStartLocalIntegrationRuntime,
   loadInTreeRegistrations,
@@ -143,7 +147,7 @@ async function main() {
   // labeled some other way is attributed to nobody. Declared once because
   // two places set it: the pools `createConnection` builds, and the
   // consent lock's own client below.
-  const applicationName = `marfa-${config.processRole ?? "both"}`;
+  const applicationName = pgApplicationName(config.processRole);
 
   let storage: Storage;
   if (config.storageDialect === "pg") {

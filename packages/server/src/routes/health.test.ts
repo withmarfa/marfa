@@ -453,3 +453,225 @@ describe("GET /health unrecognized stored values", () => {
     expect(text).not.toContain("users");
   });
 });
+
+/**
+ * The database component's verdict on pool occupancy.
+ *
+ * Fakes rather than a database, and for a sharper reason than the blocks
+ * above: the property under test is what the endpoint concludes from a set
+ * of figures, so the figures are the input. Driving a real pool to its limit
+ * would test the pool, take a shared machine's Postgres with it, and still
+ * assert nothing beyond the numbers written directly below.
+ */
+interface ActivityRow {
+  client: string;
+  state: string;
+  connections: number;
+  max_connections: number;
+  reserved: number;
+}
+
+interface PoolBody {
+  status: string;
+  components: {
+    database?: { status: string; latency_ms?: number; error?: string };
+  };
+  database_connections?: {
+    pool: {
+      size: number;
+      in_use: number;
+      idle_in_transaction: number;
+      free: number;
+    };
+  };
+}
+
+/**
+ * A storage whose `pgClient` answers the `pg_stat_activity` query with the
+ * given rows. `readDatabaseConnections` calls the client as a tagged
+ * template and reads the result as rows, so a function returning them is the
+ * whole of what it needs.
+ */
+function buildPooledStorage(rows: ActivityRow[]): Storage {
+  return {
+    keys: { count: () => Promise.resolve(3) },
+    pgClient: () => Promise.resolve(rows),
+  } as unknown as Storage;
+}
+
+/**
+ * The production web container's setting. Every number below is only
+ * meaningful against a pool size, and this is the one the deployment runs —
+ * which is also why the distance between healthy and unusable is a couple of
+ * requests rather than a percentage.
+ */
+const WEB_POOL_SIZE = 3;
+
+/** No `processRole`, so the pools label themselves `marfa-both`. */
+const pooledConfig = {
+  authMode: "keys",
+  dbPoolSize: WEB_POOL_SIZE,
+} as AppConfig;
+
+const APP_POOL = "marfa-both:app";
+
+/**
+ * This process's own pool in the given backend states, on a managed tier's
+ * shape: 25 advertised, 3 held back for superusers.
+ */
+function activity(states: Record<string, number>): ActivityRow[] {
+  return Object.entries(states).map(([state, connections]) => ({
+    client: APP_POOL,
+    state,
+    connections,
+    max_connections: 25,
+    reserved: 3,
+  }));
+}
+
+function pooled(states: Record<string, number>) {
+  return healthRoutes(
+    buildPooledStorage(activity(states)),
+    buildBlobs(() => Promise.resolve(false)),
+    pooledConfig,
+  );
+}
+
+describe("GET /health pool occupancy", () => {
+  it("reports how much of the pool is held, not only whether it answered", async () => {
+    const body = (await (
+      await pooled({ active: 1, idle: 2 }).request("/")
+    ).json()) as PoolBody;
+
+    // The climb this endpoint published nothing about before. Two idle
+    // connections are in the pool and free; one is running a query.
+    expect(body.database_connections?.pool).toEqual({
+      size: WEB_POOL_SIZE,
+      in_use: 1,
+      idle_in_transaction: 0,
+      free: 2,
+    });
+    expect(body.components.database?.status).toBe("ok");
+  });
+
+  // The regression the verdict exists for. Before it this response was
+  // byte-for-byte the healthy one: the probe answers either way, so a pool
+  // with nothing left reported exactly what an idle pool reported.
+  it("degrades on a fully held pool while the probe still answers", async () => {
+    const res = await pooled({
+      active: 1,
+      "idle in transaction": 2,
+    }).request("/");
+
+    // Still 200. The container's own liveness probe reads the code, and a
+    // degraded deployment that is serving is still serving.
+    expect(res.status).toBe(200);
+
+    const body = (await res.json()) as PoolBody;
+    expect(body.status).toBe("degraded");
+    expect(body.components.database?.status).toBe("degraded");
+    // The probe itself was fine, which is the whole point of the verdict.
+    expect(typeof body.components.database?.latency_ms).toBe("number");
+    // And it says which kind of full: held by open transactions rather than
+    // busy with queries, which is the difference between wedged and loaded.
+    expect(body.components.database?.error).toContain("all 3");
+    expect(body.components.database?.error).toContain("2 of them");
+    expect(body.database_connections?.pool.free).toBe(0);
+  });
+
+  // Busy is not wedged. Every slot doing work and one still free is the
+  // ordinary shape of a loaded server, and a component that degraded here
+  // would be one an operator learns to ignore.
+  it("stays ok while any slot is free, however busy the rest are", async () => {
+    const body = (await (
+      await pooled({ active: 2, idle: 1 }).request("/")
+    ).json()) as PoolBody;
+
+    expect(body.components.database?.status).toBe("ok");
+    expect(body.status).toBe("ok");
+    expect(body.database_connections?.pool.free).toBe(1);
+  });
+
+  // A slot the pool has not opened is a free slot. The pools open lazily, so
+  // counting sockets rather than states would read an idle deployment as
+  // having no capacity at all.
+  it("counts an unopened slot as free", async () => {
+    const body = (await (
+      await pooled({ active: 1 }).request("/")
+    ).json()) as PoolBody;
+
+    expect(body.database_connections?.pool).toEqual({
+      size: WEB_POOL_SIZE,
+      in_use: 1,
+      idle_in_transaction: 0,
+      free: 2,
+    });
+    expect(body.components.database?.status).toBe("ok");
+  });
+
+  // `idle in transaction (aborted)` is the same connection in the same
+  // predicament, and matching the exact string would have missed it.
+  it("counts an aborted transaction's connection as held", async () => {
+    const body = (await (
+      await pooled({
+        "idle in transaction": 1,
+        "idle in transaction (aborted)": 2,
+      }).request("/")
+    ).json()) as PoolBody;
+
+    expect(body.database_connections?.pool.idle_in_transaction).toBe(3);
+    expect(body.components.database?.status).toBe("degraded");
+  });
+
+  // Another client's traffic is not this pool's occupancy. The whole
+  // database's figures answer a different question and are reported
+  // separately; a cluster under pressure elsewhere must not degrade a
+  // container whose own slots are free.
+  it("ignores connections that are not this process's own pool", async () => {
+    const app = healthRoutes(
+      buildPooledStorage([
+        {
+          client: "other",
+          state: "active",
+          connections: 18,
+          max_connections: 25,
+          reserved: 3,
+        },
+      ]),
+      buildBlobs(() => Promise.resolve(false)),
+      pooledConfig,
+    );
+
+    const body = (await (await app.request("/")).json()) as PoolBody;
+    expect(body.database_connections?.pool.in_use).toBe(0);
+    expect(body.components.database?.status).toBe("ok");
+  });
+
+  // A probe that failed after most of its budget and one that failed at once
+  // are different faults, and the branch that said nothing was the one where
+  // the number said most.
+  it("reports the probe's latency on every branch, not only the healthy one", async () => {
+    const refused = healthRoutes(
+      buildStorage(() => Promise.reject(new Error("connection refused"))),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+    );
+    const timedOut = healthRoutes(
+      buildStorage(() => never),
+      buildBlobs(() => Promise.resolve(false)),
+      config,
+    );
+
+    const down = (await (await refused.request("/")).json()) as PoolBody;
+    const degraded = (await (await timedOut.request("/")).json()) as PoolBody;
+
+    expect(down.components.database?.status).toBe("down");
+    expect(typeof down.components.database?.latency_ms).toBe("number");
+
+    expect(degraded.components.database?.status).toBe("degraded");
+    // Asserted as a number rather than against a duration. What is being
+    // pinned is that the field is there; a bound on the value would be
+    // measuring the machine this runs on.
+    expect(typeof degraded.components.database?.latency_ms).toBe("number");
+  }, 15_000);
+});
