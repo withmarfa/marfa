@@ -671,6 +671,14 @@ export function createApp(
       ((storage.pgStreamClient ?? storage.pgClient) as PgClient | undefined) ??
       null,
   };
+  // `/events` also makes one bounded, request-shaped read before its body
+  // starts — the log head it announces on connect — which takes the
+  // ordinary pool and the ordinary transaction fence rather than a
+  // streaming reservation.
+  const eventsRoutesOptions = {
+    ...streamingRoutesOptions,
+    pgDb: (storage.pgDb as PgDb | undefined) ?? null,
+  };
   app.route(
     "/export",
     exportRoutes(storage, blobBackend, streamingRoutesOptions),
@@ -751,7 +759,7 @@ export function createApp(
   app.route(
     "/events",
     eventRoutes(storage, {
-      ...streamingRoutesOptions,
+      ...eventsRoutesOptions,
       maxViewers: config.sseMaxViewers ?? 0,
     }),
   );

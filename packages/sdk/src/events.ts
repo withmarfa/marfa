@@ -77,8 +77,18 @@ export interface CatchupTooOld {
 }
 
 export interface SubscribeOptions {
-  /** Server-side type filter, matching `GET /events?type=`. */
+  /** Server-side type filter, matching `GET /events?type=`. One type, or
+   *  several separated by commas (up to ten). A named type covers its
+   *  subtree. */
   type?: string;
+  /**
+   * Whether edge events reach this subscription, matching `GET
+   * /events?edges=`. Defaults to `all`, including under a type filter: an
+   * edge carries no item type, and a client reconciling a graph cannot
+   * reconstruct one it was never told about. Pass `none` when the
+   * subscriber only ever looks at items.
+   */
+  edges?: "all" | "none";
   /**
    * Resume cursor. Pass the last `eventId` seen in a previous run to replay
    * everything since. Omit to receive only events from now on.
@@ -97,6 +107,23 @@ export interface SubscribeOptions {
   ) => void | Promise<void>;
   /** Called once per successful connection, including reconnections. */
   onOpen?: () => void;
+  /**
+   * Called once per connection with the log position the stream opened at,
+   * before any event on that connection.
+   *
+   * What it is for: a client that subscribes and then reads a snapshot has
+   * nowhere to resume from until an event happens to arrive, so on a quiet
+   * space it can finish a full read, be interrupted, and come back with no
+   * way to ask what it missed — or to know that it missed anything. This
+   * arrives at connect whether or not anything has happened.
+   *
+   * The subscription adopts it as its own cursor only when it has none
+   * yet. A resuming subscription keeps the cursor it came with until its
+   * own frames advance it, because the announcement names the head of the
+   * log rather than the end of that subscription's backlog, and adopting
+   * it early would discard exactly what the reconnect was for.
+   */
+  onCursor?: (cursor: string) => void;
   /**
    * Called when the cursor is too old to serve. The subscription has stopped.
    * Re-read the state you care about, then subscribe again without a
@@ -222,8 +249,10 @@ export function subscribeToEvents(
 ): Subscription {
   const {
     type,
+    edges,
     onEvent,
     onOpen,
+    onCursor,
     onCatchupTooOld,
     onError,
     reconnect = true,
@@ -269,8 +298,12 @@ export function subscribeToEvents(
         const headers: Record<string, string> = { Accept: "text/event-stream" };
         if (lastEventId !== undefined) headers["Last-Event-ID"] = lastEventId;
 
+        const query: Record<string, string> = {};
+        if (type !== undefined) query.type = type;
+        if (edges !== undefined) query.edges = edges;
+
         const response = await transport.rawRequest("GET", "/events", {
-          query: type === undefined ? undefined : { type },
+          query: Object.keys(query).length === 0 ? undefined : query,
           headers,
           signal: controller.signal,
         });
@@ -285,6 +318,21 @@ export function subscribeToEvents(
 
         const terminal = await readStream(response.body, {
           onFrame: async (frame) => {
+            if (frame.event === "stream_cursor") {
+              const announced = (JSON.parse(frame.data) as { cursor: string })
+                .cursor;
+              onCursor?.(announced);
+              // Adopted only when there is nothing to lose by adopting it.
+              // On a resuming connection the announcement is the head of
+              // the log, which sits past the backlog this connection is
+              // about to replay — taking it here would move the cursor
+              // over events that have not been delivered yet, and a
+              // connection dropped mid-replay would never come back for
+              // them.
+              lastEventId ??= announced;
+              return undefined;
+            }
+
             if (frame.event === "catchup_too_old") {
               // Not acknowledged: the cursor is about to be thrown away, and
               // pointing it at the frame that said it was unusable would be

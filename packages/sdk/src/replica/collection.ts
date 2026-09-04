@@ -170,6 +170,12 @@ export function createReplicaCollection(
         const subscribe = options.subscribe ?? client.events.subscribe;
         const subscription = subscribe({
           type,
+          // A replica of a type holds items, so every edge frame it
+          // received would be discarded below. Under a type filter the
+          // stream sends them by default, deliberately — a client
+          // reconciling a graph needs them — so a replica says it is not
+          // that client rather than paying for frames it drops.
+          edges: "none",
           signal: cancel.signal,
           onEvent: (event) => {
             if (cancel.signal.aborted) return;

@@ -92,6 +92,18 @@ export class SqliteEventLogStore implements EventLogStore {
     return result.rowsAffected;
   }
 
+  async getMaxId(spaceId?: string): Promise<bigint | null> {
+    const result = spaceId
+      ? await this.db.get<{ max: number | bigint | null }>(
+          sql`SELECT MAX(id) AS max FROM event_log WHERE space_id = ${spaceId}`,
+        )
+      : await this.db.get<{ max: number | bigint | null }>(
+          sql`SELECT MAX(id) AS max FROM event_log`,
+        );
+    if (result.max == null) return null;
+    return typeof result.max === "bigint" ? result.max : BigInt(result.max);
+  }
+
   async getMinRetainedId(spaceId?: string): Promise<bigint | null> {
     const result = spaceId
       ? await this.db.get<{ min: number | bigint | null }>(

@@ -97,6 +97,19 @@ export class PgEventLogStore implements EventLogStore {
     return rows.length;
   }
 
+  async getMaxId(spaceId?: string): Promise<bigint | null> {
+    const query = this.db
+      .select({ max: sql<bigint | null>`MAX(${eventLog.id})` })
+      .from(eventLog);
+    const rows = spaceId
+      ? await query.where(eq(eventLog.space_id, spaceId))
+      : await query;
+    const max = rows[0]?.max ?? null;
+    if (max === null) return null;
+    // pg returns aggregate as string; normalize to bigint.
+    return typeof max === "bigint" ? max : BigInt(max);
+  }
+
   async getMinRetainedId(spaceId?: string): Promise<bigint | null> {
     const query = this.db
       .select({ min: sql<bigint | null>`MIN(${eventLog.id})` })

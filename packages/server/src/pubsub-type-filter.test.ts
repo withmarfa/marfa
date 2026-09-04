@@ -45,4 +45,31 @@ describe("the realtime type filter", () => {
     expect(eventMatchesTypeFilter("core.note", undefined)).toBe(true);
     expect(eventMatchesTypeFilter("anything.at.all", undefined)).toBe(true);
   });
+
+  it("reads an empty list as no filter rather than as a filter admitting nothing", () => {
+    // No route builds this today: the parameter parser collapses an empty
+    // list to `undefined` before it ever reaches here. That is exactly why
+    // the case is asserted directly rather than through a request. The
+    // guard inside the function is the second half of a pair, and only one
+    // half is reachable from outside — so deleting the guard as
+    // unreachable-by-any-caller passes every other test in the repository,
+    // and the failure it re-opens is a subscriber silently receiving
+    // nothing forever rather than an error anyone sees.
+    expect(eventMatchesTypeFilter("core.note", [])).toBe(true);
+    expect(eventMatchesTypeFilter("anything.at.all", [])).toBe(true);
+  });
+
+  it("answers a list when any entry answers, subtree included", () => {
+    // The list arm resolves per entry, so the subtree rule above applies to
+    // each one rather than to the list as a whole.
+    expect(
+      eventMatchesTypeFilter("core.note", ["core.note", "core.task"]),
+    ).toBe(true);
+    expect(
+      eventMatchesTypeFilter("core.media.song", ["core.note", "core.media"]),
+    ).toBe(true);
+    expect(
+      eventMatchesTypeFilter("core.contact", ["core.note", "core.task"]),
+    ).toBe(false);
+  });
 });

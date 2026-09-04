@@ -507,9 +507,16 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
 
 /**
  * Publish an edge lifecycle event. Persists via event_log with
- * item_id = null and edge_id = edge.id. Subscribers filter by edge_id
- * (or accept all edge events); the `?type=` SSE filter applies to
- * item events only since edges carry no content type.
+ * item_id = null and edge_id = edge.id.
+ *
+ * A type filter on the SSE stream narrows item events and leaves these
+ * alone: an edge carries no item type, so `?type=` has nothing to say
+ * about one, and a client watching two types needs to hear about the
+ * edges joining them. `?edges=none` is the opt-out, and it is
+ * independent of the type filter. Silencing every edge whenever a type
+ * filter was set is the behavior this replaced, and it left a filtered
+ * client with no way to reconstruct its graph — an edge has no row to
+ * re-read and leaves no tombstone when it goes.
  */
 export async function publishEdge(
   event: EdgeEvent,
@@ -612,7 +619,9 @@ export function emitReplicated(event: PubsubEventWithId): void {
 }
 
 export interface SubscribeOptions {
-  typeFilter?: string;
+  /** One type, or several. A list is answered by any entry matching, so
+   *  the subtree rule above applies per entry rather than to the list. */
+  typeFilter?: string | readonly string[];
   spaceId?: string;
   /**
    * Detaches the underlying emitter listener the moment it aborts.
@@ -658,17 +667,25 @@ export interface SubscribeOptions {
  * parent type silently received nothing — the one read surface in the API
  * resolving a type differently from every other.
  *
+ * A list answers when any entry answers, so the subtree rule is applied
+ * per entry rather than to the list. An empty list is not a filter that
+ * admits nothing — the route never builds one, and reading it as "no
+ * types" would turn a trailing comma into a silent, permanent outage.
+ *
  * Named rather than inlined because it is a rule a test can hold directly;
  * asserting it through the subscription loop means racing that loop's own
  * iterator, which tests the harness more than the rule.
  */
 export function eventMatchesTypeFilter(
   eventType: string,
-  filter: string | undefined,
+  filter: string | readonly string[] | undefined,
   spaceId?: string | null,
 ): boolean {
-  if (!filter) return true;
-  return isSubtypeOf(eventType, filter, spaceId);
+  if (filter === undefined) return true;
+  if (typeof filter === "string")
+    return isSubtypeOf(eventType, filter, spaceId);
+  if (filter.length === 0) return true;
+  return filter.some((entry) => isSubtypeOf(eventType, entry, spaceId));
 }
 
 export async function* subscribe(

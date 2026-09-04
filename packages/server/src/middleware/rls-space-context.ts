@@ -92,6 +92,33 @@ function isStreamingPath(path: string): boolean {
   );
 }
 
+/**
+ * Run `fn` inside a short transaction carrying the space's RLS context.
+ *
+ * The middleware below is the usual caller, wrapping a whole request. It
+ * is exported because `/events` is exempt from that wrapper and still has
+ * one bounded read to make before its body starts streaming — the
+ * event-log head it announces. That read is request-shaped rather than
+ * stream-shaped: one scalar, once, on the ordinary pool, released
+ * immediately. It deliberately does NOT go through
+ * `storage/pg/streaming-rls.ts`, which reserves from a five-connection
+ * pool for the length of a read; putting a per-connect reservation there
+ * would make a fresh viewer contend with every replaying one, and answer
+ * 503 to a client that has nothing to catch up on.
+ */
+export async function withRlsSpaceTransaction<T>(
+  db: PgDb,
+  spaceId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT set_config('marfa.space_id', ${spaceId}, true), set_config('role', 'marfa_app', true)`,
+    );
+    return pgRequestContext.run({ tx }, fn);
+  });
+}
+
 export function rlsSpaceContextMiddleware(options: RlsMiddlewareOptions) {
   return createMiddleware<AppEnv>(async (c, next) => {
     const { rlsEnforce, db } = options;
@@ -122,14 +149,8 @@ export function rlsSpaceContextMiddleware(options: RlsMiddlewareOptions) {
     // role is an ordinary GUC), and nothing reads a result between the
     // two, so issuing them separately was one round trip of pure
     // latency on every space-bounded request.
-    await db.transaction(async (tx) => {
-      await tx.execute(
-        sql`SELECT set_config('marfa.space_id', ${spaceId}, true), set_config('role', 'marfa_app', true)`,
-      );
-
-      await pgRequestContext.run({ tx }, async () => {
-        await next();
-      });
+    await withRlsSpaceTransaction(db, spaceId, async () => {
+      await next();
     });
   });
 }
