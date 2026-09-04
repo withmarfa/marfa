@@ -9,10 +9,15 @@
  * subtype's event while connected and lost the same event on every
  * reconnect.
  *
- * Narrower than the `type` parameter on the list surfaces, which also
- * take a `parent.*` wildcard, match on name prefix and resolve a space's
- * own types. The stream does none of those. What is pinned here is the
- * agreement between its two halves, not agreement with those.
+ * The same parameter as the list surfaces take, resolved by the same rule:
+ * the global wildcard, the named type and everything under its name, and
+ * the types that declare their way there. The stream used to resolve the
+ * declared clause alone, so `*` and `core.*` matched nothing at all while
+ * the same spellings on `/items` matched everything and a subtree — a 200
+ * carrying no events, which is the one filter failure a client cannot tell
+ * from a quiet space. Agreement with the list surface is pinned below by
+ * asking both and comparing, rather than by restating what either should
+ * return.
  *
  * That is the worst shape a delivery gap can take, because the client
  * cannot see it: replay reports no error and closes no stream, so the
@@ -31,9 +36,16 @@
  * observes that.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createTestContext, request, readSse, settle } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  readSse,
+  settle,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -68,6 +80,23 @@ async function createItem(
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { item: { id: string } }).item.id;
+}
+
+/** What `GET /items?type=<spelling>` answers with: the status, and the
+ *  ids when it answered with any. Compared against what the stream does
+ *  with the same spelling. */
+async function listed(
+  spelling: string,
+): Promise<{ status: number; ids: Set<string> }> {
+  const res = await request(
+    ctx.app,
+    "GET",
+    `/items?type=${encodeURIComponent(spelling)}&limit=100`,
+    { key: ctx.adminKey },
+  );
+  if (res.status !== 200) return { status: res.status, ids: new Set() };
+  const body = (await res.json()) as { data: { id: string }[] };
+  return { status: 200, ids: new Set(body.data.map((i) => i.id)) };
 }
 
 describe("GET /events?type= on the live stream", () => {
@@ -190,5 +219,192 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     ).text;
     // With nothing to filter on there is nothing to withhold it for.
     expect(unfilteredText).toContain("ZZtypelessZZ");
+  });
+});
+
+/**
+ * The spellings the parameter takes, answered the way the list surface
+ * answers them.
+ *
+ * Written as a comparison rather than as a list of expected ids: the
+ * defect is one parameter resolving differently across surfaces, and an
+ * assertion that restates what the stream should return can agree with
+ * itself while still disagreeing with `/items`. Asking both and comparing
+ * is the only form that fails when they drift.
+ *
+ * Refusal counts as an answer, and for two of the spellings here it is
+ * the answer. `/items` rejects the global wildcard deliberately —
+ * "everything" is the request with no `type` at all, and a filter
+ * matching every type would slip past the per-type levers keyed off this
+ * parameter — and rejects anything outside the pattern grammar. The
+ * stream used to accept both and then match nothing, which is a 200
+ * carrying no events: the one filter failure a client cannot tell from a
+ * quiet space.
+ */
+describe("GET /events?type= answers the spellings /items answers", () => {
+  /** Registered outside every `core.` namespace and declaring no core
+   *  parent, so it is what `core.*` must exclude. */
+  const OUTSIDE_TYPE = "user.stream_filter_probe";
+
+  let outsideId: string;
+  let songId: string;
+  let anchorId: string;
+  let cursor: bigint;
+
+  beforeAll(async () => {
+    const registered = await request(ctx.app, "POST", "/types", {
+      key: ctx.adminKey,
+      body: {
+        id: OUTSIDE_TYPE,
+        version: 1,
+        fields: { title: { type: "string" } },
+      },
+    });
+    expect([201, 409]).toContain(registered.status);
+
+    // A row for the cursor to point at, taken before the three under
+    // test so the replay walks exactly them.
+    await createItem("core.note", { body: "spelling seed" });
+    cursor = await latestEventId();
+
+    // The anchor goes last and is of a type every accepted spelling
+    // admits, so each read below has a terminator that arrives whether
+    // or not the rows before it did.
+    outsideId = await createItem(OUTSIDE_TYPE, { title: "outside core" });
+    songId = await createItem("core.media.song", { title: "under core" });
+    anchorId = await createItem("core.note", { body: "spelling anchor" });
+  });
+
+  it("delivers what the list returns for a subtree wildcard, replaying", async () => {
+    const res = await request(ctx.app, "GET", "/events?type=core.*", {
+      key: ctx.adminKey,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    const { text } = await readSse(res, {
+      until: (t) => t.includes(anchorId),
+    });
+
+    const { status, ids } = await listed("core.*");
+    expect(status).toBe(200);
+    for (const id of [outsideId, songId, anchorId]) {
+      expect({ id, streamed: text.includes(id) }).toEqual({
+        id,
+        streamed: ids.has(id),
+      });
+    }
+  });
+
+  it("delivers what the list returns for a subtree wildcard, live", async () => {
+    const res = await request(ctx.app, "GET", "/events?type=core.*", {
+      key: ctx.adminKey,
+    });
+    expect(res.status).toBe(200);
+
+    const reading = readSse(res, { until: (t) => t.includes("ZZliveendZZ") });
+    await settle();
+
+    const liveOutside = await createItem(OUTSIDE_TYPE, {
+      title: "ZZliveoutZZ",
+    });
+    const liveSong = await createItem("core.media.song", {
+      title: "ZZlivesongZZ",
+    });
+    const liveAnchor = await createItem("core.note", { body: "ZZliveendZZ" });
+
+    const { text } = await reading;
+    const { status, ids } = await listed("core.*");
+    expect(status).toBe(200);
+    for (const id of [liveOutside, liveSong, liveAnchor]) {
+      expect({ id, streamed: text.includes(id) }).toEqual({
+        id,
+        streamed: ids.has(id),
+      });
+    }
+  });
+
+  for (const spelling of ["*", "core", "core.note/private"] as const) {
+    it(`refuses ${spelling}, as the list does, rather than opening an empty stream`, async () => {
+      const { status } = await listed(spelling);
+      // Stated rather than assumed: this pins the stream to whatever the
+      // list surface does with the spelling, so a change there that made
+      // it acceptable would fail here instead of leaving the two apart.
+      expect(status).toBe(400);
+
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/events?type=${encodeURIComponent(spelling)}`,
+        { key: ctx.adminKey },
+      );
+      expect(res.status).toBe(400);
+    });
+  }
+});
+
+/**
+ * A stored row the replay cannot classify is withheld by both checks that
+ * look at it, not by one of them.
+ *
+ * The type filter and the permission narrowing sit three lines apart and
+ * read the same value. One treated a missing item type as "does not
+ * match" and skipped the row; the other guarded on the value being
+ * present, so a missing one skipped the NARROWING and the row went out
+ * unfiltered. The check that failed open was the permission check, which
+ * is the wrong one of the two to be wrong.
+ *
+ * The gap only opens for a credential the permission maps apply to and a
+ * request carrying no `?type=`: with a type filter the first check
+ * withholds the row anyway, and for an admin nothing decodes the payload
+ * at all. That combination is what this pins.
+ *
+ * Nothing in the tree writes this payload — the publisher always attaches
+ * the item — so it is constructed at the store. Unreachable today is a
+ * property of the current writers rather than of this code, and a
+ * permission check should not be resting on it.
+ */
+describe("the replay's two checks on a row that names no item type", () => {
+  it("does not hand it to a credential the permission maps apply to", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const raw = `marfa_k1_test_member_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: "type-filter member",
+        source: `type-filter-member-${suffix}`,
+        role: "member",
+        type_permissions: { "core.*": "read" },
+        default_tier: "library",
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+    );
+
+    await createItem("core.note", { body: "narrowing seed" });
+    const cursor = await latestEventId();
+
+    await ctx.storage.eventLog.append({
+      event_type: "item.created",
+      payload: JSON.stringify({
+        type: "item.created",
+        note: "ZZunclassifiableZZ",
+      }),
+    });
+    // Written after, so reaching it proves the row above was already
+    // decided rather than merely not yet replayed.
+    const anchorId = await createItem("core.note", {
+      body: "narrowing anchor",
+    });
+
+    const res = await request(ctx.app, "GET", "/events", {
+      key: raw,
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    const { text } = await readSse(res, {
+      until: (t) => t.includes(anchorId),
+    });
+
+    // The narrowing applies, so it applies to the row it cannot classify
+    // too.
+    expect(text).not.toContain("ZZunclassifiableZZ");
   });
 });

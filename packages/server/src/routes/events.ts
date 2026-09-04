@@ -1,5 +1,11 @@
 import { Hono } from "hono";
-import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
+import {
+  ErrorCode,
+  GLOBAL_TYPE_WILDCARD,
+  MarfaError,
+  isValidTypePattern,
+  matchesTypeFilter,
+} from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import {
@@ -133,6 +139,71 @@ type EdgeMode = (typeof EDGE_MODES)[number];
 const REPLAY_DEDUPE_WINDOW = REPLAY_BATCH_SIZE;
 
 /**
+ * The wire name of the frame saying the stream stopped delivering.
+ *
+ * A stream that cannot deliver what it promised says so and closes. It
+ * never carries on in a state the client cannot observe — a truncated
+ * catch-up presented as a complete one, a backlog quietly shortened, half
+ * the event kinds silently stopped — because a client has no way to
+ * notice any of those and every one of them ends with a cursor sitting
+ * past events it never saw.
+ *
+ * **Carries no `id:` field, and that is the whole recovery.** Nothing
+ * after the gap is ever sent, so the last `id:` the client received is
+ * still the last event it actually holds, and everything past it is still
+ * in the log. Reconnecting with that cursor replays the gap. An `id:` here
+ * would move the cursor onto a frame that is not an event and, worse,
+ * would move it over the very rows the reconnect exists to fetch.
+ *
+ * Distinct from `catchup_too_old`, which means the opposite thing about
+ * the same cursor: there the log can no longer serve it and the client
+ * has to re-read state from the API. Here the cursor is good and the
+ * cheap recovery is the correct one, so collapsing the two would send
+ * clients on a full re-import after a transient failure.
+ */
+const STREAM_INCOMPLETE_EVENT = "stream_incomplete";
+
+/**
+ * Why the stream stopped. One frame with a reason rather than a frame per
+ * cause: the client's recovery is the same in every case — reconnect from
+ * the cursor it already holds — so a client learns one frame, and an
+ * operator still reads which of four things happened.
+ */
+type StreamIncompleteReason =
+  /** The `Last-Event-ID` catch-up threw partway through. */
+  | "replay_failed"
+  /** Live frames held during the prologue outgrew {@link MAX_HELD_FRAMES}. */
+  | "backlog_overflow"
+  /** The item subscription failed for a reason that was not the client leaving. */
+  | "live_delivery_failed"
+  /** The edge subscription did, which stops half the stream and nothing else. */
+  | "edge_delivery_failed";
+
+/**
+ * Most live frames one connection holds while its prologue runs.
+ *
+ * **Derived from the dedupe window, because the two bound the same
+ * population from opposite sides.** Both structures exist for exactly the
+ * events published while this connection was announcing its cursor and
+ * replaying its backlog: `REPLAY_DEDUPE_WINDOW` remembers the ids the
+ * replay sent so a held frame is not delivered twice, and this holds the
+ * frames it is checked against. A hold larger than that window keeps
+ * frames the window can no longer vouch for; a hold smaller than it drops
+ * frames the window would have admitted. Equal is the only size at which
+ * the two agree about the same window, so one constant moves both and
+ * neither can be re-tuned alone.
+ *
+ * **What it costs, per holding viewer.** A held frame is a two-field
+ * wrapper around the event object the emitter broadcast — the same object
+ * every other subscriber received, not a copy — so the marginal cost is
+ * the wrappers, and the retained cost is keeping up to this many
+ * already-published events alive until the prologue ends. The viewer
+ * ceiling bounds how many connections can be holding at once; this bounds
+ * what each one accumulates, which is the half nothing bounded before.
+ */
+const MAX_HELD_FRAMES = REPLAY_DEDUPE_WINDOW;
+
+/**
  * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a pool connection reserved ONLY for the replay
  * phase — live delivery flows from the in-process emitter, which the
@@ -226,6 +297,19 @@ function filterReplayPayload(
  * filter; a value that trims to nothing is that rather than a filter
  * admitting nothing, so `?type=` and `?type=,` open an unfiltered stream
  * instead of a silent, permanent one.
+ *
+ * **Each entry is held to the grammar `/items`, `/search` and `/export`
+ * hold this parameter to, and refused on the same terms.** The stream
+ * used to accept any string and then match nothing with it, which is the
+ * worst answer a filter can give: a 200 and an empty stream, which a
+ * client cannot tell from a quiet space. A spelling the list surfaces
+ * reject now reaches the caller as the rejection they already get there
+ * rather than as silence.
+ *
+ * The global wildcard is refused for the reason it is refused on those
+ * surfaces rather than because it is hard to honor: "everything" is this
+ * stream with no `type` at all, and a filter matching every type would
+ * slip past the per-type levers keyed off this parameter.
  */
 function parseTypeFilter(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;
@@ -239,6 +323,14 @@ function parseTypeFilter(raw: string | undefined): string[] | undefined {
       ErrorCode.VALIDATION_ERROR,
       `Too many types in filter (max ${String(MAX_TYPE_FILTER_ENTRIES)})`,
     );
+  }
+  for (const part of parts) {
+    if (part === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(part)) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Invalid type identifier",
+      );
+    }
   }
   return parts;
 }
@@ -453,6 +545,18 @@ export function eventRoutes(
            * exactly right, since nothing has been sent to duplicate.
            */
           const replayedIds = new Set<bigint>();
+          /**
+           * The last `id:` this stream wrote, which is the cursor the
+           * client is holding.
+           *
+           * Recorded because it is what a failure has to hand back: every
+           * termination below stops without sending anything past the
+           * gap, so this stays a faithful resume point and the frame that
+           * announces the failure can say so. Advanced only where an
+           * `id:` is actually written — a frame the filter withheld moved
+           * no client cursor.
+           */
+          let lastSentId: bigint | null = null;
 
           // Subscribe BEFORE replay starts to avoid gaps.
           const events = subscribe({
@@ -493,6 +597,7 @@ export function eventRoutes(
 
             const idField =
               eventId !== undefined ? `id: ${String(eventId)}\n` : "";
+            if (eventId !== undefined) lastSentId = eventId;
             send(
               `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
             );
@@ -514,6 +619,7 @@ export function eventRoutes(
             const sseData = { type: wireType, edge: event.edge };
             const idField =
               eventId !== undefined ? `id: ${String(eventId)}\n` : "";
+            if (eventId !== undefined) lastSentId = eventId;
             send(
               `${idField}event: ${wireType}\ndata: ${JSON.stringify(sseData)}\n\n`,
             );
@@ -541,25 +647,31 @@ export function eventRoutes(
                 }
 
                 if (holding) {
-                  heldFrames.push({ kind: "item", event });
+                  holdFrame({ kind: "item", event });
                 } else {
                   sendEvent(event.eventId, event);
                 }
                 pump();
               })
-              .catch(() => {
-                const wasOpen = !state.closed;
-                cleanup();
-                if (wasOpen) {
-                  try {
-                    controller.close();
-                  } catch {
-                    /* already closed */
-                  }
-                }
+              .catch((err: unknown) => {
+                // Already closed means the client left and `cleanup` has
+                // run: the pending `next()` rejecting with the abort is
+                // the subscription ending, not a failure.
+                if (state.closed) return;
+                console.warn(
+                  `[events] closing the stream: item delivery failed (${String(err)})`,
+                );
+                failStream("live_delivery_failed");
               });
           };
 
+          // The pumps run before the helpers they call are initialized,
+          // which is safe and deliberate: only their `.then`/`.catch`
+          // callbacks reach those, and the first of those cannot run
+          // until this synchronous body has finished. Starting them here
+          // is what attaches the emitter listeners, and moving that later
+          // would widen the window in which a publish has nobody
+          // listening.
           pump();
 
           const edgeIter = subscribeEdges({
@@ -572,14 +684,26 @@ export function eventRoutes(
               .then(({ value: event, done }) => {
                 if (done || state.closed) return;
                 if (holding) {
-                  heldFrames.push({ kind: "edge", event });
+                  holdFrame({ kind: "edge", event });
                 } else {
                   sendEdgeEvent(event.eventId, event);
                 }
                 pumpEdges();
               })
-              .catch(() => {
-                /* cleanup already handles termination */
+              .catch((err: unknown) => {
+                // The same discrimination the item pump makes, and the
+                // same handling, because the alternative is worse here
+                // rather than better: swallowing this ends edge delivery
+                // for the life of the connection while item delivery
+                // carries on, so the client keeps receiving events and
+                // never learns it has stopped hearing about half of
+                // them. Half a stream that looks whole is the one shape
+                // a durable client cannot detect.
+                if (state.closed) return;
+                console.warn(
+                  `[events] closing the stream: edge delivery failed (${String(err)})`,
+                );
+                failStream("edge_delivery_failed");
               });
           };
           pumpEdges();
@@ -603,7 +727,69 @@ export function eventRoutes(
             }
           };
 
-          const replay = async (afterIdResolved: bigint): Promise<void> => {
+          /**
+           * Stop delivering, say so, and close.
+           *
+           * The one exit every "this stream can no longer honour what it
+           * opened with" path takes, so the four causes cannot drift into
+           * four different behaviors — which is how one of them came to
+           * end the connection, one to end half of it silently, and one
+           * to carry on as though nothing had happened.
+           *
+           * The held frames go unsent, and that is the point rather than
+           * a side effect: they sit after the gap, so delivering them
+           * would present an incomplete stream as a complete one and
+           * carry the client's cursor past events it never received.
+           */
+          const failStream = (reason: StreamIncompleteReason): void => {
+            const payload = JSON.stringify({
+              type: STREAM_INCOMPLETE_EVENT,
+              reason,
+              // What to reconnect with. Null when this stream had not
+              // delivered an event yet, which a client reads as "resume
+              // from whatever you already had".
+              cursor: lastSentId === null ? null : String(lastSentId),
+            });
+            send(`event: ${STREAM_INCOMPLETE_EVENT}\ndata: ${payload}\n\n`);
+            heldFrames.length = 0;
+            endStream();
+          };
+
+          /**
+           * Hold one live frame until the prologue is done with it.
+           *
+           * The cap is enforced here rather than at the two call sites,
+           * for the reason the single buffer exists at all: a rule
+           * written twice is a rule one of the two kinds of frame will
+           * eventually stop obeying.
+           *
+           * Overflow ends the stream rather than shedding frames. Dropping
+           * the oldest or the newest would be a silent truncation, which
+           * is the failure this whole file is arranged against; carrying
+           * on live would interleave held frames with replayed ones and
+           * reorder the stream. Ending it leaves everything unsent still
+           * in the log, behind a cursor the client already holds.
+           */
+          const holdFrame = (frame: HeldFrame): void => {
+            if (heldFrames.length >= MAX_HELD_FRAMES) {
+              console.warn(
+                `[events] closing the stream: ${String(MAX_HELD_FRAMES)} live frames were held while the catch-up ran and it has not finished`,
+              );
+              failStream("backlog_overflow");
+              return;
+            }
+            heldFrames.push(frame);
+          };
+
+          /**
+           * Send what the client missed, and answer whether it got all of
+           * it. A false answer means the stream has already been told and
+           * closed, so the caller must not release the hold on top of it.
+           */
+          const replay = async (afterIdResolved: bigint): Promise<boolean> => {
+            // Above the `try` because the catch reports it: a catch-up
+            // that stopped is only actionable if it says where.
+            let lastReplayedId: bigint = afterIdResolved;
             try {
               // Detect stale cursors — clients whose `Last-Event-ID`
               // predates the retention window can't be faithfully caught
@@ -627,11 +813,10 @@ export function eventRoutes(
                     `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
                   );
                   endStream();
-                  return;
+                  return false;
                 }
               }
 
-              let lastReplayedId: bigint = afterIdResolved;
               // The cursor above paginates `getAfter` and advances
               // past every row this loop walks, rows a filter
               // withheld included. That makes it the wrong thing to
@@ -669,8 +854,11 @@ export function eventRoutes(
                 if (batch.length === 0) break;
 
                 for (const event of batch) {
+                  // False rather than true: the client is gone, so this
+                  // catch-up did not finish and there is nobody to
+                  // release a hold for.
                   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
-                  if (state.closed) return;
+                  if (state.closed) return false;
                   const isEdge = event.edge_id !== null;
                   // The same rule the live path applies, and the
                   // reason it is written as one: an edge carries no
@@ -720,44 +908,64 @@ export function eventRoutes(
                       continue;
                     }
                   }
-                  const parsedItem: unknown = parsed?.item;
-                  const itemType =
-                    typeof parsedItem === "object" && parsedItem !== null
-                      ? (parsedItem as { type?: string }).type
-                      : undefined;
-                  // The same function the live path filters on, and
-                  // called here rather than reimplemented: `?type=`
-                  // names a subtree, so a string comparison drops a
-                  // subtype the live stream delivers, and the client
-                  // has no way to see that its view narrowed on
-                  // reconnect. Passed the arguments live passes, so
-                  // the two cannot resolve the same filter
-                  // differently. An item row whose payload carries no
-                  // item type is withheld, as it was before.
+                  // Everything that classifies a row lives inside this
+                  // branch, and `parsed !== null` is exactly the
+                  // condition under which it was decoded — an edge row,
+                  // or a subscriber with neither filter, never reaches
+                  // it and is never asked to name a type it does not
+                  // carry.
                   //
-                  // `!isEdge` is load-bearing rather than a shortcut.
-                  // An edge row carries no item type at all, so without
-                  // it every edge falls into the withheld-for-no-type
-                  // arm and a type filter goes on silencing edges on
-                  // this path alone — the live/replay disagreement this
-                  // file exists to prevent, reintroduced by the guard
-                  // above that used to make the question unreachable.
-                  if (
-                    !isEdge &&
-                    typeParam !== undefined &&
-                    (itemType === undefined ||
-                      !eventMatchesTypeFilter(itemType, typeParam))
-                  ) {
-                    lastReplayedId = event.id;
-                    continue;
-                  }
-                  if (
-                    typeFilter.allowed !== undefined &&
-                    itemType &&
-                    !matchesTypeFilter(itemType, typeFilter)
-                  ) {
-                    lastReplayedId = event.id;
-                    continue;
+                  // **One decision about a row that cannot be
+                  // classified, rather than two checks reaching
+                  // opposite conclusions about it.** These were adjacent
+                  // and disagreed: the type filter withheld an item row
+                  // whose payload named no type, while the permission
+                  // narrowing three lines below guarded on the same
+                  // value being present and so let it through
+                  // unnarrowed. The check that failed open was the
+                  // permission one. Nothing in the tree writes that
+                  // payload today — the publisher always attaches the
+                  // item — but that is a property of the current
+                  // writers rather than of this code, and it is not one
+                  // a permission check should be resting on.
+                  //
+                  // Withheld rather than sent, because a row whose type
+                  // cannot be read cannot be proved readable by this
+                  // subscriber, and a filter that cannot classify a row
+                  // has no business handing it over.
+                  if (parsed !== null) {
+                    const parsedItem: unknown = parsed.item;
+                    const named: unknown =
+                      typeof parsedItem === "object" && parsedItem !== null
+                        ? (parsedItem as { type?: unknown }).type
+                        : undefined;
+                    if (typeof named !== "string") {
+                      lastReplayedId = event.id;
+                      continue;
+                    }
+                    // The same function the live path filters on, and
+                    // called here rather than reimplemented: `?type=`
+                    // names a subtree, so a string comparison drops a
+                    // subtype the live stream delivers, and the client
+                    // has no way to see that its view narrowed on
+                    // reconnect. Passed the arguments live passes —
+                    // the space included, or a space's own subtype
+                    // answers on one path and not the other — so the
+                    // two cannot resolve the same filter differently.
+                    if (
+                      typeParam !== undefined &&
+                      !eventMatchesTypeFilter(named, typeParam, spaceId ?? null)
+                    ) {
+                      lastReplayedId = event.id;
+                      continue;
+                    }
+                    if (
+                      typeFilter.allowed !== undefined &&
+                      !matchesTypeFilter(named, typeFilter)
+                    ) {
+                      lastReplayedId = event.id;
+                      continue;
+                    }
                   }
 
                   const replayWireType = wireEventName(
@@ -774,6 +982,7 @@ export function eventRoutes(
                   // re-serialized, so replaying an edge event, or any
                   // event for a credential that bypasses the maps,
                   // pays nothing.
+                  lastSentId = event.id;
                   send(
                     `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
                   );
@@ -785,12 +994,26 @@ export function eventRoutes(
 
                 if (batch.length < REPLAY_BATCH_SIZE) break;
               }
-            } catch {
-              // A catch-up that failed leaves the client short of
-              // events it will never ask for again, and the held frames
-              // sit after that gap — sending them would present an
-              // incomplete stream as a complete one.
-              heldFrames.length = 0;
+              return true;
+            } catch (err) {
+              // A catch-up that failed leaves the client short of events
+              // it will never ask for again, and it used to fail by
+              // clearing the buffers and carrying on: the connection
+              // stayed open, the announcement said nothing, and the
+              // client had no way to tell a truncated backlog from a
+              // complete one. `isSubtypeOf` throwing on an unresolvable
+              // chain is a reachable way in now that this path resolves
+              // subtypes, and on the live path the same failure already
+              // ends the stream where the client can see it.
+              //
+              // The cursor is named in the log because it is the only
+              // thing that identifies which catch-up stopped and where,
+              // and it is the row after it that has to be looked at.
+              console.warn(
+                `[events] closing the stream: the catch-up could not complete after event ${String(lastReplayedId)} (${String(err)})`,
+              );
+              failStream("replay_failed");
+              return false;
             }
           };
 
@@ -948,14 +1171,16 @@ export function eventRoutes(
           // of the first two it is holding.
           void (async () => {
             if (!(await announceCursor())) return;
+            // True when there was nothing to catch up on, which is the
+            // same thing as a catch-up that finished: either way what
+            // was held is safe to deliver.
+            let caughtUp = true;
             try {
               if (afterId !== null) {
-                const runReplay = (): Promise<void> => replay(afterId);
-                if (rlsCtx) {
-                  await rlsCtx.withInstalledContext(runReplay);
-                } else {
-                  await runReplay();
-                }
+                const runReplay = (): Promise<boolean> => replay(afterId);
+                caughtUp = rlsCtx
+                  ? await rlsCtx.withInstalledContext(runReplay)
+                  : await runReplay();
               }
             } finally {
               // The reservation exists for the replay alone; the live
@@ -964,6 +1189,12 @@ export function eventRoutes(
               // client that disconnects mid-replay.
               releaseRls();
             }
+            // A catch-up that could not finish has already told the
+            // client and closed. Releasing the hold on top of that would
+            // deliver the live frames sitting AFTER the gap, which is
+            // exactly what turns a short catch-up into one the client
+            // cannot see is short.
+            if (!caughtUp) return;
             releaseHold();
           })();
 
