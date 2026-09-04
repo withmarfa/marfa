@@ -701,6 +701,13 @@
       "when": 1788512000000,
       "tag": "0099_idempotency_records",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1788559587654,
+      "tag": "0100_enrichment_queue_by_arrival",
+      "breakpoints": true
     }
   ]
 }

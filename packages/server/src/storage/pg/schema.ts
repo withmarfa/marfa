@@ -186,11 +186,12 @@ export const items = pgTable(
     // Serves the enrichment candidate query, which runs on a timer forever
     // and must cost nothing once a corpus is extracted. Partial: only file
     // items with a blob are ever candidates, ordered as the query reads
-    // them. The candidate query inlines these constants as literals — a
-    // bound parameter defeats the planner's partial-index implication
-    // proof.
+    // them: by when the file arrived, because a queue position any write can
+    // move is not a record of how long anything has waited. The candidate
+    // query inlines these constants as literals — a bound parameter defeats
+    // the planner's partial-index implication proof.
     index("idx_items_enrichment_candidates")
-      .on(table.updated_at)
+      .on(table.created_at)
       .where(
         sql`(type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND (properties->>'blob_ref') IS NOT NULL`,
       ),
