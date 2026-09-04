@@ -68,10 +68,15 @@ import { ItemStateEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
   BulkActionFilterSchema,
+  BulkActionFilterShape,
   BulkActionJobSchema,
   type BulkActionResult as BulkActionResultType,
 } from "../bulk-actions/types.js";
 import { refuseRenamedTimeFilterKeys } from "./_renamed-time-filters.js";
+import {
+  refuseUnknownFilterKeys,
+  UNKNOWN_FILTER_FIELD_NOTE,
+} from "./_unknown-query-keys.js";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -275,7 +280,8 @@ const bulkActionRoute = createRoute({
   tags: ["Items"],
   summary: "Apply a bulk action",
   description:
-    "Applies one action (transition, purge, retag, retier, or property/timestamp update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error.",
+    "Applies one action (transition, purge, retag, retier, or property/timestamp update) to every item matching a filter. Non-dry-run calls queue an async job; `dry_run: true` returns the matched ids without writing, and `max_items` caps the match set before a `bulk_cap_exceeded` error.\n\n" +
+    UNKNOWN_FILTER_FIELD_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -1248,6 +1254,14 @@ export function bulkRoutes(storage: Storage) {
       refuseRenamedTimeFilterKeys((rawBody as { filter?: unknown }).filter, {
         catchUpFilter: "none",
       });
+      // And then the general case, of which the two retired names are one
+      // instance. Unconditional on this door regardless of what the read
+      // doors do: a dropped filter field here is not a narrower match set
+      // but the whole space, and under the match cap it succeeds.
+      refuseUnknownFilterKeys(
+        (rawBody as { filter?: unknown }).filter,
+        BulkActionFilterShape,
+      );
     }
 
     // Validate filter fields up-front so a caller with a bad filter gets

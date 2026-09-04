@@ -23,6 +23,10 @@ import {
 import { filterMetadataForCaller } from "./util.js";
 import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
+import {
+  refuseUnknownQueryParams,
+  UNKNOWN_PARAM_NOTE,
+} from "./_unknown-query-keys.js";
 
 // Search responses use loose() so the FTS5 ranker's extra columns
 // (e.g. relevance internals) don't trip strict validation. The
@@ -43,8 +47,7 @@ const searchRoute = createRoute({
   path: "/",
   tags: ["Search"],
   summary: "Search items",
-  description:
-    "Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` — including its two time bounds, which read the item's own time — and uses `limit` / `offset` paging rather than a cursor; absolute scores aren't stable across index rebuilds.",
+  description: `Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as \`GET /items\` — including its two time bounds, which read the item's own time — and uses \`limit\` / \`offset\` paging rather than a cursor; absolute scores aren't stable across index rebuilds. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -147,6 +150,7 @@ export function searchRoutes(storage: Storage) {
     // sending a caller to a parameter it would strip is that same failure
     // reached through the refusal.
     refuseRenamedTimeQueryParams(c.req.raw.url, { catchUpFilter: "none" });
+    refuseUnknownQueryParams(c.req.raw.url, searchRoute.request.query);
 
     const {
       q,

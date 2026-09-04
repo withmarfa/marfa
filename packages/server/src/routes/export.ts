@@ -29,6 +29,10 @@ import {
 import type { StreamRlsContext } from "../storage/pg/streaming-rls.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
+import {
+  refuseUnknownQueryParams,
+  UNKNOWN_PARAM_NOTE,
+} from "./_unknown-query-keys.js";
 
 /**
  * Acquire the stream's RLS connection, mapping pool exhaustion to the
@@ -136,7 +140,8 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export space data",
   description:
-    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's custom type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry.",
+    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's custom type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry. " +
+    UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -230,6 +235,10 @@ export function exportRoutes(
     // following that advice would land back in the silence the refusal is
     // here to prevent.
     refuseRenamedTimeQueryParams(c.req.raw.url, { catchUpFilter: "none" });
+    // One check for both output formats: `format=archive` is handled by a
+    // separate function further down but arrives through this handler and
+    // shares this query schema, so refusing here covers both.
+    refuseUnknownQueryParams(c.req.raw.url, exportRoute.request.query);
 
     const query = c.req.valid("query");
 

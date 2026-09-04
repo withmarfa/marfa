@@ -25,19 +25,20 @@ import { ItemStateEnum } from "../routes/_schemas.js";
  * lets the substrate hold the shape without depending on the published
  * client package, which is why the copy existed at all.
  */
-export const BulkActionFilterSchema = z
-  .object({
-    type: z.string().optional(),
-    state: ItemStateEnum.optional(),
-    source: z.string().optional(),
-    tier: z.enum(["library", "feed"]).optional(),
-    tags: z.array(z.string()).optional(),
-    timestamp_after: z.string().optional(),
-    timestamp_before: z.string().optional(),
-    /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
-    filter: z.string().optional(),
-  })
-  .optional();
+export const BulkActionFilterShape = z.object({
+  type: z.string().optional(),
+  state: ItemStateEnum.optional(),
+  source: z.string().optional(),
+  tier: z.enum(["library", "feed"]).optional(),
+  tags: z.array(z.string()).optional(),
+  timestamp_after: z.string().optional(),
+  timestamp_before: z.string().optional(),
+  /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
+  filter: z.string().optional(),
+});
+
+/** The same shape as the request takes it: absent means "every item". */
+export const BulkActionFilterSchema = BulkActionFilterShape.optional();
 
 const BulkActionBaseSchema = z.object({
   filter: BulkActionFilterSchema,

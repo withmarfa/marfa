@@ -94,6 +94,21 @@ import { filterMetadataForCaller } from "./util.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
+import {
+  refuseUnknownQueryParams,
+  UNKNOWN_PARAM_NOTE,
+} from "./_unknown-query-keys.js";
+
+/**
+ * The `?edge[<type>]=<id>` / `?backref[<type>]=<id>` shorthand keys.
+ *
+ * Declared once because two things read it now: the clause builder that
+ * compiles a match into the filter grammar, and the unknown-parameter
+ * refusal, which would otherwise reject every one of them. Two copies of
+ * this pattern would mean a working shorthand starting to answer 400 the
+ * moment one of them changed.
+ */
+const EDGE_SHORTHAND_KEY = /^(edge|backref)\[([^\]]+)\]$/;
 
 // ---------------------------------------------------------------------------
 // Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
@@ -451,8 +466,7 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description:
-    "Returns a paginated list of items in the space, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1.",
+  description: `Returns a paginated list of items in the space, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -2114,6 +2128,13 @@ export function itemRoutes(storage: Storage) {
     refuseRenamedTimeQueryParams(c.req.raw.url, {
       catchUpFilter: "updated_after",
     });
+    // After the renamed-name refusal, so a retired name still gets the
+    // message that tells a caller what replaced it rather than the
+    // general one. The edge shorthands are allowed by pattern: the type
+    // is part of the key, so no schema can enumerate them.
+    refuseUnknownQueryParams(c.req.raw.url, listItemsRoute.request.query, {
+      allow: [EDGE_SHORTHAND_KEY],
+    });
 
     const query = c.req.valid("query");
 
@@ -2161,7 +2182,7 @@ export function itemRoutes(storage: Storage) {
     // ?edge[X]=Y and ?backref[X]=Y shorthands are AND-composed with any existing filter= param.
     const rawQuery = new URL(c.req.raw.url).searchParams;
     const edgeClauses: string[] = [];
-    const shorthandRe = /^(edge|backref)\[([^\]]+)\]$/;
+    const shorthandRe = EDGE_SHORTHAND_KEY;
     for (const [key, val] of rawQuery.entries()) {
       // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- using String#match for boolean shape check; no captures needed
       if (key.match(shorthandRe) && val) {
