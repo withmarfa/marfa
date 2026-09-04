@@ -10,14 +10,14 @@
     "exports": 9
   },
   "@withmarfa/sdk": {
-    "version": "3.3.0",
-    "hash": "8ee768e550bb9a995fb65e6151679b38478f2c8535105ca04ff6961abdda4fae",
+    "version": "4.0.0",
+    "hash": "06b931c3186971b17a45eda4300fef0489a92481fac6c9efecf906880aa94576",
     "exports": 133
   },
   "@withmarfa/shared": {
     "version": "6.18.0",
-    "hash": "80ecbf807ea4f7d3e19cfd8a71d112f173543fdaded0a5826eb8bba241d684cd",
-    "exports": 267
+    "hash": "ec24f3c786bf20f39c14ff664c090954b003e4b0da507c4dab95315de14bc4e3",
+    "exports": 268
   },
   "@withmarfa/webhooks": {
     "version": "1.1.1",
