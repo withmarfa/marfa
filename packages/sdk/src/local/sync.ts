@@ -81,21 +81,31 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
    *
    * The subscription's callbacks are synchronous, so a cursor write or a
    * catch-up read can only be started from one, never awaited by it. That
-   * leaves a promise nobody holds, and a stopped engine is exactly when
-   * one of those fails: the store closes underneath work that was already
-   * in flight, and the rejection surfaces as an unhandled one that names
-   * a closed client rather than anything a reader can act on.
+   * leaves a promise nobody holds, and there are two quite different ways
+   * one of them ends badly.
    *
-   * So a failure after the engine has been stopped is a shutdown and is
-   * dropped, and a failure while it is still running is real and is left
-   * to surface. The check is on arrival rather than at the start, because
-   * the stop is what happens in between.
+   * A failure after the engine has been stopped is a shutdown: the store
+   * closed underneath work already in flight, and reporting it would name
+   * a closed client rather than anything a reader can act on. Dropped.
+   *
+   * A failure while the engine is still running is real, and it is
+   * reported rather than thrown. Rethrowing here — into a microtask,
+   * because there is nowhere else for it to go — reaches Node as an
+   * uncaught exception and ends the host process, so an ordinary bad read
+   * on a background reconnect would take an application down with it.
+   * That is a worse answer than telling the app the read failed.
    */
-  const detached = (work: () => Promise<void>): void => {
+  const detached = (
+    scope: "stream" | "cursor" | "catchup" | "reimport",
+    work: () => Promise<void>,
+  ): void => {
     void work().catch((error: unknown) => {
       if (controller.signal.aborted) return;
-      queueMicrotask(() => {
-        throw error;
+      emit({
+        type: "sync.error",
+        scope,
+        message: error instanceof Error ? error.message : String(error),
+        error,
       });
     });
   };
@@ -164,8 +174,32 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
    * longer has — the only way a removal from outside the retention window
    * ever reaches a client that was away for it.
    */
-  const reimport = async (): Promise<void> => {
+  const reimport = async (): Promise<boolean> => {
     if (drain !== undefined) await drain.drain();
+
+    // A drain does not promise an empty queue. It returns with rows still
+    // pending whenever it could not reach the server, or whenever
+    // something ahead of them was held back — so checking is the
+    // difference between reporting that the re-import could not run and
+    // throwing out of work nobody is holding.
+    const stillPending = (await store.outbox.list()).filter(
+      (entry) => entry.state === "pending",
+    ).length;
+    if (stillPending > 0) {
+      emit({
+        type: "sync.error",
+        scope: "reimport",
+        message:
+          `Cannot re-import while ${String(stillPending)} write(s) are still waiting to be sent. ` +
+          `The cursor has aged out of the event log, so this store needs a full read before it can follow ` +
+          `the stream again: drain the queue and start the engine again.`,
+        error: undefined,
+      });
+      // The cursor is left where it was. Clearing it here would lose the
+      // one record that a re-import is still owed.
+      return false;
+    }
+
     // The cursor is worthless and saying so is what stops a later start
     // resuming from it. Cleared before the read rather than after, because
     // a crash mid-read must not leave a cursor that claims a completed
@@ -179,6 +213,7 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       prunedItems: result.prunedItems,
       prunedEdges: result.prunedEdges,
     });
+    return true;
   };
 
   const subscribe = (resume: string | undefined): Subscription => {
@@ -193,14 +228,14 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
         opens += 1;
         // Not on the first: that connection's gap is what `start`'s own
         // read covers, and running both would read the corpus twice.
-        if (opens > 1) detached(catchUp);
+        if (opens > 1) detached("catchup", catchUp);
       },
       onCursor: (cursor) => {
         // Recorded only when the store has none. A resuming store keeps
         // the cursor it came with: the announcement names the head of the
         // log, which sits past the backlog about to be replayed, so taking
         // it here would step over events not yet delivered.
-        detached(async () => {
+        detached("cursor", async () => {
           const row = await store.syncState.read(store.identity);
           if (row?.cursor == null) {
             await store.syncState.setCursor(store.identity, cursor);
@@ -215,10 +250,13 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
         await applyEvent(store, event, eventId);
       },
       onCatchupTooOld: () => {
-        detached(async () => {
-          await reimport();
-          // Resubscribe from nothing: the new connection announces a
-          // cursor, and that is what the re-imported state resumes from.
+        detached("reimport", async () => {
+          // Only on a re-import that actually happened. Resubscribing
+          // after one that did not would adopt the new connection's
+          // announcement as this store's cursor and carry on live, with
+          // the rows the re-import would have pruned still held and
+          // nothing left that could ever notice them.
+          if (!(await reimport())) return;
           if (!controller.signal.aborted) subscription = subscribe(undefined);
         });
       },

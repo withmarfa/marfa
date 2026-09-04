@@ -214,6 +214,64 @@ describe("a cursor the log can no longer serve (seam: online)", () => {
   });
 });
 
+describe("an aged-out cursor over a queue a drain cannot clear (seam: online)", () => {
+  it("says the re-import could not run instead of ending the process", async () => {
+    await bringUp(true);
+    await openStore();
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "on the server" },
+    });
+    await startSync({ initialRetryMs: 5 }).start();
+    for (const sync of running.splice(0)) sync.stop();
+
+    // A drain does not promise an empty queue, and this is the ordinary
+    // way it does not: a create parked for review, and an edit to that
+    // same row queued behind it. The edit stays pending however many
+    // passes run, because the row it names has unsent work in front of it.
+    const held = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "parked" },
+    });
+    const parked = (await store.outbox.list())[0];
+    await store.outbox.block(
+      parked!.seq,
+      "needs_review",
+      "2026-09-01T00:00:00.000Z",
+    );
+    await store.mutations.updateItem(held.id, { title: "waits behind it" });
+
+    // And a cursor the log will refuse, so the engine reaches for the one
+    // read it must not run over a pending write: the prune measures the
+    // corpus against a listing this edit's row is absent from.
+    await store.syncState.setCursor(identity, "0");
+
+    events.length = 0;
+    startSync({ initialRetryMs: 5 });
+    await running[running.length - 1]?.start();
+    await reports(
+      (event) => event.type === "sync.error" && event.scope === "reimport",
+    );
+
+    // Reported, not thrown. The work runs detached from anything that
+    // could hold its promise, so throwing reaches Node as an uncaught
+    // exception and ends the host process — an ordinary offline
+    // reconnect taking an application down with it.
+    const failure = events.find((e) => e.type === "sync.error");
+    expect(failure).toMatchObject({ scope: "reimport" });
+    expect(failure?.type === "sync.error" && failure.message).toContain(
+      "waiting to be sent",
+    );
+
+    // The cursor is left alone, because it is the only record that this
+    // store still owes a full read. Clearing it and carrying on live would
+    // leave the rows a prune should have taken with nothing able to
+    // notice them again.
+    expect((await store.syncState.read(identity))?.cursor).toBe("0");
+    expect(await store.outbox.count()).toBe(2);
+  });
+});
+
 describe("a restart after events have been seen (seam: online)", () => {
   it("comes back at the cursor the stream last accounted for", async () => {
     await bringUp(true);

@@ -74,14 +74,26 @@ export class PendingWritesError extends Error {
 export async function importAll(options: ImportOptions): Promise<ImportResult> {
   const { store, client, prune, updatedAfter, onProgress } = options;
 
-  // Rows a drain could still send. A blocked one is not among them: it is
-  // not going anywhere on its own, and refusing to import while anything
-  // at all is queued would strand a client whose queue holds one write
-  // parked for review — permanently, since the import is what would let it
-  // rebase. The prune protects those rows instead.
   const queued = await store.outbox.list();
-  const pending = queued.filter((entry) => entry.state === "pending");
-  if (pending.length > 0) throw new PendingWritesError(pending.length);
+
+  // The refusal belongs to the prune and to nothing else.
+  //
+  // What it guards is measuring the corpus against a listing: a row a
+  // pending write is about to create is absent from that listing, and
+  // sweeping against it would delete the write. A read that does not
+  // prune only ever writes forward, through the same version comparison
+  // the stream uses, so it cannot touch a queued row at all — and
+  // refusing there would take out the catch-up that runs on every
+  // reconnect, which is exactly when a queue is least likely to be empty.
+  //
+  // A blocked row is not pending: it is not going anywhere on its own, and
+  // refusing on one would strand the client that most needs to re-import,
+  // permanently, since the import is what would let it rebase. The prune's
+  // own protection covers those.
+  if (prune) {
+    const pending = queued.filter((entry) => entry.state === "pending");
+    if (pending.length > 0) throw new PendingWritesError(pending.length);
+  }
 
   // Captured before the read, and this is the whole reason the prune is
   // safe to run against a live stream. A row the stream delivers while the

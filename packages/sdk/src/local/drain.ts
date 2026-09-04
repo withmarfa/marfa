@@ -320,10 +320,21 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
 
       for (const entry of queued) {
         if (gone.has(entry.seq)) continue;
-        const ids = heldIds(entry);
-        const held = ids.some((id) => waiting.has(id));
+        // What this mutation waits on, and what it makes others wait on,
+        // are deliberately not the same set. An edge waits behind either
+        // endpoint's unsent create, so both are tested. But only the row
+        // this mutation is *about* is held back by it — adding the
+        // endpoints would make an item wait behind an edge, and an item
+        // parked behind a blocked edge is never sent, never blocked and
+        // never dead-lettered: it is skipped on every pass, counted as
+        // pending with no reason attached, and clears only when somebody
+        // acts on an edge that has nothing to do with it.
+        //
+        // Transitivity still holds, because each later mutation is tested
+        // with its own `heldIds` against everything already waiting.
+        const held = heldIds(entry).some((id) => waiting.has(id));
         if (entry.state === "blocked" || held) {
-          for (const id of ids) waiting.add(id);
+          waiting.add(entry.targetId);
           continue;
         }
 
@@ -362,7 +373,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
               reason: verdict.reason,
               message: verdict.message,
             });
-            for (const id of ids) waiting.add(id);
+            waiting.add(entry.targetId);
             break;
           }
 
@@ -382,7 +393,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
               reason: "needs_review",
               message: verdict.message,
             });
-            for (const id of ids) waiting.add(id);
+            waiting.add(entry.targetId);
             break;
           }
 
@@ -405,7 +416,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
                 message: verdict.message,
               });
             }
-            for (const id of ids) waiting.add(id);
+            waiting.add(entry.targetId);
             break;
           }
         }

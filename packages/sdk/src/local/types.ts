@@ -170,6 +170,22 @@ export type LocalEngineEvent =
       edges: number;
       totalItems: number | undefined;
     }
+  /**
+   * Something the engine started on its own did not finish.
+   *
+   * The stream's callbacks are synchronous, so the work they begin — a
+   * cursor write, a catch-up, a re-import — cannot be awaited by whatever
+   * asked for it, and a failure has nowhere to be returned to. Reported
+   * here rather than thrown: a rejection nobody holds becomes an uncaught
+   * exception and takes the host process with it, which is a far worse
+   * answer to a failed read than telling the app it failed.
+   */
+  | {
+      type: "sync.error";
+      scope: "stream" | "cursor" | "catchup" | "reimport";
+      message: string;
+      error: unknown;
+    }
   /** A fresh store has read the server's state for the first time. */
   | { type: "hydration.finished"; items: number; edges: number }
   /**
