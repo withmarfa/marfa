@@ -579,11 +579,16 @@ export function adminArchiveRoutes(
             imported++;
             resolvableIds.add(created.id);
 
-            for (const [namespace, data] of Object.entries(
+            // One write for the whole set, not one per namespace. Each
+            // `setExtension` rewrites the same JSON column and bumps the
+            // item's modification time beside it, so writing them
+            // separately cost namespaces times items on the one path
+            // whose purpose is moving a lot of rows at once. What is
+            // stored is identical either way.
+            await storage.metadata.setExtensions(
+              created.id,
               archiveExtensions(meta),
-            )) {
-              await storage.metadata.setExtension(created.id, namespace, data);
-            }
+            );
           } catch (err) {
             if (
               err instanceof MarfaError &&

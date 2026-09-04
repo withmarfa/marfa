@@ -803,6 +803,32 @@ export interface MetadataStore {
     data: Record<string, unknown>,
   ): Promise<Record<string, Record<string, unknown>>>;
   /**
+   * `setExtension` for several namespaces of one item at once, replacing
+   * each named namespace and leaving the rest of the map alone.
+   *
+   * The extensions of an item are one JSON column, so writing them one
+   * namespace at a time rewrites that column once per namespace and — for
+   * every namespace that announces — bumps the item's modification time
+   * again beside it. On the archive restore, which is the caller this
+   * exists for, that multiplied by every item in the archive on the one
+   * path whose whole purpose is moving a lot of rows at once. Passing the
+   * set the caller already holds collapses it to one write of each row.
+   *
+   * The bump is decided once for the whole set: if any namespace in it
+   * announces, the item is bumped once, which is what a caller writing
+   * them together means by "the item changed". An empty set writes
+   * nothing at all rather than touching the row to store what it already
+   * holds.
+   *
+   * Unconditional replace, with `setExtension`'s hazard and not
+   * `mutateExtension`'s guarantee: a value derived from a previous read
+   * still belongs in `mutateExtension`.
+   */
+  setExtensions(
+    itemId: string,
+    entries: Record<string, Record<string, unknown>>,
+  ): Promise<Record<string, Record<string, unknown>>>;
+  /**
    * Atomic namespace-scoped read / mutate / write. `mutate` is handed the
    * namespace's current contents (an empty record when unset) exactly
    * once and returns the replacement; the whole cycle runs inside a

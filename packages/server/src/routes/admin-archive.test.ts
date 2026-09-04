@@ -570,3 +570,89 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
     expect(await ctx.storage.edges.get(goodEdgeId)).toBeNull();
   });
 });
+
+describe("POST /admin/restore-archive — the items it writes", () => {
+  /**
+   * Every namespace of an item in one write.
+   *
+   * The extensions of an item are a single JSON column, so writing them one
+   * namespace at a time rewrote that column once per namespace and bumped
+   * the item's modification time beside each announcing one. On a restore
+   * that multiplied by every item in the archive, on the one path whose
+   * whole purpose is moving a lot of rows at once. What is stored is
+   * identical either way, which is why nothing failed while it happened.
+   */
+  it("writes an item's extensions once however many namespaces it carries", async () => {
+    const source = `archive-ext-${Math.random().toString(36).slice(2, 8)}`;
+    const itemId = "019537a0-7b80-7000-8000-000000000121";
+    const extensions = {
+      "app.one": { a: 1 },
+      "app.two": { b: 2 },
+      "app.three": { c: 3 },
+    };
+
+    const archive = await buildArchive(
+      {
+        version: 1,
+        format: "marfa-archive-v1",
+        created_at: new Date().toISOString(),
+        item_count: 1,
+        blob_count: 0,
+        blobs: {},
+      },
+      [
+        JSON.stringify({
+          item: {
+            id: itemId,
+            type: "core.note",
+            properties: { body: "three namespaces" },
+            source,
+            source_id: "ax-1",
+          },
+          metadata: { tags: [], extensions },
+        }),
+      ],
+      [],
+    );
+
+    const meta = ctx.storage.metadata;
+    const realSetExtension = meta.setExtension.bind(meta);
+    const realSetExtensions = meta.setExtensions.bind(meta);
+    let perNamespaceCalls = 0;
+    let batchedCalls = 0;
+    meta.setExtension = async (itemArg, namespace, data) => {
+      perNamespaceCalls += 1;
+      return realSetExtension(itemArg, namespace, data);
+    };
+    meta.setExtensions = async (itemArg, entries) => {
+      batchedCalls += 1;
+      return realSetExtensions(itemArg, entries);
+    };
+    try {
+      const res = await ctx.app.request("/admin/restore-archive", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: new Uint8Array(archive),
+      });
+      expect(res.status).toBe(200);
+    } finally {
+      meta.setExtension = realSetExtension;
+      meta.setExtensions = realSetExtensions;
+    }
+
+    // One door call for the item, whatever it carries. The write count
+    // follows: the batched door writes the sidecar once and bumps the item
+    // at most once, where the per-namespace door did both per namespace.
+    expect(perNamespaceCalls).toBe(0);
+    expect(batchedCalls).toBe(1);
+
+    // And the same thing is stored either way, which is the half that must
+    // not change.
+    expect(await ctx.storage.metadata.getExtensions(itemId)).toEqual(
+      extensions,
+    );
+  });
+});

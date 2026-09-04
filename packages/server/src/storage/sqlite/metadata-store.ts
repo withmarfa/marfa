@@ -111,7 +111,7 @@ export class SqliteMetadataStore implements MetadataStore {
   private async writeSidecar(
     tx: SqliteTxContext,
     itemId: string,
-    write: { tags: string } | { extensions: string; namespace: string },
+    write: { tags: string } | { extensions: string; namespaces: string[] },
   ): Promise<void> {
     // **The item is written first, and the order is load-bearing.** It
     // reads backwards — this method is about the sidecar, and the item is
@@ -123,7 +123,11 @@ export class SqliteMetadataStore implements MetadataStore {
     // files are read as a pair, and an ordering that mattered in only one
     // of them would leave the next reader working out which — the answer
     // being easy to get wrong and nothing failing when it is.
-    if ("tags" in write || announcesMetadataChange(write.namespace)) {
+    // One bump for the whole write, however many namespaces it carries.
+    // Any announcing namespace in the set makes the item's change visible,
+    // and a caller writing several together means one change rather than
+    // one per namespace.
+    if ("tags" in write || write.namespaces.some(announcesMetadataChange)) {
       await tx
         .update(items)
         .set({ updated_at: new Date().toISOString() })
@@ -296,7 +300,45 @@ export class SqliteMetadataStore implements MetadataStore {
       const extensions = { ...current.extensions, [namespace]: data };
       await this.writeSidecar(tx, itemId, {
         extensions: JSON.stringify(extensions),
-        namespace,
+        namespaces: [namespace],
+      });
+      return extensions;
+    });
+  }
+
+  /**
+   * Several namespaces of one item in a single write. The extensions of an
+   * item are one JSON column, so writing them one at a time rewrites that
+   * column once per namespace and bumps the item's modification time
+   * again beside each announcing one. The archive restore holds the whole
+   * set before it writes any of it, and that is the caller this exists
+   * for: its cost was namespaces times items on the one path whose
+   * purpose is moving many rows at once.
+   *
+   * Replaces each named namespace and leaves the rest of the map alone,
+   * which is `setExtension` applied to a set rather than a different
+   * merge rule. It carries `setExtension`'s hazard too: a value derived
+   * from an earlier read still belongs in `mutateExtension`.
+   */
+  async setExtensions(
+    itemId: string,
+    entries: Record<string, Record<string, unknown>>,
+  ): Promise<Record<string, Record<string, unknown>>> {
+    const namespaces = Object.keys(entries);
+    if (namespaces.length === 0) return this.getExtensions(itemId);
+    return await this.db.transaction(async (tx) => {
+      const row = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .get();
+      const current: Metadata = row
+        ? rowToMetadata(row)
+        : { item_id: itemId, tags: [], extensions: {} };
+      const extensions = { ...current.extensions, ...entries };
+      await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(extensions),
+        namespaces,
       });
       return extensions;
     });
@@ -329,7 +371,7 @@ export class SqliteMetadataStore implements MetadataStore {
       const extensions = { ...current.extensions, [namespace]: next };
       await this.writeSidecar(tx, itemId, {
         extensions: JSON.stringify(extensions),
-        namespace,
+        namespaces: [namespace],
       });
       return next;
     });
@@ -353,7 +395,7 @@ export class SqliteMetadataStore implements MetadataStore {
       );
       await this.writeSidecar(tx, itemId, {
         extensions: JSON.stringify(rest),
-        namespace,
+        namespaces: [namespace],
       });
       return rest;
     });
