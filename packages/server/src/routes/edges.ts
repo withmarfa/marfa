@@ -154,7 +154,11 @@ const listEdgesRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Validation error (e.g. too many edge types in filter)",
+      description:
+        "Too many edge types in the filter, an unrecognized query " +
+        "parameter, or one of the two retired time-filter names. This " +
+        "door already answered the first; the change that made it answer " +
+        "the other two is the reason the sentence names all three.",
     },
     401: {
       content: {
