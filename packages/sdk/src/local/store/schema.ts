@@ -151,6 +151,17 @@ export const syncState = sqliteTable(
     cursor: text("cursor"),
     hydratedAt: text("hydrated_at"),
     lastDrainedAt: text("last_drained_at"),
+    /**
+     * Set when a full re-read is owed and not yet finished.
+     *
+     * A separate column because the cursor cannot carry it: a re-import
+     * clears the cursor before it reads, so a read that fails part-way
+     * leaves null — which is also what a store that has never connected
+     * looks like. Only one of those needs the corpus read again and
+     * pruned, and following live over the other holds rows the server
+     * dropped with nothing left that could ever notice them.
+     */
+    reimportOwedAt: text("reimport_owed_at"),
   },
   (table) => [
     primaryKey({ columns: [table.origin, table.spaceId, table.accountId] }),

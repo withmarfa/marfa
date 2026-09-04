@@ -34,6 +34,8 @@ let events: LocalEngineEvent[];
 let dir: string;
 let path: string;
 
+const AT = "2026-09-01T00:00:00.000Z";
+
 const identity = {
   origin: "http://localhost",
   spaceId: SINGLE_SPACE,
@@ -213,6 +215,42 @@ describe("a listener that throws, and one that is not there", () => {
     const status = await engine.status();
     expect(status.lastError).toMatchObject({ scope: "stream" });
     expect(status.lastError?.message).toEqual(expect.any(String));
+  });
+});
+
+describe("a re-import that did not finish", () => {
+  it("is owed on the next start rather than followed over", async () => {
+    const stale = await client.items.create({
+      type: "core.note",
+      properties: { body: "removed while away" },
+    });
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "still there" },
+    });
+    await engineOver(store).start();
+    for (const running of engines.splice(0)) running.stop();
+    expect(await store.server.items.get(stale.id)).toBeDefined();
+
+    // Removed with nothing watching, and a re-import that got as far as
+    // clearing the cursor and then failed. Null cursor means two things —
+    // a store that has never connected, and one that owes a full read —
+    // and only the second needs one. Told apart by the flag rather than
+    // by the cursor, which this path destroys.
+    await client.items.delete(stale.id);
+    await client.items.purge(stale.id);
+    await store.syncState.setReimportOwed(identity, AT);
+    await store.syncState.setCursor(identity, null);
+
+    const engine = engineOver(store);
+    await engine.start();
+
+    // Without the flag the hydration stamp is set and the cursor is null,
+    // so the next start adopts the announced head and follows live for
+    // ever over a corpus that was never re-read and never pruned.
+    expect(await store.server.items.get(stale.id)).toBeUndefined();
+    expect(await store.server.items.list()).toHaveLength(1);
+    expect((await store.syncState.read(identity))?.reimportOwedAt).toBeNull();
   });
 });
 

@@ -121,6 +121,8 @@ export interface SyncStateRow {
   cursor: string | null;
   hydratedAt: string | null;
   lastDrainedAt: string | null;
+  /** When a full re-read was found to be owed, or null when none is. */
+  reimportOwedAt: string | null;
 }
 
 /**

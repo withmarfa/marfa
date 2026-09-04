@@ -24,6 +24,9 @@ export interface SyncStateLayer {
   setCursor(identity: StoreIdentity, cursor: string | null): Promise<void>;
   setHydratedAt(identity: StoreIdentity, at: string | null): Promise<void>;
   setLastDrainedAt(identity: StoreIdentity, at: string): Promise<void>;
+  /** Record that a full re-read is owed, or clear it with null once one
+   *  has finished. */
+  setReimportOwed(identity: StoreIdentity, at: string | null): Promise<void>;
   /** Every identity this store file has recorded. One in the ordinary case;
    *  more than one is a store two accounts have shared. */
   listIdentities(): Promise<StoreIdentity[]>;
@@ -55,6 +58,7 @@ export function createSyncStateLayer(exec: Executor): SyncStateLayer {
         cursor: row.cursor,
         hydratedAt: row.hydratedAt,
         lastDrainedAt: row.lastDrainedAt,
+        reimportOwedAt: row.reimportOwedAt,
       };
     },
 
@@ -89,6 +93,13 @@ export function createSyncStateLayer(exec: Executor): SyncStateLayer {
       await exec
         .update(syncState)
         .set({ lastDrainedAt: at })
+        .where(whereIdentity(identity));
+    },
+
+    setReimportOwed: async (identity, at) => {
+      await exec
+        .update(syncState)
+        .set({ reimportOwedAt: at })
         .where(whereIdentity(identity));
     },
 

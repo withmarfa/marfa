@@ -236,12 +236,21 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       return false;
     }
 
+    // Recorded before anything is destroyed, because the cursor cannot
+    // carry this on its own: it is cleared next, and a read that fails
+    // part-way then leaves null — which is also what a store that has
+    // never connected looks like. Only one of the two owes a full read,
+    // and the other must not be given one.
+    await store.syncState.setReimportOwed(store.identity, now());
     // The cursor is worthless and saying so is what stops a later start
     // resuming from it. Cleared before the read rather than after, because
     // a crash mid-read must not leave a cursor that claims a completed
     // subscription.
     await store.syncState.setCursor(store.identity, null);
     const result = await importAll({ store, client, prune: true });
+    // Cleared only once the read has actually finished. Anything that
+    // throws above leaves it set, and the next start does this again.
+    await store.syncState.setReimportOwed(store.identity, null);
     emit({
       type: "reimport.finished",
       items: result.items,
@@ -339,6 +348,7 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       // the assignment below throws out of `start`, so a default would be
       // a value nothing can read.
       let hydratedAt: string | null | undefined;
+      let owesReimport: boolean | undefined;
       let giveUp: ReturnType<typeof setTimeout> | undefined;
       let stopWaiting: (() => void) | undefined;
       const announced = new Promise<void>((resolve, reject) => {
@@ -409,10 +419,20 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
         // the subscription is already holding.
         await announced;
         hydratedAt = state?.hydratedAt ?? null;
+        owesReimport = state?.reimportOwedAt != null;
       } finally {
         clearTimeout(giveUp);
         stopWaiting?.();
         announceOnce = undefined;
+      }
+
+      // A read this store still owes, from a re-import that did not
+      // finish. It comes before the hydration check because it is the
+      // stronger obligation: this store holds rows and some of them may be
+      // gone from the server, which only a prune can find.
+      if (owesReimport) {
+        await reimport();
+        return;
       }
 
       if (hydratedAt == null) {

@@ -229,6 +229,9 @@ describe("sync state", () => {
       cursor: null,
       hydratedAt: null,
       lastDrainedAt: null,
+      // A store that has never connected owes no re-read. The distinction
+      // matters because a null cursor alone cannot carry it.
+      reimportOwedAt: null,
     });
   });
 
