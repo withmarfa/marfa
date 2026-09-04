@@ -72,6 +72,27 @@ async function ageItem(itemId: string, isoDate: string): Promise<void> {
   }
 }
 
+/** Reads the stamp back, for the assertions about the column itself. */
+async function readTrashedAt(itemId: string): Promise<string | null> {
+  if (isPg()) {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    const rows = (await s.__pgClient(
+      `SELECT trashed_at FROM items WHERE id = $1`,
+      [itemId],
+    )) as { trashed_at: string | null }[];
+    return rows[0]?.trashed_at ?? null;
+  }
+  const s = ctx.storage as unknown as {
+    __sqliteAll: (q: string) => Promise<unknown[]>;
+  };
+  const rows = (await s.__sqliteAll(
+    `SELECT trashed_at FROM items WHERE id = '${itemId.replace(/'/g, "''")}'`,
+  )) as { trashed_at: string | null }[];
+  return rows[0]?.trashed_at ?? null;
+}
+
 /**
  * Blanks the stamp, reproducing a row soft-deleted by a build that predates
  * the column — the only shape the sweep's fallback exists for.
@@ -381,6 +402,36 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
 
     expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
+  });
+
+  it("clears the stamp when an item leaves the bin", async () => {
+    // The sweep cannot see this: it filters on `state = 'trashed'` before
+    // it reads the stamp, so a stale one on a restored row stays invisible
+    // until something else reads the column. The column's meaning is the
+    // contract, so the assertion is on the column.
+    const itemId = id("c14c");
+    await ctx.storage.items.create(
+      {
+        id: itemId,
+        type: "core.note",
+        properties: { body: "in and back out" },
+        tier: "library",
+      },
+      undefined,
+    );
+    expect(await readTrashedAt(itemId)).toBeNull();
+
+    await ctx.storage.items.delete(itemId);
+    expect(await readTrashedAt(itemId)).not.toBeNull();
+
+    await ctx.storage.items.restore(itemId);
+    expect(await readTrashedAt(itemId)).toBeNull();
+
+    // And the explicit transition door agrees with the two beside it.
+    await ctx.storage.items.transition(itemId, "trashed");
+    expect(await readTrashedAt(itemId)).not.toBeNull();
+    await ctx.storage.items.transition(itemId, "active");
+    expect(await readTrashedAt(itemId)).toBeNull();
   });
 
   it("starts a fresh window when an item is restored and binned again", async () => {
