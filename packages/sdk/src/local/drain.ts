@@ -191,9 +191,10 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
   const deadLetter = async (
     entry: OutboxEntry,
     verdict: Extract<Verdict, { class: "permanent" }>,
-  ): Promise<LocalEngineEvent[]> => {
+  ): Promise<{ events: LocalEngineEvent[]; removed: number[] }> => {
     const at = now();
     const events: LocalEngineEvent[] = [];
+    const removed: number[] = [entry.seq];
 
     await store.transaction(async (tx) => {
       await tx.deadLetters.record({
@@ -253,6 +254,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
           failedAt: at,
         });
         await tx.outbox.remove(candidate.seq);
+        removed.push(candidate.seq);
         events.push({
           type: "mutation.dead_lettered",
           seq: candidate.seq,
@@ -264,7 +266,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
       }
     });
 
-    return events;
+    return { events, removed };
   };
 
   const finish = async (
@@ -285,9 +287,14 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
       const queued = await store.outbox.list();
       /** Ids with unsent work in front of them on this pass. */
       const waiting = new Set<string>();
+      // A cascade takes rows out of the queue that this pass is still
+      // walking. Sending one of those repeats a write the engine has
+      // already given up on, against a row the server refused to create.
+      const gone = new Set<number>();
       let sent = 0;
 
       for (const entry of queued) {
+        if (gone.has(entry.seq)) continue;
         const ids = heldIds(entry);
         const held = ids.some((id) => waiting.has(id));
         if (entry.state === "blocked" || held) {
@@ -335,7 +342,9 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
           }
 
           case "permanent": {
-            for (const event of await deadLetter(entry, verdict)) emit(event);
+            const cascade = await deadLetter(entry, verdict);
+            for (const seq of cascade.removed) gone.add(seq);
+            for (const event of cascade.events) emit(event);
             break;
           }
 
