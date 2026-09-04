@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createGzip } from "node:zlib";
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, afterAll, vi } from "vitest";
 import * as tar from "tar-stream";
 import {
   createTestContext,
@@ -668,7 +668,20 @@ describe("POST /admin/restore-archive — the items it writes", () => {
       body: new Uint8Array(archive),
     });
     expect(res.status).toBe(200);
-    await settle();
+    // Waits for the frames rather than for a duration. `settle` is a fixed
+    // sleep, and a positive assertion resting on one reports a busy machine
+    // as a missing event; this fails as a timeout naming the condition it
+    // could not reach, on the runner's own budget rather than a number
+    // chosen here. The negative case below still sleeps, because absence
+    // has nothing to wait for.
+    await vi.waitFor(async () => {
+      expect(
+        events.filter((e) => e.item.id === sourceId || e.item.id === targetId),
+      ).toHaveLength(2);
+      expect(
+        (await logSince(cursor)).some((r) => r.event_type === "edge_created"),
+      ).toBe(true);
+    });
     controller.abort();
     await done;
 
@@ -868,7 +881,13 @@ describe("POST /admin/restore-archive — the items it writes", () => {
       body: new Uint8Array(archive),
     });
     expect(res.status).toBe(200);
-    await settle();
+    // A condition rather than a sleep, for the reason given above.
+    await vi.waitFor(async () => {
+      expect(events.some((e) => e.item.id === itemId)).toBe(true);
+      expect((await logSince(cursor)).some((r) => r.item_id === itemId)).toBe(
+        true,
+      );
+    });
     controller.abort();
     await done;
 
