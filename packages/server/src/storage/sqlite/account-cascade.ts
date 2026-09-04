@@ -113,7 +113,8 @@ export async function sqlitePurgeSpaceScopedRows(
 /**
  * Hard-delete a space that no account owns. SQLite half; the PG copy
  * carries the reasoning, including why a space with users is refused
- * rather than deleted here.
+ * rather than deleted here and why this path's silence rests on a
+ * different argument from the account cascade's.
  */
 export async function sqliteDeleteSpace(
   db: DrizzleDb,
