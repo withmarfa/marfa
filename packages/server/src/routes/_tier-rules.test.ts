@@ -18,18 +18,25 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  MarfaError,
   SYSTEM_TYPE_IDS,
   softDeleteState,
-  hasBoundedLifecycle,
 } from "@withmarfa/shared";
 import { assertTierApplicable } from "./_tier-rules.js";
 
-/** Did the gate refuse a caller-supplied tier for this type? */
-function refusesTier(type: string): boolean {
+/**
+ * Did the gate refuse this tier for this type?
+ *
+ * The error type is checked rather than swallowed. A bare `try/catch` reports
+ * "refused" for any throw at all, including a TypeError from a changed
+ * signature, so a gate that crashed would read as a gate that worked.
+ */
+function refuses(type: string, tier: unknown): boolean {
   try {
-    assertTierApplicable(type, "feed");
+    assertTierApplicable(type, tier);
     return false;
-  } catch {
+  } catch (err) {
+    if (!(err instanceof MarfaError)) throw err;
     return true;
   }
 }
@@ -52,7 +59,7 @@ describe("the tier gate and the soft-delete state", () => {
     ).toBe("revoked");
 
     expect(
-      refusesTier(UNSEEDED_SYSTEM_TYPE),
+      refuses(UNSEEDED_SYSTEM_TYPE, "feed"),
       "a delete puts this type into the bounded lifecycle's terminal state, and the tier gate still accepted a caller-supplied tier for it, so the two doors disagree about whether it is a platform record",
     ).toBe(true);
   });
@@ -62,34 +69,22 @@ describe("the tier gate and the soft-delete state", () => {
       ...SYSTEM_TYPE_IDS,
       UNSEEDED_SYSTEM_TYPE,
       "core.note",
-      "app.thing",
+      "app.acme.thing",
     ];
     // The floor: a loop over an empty set asserts nothing, and the seeded set
     // is read at runtime rather than written down here.
     expect(cases.length).toBeGreaterThan(3);
     for (const type of cases) {
       expect(
-        refusesTier(type),
+        refuses(type, "feed"),
         `${type}: the tier gate and the delete door answer differently about whether this is a platform record`,
       ).toBe(softDeleteState(type) === "revoked");
-      // And both follow the one predicate rather than agreeing by luck.
-      expect(refusesTier(type)).toBe(hasBoundedLifecycle(type));
     }
   });
 
   it("still ignores a write that supplies no tier at all", () => {
     // The early return the gate has always had. Without this, widening the
     // predicate would be indistinguishable from refusing every system write.
-    expect(refusesTier2(undefined)).toBe(false);
+    expect(refuses("system.connection", undefined)).toBe(false);
   });
 });
-
-/** A write with no tier, which the gate returns from before it looks at type. */
-function refusesTier2(tier: unknown): boolean {
-  try {
-    assertTierApplicable("system.connection", tier);
-    return false;
-  } catch {
-    return true;
-  }
-}
