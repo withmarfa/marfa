@@ -646,7 +646,7 @@ const listFromSourceRoute = createRoute({
   tags: ["Edges"],
   summary: "List outbound edges from an item",
   description:
-    "Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item.",
+    "Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -681,6 +681,14 @@ const listFromSourceRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description: "No read access to the anchor item's type",
+    },
     404: {
       content: {
         "application/json": {
@@ -699,7 +707,7 @@ const listBackrefsRoute = createRoute({
   tags: ["Edges"],
   summary: "List inbound edges to an item",
   description:
-    "Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item.",
+    "Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -733,6 +741,14 @@ const listBackrefsRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description: "No read access to the anchor item's type",
     },
     404: {
       content: {
@@ -768,6 +784,13 @@ export function itemEdgeListingRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
+    // The anchor decides what this call returns, so reading it is a read
+    // of the anchor — the same check every write door in this file makes
+    // against its source item, and the one the item read doors make. It
+    // is stated here rather than left to the space fence because the
+    // fence and the type map answer different questions: a credential can
+    // be inside the space and still hold no grant on this type.
+    requireTypeAccess(c, item.type, "read");
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
@@ -797,6 +820,13 @@ export function itemEdgeListingRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
+    // The anchor decides what this call returns, so reading it is a read
+    // of the anchor — the same check every write door in this file makes
+    // against its source item, and the one the item read doors make. It
+    // is stated here rather than left to the space fence because the
+    // fence and the type map answer different questions: a credential can
+    // be inside the space and still hold no grant on this type.
+    requireTypeAccess(c, item.type, "read");
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
