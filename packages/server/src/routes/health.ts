@@ -309,15 +309,15 @@ async function readDatabaseConnections(
  * not — a pool holding one idle connection, or with one slot it has not
  * opened, reports `ok`, so nothing here fires on a pool that is merely busy.
  *
- * **Why not a threshold, when the ticket's own words are "one slot left".**
- * The pools here are three and two, so every threshold between "some" and
- * "none" is one request wide, and a component that degrades on one
- * concurrent request is one an operator learns to ignore — which this file
- * already has a rule about. The climb toward the limit is published instead,
- * as `database_connections.pool`, where a watcher can graph `free` falling
- * and `idle_in_transaction` rising without the endpoint having to shout.
- * Reporting a number and degrading on a state is the split this file draws
- * everywhere else.
+ * **Why not a threshold that leaves one slot spare**, which is the earlier
+ * warning an operator asks for first. The pools here are three and two, so
+ * every threshold between "some" and "none" is one request wide, and a
+ * component that degrades on one concurrent request is one its readers learn
+ * to ignore — a rule this file already applies to two other checks. The climb
+ * is published instead, as `database_connections.pool`, where a watcher can
+ * graph `free` falling and `idle_in_transaction` rising without the endpoint
+ * having to shout. Reporting a number and degrading on a state is the split
+ * this file draws everywhere else.
  *
  * Returns the reason, or `null` when there is nothing to report. A pool with
  * no size to compare against is not a reading and says nothing either way.
