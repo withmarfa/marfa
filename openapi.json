@@ -13427,11 +13427,15 @@
                           "enum": [
                             409
                           ]
+                        },
+                        "message": {
+                          "type": "string"
                         }
                       },
                       "required": [
                         "code",
-                        "status"
+                        "status",
+                        "message"
                       ]
                     },
                     "edge": {
