@@ -145,7 +145,16 @@ describe("hydrating a fresh store (seam: online)", () => {
     // read finishing and the subscription opening that nothing covers and
     // nothing afterwards reports; subscribing first turns that window into
     // an overlap, which the version comparison makes free.
-    expect(seam.calls).toEqual(["GET /events", "GET /items", "GET /edges"]);
+    expect(seam.calls).toEqual([
+      "GET /events",
+      // The count the progress reports are measured against, read once
+      // before the walk rather than per page: a denominator that moved
+      // while the read ran would make every fraction built on it a
+      // different question.
+      "GET /items/stats",
+      "GET /items",
+      "GET /edges",
+    ]);
 
     // Every state, so a row reaching the bin is something this client can
     // see rather than a row that silently stops being mentioned.
@@ -167,7 +176,8 @@ describe("hydrating a fresh store (seam: online)", () => {
     // honored. The default listing returns one row where the store holds
     // two, which is the same request without `state` and the only thing
     // that proves the parameter did any work.
-    expect(seam.requests[1]?.query).toMatchObject({ state: "any" });
+    const itemRead = seam.requests.find((r) => r.path === "/items");
+    expect(itemRead?.query).toMatchObject({ state: "any" });
     expect((await client.items.list({})).data).toHaveLength(1);
 
     expect(events).toContainEqual(

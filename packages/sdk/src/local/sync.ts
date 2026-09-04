@@ -77,6 +77,46 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
   let announceOnce: (() => void) | undefined;
 
   /**
+   * Run work the subscription starts and cannot wait for.
+   *
+   * The subscription's callbacks are synchronous, so a cursor write or a
+   * catch-up read can only be started from one, never awaited by it. That
+   * leaves a promise nobody holds, and a stopped engine is exactly when
+   * one of those fails: the store closes underneath work that was already
+   * in flight, and the rejection surfaces as an unhandled one that names
+   * a closed client rather than anything a reader can act on.
+   *
+   * So a failure after the engine has been stopped is a shutdown and is
+   * dropped, and a failure while it is still running is real and is left
+   * to surface. The check is on arrival rather than at the start, because
+   * the stop is what happens in between.
+   */
+  const detached = (work: () => Promise<void>): void => {
+    void work().catch((error: unknown) => {
+      if (controller.signal.aborted) return;
+      queueMicrotask(() => {
+        throw error;
+      });
+    });
+  };
+
+  /**
+   * How many items the server holds, or undefined when it would not say.
+   *
+   * The stats route counts per lifecycle state, and hydration reads every
+   * state, so the sum across them is the number this read is walking
+   * towards.
+   */
+  const countItems = async (): Promise<number | undefined> => {
+    try {
+      const byState = await client.items.stats();
+      return Object.values(byState).reduce((sum, count) => sum + count, 0);
+    } catch {
+      return undefined;
+    }
+  };
+
+  /**
    * Read whatever changed since the newest row held.
    *
    * Run on every reconnect, before the connection's own frames are
@@ -153,14 +193,15 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
         opens += 1;
         // Not on the first: that connection's gap is what `start`'s own
         // read covers, and running both would read the corpus twice.
-        if (opens > 1) void catchUp();
+        if (opens > 1) detached(catchUp);
       },
       onCursor: (cursor) => {
         // Recorded only when the store has none. A resuming store keeps
         // the cursor it came with: the announcement names the head of the
         // log, which sits past the backlog about to be replayed, so taking
         // it here would step over events not yet delivered.
-        void store.syncState.read(store.identity).then(async (row) => {
+        detached(async () => {
+          const row = await store.syncState.read(store.identity);
           if (row?.cursor == null) {
             await store.syncState.setCursor(store.identity, cursor);
           }
@@ -174,7 +215,8 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
         await applyEvent(store, event, eventId);
       },
       onCatchupTooOld: () => {
-        void reimport().then(() => {
+        detached(async () => {
+          await reimport();
           // Resubscribe from nothing: the new connection announces a
           // cursor, and that is what the re-imported state resumes from.
           if (!controller.signal.aborted) subscription = subscribe(undefined);
@@ -198,10 +240,28 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       await announced;
 
       if (state?.hydratedAt == null) {
+        // What the server says it holds, read once before the walk so the
+        // progress below has a denominator. Best-effort: a credential that
+        // cannot see the stats route, or a server that will not answer,
+        // leaves the total unknown rather than stopping the hydration —
+        // a read with no progress bar is worth more than no read.
+        const totalItems = await countItems();
+
         // A fresh store reads everything on start. No prune: there is
         // nothing here yet that the server could have dropped, and running
         // one would only ask the same question of an empty set.
-        const result = await importAll({ store, client, prune: false });
+        const result = await importAll({
+          store,
+          client,
+          prune: false,
+          onProgress: ({ items, edges }) => {
+            emit({ type: "hydration.progress", items, edges, totalItems });
+          },
+        });
+        // Stamped after the read rather than before. A process that dies
+        // part-way through comes back with this still unset and reads
+        // again, which is the only way the counts can be trusted to have
+        // reached the total they were measured against.
         await store.syncState.setHydratedAt(store.identity, now());
         emit({
           type: "hydration.finished",

@@ -27,6 +27,16 @@ export interface ImportOptions {
    * bulk write gives a great many rows the same one.
    */
   updatedAfter?: string;
+  /**
+   * Called as rows land, with the running totals.
+   *
+   * Counts rather than a percentage, and monotonic: they only ever rise,
+   * so a progress display built on them cannot go backwards when a page
+   * turns out to hold rows the store already had. What they are a
+   * fraction of is the caller's business, because only the caller knows
+   * whether it asked for the whole corpus or a slice of it.
+   */
+  onProgress?: (progress: { items: number; edges: number }) => void;
 }
 
 export interface ImportResult {
@@ -62,7 +72,7 @@ export class PendingWritesError extends Error {
  * that was already in flight when it arrived.
  */
 export async function importAll(options: ImportOptions): Promise<ImportResult> {
-  const { store, client, prune, updatedAfter } = options;
+  const { store, client, prune, updatedAfter, onProgress } = options;
 
   // Rows a drain could still send. A blocked one is not among them: it is
   // not going anywhere on its own, and refusing to import while anything
@@ -109,6 +119,10 @@ export async function importAll(options: ImportOptions): Promise<ImportResult> {
       await tx.server.metadata.put(row.metadata);
       if (outcome === "applied") items += 1;
     });
+    // Every row rather than every page, because a read that stalls
+    // part-way through a page is exactly when a person is watching, and a
+    // per-page report would sit still through it.
+    onProgress?.({ items, edges });
   }
 
   const edgePages = paginate((cursor) =>
@@ -124,6 +138,7 @@ export async function importAll(options: ImportOptions): Promise<ImportResult> {
     await store.transaction(async (tx) => {
       if ((await putEdgeIfNotOlder(tx, edge)) === "applied") edges += 1;
     });
+    onProgress?.({ items, edges });
   }
 
   if (heldItems === null || heldEdges === null) {

@@ -155,6 +155,21 @@ export type LocalEngineEvent =
        *  those. */
       remaining: number;
     }
+  /**
+   * How far a first read has got.
+   *
+   * Counts rise and never fall, so a progress display built on them cannot
+   * run backwards when a page turns out to hold rows already held.
+   * `totalItems` is what the server says it has, read once before the walk
+   * — undefined when the server would not say, which is a display without
+   * a denominator rather than a reason to withhold the progress.
+   */
+  | {
+      type: "hydration.progress";
+      items: number;
+      edges: number;
+      totalItems: number | undefined;
+    }
   /** A fresh store has read the server's state for the first time. */
   | { type: "hydration.finished"; items: number; edges: number }
   /**

@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
 import { localSchema } from "./schema.js";
 import { resolveLocalMigrationsFolder } from "./migrations-folder.js";
+import { codeSchemaStamp, storeSchemaStamp } from "./version.js";
 
 export type LocalDb = ReturnType<typeof drizzle<typeof localSchema>>;
 
@@ -37,9 +38,59 @@ export interface OpenDbResult {
   close: () => void;
 }
 
+/**
+ * Open the database and migrate it, without deciding what a failure means.
+ *
+ * Split from {@link openDatabase} so the caller can look at a store it
+ * cannot migrate before anything is done about it. The two questions have
+ * different answers: this one is "does it open", and the caller's is "may
+ * this store be set aside", which needs the queue read out of it first.
+ */
+export interface InspectedDb extends OpenDbResult {
+  /** Whether the store carries a schema this build does not ship. A store
+   *  written by a newer engine has migrations this code has never seen,
+   *  and running forward against it is not something migrations can undo. */
+  newerThanCode: boolean;
+  /** The migration failure, when one is why this is being reported. */
+  migrationError?: unknown;
+}
+
+/**
+ * Open a store far enough to judge it.
+ *
+ * Never throws for a schema reason: a store that cannot be migrated comes
+ * back with the failure attached and its client still open, because the
+ * caller has to read the outbox out of it before anything else happens.
+ */
+export async function inspectDatabase(path: string): Promise<InspectedDb> {
+  const opened = await openConnection(path);
+  const folder = resolveLocalMigrationsFolder(import.meta.url);
+
+  const stamp = await storeSchemaStamp(opened.raw);
+  const newerThanCode = stamp !== undefined && stamp > codeSchemaStamp(folder);
+  if (newerThanCode) return { ...opened, newerThanCode };
+
+  try {
+    await migrate(opened.db, { migrationsFolder: folder });
+  } catch (migrationError) {
+    return { ...opened, newerThanCode: false, migrationError };
+  }
+
+  return { ...opened, newerThanCode: false };
+}
+
 /** Open the store's database, run its migrations forward, and hand back
  *  both the drizzle handle and the raw client. */
 export async function openDatabase(path: string): Promise<OpenDbResult> {
+  const opened = await openConnection(path);
+  await migrate(opened.db, {
+    migrationsFolder: resolveLocalMigrationsFolder(import.meta.url),
+  });
+  return opened;
+}
+
+/** Open the connection and set the pragmas, with no opinion on schema. */
+async function openConnection(path: string): Promise<OpenDbResult> {
   if (
     path !== ":memory:" &&
     !path.startsWith("file:") &&
@@ -59,9 +110,6 @@ export async function openDatabase(path: string): Promise<OpenDbResult> {
   await raw.execute("PRAGMA foreign_keys = ON");
 
   const db = drizzle(raw, { schema: localSchema });
-  await migrate(db, {
-    migrationsFolder: resolveLocalMigrationsFolder(import.meta.url),
-  });
 
   return {
     db,

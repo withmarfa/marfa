@@ -16,7 +16,12 @@
  * `@libsql/client` and `drizzle-orm` are optional peers, so a consumer that
  * does not want a local store does not pay for one.
  */
-export { openLocalStore } from "./store/index.js";
+export {
+  openLocalStore,
+  ReadOnlyStoreError,
+  StoreIdentityMismatchError,
+  StoreUnrecoverableError,
+} from "./store/index.js";
 export type {
   LocalStore,
   LocalStoreScope,
@@ -33,6 +38,8 @@ export type {
   SyncStateLayer,
   VisibleLayer,
   EnqueueInput,
+  StoreRecovery,
+  RecoveryReason,
 } from "./store/index.js";
 
 export { createOutboxDrain, DEFAULT_RETRY_CEILING } from "./drain.js";
@@ -40,6 +47,24 @@ export type { DrainOptions, DrainResult, OutboxDrain } from "./drain.js";
 
 export { createLocalSync } from "./sync.js";
 export type { LocalSync, LocalSyncOptions } from "./sync.js";
+
+export { createLocalEngine } from "./engine.js";
+export type {
+  ConnectionState,
+  LocalEngine,
+  LocalEngineOptions,
+  LocalEngineStatus,
+} from "./engine.js";
+
+export {
+  createProjection,
+  DEFAULT_PROJECTION_MAX_ITEMS,
+} from "./projection.js";
+export type {
+  ProjectionCollection,
+  ProjectionOptions,
+  ProjectionUtils,
+} from "./projection.js";
 
 export { applyEvent } from "./apply.js";
 export type { ApplyOutcome } from "./apply.js";

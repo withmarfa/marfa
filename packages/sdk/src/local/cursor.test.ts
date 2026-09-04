@@ -1,0 +1,261 @@
+/**
+ * The scenarios that need the server to assign event ids.
+ *
+ * Their own file because they are the only ones that ask the fixture for
+ * an event log, and that wiring is module-global: keeping them together
+ * keeps the number of suites that turn it on to one.
+ */
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { MarfaClient } from "../client.js";
+import {
+  createKeysModeFixture,
+  type KeysModeFixture,
+} from "../test-harness.js";
+import { createOutboxDrain } from "./drain.js";
+import { createOfflineSeam, type OfflineSeam } from "./offline-seam.js";
+import { createLocalSync, type LocalSync } from "./sync.js";
+import { openLocalStore, type LocalStore } from "./store/index.js";
+import {
+  SINGLE_ACCOUNT,
+  SINGLE_SPACE,
+  type LocalEngineEvent,
+} from "./types.js";
+
+let fixture: KeysModeFixture;
+let seam: OfflineSeam;
+let client: MarfaClient;
+let store: LocalStore;
+let events: LocalEngineEvent[];
+let watchers: {
+  match: (event: LocalEngineEvent) => boolean;
+  resolve: () => void;
+}[];
+let running: LocalSync[];
+let dir: string;
+
+const identity = {
+  origin: "http://localhost",
+  spaceId: SINGLE_SPACE,
+  accountId: SINGLE_ACCOUNT,
+};
+
+function reports(match: (event: LocalEngineEvent) => boolean): Promise<void> {
+  return new Promise((resolve) => {
+    if (events.some(match)) {
+      resolve();
+      return;
+    }
+    watchers.push({ match, resolve });
+  });
+}
+
+function startSync(options?: { initialRetryMs?: number }): LocalSync {
+  const sync = createLocalSync({
+    store,
+    client,
+    drain: createOutboxDrain({ store, client }),
+    ...(options?.initialRetryMs === undefined
+      ? {}
+      : { initialRetryMs: options.initialRetryMs }),
+    onEvent: (event) => {
+      events.push(event);
+      for (const watcher of watchers.splice(0)) {
+        if (watcher.match(event)) watcher.resolve();
+        else watchers.push(watcher);
+      }
+    },
+  });
+  running.push(sync);
+  return sync;
+}
+
+/** Bring up a fixture, saying whether the event log is wired. */
+async function bringUp(eventLog: boolean): Promise<void> {
+  fixture = await createKeysModeFixture(undefined, { eventLog });
+  seam = createOfflineSeam(fixture.fetch);
+  client = new MarfaClient({
+    url: "http://localhost",
+    apiKey: fixture.adminKey,
+    fetch: seam.fetch,
+  });
+}
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "marfa-local-cursor-"));
+  events = [];
+  watchers = [];
+  running = [];
+});
+
+afterEach(() => {
+  for (const sync of running) sync.stop();
+  store.close();
+  fixture.cleanup();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+async function openStore(): Promise<LocalStore> {
+  store = await openLocalStore({ path: join(dir, "store.db"), identity });
+  return store;
+}
+
+describe("the fixture's event log", () => {
+  it("is what decides whether a cursor can be refused at all", async () => {
+    // Off. Nothing is appended, so the log is empty, the staleness check
+    // is skipped for want of anything to compare against, and a cursor
+    // from before the beginning of time is served as though it were
+    // current. A suite that tested the stale-cursor path here would pass
+    // having exercised none of it.
+    await bringUp(false);
+    await openStore();
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "one" },
+    });
+
+    const silent = await askWithCursor("0");
+    expect(silent.tooOld).toBeUndefined();
+    expect(silent.announced).toBe("0");
+
+    store.close();
+    fixture.cleanup();
+
+    // On. The same request, against the same code, now meets a log that
+    // knows where it starts.
+    await bringUp(true);
+    await openStore();
+    const created = await client.items.create({
+      type: "core.note",
+      properties: { body: "one" },
+    });
+    expect(created.id).toBeDefined();
+
+    const refused = await askWithCursor("0");
+    expect(refused.tooOld).toMatchObject({ requested: "0" });
+    expect(Number(refused.announced)).toBeGreaterThan(0);
+  });
+});
+
+/** Open one subscription with a resume cursor and report what it got. */
+function askWithCursor(cursor: string): Promise<{
+  announced: string | undefined;
+  tooOld: { min_retained_id: string; requested: string } | undefined;
+}> {
+  return new Promise((resolve) => {
+    let announced: string | undefined;
+    const subscription = client.events.subscribe({
+      lastEventId: cursor,
+      reconnect: false,
+      onEvent: () => undefined,
+      onCursor: (value) => {
+        announced = value;
+        // Nothing else is coming on a stream that was going to refuse:
+        // the refusal is the first frame after the announcement, and the
+        // announcement is the last thing a healthy one says unprompted.
+        setTimeout(() => {
+          subscription.close();
+          resolve({ announced, tooOld: undefined });
+        }, 50);
+      },
+      onCatchupTooOld: (info) => {
+        subscription.close();
+        resolve({ announced, tooOld: info });
+      },
+    });
+  });
+}
+
+describe("a cursor the log can no longer serve (seam: online)", () => {
+  it("re-reads and prunes rather than reconnecting into the same refusal", async () => {
+    await bringUp(true);
+    await openStore();
+
+    const kept = await client.items.create({
+      type: "core.note",
+      properties: { body: "kept" },
+    });
+    const goes = await client.items.create({
+      type: "core.note",
+      properties: { body: "goes while away" },
+    });
+    await startSync({ initialRetryMs: 5 }).start();
+    expect(await store.server.items.get(goes.id)).toBeDefined();
+
+    // Away before anything happens, and this ordering is the scenario
+    // rather than housekeeping. With the subscription still open the
+    // removal arrives as a live frame, the store acts on it, and the
+    // re-import that follows finds nothing left to prune — proving the
+    // stream works and the prune nothing at all.
+    for (const sync of running.splice(0)) sync.stop();
+
+    // Removed while away, with the cursor left at a position the log
+    // cannot serve. Reconnecting with it loops on the refusal; dropping
+    // it silently skips whatever happened in the gap — which is this
+    // removal, and nothing else would ever mention it.
+    await client.items.delete(goes.id);
+    await client.items.purge(goes.id);
+    await store.syncState.setCursor(identity, "0");
+
+    events.length = 0;
+    const resumed = startSync({ initialRetryMs: 5 });
+    await resumed.start();
+    await reports((event) => event.type === "reimport.finished");
+
+    const reimport = events.find((e) => e.type === "reimport.finished");
+    expect(reimport).toMatchObject({ prunedItems: 1 });
+    expect(await store.server.items.get(goes.id)).toBeUndefined();
+    expect(await store.server.items.get(kept.id)).toBeDefined();
+    // Resumed from the announcement the new connection made, not from the
+    // cursor that was refused.
+    expect((await store.syncState.read(identity))?.cursor).not.toBe("0");
+  });
+});
+
+describe("a restart after events have been seen (seam: online)", () => {
+  it("comes back at the cursor the stream last accounted for", async () => {
+    await bringUp(true);
+    await openStore();
+    await startSync().start();
+
+    const note = await client.items.create({
+      type: "core.note",
+      properties: { body: "written while watching" },
+    });
+    // The store's own record rather than the subscription's: the two are
+    // written together, and only the store's survives the process.
+    await settles(
+      () => store.syncState.read(identity),
+      (row) => row?.cursor != null && row.cursor !== "0",
+    );
+    const cursorBefore = (await store.syncState.read(identity))?.cursor;
+
+    for (const sync of running.splice(0)) sync.stop();
+    store.close();
+
+    // A second engine over the same file, as a restart is.
+    await openStore();
+    expect((await store.syncState.read(identity))?.cursor).toBe(cursorBefore);
+    expect(await store.server.items.get(note.id)).toBeDefined();
+
+    // And it resumes from there rather than from the head of the log,
+    // which is what the announcement would have given it.
+    seam.reset();
+    await startSync().start();
+    const resumed = seam.requests.find((r) => r.path === "/events");
+    expect(resumed?.headers["last-event-id"]).toBe(cursorBefore);
+  });
+});
+
+async function settles<T>(
+  read: () => Promise<T>,
+  want: (value: T) => boolean,
+): Promise<T> {
+  for (;;) {
+    const value = await read();
+    if (want(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
