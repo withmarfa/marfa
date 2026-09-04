@@ -28,6 +28,7 @@ import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
 interface OpenAPIDoc {
   paths?: object;
   tags?: unknown[];
+  components?: object;
 }
 
 /**
@@ -310,6 +311,153 @@ const IDEMPOTENT_OPERATIONS = new Set(
   }),
 );
 
+/**
+ * The response headers the server sets, and what each one means.
+ *
+ * None of these can be reflected. Every one is set by middleware or by the
+ * error handler rather than declared on a `createRoute` response, so the
+ * published spec described no response header at all until they were
+ * written here — a client could only learn that any of them existed by
+ * reading the server. They are the whole set: `Cache-Control` and `Pragma`
+ * in `routes/no-store.ts` sit on the plain-Hono auth HTML pages, which are
+ * not part of the reflected API surface and are deliberately left out.
+ *
+ * Held in `components.headers` and referenced from each response, so the
+ * meaning is written once rather than restated on 106 operations.
+ */
+const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
+  "X-Request-ID": {
+    description:
+      "This request's identifier, the same one written to the server's request log. Echoes the caller's own `X-Request-ID` when it sends one matching `[A-Za-z0-9_-]{1,128}`, and is a generated UUIDv7 otherwise, so a client can either adopt the server's id or impose its own. Quote it when reporting a problem: it is the one value that finds the request again.",
+    schema: { type: "string" },
+  },
+  "X-Error-Code": {
+    description:
+      "The machine-readable error code, identical to `error.code` in the body and drawn from the same enum the response schema lists. Read it rather than matching on `error.message`, which is prose written for a person and may be reworded. Present on every error the server renders, including one served from an idempotency record.",
+    schema: { type: "string" },
+  },
+  "X-RateLimit-Limit": {
+    description:
+      "How many requests this credential may make in the current window. Sent on every response, not only refusals, so a client can pace itself before it is refused. Absent entirely on a deployment that does not enable rate limiting, along with the rest of the `X-RateLimit-*` trio.",
+    schema: { type: "integer" },
+  },
+  "X-RateLimit-Remaining": {
+    description:
+      "Requests left in the current window for this credential, floored at 0. The request that is refused with 429 is the one that reads 0.",
+    schema: { type: "integer" },
+  },
+  "X-RateLimit-Reset": {
+    description:
+      "Unix time in seconds at which the current window ends and `X-RateLimit-Remaining` returns to `X-RateLimit-Limit`.",
+    schema: { type: "integer" },
+  },
+  "Retry-After": {
+    description:
+      "Seconds to wait before retrying, sent with the rate limiter's own refusal. Derived from the time left in the window rather than a fixed backoff, so a client that honors it needs no backoff of its own.",
+    schema: { type: "integer" },
+  },
+  "Idempotency-Replayed": {
+    description:
+      "Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read — the header says where the answer came from, not that anything went wrong.",
+    schema: { type: "string", enum: ["true"] },
+  },
+};
+
+/** Headers on every response, whatever the operation or the status. */
+const UNIVERSAL_RESPONSE_HEADERS = [
+  "X-Request-ID",
+  "X-RateLimit-Limit",
+  "X-RateLimit-Remaining",
+  "X-RateLimit-Reset",
+];
+
+/**
+ * The rate limiter's refusal, added to every operation.
+ *
+ * Declared here rather than on each route for the same reason the
+ * `Idempotency-Key` parameter is: the limiter is middleware mounted across
+ * `*`, so every operation can answer 429 and not one of them said so. The
+ * `Retry-After` header this ticket exists to declare has nowhere to hang
+ * without it — a header is declared on a response, and the response was
+ * missing too.
+ */
+const RATE_LIMITED_RESPONSE = {
+  description:
+    "Rate limited. The credential has spent its allowance for the current window; `Retry-After` says how long to wait. Only reachable on a deployment that enables rate limiting.",
+  content: {
+    "application/json": {
+      schema: {
+        type: "object",
+        properties: {
+          error: {
+            type: "object",
+            properties: {
+              code: { type: "string", enum: ["rate_limited"] },
+              message: { type: "string" },
+            },
+            required: ["code", "message"],
+          },
+        },
+        required: ["error"],
+      },
+    },
+  },
+};
+
+/** `{ "X-Request-ID": { "$ref": … }, … }` for the named headers. */
+function headerRefs(names: readonly string[]): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const name of names) {
+    out[name] = { $ref: `#/components/headers/${name}` };
+  }
+  return out;
+}
+
+/**
+ * Declare, on one operation, the headers its responses actually carry.
+ *
+ * Which headers apply is decided per status rather than per operation:
+ * `X-Error-Code` rides every error the handler renders, `Retry-After` only
+ * the limiter's own refusal. `Idempotency-Replayed` is the exception that
+ * is decided per operation, and it goes on every response rather than only
+ * the success one because a replay reproduces whatever the first attempt
+ * answered — a recorded conflict replays as a conflict.
+ */
+function withResponseHeaders(
+  operation: Record<string, unknown>,
+  replays: boolean,
+): Record<string, unknown> {
+  const responses = operation.responses;
+  if (responses === null || typeof responses !== "object") return operation;
+
+  const next: Record<string, unknown> = {};
+  for (const [status, response] of Object.entries(
+    responses as Record<string, unknown>,
+  )) {
+    if (response === null || typeof response !== "object") {
+      next[status] = response;
+      continue;
+    }
+    const code = Number.parseInt(status, 10);
+    const names = [...UNIVERSAL_RESPONSE_HEADERS];
+    // `default` and any other non-numeric key parses to NaN, and NaN fails
+    // both comparisons — so an unrecognized key gets the universal set and
+    // no claim this code cannot support.
+    if (code >= 400) names.push("X-Error-Code");
+    if (code === 429) names.push("Retry-After");
+    if (replays) names.push("Idempotency-Replayed");
+
+    const existing = (response as { headers?: Record<string, unknown> })
+      .headers;
+    next[status] = {
+      ...response,
+      headers: { ...headerRefs(names), ...(existing ?? {}) },
+    };
+  }
+
+  return { ...operation, responses: next };
+}
+
 /** Shape the reflected document into the published public reference. */
 export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   spec.tags = PUBLIC_TAGS;
@@ -357,6 +505,36 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   for (const [pathKey, def] of Object.entries(EXTRA_PATHS)) {
     nextPaths[pathKey] = { ...(nextPaths[pathKey] ?? {}), ...def };
   }
+
+  // Declare the middleware-set response headers, last so that the injected
+  // routes above are covered too — they are served through the same logger
+  // and the same limiter as everything else, and a client reading the
+  // reference has no way to know which routes the reflection happened to
+  // see.
+  for (const [pathKey, methods] of Object.entries(nextPaths)) {
+    const withHeaders: Record<string, unknown> = {};
+    for (const [method, op] of Object.entries(methods)) {
+      if (op === null || typeof op !== "object") {
+        withHeaders[method] = op;
+        continue;
+      }
+      const operation = op as Record<string, unknown>;
+      const responses = {
+        ...((operation.responses as Record<string, unknown> | undefined) ?? {}),
+      };
+      responses["429"] ??= RATE_LIMITED_RESPONSE;
+      withHeaders[method] = withResponseHeaders(
+        { ...operation, responses },
+        IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`),
+      );
+    }
+    nextPaths[pathKey] = withHeaders;
+  }
+
+  spec.components = {
+    ...(spec.components ?? {}),
+    headers: RESPONSE_HEADER_COMPONENTS,
+  };
 
   spec.paths = nextPaths;
   return spec;
