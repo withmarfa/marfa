@@ -14,6 +14,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   compareSurfaceLocks,
+  decideSurfaceLockDrift,
   describeSurfaceLockDrift,
   type SurfaceLock,
 } from "./published-surface.js";
@@ -40,6 +41,21 @@ describe("compareSurfaceLocks", () => {
         toExports: 134,
       },
     ]);
+  });
+
+  it("is quiet when nothing moved at all", () => {
+    // The ordinary case, and the one the other fixtures could not hold. With
+    // (version same, hash moved), (both moved) and (version moved, hash same)
+    // covered but not this, deleting the hash-equality guard left every test
+    // green while the check reported every untouched package as drift on every
+    // pull request — a guard that refuses everything is as useless as one that
+    // refuses nothing, and louder.
+    expect(
+      compareSurfaceLocks(
+        { "@withmarfa/sdk": entry("4.0.0", "aaa") },
+        { "@withmarfa/sdk": entry("4.0.0", "aaa") },
+      ),
+    ).toEqual([]);
   });
 
   it("is quiet when the version moved with the surface", () => {
@@ -160,5 +176,57 @@ describe("the drift script", () => {
     const { status, stderr } = runDrift([]);
     expect(status).not.toBe(0);
     expect(stderr).toContain("nothing to compare against");
+  });
+});
+
+describe("the decision the check acts on", () => {
+  // Everything above tests the comparison; the two script cases below exit
+  // before they reach it. So until this block existed, `process.exit(1)`
+  // changed to `process.exit(0)` on the refusal path passed the whole suite,
+  // and so did replacing the comparison with `compareSurfaceLocks(head, head)`.
+  // The guard could be switched off inside the file that is the guard.
+  it("refuses, and names the package and the version it stood at", () => {
+    const verdict = decideSurfaceLockDrift(
+      { "@withmarfa/sdk": entry("4.0.0", "aaa", 134) },
+      { "@withmarfa/sdk": entry("4.0.0", "bbb", 134) },
+      "abc1234",
+    );
+    expect(
+      verdict.code,
+      "a surface that moved under a standing version did not produce a failing exit status, so the check would pass through the one thing it exists to refuse",
+    ).toBe(1);
+    expect(verdict.report).toContain("@withmarfa/sdk");
+    expect(verdict.report).toContain("4.0.0");
+  });
+
+  it("passes when no surface moved, and says what it looked at", () => {
+    const clean = {
+      "@withmarfa/sdk": entry("4.0.0", "aaa"),
+      "@withmarfa/shared": entry("6.16.0", "ccc"),
+    };
+    const verdict = decideSurfaceLockDrift(clean, clean, "abc1234");
+    expect(verdict.code).toBe(0);
+    // The count and the base ref, because a check that prints only "ok" is one
+    // nobody can tell apart from a check that compared nothing.
+    expect(verdict.report).toContain("2 packages");
+    expect(verdict.report).toContain("abc1234");
+  });
+
+  it("counts every drifted package rather than stopping at the first", () => {
+    const verdict = decideSurfaceLockDrift(
+      {
+        "@withmarfa/sdk": entry("4.0.0", "aaa"),
+        "@withmarfa/shared": entry("6.16.0", "ccc"),
+      },
+      {
+        "@withmarfa/sdk": entry("4.0.0", "bbb"),
+        "@withmarfa/shared": entry("6.16.0", "ddd"),
+      },
+      "abc1234",
+    );
+    expect(verdict.code).toBe(1);
+    expect(verdict.report).toContain("2 packages");
+    expect(verdict.report).toContain("@withmarfa/sdk");
+    expect(verdict.report).toContain("@withmarfa/shared");
   });
 });

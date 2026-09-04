@@ -388,3 +388,47 @@ export function describeSurfaceViolation(v: SurfaceViolation): string {
       );
   }
 }
+
+/**
+ * The whole rule, as a value rather than as control flow in a script.
+ *
+ * The script that runs this in CI used to hold the decision itself: compare,
+ * branch on the length, print, exit. Nothing could reach that branch from a
+ * test, so `if (drifts.length >= 0)` and an exit code of zero on the refusal
+ * path both passed the entire suite. **The guard could be switched off inside
+ * the file that is the guard**, which is the failure this whole change exists
+ * to prevent, one level up. So the decision lives here and the script is an
+ * I/O shell around it.
+ *
+ * `code` is the process exit status, and 1 and 2 mean different things: 1 is
+ * a surface that moved under a standing version, 2 is a check that could not
+ * see enough to say. Collapsing them would make a malformed lock file read as
+ * a violation, which sends the next reader looking for a change nobody made.
+ */
+export interface SurfaceLockVerdict {
+  code: 0 | 1;
+  report: string;
+}
+
+export function decideSurfaceLockDrift(
+  baseline: SurfaceLock,
+  head: SurfaceLock,
+  baseRef: string,
+): SurfaceLockVerdict {
+  const drifts = compareSurfaceLocks(baseline, head);
+  if (drifts.length === 0) {
+    return {
+      code: 0,
+      report:
+        "published surface lock: no package's surface moved under a standing " +
+        `version (${String(Object.keys(head).length)} packages, base ${baseRef})`,
+    };
+  }
+  const plural = drifts.length === 1 ? "" : "s";
+  return {
+    code: 1,
+    report:
+      `A published surface moved without its version moving, in ${String(drifts.length)} package${plural}:\n\n` +
+      drifts.map((d) => `  - ${describeSurfaceLockDrift(d)}`).join("\n\n"),
+  };
+}

@@ -17,8 +17,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  compareSurfaceLocks,
-  describeSurfaceLockDrift,
+  decideSurfaceLockDrift,
   type SurfaceLock,
 } from "../src/publishing/published-surface.js";
 
@@ -61,22 +60,38 @@ function lockAtRef(ref: string): SurfaceLock {
     );
     process.exit(2);
   }
-  return JSON.parse(raw) as SurfaceLock;
+  try {
+    return JSON.parse(raw) as SurfaceLock;
+  } catch (err) {
+    console.error(
+      `${LOCK_IN_REPO} at ${ref} is not readable JSON, so there is no baseline to compare against.\n` +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    process.exit(2);
+  }
 }
 
 const baseline = lockAtRef(baseRef);
-const head = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as SurfaceLock;
 
-const drifts = compareSurfaceLocks(baseline, head);
-if (drifts.length === 0) {
-  console.log(
-    `published surface lock: no package's surface moved under a standing version (${String(Object.keys(head).length)} packages, base ${baseRef})`,
+// Read symmetrically with the baseline, and for the same reason. A lock that
+// will not parse is a check that cannot see, not a surface that moved: exiting
+// 1 here would print a violation nobody committed and send the next reader
+// looking through a diff for a change that is not in it.
+let head: SurfaceLock;
+try {
+  head = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as SurfaceLock;
+} catch (err) {
+  console.error(
+    `Could not read the committed ${LOCK_IN_REPO}, so there is nothing to compare against the baseline.\n` +
+      (err instanceof Error ? err.message : String(err)),
   );
-  process.exit(0);
+  process.exit(2);
 }
 
-console.error(
-  `A published surface moved without its version moving, in ${String(drifts.length)} package${drifts.length === 1 ? "" : "s"}:\n`,
-);
-for (const d of drifts) console.error(`  - ${describeSurfaceLockDrift(d)}\n`);
-process.exit(1);
+const verdict = decideSurfaceLockDrift(baseline, head, baseRef);
+if (verdict.code === 0) {
+  console.log(verdict.report);
+} else {
+  console.error(verdict.report);
+}
+process.exit(verdict.code);
