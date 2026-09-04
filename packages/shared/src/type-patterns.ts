@@ -221,6 +221,11 @@ export function typeSubtreeToSql(
  * a walk up one chain. A query resolves the filter once and wants the set; a
  * stream resolves it per event and wants the predicate.
  *
+ * `spaceId` reads exactly as it does for {@link typeSubtreeToSql}:
+ * `undefined` means the caller resolves names only and the declared
+ * clause is skipped, `null` is the real null-space scope a single-space
+ * self-host registers into, and a string is that space.
+ *
  * Ordered cheapest first, and the ordering is load-bearing rather than
  * cosmetic. Both name clauses are string comparisons, so a filter naming a
  * namespace answers for everything inside it without consulting the registry
@@ -240,6 +245,14 @@ export function typeAnswersSubtreeFilter(
   const root = subtreeWildcardRoot(filter) ?? filter;
   if (type === root) return true;
   if (type.startsWith(`${root}.`)) return true;
+  // The same three-way reading of `spaceId` that `declaredExtras` gives
+  // the SQL side, and it has to be stated rather than inherited:
+  // `resolveSchema` treats `undefined` and `null` alike, so without this
+  // line a caller omitting the argument would resolve declared parentage
+  // where `typeSubtreeToSql` resolves none — the two disagreeing about
+  // the same filter, which is the one thing this function exists to
+  // prevent. `undefined` means names only; `null` is a real scope.
+  if (spaceId === undefined) return false;
   return isSubtypeOf(type, root, spaceId);
 }
 

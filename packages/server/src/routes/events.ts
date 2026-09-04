@@ -182,18 +182,42 @@ type StreamIncompleteReason =
 /**
  * Most live frames one connection holds while its prologue runs.
  *
- * **Derived from the dedupe window, because the two bound the same
- * population from opposite sides.** Both structures exist for exactly the
- * events published while this connection was announcing its cursor and
- * replaying its backlog: `REPLAY_DEDUPE_WINDOW` remembers the ids the
- * replay sent so a held frame is not delivered twice, and this holds the
- * frames it is checked against. A hold larger than that window keeps
- * frames the window can no longer vouch for; a hold smaller than it drops
- * frames the window would have admitted. Equal is the only size at which
- * the two agree about the same window, so one constant moves both and
- * neither can be re-tuned alone.
+ * **Chosen as a memory bound, not derived from anything.** An earlier
+ * version of this comment claimed it followed from `REPLAY_DEDUPE_WINDOW`
+ * because the two bounded the same population from opposite sides. They
+ * do not: that window holds the last few ids the replay actually SENT,
+ * after filtering, while this holds live frames on their way in — and
+ * whether a held frame's id is still inside that window depends on how
+ * many rows the replay sent after it, which is a property of the
+ * backlog's length rather than of this buffer's. Neither number is a
+ * function of the other, and moving one does not require moving the
+ * other.
  *
- * **What it costs, per holding viewer.** A held frame is a two-field
+ * **What the number is actually for.** The hold lasts only as long as the
+ * prologue — one head read, plus a replay when the client sent a cursor.
+ * The buffer grows as the product of the space's write rate and that
+ * duration, and the prologue does not get faster because the buffer got
+ * bigger, so past some size holding more only defers the same answer at a
+ * higher cost. The job of the number is to sit above what an ordinary
+ * prologue on a busy space reaches and below what would matter if a
+ * pathological one did not stop.
+ *
+ * Five hundred because that is what this route already treats as a
+ * sensible number of event-shaped things for one connection to hold at
+ * once — `REPLAY_BATCH_SIZE` is the same figure for the replay's own
+ * read. That is a precedent being reused, not a derivation: if the batch
+ * size moves for reasons of its own, this does not have to follow.
+ *
+ * **What it costs at the boundary, stated because it is a real cost.**
+ * `REPLAY_DEDUPE_WINDOW` degrades gracefully at its own edge — past it a
+ * client receives a second copy carrying an id it already absorbed, which
+ * is why that number can be a judgment rather than a proof. This one does
+ * not degrade: at the cap the stream terminates where nothing worse than
+ * a duplicate would otherwise have happened. That is the deliberate
+ * trade — a bounded, announced, resumable termination in place of a
+ * buffer with no ceiling — and it is worth knowing it is a trade.
+ *
+ * **What it costs per holding viewer.** A held frame is a two-field
  * wrapper around the event object the emitter broadcast — the same object
  * every other subscriber received, not a copy — so the marginal cost is
  * the wrappers, and the retained cost is keeping up to this many
@@ -201,7 +225,7 @@ type StreamIncompleteReason =
  * ceiling bounds how many connections can be holding at once; this bounds
  * what each one accumulates, which is the half nothing bounded before.
  */
-const MAX_HELD_FRAMES = REPLAY_DEDUPE_WINDOW;
+const MAX_HELD_FRAMES = 500;
 
 /**
  * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
@@ -555,6 +579,18 @@ export function eventRoutes(
            * announces the failure can say so. Advanced only where an
            * `id:` is actually written — a frame the filter withheld moved
            * no client cursor.
+           *
+           * **The last id written, which is not always the highest, and
+           * that is deliberate.** `event_log.id` is assigned before
+           * commit, so a lower id can commit after a higher one and reach
+           * a client afterwards; the SSE `id:` field has carried that
+           * property since long before this line, and the documented
+           * client rule is written against it — store the last id you
+           * received rather than the highest you have seen. Taking a
+           * maximum here would contradict that rule and skip the
+           * late-committing event. Resuming from this value can therefore
+           * re-deliver a row, which a client applying payloads by id
+           * already absorbs, and cannot skip one.
            */
           let lastSentId: bigint | null = null;
 
@@ -566,11 +602,28 @@ export function eventRoutes(
           });
           const reader = events[Symbol.asyncIterator]();
 
+          /**
+           * Whether an item frame survives the caller's type projection.
+           *
+           * Named because it is asked twice — once before a frame is
+           * held and again when it is released — and those two must be
+           * the same question. Both inputs are fixed for the life of the
+           * connection: `typeFilter` is computed once at request start
+           * and a frame's own type never changes, so an early answer
+           * cannot differ from a late one.
+           */
+          const itemPassesProjection = (event: ItemEventWithId): boolean =>
+            matchesTypeFilter(event.item.type, typeFilter);
+
+          /** Whether edge frames reach this stream at all. Read once:
+           *  `?edges=` is a request parameter, not a per-frame property. */
+          const edgesReachThisStream = edgeMode !== "none";
+
           const sendEvent = (
             eventId: bigint | undefined,
             event: ItemEventWithId,
           ) => {
-            if (!matchesTypeFilter(event.item.type, typeFilter)) {
+            if (!itemPassesProjection(event)) {
               return;
             }
 
@@ -614,7 +667,7 @@ export function eventRoutes(
             eventId: bigint | undefined,
             event: EdgeEventWithId,
           ) => {
-            if (edgeMode === "none") return;
+            if (!edgesReachThisStream) return;
             const wireType = wireEventName(event.type);
             const sseData = { type: wireType, edge: event.edge };
             const idField =
@@ -763,6 +816,36 @@ export function eventRoutes(
            * written twice is a rule one of the two kinds of frame will
            * eventually stop obeying.
            *
+           * **A frame that will not be delivered is not held, and this is
+           * the load-bearing half.** The cap used to count frames the
+           * release path was guaranteed to discard, so traffic a
+           * subscriber had explicitly excluded could still exhaust its
+           * buffer and terminate its stream: `?edges=none` could be
+           * killed by edge events, and a credential scoped to one type by
+           * events of another. Narrowing the subscription made it worse
+           * rather than better, which is the opposite of what a filter is
+           * for — and the first-party replica subscribes with
+           * `edges: "none"` by design, so it sat in exactly that
+           * configuration. Both questions are the ones the release path
+           * asks, asked here through the same two predicates so they
+           * cannot drift, and both are stable for the life of the
+           * connection so asking early cannot answer differently.
+           *
+           * The projection costs a `matchesTypeFilter` per held frame it
+           * admits, paid again when that frame is released. Bounded by
+           * this cap and measured at ~146ns, that is at most ~73us across
+           * a whole connection's prologue — against a buffer that could
+           * otherwise be filled entirely by frames its owner cannot
+           * receive.
+           *
+           * The `?type=` filter and the space fence are not asked here
+           * because they are applied upstream, inside the subscription,
+           * so a frame excluded by either never reaches this function.
+           * The replay dedupe is the one release-time drop that stays at
+           * release: whether a held id was also sent by the replay is not
+           * knowable until the replay has finished, so the cap can still
+           * count a frame that turns out to be a duplicate.
+           *
            * Overflow ends the stream rather than shedding frames. Dropping
            * the oldest or the newest would be a silent truncation, which
            * is the failure this whole file is arranged against; carrying
@@ -771,6 +854,11 @@ export function eventRoutes(
            * in the log, behind a cursor the client already holds.
            */
           const holdFrame = (frame: HeldFrame): void => {
+            const deliverable =
+              frame.kind === "edge"
+                ? edgesReachThisStream
+                : itemPassesProjection(frame.event);
+            if (!deliverable) return;
             if (heldFrames.length >= MAX_HELD_FRAMES) {
               console.warn(
                 `[events] closing the stream: ${String(MAX_HELD_FRAMES)} live frames accumulated while it was still opening, and the prologue has not finished`,

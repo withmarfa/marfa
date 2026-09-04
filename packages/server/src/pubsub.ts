@@ -730,13 +730,19 @@ export async function* subscribe(
   try {
     for await (const [event] of iter) {
       const itemEvent = event as ItemEventWithId;
+      // Space first, and the order matters now: this is a string
+      // comparison while the type filter below may walk a declared chain
+      // through the registry, so testing the cheap fence first keeps the
+      // expensive question off every event belonging to another space.
+      if (options?.spaceId && itemEvent.spaceId !== options.spaceId) continue;
       // The space goes to the matcher, or a space's own subtype of a
       // shipped type does not answer a filter naming that type. `?? null`
       // rather than passing the value through: the list surfaces resolve
       // a space-less caller against the null-space overlay a single-space
       // self-host registers into, and a stream resolving it against core
       // types alone would disagree with them for exactly those
-      // deployments.
+      // deployments. It also matters that this is not `undefined`, which
+      // the matcher reads as "resolve names only".
       if (
         !eventMatchesTypeFilter(
           itemEvent.item.type,
@@ -745,7 +751,6 @@ export async function* subscribe(
         )
       )
         continue;
-      if (options?.spaceId && itemEvent.spaceId !== options.spaceId) continue;
       yield itemEvent;
     }
   } catch (err) {

@@ -27,7 +27,12 @@ import type { ApiKey } from "@withmarfa/shared";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
 import { createTestContext, request, readSse, settle } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { emitWake, initEventLog, type ItemEventWithId } from "../pubsub.js";
+import {
+  emitWake,
+  initEventLog,
+  type EdgeEventWithId,
+  type ItemEventWithId,
+} from "../pubsub.js";
 import { eventRoutes } from "./events.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { PersistedEvent, Storage } from "../storage/interface.js";
@@ -46,6 +51,95 @@ afterAll(async () => {
 async function latestEventId(): Promise<bigint> {
   const rows = await ctx.storage.eventLog.getAfter(0n, 1000);
   return rows.reduce((max, row) => (row.id > max ? row.id : max), 0n);
+}
+
+/** Default is a key with no space and no permission map, so nothing is
+ *  filtered and every emitted event reaches the hold. The probes below
+ *  override the permission map to narrow what may be delivered. */
+function makeApp(storage: Storage, key: Partial<ApiKey> = {}): Hono<AppEnv> {
+  const app = new Hono<AppEnv>();
+  app.use("*", async (c, next) => {
+    c.set("apiKey", {
+      id: "key-events-overflow",
+      name: "overflow viewer",
+      key_hash: "unused",
+      role: "instance_admin",
+      type_permissions: {},
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      created_at: new Date().toISOString(),
+      ...key,
+    } as unknown as ApiKey);
+    await next();
+  });
+  app.route(
+    "/events",
+    eventRoutes(storage, { rlsEnforce: false, pgClient: null }),
+  );
+  return app;
+}
+
+/** A storage whose first replay read blocks until the returned `open`
+ *  is called, so the prologue is held by the test rather than a clock. */
+function gatedStorage(): { storage: Storage; open: () => void } {
+  let open = (): void => undefined;
+  const gate = new Promise<PersistedEvent[]>((resolve) => {
+    open = () => {
+      resolve([]);
+    };
+  });
+  let firstRead = true;
+  const storage: Storage = {
+    ...ctx.storage,
+    eventLog: {
+      ...ctx.storage.eventLog,
+      append: (entry) => ctx.storage.eventLog.append(entry),
+      getMinRetainedId: (spaceId) =>
+        ctx.storage.eventLog.getMinRetainedId(spaceId),
+      getMaxId: (spaceId) => ctx.storage.eventLog.getMaxId(spaceId),
+      cleanup: (hours, spaceId) => ctx.storage.eventLog.cleanup(hours, spaceId),
+      getAfter: (afterId, limit, spaceId) => {
+        if (firstRead) {
+          firstRead = false;
+          return gate;
+        }
+        return ctx.storage.eventLog.getAfter(afterId, limit, spaceId);
+      },
+    },
+  };
+  return { storage, open };
+}
+
+function emitNotes(count: number, tag: string): void {
+  for (let n = 0; n < count; n++) {
+    emitWake({
+      type: "created",
+      item: {
+        id: `ZZ${tag}${String(n)}ZZ`,
+        type: "core.note",
+        properties: {},
+      } as unknown as ItemEventWithId["item"],
+      originatingConnectionId: null,
+      hopCount: 0,
+    });
+  }
+}
+
+function emitEdges(count: number, tag: string): void {
+  for (let n = 0; n < count; n++) {
+    emitWake({
+      type: "edge_created",
+      edge: {
+        id: `ZZ${tag}${String(n)}ZZ`,
+        edge_type: "references",
+        source_id: "src",
+        target_id: "tgt",
+      } as unknown as EdgeEventWithId["edge"],
+      originatingConnectionId: null,
+      hopCount: 0,
+    });
+  }
 }
 
 describe("a catch-up that throws partway through", () => {
@@ -149,31 +243,6 @@ describe("live frames held past the limit while the catch-up runs", () => {
    */
   const OVER_THE_CAP = 501;
 
-  /** A key with no space and no permission map, so nothing below is
-   *  filtered and every emitted event reaches the hold. */
-  function makeApp(storage: Storage): Hono<AppEnv> {
-    const app = new Hono<AppEnv>();
-    app.use("*", async (c, next) => {
-      c.set("apiKey", {
-        id: "key-events-overflow",
-        name: "overflow viewer",
-        key_hash: "unused",
-        role: "instance_admin",
-        type_permissions: {},
-        extension_permissions: {},
-        edge_permissions: {},
-        metadata_permissions: {},
-        created_at: new Date().toISOString(),
-      } as unknown as ApiKey);
-      await next();
-    });
-    app.route(
-      "/events",
-      eventRoutes(storage, { rlsEnforce: false, pgClient: null }),
-    );
-    return app;
-  }
-
   it("tells the client and closes, instead of growing without a limit", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
@@ -182,36 +251,7 @@ describe("live frames held past the limit while the catch-up runs", () => {
     expect(seed.status).toBe(201);
     const cursor = await latestEventId();
 
-    // The catch-up is held open on this rather than on a clock, so the
-    // window in which frames accumulate is decided by the test rather
-    // than by how loaded the machine is.
-    let openTheGate = (): void => undefined;
-    const gate = new Promise<PersistedEvent[]>((resolve) => {
-      openTheGate = () => {
-        resolve([]);
-      };
-    });
-    let firstRead = true;
-    const storage: Storage = {
-      ...ctx.storage,
-      eventLog: {
-        ...ctx.storage.eventLog,
-        append: (entry) => ctx.storage.eventLog.append(entry),
-        getMinRetainedId: (spaceId) =>
-          ctx.storage.eventLog.getMinRetainedId(spaceId),
-        getMaxId: (spaceId) => ctx.storage.eventLog.getMaxId(spaceId),
-        cleanup: (hours, spaceId) =>
-          ctx.storage.eventLog.cleanup(hours, spaceId),
-        getAfter: (afterId, limit, spaceId) => {
-          if (firstRead) {
-            firstRead = false;
-            return gate;
-          }
-          return ctx.storage.eventLog.getAfter(afterId, limit, spaceId);
-        },
-      },
-    };
-
+    const { storage, open } = gatedStorage();
     const res = await makeApp(storage).request("/events", {
       headers: { "Last-Event-ID": String(cursor) },
     });
@@ -220,20 +260,9 @@ describe("live frames held past the limit while the catch-up runs", () => {
     // held rather than delivered live.
     await settle();
 
-    for (let n = 0; n < OVER_THE_CAP; n++) {
-      emitWake({
-        type: "created",
-        item: {
-          id: `ZZheld${String(n)}ZZ`,
-          type: "core.note",
-          properties: {},
-        } as unknown as ItemEventWithId["item"],
-        originatingConnectionId: null,
-        hopCount: 0,
-      });
-    }
+    emitNotes(OVER_THE_CAP, "held");
     await settle();
-    openTheGate();
+    open();
 
     const { text, closed } = await readSse(res, { untilClosed: true });
     expect(closed).toBe(true);
@@ -243,5 +272,104 @@ describe("live frames held past the limit while the catch-up runs", () => {
     // gap, and delivering some of them is what presents a short
     // catch-up as a complete one.
     expect(text).not.toContain("ZZheld0ZZ");
+  });
+});
+
+/**
+ * The cap counts what the subscriber would receive, not what arrived.
+ *
+ * A held frame passes through the same two questions the release path
+ * asks — does this stream take edges at all, and does this credential's
+ * type projection admit this item — before it occupies a slot. Without
+ * that, the buffer could be filled entirely by frames guaranteed to be
+ * discarded on release, so **traffic a subscriber explicitly excluded
+ * could terminate its stream**, and narrowing a subscription made it
+ * more fragile rather than less.
+ *
+ * Both probes below are the shapes a real client takes. `edges: "none"`
+ * is what the first-party replica subscribes with by design, because a
+ * replica of a type holds items and would discard every edge frame
+ * anyway; a credential scoped to a single type is the ordinary shape of
+ * a narrow integration credential. Neither should be reachable by the
+ * traffic it opted out of.
+ *
+ * Asserted by completion rather than by absence: the catch-up finishes,
+ * the stream stays open, and the anchor published afterwards arrives.
+ * "No `stream_incomplete` appeared" alone would be equally true of a
+ * stream that delivered nothing at all.
+ */
+describe("frames the subscriber would never receive", () => {
+  const OVER_THE_CAP = 501;
+
+  it("do not fill the hold when the stream opted out of edges", async () => {
+    const seed = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "edges-none seed" } },
+    });
+    expect(seed.status).toBe(201);
+    const cursor = await latestEventId();
+
+    const { storage, open } = gatedStorage();
+    const res = await makeApp(storage).request("/events?edges=none", {
+      headers: { "Last-Event-ID": String(cursor) },
+    });
+    expect(res.status).toBe(200);
+    await settle();
+
+    emitEdges(OVER_THE_CAP, "excludededge");
+    await settle();
+    open();
+    // Published after the gate opens, so it travels the live path and
+    // proves the stream is still delivering rather than merely open.
+    await settle();
+    emitNotes(1, "edgesnoneanchor");
+
+    const { text } = await readSse(res, {
+      until: (t) => t.includes("ZZedgesnoneanchor0ZZ"),
+    });
+    expect(text).not.toContain("stream_incomplete");
+    // The frames it opted out of stayed out, which is why they cost it
+    // nothing.
+    expect(text).not.toContain("ZZexcludededge0ZZ");
+  });
+
+  it("do not fill the hold when the credential cannot read their type", async () => {
+    const seed = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "scoped seed" } },
+    });
+    expect(seed.status).toBe(201);
+    const cursor = await latestEventId();
+
+    const { storage, open } = gatedStorage();
+    // `member` rather than an admin role: the permission maps are what
+    // this probe is about, and admin roles bypass them.
+    const res = await makeApp(storage, {
+      role: "member",
+      type_permissions: { "core.task": "read" },
+    }).request("/events", { headers: { "Last-Event-ID": String(cursor) } });
+    expect(res.status).toBe(200);
+    await settle();
+
+    emitNotes(OVER_THE_CAP, "unreadable");
+    await settle();
+    open();
+    await settle();
+    emitWake({
+      type: "created",
+      item: {
+        id: "ZZscopedanchorZZ",
+        type: "core.task",
+        properties: {},
+      } as unknown as ItemEventWithId["item"],
+      originatingConnectionId: null,
+      hopCount: 0,
+    });
+
+    const { text } = await readSse(res, {
+      until: (t) => t.includes("ZZscopedanchorZZ"),
+    });
+    expect(text).not.toContain("stream_incomplete");
+    expect(text).not.toContain("ZZunreadable0ZZ");
   });
 });
