@@ -94,7 +94,9 @@ const SEEDED = [
 
 describe.skipIf(isPg)("the SQLite backfill", () => {
   const workDir = mkdtempSync(join(tmpdir(), "marfa-trashed-at-backfill-"));
-  afterAll(() => rmSync(workDir, { recursive: true, force: true }));
+  afterAll(() => {
+    rmSync(workDir, { recursive: true, force: true });
+  });
 
   it("takes the modification time for trashed rows and leaves the rest null", async () => {
     const dbPath = join(workDir, "backfill.db");
