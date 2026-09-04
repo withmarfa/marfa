@@ -587,16 +587,20 @@ export function adminArchiveRoutes(
             // whose purpose is moving a lot of rows at once. What is
             // stored is identical either way.
             const extensions = archiveExtensions(meta);
-            const stored = await storage.metadata.setExtensions(
-              created.id,
-              extensions,
-            );
+            const { extensions: stored, updated_at } =
+              await storage.metadata.setExtensions(created.id, extensions);
             // Collected, not announced — for the same reason as the edges
             // below. A rollback would take the row away and the
             // `event_log` append with it, leaving a live subscriber
             // holding a frame no replay can repair.
             restoredItems.push({
-              item: created,
+              // The extensions write bumps the item's modification time,
+              // and `created` was read before it ran. Announcing that
+              // frame would publish an `updated_at` the row does not
+              // carry: a client watermarking on it re-fetches on its next
+              // catch-up, and one comparing it against a later read sees
+              // a change nothing told it about.
+              item: updated_at ? { ...created, updated_at } : created,
               metadata: {
                 item_id: created.id,
                 // `archiveTags` answers `undefined` for "the archive named

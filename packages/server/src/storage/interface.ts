@@ -763,6 +763,23 @@ export interface ItemStore {
   ): Promise<number>;
 }
 
+/**
+ * What `setExtensions` answers: the item's whole extensions map after the
+ * write, and the modification time the write left on the item row.
+ *
+ * `updated_at` is null when nothing in the set announces, because then the
+ * item row was never touched and there is no new value to report. A caller
+ * publishing the item beside the write needs this half: the frame it holds
+ * was read before the write, so announcing that one describes an
+ * `updated_at` the row does not have. A client watermarking on the value
+ * re-fetches on its next catch-up, and a client comparing it against a
+ * later read sees a change nothing told it about.
+ */
+export interface SetExtensionsResult {
+  extensions: Record<string, Record<string, unknown>>;
+  updated_at: string | null;
+}
+
 export interface MetadataStore {
   get(itemId: string): Promise<Metadata>;
   getMany(itemIds: string[]): Promise<Metadata[]>;
@@ -823,11 +840,15 @@ export interface MetadataStore {
    * Unconditional replace, with `setExtension`'s hazard and not
    * `mutateExtension`'s guarantee: a value derived from a previous read
    * still belongs in `mutateExtension`.
+   *
+   * Answers the post-write modification time alongside the map, because
+   * the caller this exists for publishes the item it just wrote and would
+   * otherwise announce the value the row carried before the bump.
    */
   setExtensions(
     itemId: string,
     entries: Record<string, Record<string, unknown>>,
-  ): Promise<Record<string, Record<string, unknown>>>;
+  ): Promise<SetExtensionsResult>;
   /**
    * Atomic namespace-scoped read / mutate / write. `mutate` is handed the
    * namespace's current contents (an empty record when unset) exactly
