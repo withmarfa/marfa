@@ -66,6 +66,7 @@ import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
+  BulkActionFilterSchema,
   BulkActionJobSchema,
   type BulkActionResult as BulkActionResultType,
 } from "../bulk-actions/types.js";
@@ -131,25 +132,8 @@ const BulkResponseSchema = z.object({
   results: z.array(BulkResultEntrySchema),
 });
 
-// filter fields — same semantics as GET /items query. One JSON object so
-// bulk_action callers don't have to shove a filter expression through
-// query-string encoding.
-const BulkFilterSchema = z
-  .object({
-    type: z.string().optional(),
-    state: z.enum(["active", "archived", "trashed"]).optional(),
-    source: z.string().optional(),
-    tier: z.enum(["library", "feed"]).optional(),
-    tags: z.array(z.string()).optional(),
-    timestamp_after: z.string().optional(),
-    timestamp_before: z.string().optional(),
-    /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
-    filter: z.string().optional(),
-  })
-  .optional();
-
 const BulkActionBaseSchema = z.object({
-  filter: BulkFilterSchema,
+  filter: BulkActionFilterSchema,
   dry_run: z.boolean().optional(),
   max_items: z.number().int().positive().optional(),
   enable_fanout: z.boolean().optional(),

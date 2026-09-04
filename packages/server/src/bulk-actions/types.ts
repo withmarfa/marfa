@@ -8,6 +8,22 @@
  */
 import { z } from "@hono/zod-openapi";
 
+/**
+ * The bulk-action match set, and the only declaration of it.
+ *
+ * Filter fields carry the same semantics as the `GET /items` query. One
+ * JSON object so bulk_action callers don't have to shove a filter
+ * expression through query-string encoding.
+ *
+ * `POST /items/bulk-actions` used to declare this shape a second time in
+ * its own route file, field for field, with nothing holding the two in
+ * step: the openapi-freshness gate compares the generated specification
+ * against the routes, so it watched the route copy and not this one. Two
+ * renames and a missing lifecycle state later, the route imports this
+ * instead. Keeping the declaration here rather than in the route is what
+ * lets the substrate hold the shape without depending on the published
+ * client package, which is why the copy existed at all.
+ */
 export const BulkActionFilterSchema = z
   .object({
     type: z.string().optional(),
@@ -17,6 +33,7 @@ export const BulkActionFilterSchema = z
     tags: z.array(z.string()).optional(),
     timestamp_after: z.string().optional(),
     timestamp_before: z.string().optional(),
+    /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
     filter: z.string().optional(),
   })
   .optional();
