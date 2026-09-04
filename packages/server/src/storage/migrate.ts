@@ -4,7 +4,16 @@
  * Usage from CLI: tsx src/storage/migrate.ts [--dialect pg|sqlite]
  */
 
-import { existsSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -25,7 +34,62 @@ export function getMigrationFolder(dialect: "pg" | "sqlite"): string {
   );
 }
 
-export async function runPgMigrations(connectionString: string): Promise<void> {
+interface JournalEntry {
+  tag: string;
+}
+
+/**
+ * A throwaway migration folder holding the chain up to and including
+ * `throughTag`, and nothing after it.
+ *
+ * It exists so a data migration can be tested. The schema suites apply
+ * every migration to an empty database and compare structure, which cannot
+ * observe an `UPDATE ... WHERE` in a migration body doing anything at all —
+ * there are no rows for it to touch. Testing one needs rows that predate
+ * it, and that needs a way to stop the runner short of it.
+ *
+ * The migrator takes its list from `meta/_journal.json` inside the folder
+ * it is handed, so a trimmed copy of the journal beside copies of the same
+ * `.sql` files is the entire mechanism — the real runner, the real SQL, a
+ * shorter list. Copied rather than trimmed in place because the real folder
+ * is what every other caller reads.
+ *
+ * The caller owns the returned directory and must remove it.
+ */
+function partialMigrationFolder(
+  dialect: "pg" | "sqlite",
+  throughTag: string,
+): string {
+  const source = getMigrationFolder(dialect);
+  const journalPath = join(source, "meta", "_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
+    entries: JournalEntry[];
+  };
+  const cut = journal.entries.findIndex((e) => e.tag === throughTag);
+  if (cut === -1) {
+    throw new Error(`No ${dialect} migration tagged "${throughTag}"`);
+  }
+  const kept = journal.entries.slice(0, cut + 1);
+
+  const folder = mkdtempSync(join(tmpdir(), `marfa-migrations-${dialect}-`));
+  mkdirSync(join(folder, "meta"), { recursive: true });
+  writeFileSync(
+    join(folder, "meta", "_journal.json"),
+    JSON.stringify({ ...journal, entries: kept }),
+  );
+  for (const entry of kept) {
+    copyFileSync(
+      join(source, `${entry.tag}.sql`),
+      join(folder, `${entry.tag}.sql`),
+    );
+  }
+  return folder;
+}
+
+async function applyPgMigrations(
+  connectionString: string,
+  migrationsFolder: string,
+): Promise<void> {
   const { drizzle } = await import("drizzle-orm/postgres-js");
   const { migrate } = await import("drizzle-orm/postgres-js/migrator");
   const postgres = (await import("postgres")).default;
@@ -34,13 +98,36 @@ export async function runPgMigrations(connectionString: string): Promise<void> {
   const db = drizzle(client);
 
   try {
-    await migrate(db, { migrationsFolder: getMigrationFolder("pg") });
+    await migrate(db, { migrationsFolder });
   } finally {
     await client.end();
   }
 }
 
-export async function runSqliteMigrations(sqlitePath: string): Promise<void> {
+export async function runPgMigrations(connectionString: string): Promise<void> {
+  await applyPgMigrations(connectionString, getMigrationFolder("pg"));
+}
+
+/**
+ * Migrate a Postgres database up to and including `throughTag`, stopping
+ * there. `partialMigrationFolder` carries why this exists.
+ */
+export async function runPgMigrationsThrough(
+  connectionString: string,
+  throughTag: string,
+): Promise<void> {
+  const folder = partialMigrationFolder("pg", throughTag);
+  try {
+    await applyPgMigrations(connectionString, folder);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+  }
+}
+
+async function applySqliteMigrations(
+  sqlitePath: string,
+  migrationsFolder: string,
+): Promise<void> {
   const { createClient } = await import("@libsql/client");
   const { drizzle } = await import("drizzle-orm/libsql");
   const { migrate } = await import("drizzle-orm/libsql/migrator");
@@ -54,9 +141,29 @@ export async function runSqliteMigrations(sqlitePath: string): Promise<void> {
   const db = drizzle(client);
 
   try {
-    await migrate(db, { migrationsFolder: getMigrationFolder("sqlite") });
+    await migrate(db, { migrationsFolder });
   } finally {
     client.close();
+  }
+}
+
+export async function runSqliteMigrations(sqlitePath: string): Promise<void> {
+  await applySqliteMigrations(sqlitePath, getMigrationFolder("sqlite"));
+}
+
+/**
+ * Migrate a SQLite database up to and including `throughTag`, stopping
+ * there. `partialMigrationFolder` carries why this exists.
+ */
+export async function runSqliteMigrationsThrough(
+  sqlitePath: string,
+  throughTag: string,
+): Promise<void> {
+  const folder = partialMigrationFolder("sqlite", throughTag);
+  try {
+    await applySqliteMigrations(sqlitePath, folder);
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
   }
 }
 
