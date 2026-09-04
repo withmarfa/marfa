@@ -459,12 +459,24 @@ export interface BulkEdgeResult {
 /** Filter shape for `POST /items/bulk-actions`. Close to the `GET /items`
  *  query grammar — every field is AND-composed, `filter` accepts the
  *  full filter-SQL DSL — but narrower on two axes: this route has no
- *  `"any"` / `"all"` catch-all, and `state` excludes `revoked` (a
- *  `system.*`-only lifecycle value bulk actions never match). Widen
- *  either only if the route itself starts accepting the wider value. */
+ *  `"any"` / `"all"` catch-all, and `state` has no `revoked`. Both are
+ *  refused with a 400 rather than ignored. Widen either only if the
+ *  route itself starts accepting the wider value.
+ *
+ *  This is a statement about these two fields and nothing wider. It does
+ *  not say a bulk action cannot reach a revoked row: the default state
+ *  mask drops only trashed rows, and the free-text `filter` DSL names
+ *  `state` with no value allowlist, so neither path passes through the
+ *  field narrowed here.
+ *
+ *  Spelled as a union rather than as an exclusion, deliberately. An
+ *  exclusion is a denylist over a type that grows elsewhere: add a fifth
+ *  lifecycle value and it lands in this filter with no error, while the
+ *  route's own enum stays as written and refuses it — which is the exact
+ *  disagreement this shape was narrowed to remove. */
 export interface BulkActionFilter {
   type?: string;
-  state?: Exclude<ItemState, "revoked">;
+  state?: "active" | "archived" | "trashed";
   source?: string;
   tier?: Tier;
   tags?: string[];
