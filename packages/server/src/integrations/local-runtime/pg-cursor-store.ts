@@ -27,6 +27,7 @@
  * over the same value at all.
  */
 import type { Storage } from "../../storage/interface.js";
+import { RUNTIME_NAMESPACE } from "../../metadata-namespaces.js";
 
 export interface ConnectionRuntimeState {
   cursors: Record<string, unknown>;
@@ -40,12 +41,23 @@ export interface ConnectionRuntimeError {
   message_kind?: string;
 }
 
-/** Reserved namespace for dispatch-owned per-Connection runtime state. */
-export const CONNECTION_RUNTIME_NAMESPACE = "connection.runtime";
+/**
+ * Reserved namespace for dispatch-owned per-Connection runtime state.
+ *
+ * Aliased from the one place the string is written rather than spelled
+ * again. The predicate deciding whether a namespace write is visible to a
+ * client derives from that constant, so a second spelling here would let
+ * the state this module writes and the rule that silences it drift apart
+ * with nothing to notice.
+ */
+export const CONNECTION_RUNTIME_NAMESPACE = RUNTIME_NAMESPACE;
 
-/** Reserved namespace for the inbound-delivery idempotency window. */
+/**
+ * Reserved namespace for the inbound-delivery idempotency window. Derived
+ * from the namespace it sits beside so the pair cannot separate.
+ */
 export const CONNECTION_IDEMPOTENCY_NAMESPACE =
-  "connection.runtime.idempotency";
+  `${RUNTIME_NAMESPACE}.idempotency` as const;
 
 /** Recent-errors tail size kept on the connection state. */
 const RECENT_ERRORS_SIZE = 16;
