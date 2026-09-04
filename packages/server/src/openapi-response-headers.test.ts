@@ -41,6 +41,12 @@ const UNIVERSAL = [
   "X-RateLimit-Reset",
 ];
 
+/** Published at a path the server does not mount, so nothing is true of it. */
+const UNSERVED = new Set(["POST /oauth2/register"]);
+
+/** Statuses an idempotency claim gives back rather than records. */
+const RELEASED = new Set([401, 403]);
+
 describe("the published spec declares the headers the server sets", () => {
   let spec: Record<string, unknown>;
   /** `POST /items` -> { "200": { … }, … } */
@@ -101,6 +107,7 @@ describe("the published spec declares the headers the server sets", () => {
   it("declares the always-on headers on every response", () => {
     const missing: string[] = [];
     for (const [key, responses] of operations) {
+      if (UNSERVED.has(key)) continue;
       for (const [status, response] of Object.entries(responses)) {
         for (const name of UNIVERSAL) {
           if (!(name in (response.headers ?? {}))) {
@@ -113,11 +120,20 @@ describe("the published spec declares the headers the server sets", () => {
   });
 
   it("declares X-Error-Code on error responses and not on success", () => {
+    // One error response is answered without passing through the error
+    // handler, so nothing stamps the header on it. It is excluded in
+    // `openapi-finalize.ts` with the reason; asserting it here as an
+    // exception rather than silently tolerating a mismatch is what keeps
+    // the exclusion visible when the route is fixed.
+    const KNOWN_UNSTAMPED = new Set(["PATCH /items/{id} 409"]);
     const wrong: string[] = [];
     for (const [key, responses] of operations) {
+      if (UNSERVED.has(key)) continue;
       for (const [status, response] of Object.entries(responses)) {
         const declared = "X-Error-Code" in (response.headers ?? {});
-        const isError = Number.parseInt(status, 10) >= 400;
+        const isError =
+          Number.parseInt(status, 10) >= 400 &&
+          !KNOWN_UNSTAMPED.has(`${key} ${status}`);
         if (declared !== isError) {
           wrong.push(`${key} ${status} declared=${String(declared)}`);
         }
@@ -130,6 +146,7 @@ describe("the published spec declares the headers the server sets", () => {
     const wrong: string[] = [];
     let refusals = 0;
     for (const [key, responses] of operations) {
+      if (UNSERVED.has(key)) continue;
       for (const [status, response] of Object.entries(responses)) {
         const declared = "Retry-After" in (response.headers ?? {});
         if (status === "429") refusals += 1;
@@ -138,10 +155,11 @@ describe("the published spec declares the headers the server sets", () => {
         }
       }
     }
-    // Every operation is behind the limiter, so every operation answers
+    // Every served operation is behind the limiter, so every one answers
     // 429 — a count of zero would mean the refusal stopped being declared
-    // and every assertion above passed by having nothing to check.
-    expect(refusals).toBe(operations.size);
+    // and every assertion above passed by having nothing to check. The
+    // published-but-unserved path carries nothing at all, deliberately.
+    expect(refusals).toBe(operations.size - UNSERVED.size);
     expect(wrong.sort()).toEqual([]);
   });
 
@@ -165,10 +183,13 @@ describe("the published spec declares the headers the server sets", () => {
       const responses = operations.get(key);
       expect(responses, `${key} is missing from the spec`).toBeDefined();
       for (const [status, response] of Object.entries(responses ?? {})) {
+        // 401 and 403 release the claim rather than recording it, so
+        // neither can ever be replayed and neither carries the marker.
+        const released = RELEASED.has(Number.parseInt(status, 10));
         expect(
           "Idempotency-Replayed" in (response.headers ?? {}),
           `${key} ${status}`,
-        ).toBe(true);
+        ).toBe(!released);
       }
     }
   });
@@ -244,6 +265,72 @@ describe("the server sends the headers the spec declares", () => {
     // shipped with exactly that gap: no request id to quote and no view
     // of the rate-limit budget the retry had just spent.
     assertUniversal(replay, "replayed POST /items");
+  });
+
+  it("sends the always-on headers on responses the handler builds itself", async () => {
+    // The assertion class that was missing. Every case above reaches a
+    // response Hono built — `c.json` and the error handler both keep the
+    // prepared headers on their own. A handler that returns `new Response`
+    // does not, and four of them did exactly that, so the universal four
+    // were declared on three 200s that shipped without them.
+    //
+    // It stayed invisible because it depends on deployment shape: Hono's
+    // cors middleware reads `c.res` before `next()` and materializes the
+    // response for everything behind it, so where `CORS_ORIGINS` is set the
+    // headers survived. The harness leaves it empty, which is also the
+    // default, so this is the configuration that actually shipped.
+    // NDJSON export — a streamed Response built by hand.
+    const ndjson = await request(ctx.app, "GET", "/export", {
+      key: ctx.adminKey,
+    });
+    expect(ndjson.status).toBe(200);
+    assertUniversal(ndjson, "GET /export");
+    await ndjson.body?.cancel();
+
+    // The gzip archive, which is a second hand-built Response on the same
+    // route behind a different query.
+    const archive = await request(ctx.app, "GET", "/export?format=archive", {
+      key: ctx.adminKey,
+    });
+    expect(archive.status).toBe(200);
+    assertUniversal(archive, "GET /export?format=archive");
+    await archive.body?.cancel();
+
+    // Blob download. Upload first so there is something to fetch; the
+    // upload itself goes through `c.json` and is not the case under test.
+    const uploaded = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: new TextEncoder().encode("header probe bytes"),
+    });
+    expect(uploaded.status).toBe(201);
+    const { hash } = (await uploaded.json()) as { hash: string };
+    const blob = await request(ctx.app, "GET", `/blobs/${hash}`, {
+      key: ctx.adminKey,
+    });
+    expect(blob.status).toBe(200);
+    assertUniversal(blob, "GET /blobs/{hash}");
+    // The response's own headers must survive the merge — a blob served
+    // without its content type or length is a different defect.
+    expect(blob.headers.get("Content-Type")).toBe("application/octet-stream");
+    expect(blob.headers.get("Content-Length")).toBe("18");
+    await blob.body?.cancel();
+
+    // The SSE stream. Headers only: the body stays open by design, so it is
+    // cancelled rather than read.
+    const events = await request(ctx.app, "GET", "/events", {
+      key: ctx.adminKey,
+    });
+    expect(events.status).toBe(200);
+    assertUniversal(events, "GET /events");
+    expect(events.headers.get("Content-Type")).toContain("text/event-stream");
+    // The prepared bag holds none of these names, so the stream keeps its
+    // own caching directives through the merge.
+    expect(events.headers.get("Cache-Control")).toBe("no-cache");
+    await events.body?.cancel();
   });
 
   it("sends the same body on a replay as on the first attempt", async () => {

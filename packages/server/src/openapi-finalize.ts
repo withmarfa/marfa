@@ -353,7 +353,7 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
   },
   "Retry-After": {
     description:
-      "Seconds to wait before retrying, sent with the rate limiter's own refusal. Derived from the time left in the window rather than a fixed backoff, so a client that honors it needs no backoff of its own.",
+      "Seconds to wait before retrying, sent with the rate limiter's own refusal. Derived from the time left in the window rather than a fixed backoff, so a client that honors it needs no backoff of its own. A `429` carrying `quota_exceeded` is the other kind of refusal and carries no `Retry-After`: a quota is not a window that reopens, and waiting does not clear it.",
     schema: { type: "integer" },
   },
   "Idempotency-Replayed": {
@@ -383,7 +383,7 @@ const UNIVERSAL_RESPONSE_HEADERS = [
  */
 const RATE_LIMITED_RESPONSE = {
   description:
-    "Rate limited. The credential has spent its allowance for the current window; `Retry-After` says how long to wait. Only reachable on a deployment that enables rate limiting.",
+    "Refused for rate or quota. `rate_limited` is the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. `quota_exceeded` is a space quota on a stored resource, carrying `details.resource`, `details.limit` and `details.current`; it is not a window, so it carries no `Retry-After` and waiting does not clear it. The limiter is only mounted on a deployment that enables rate limiting; the quota refusal is always reachable on the routes that reserve one.",
   content: {
     "application/json": {
       schema: {
@@ -392,8 +392,24 @@ const RATE_LIMITED_RESPONSE = {
           error: {
             type: "object",
             properties: {
-              code: { type: "string", enum: ["rate_limited"] },
+              // Both codes the server maps to 429. Declaring only the
+              // limiter's made a generated client reject a real quota
+              // refusal, which is the failure this whole change exists to
+              // stop — a client learning the contract from the server
+              // rather than from the specification.
+              code: {
+                type: "string",
+                enum: ["rate_limited", "quota_exceeded"],
+              },
               message: { type: "string" },
+              details: {
+                type: "object",
+                properties: {
+                  resource: { type: "string" },
+                  limit: { type: "integer" },
+                  current: { type: "integer" },
+                },
+              },
             },
             required: ["code", "message"],
           },
@@ -403,6 +419,45 @@ const RATE_LIMITED_RESPONSE = {
     },
   },
 };
+
+/**
+ * Operations that are published but not served at the path they are
+ * published under, so nothing can be true of them.
+ *
+ * `/oauth2/register` is mounted under `/auth`, making the real path
+ * `/auth/oauth2/register`. Declaring headers and a refusal on the phantom
+ * would be describing a route that answers nothing. The wrong path predates
+ * this and is tracked separately; what belongs here is only the refusal to
+ * add to it.
+ */
+const UNSERVED_PATHS = new Set(["/oauth2/register"]);
+
+/**
+ * Responses that answer with an error status without passing through the
+ * error handler, so `X-Error-Code` is never set on them.
+ *
+ * The handler is what stamps the header, and every route reaches it by
+ * throwing — except this one, which returns its conflict envelope directly.
+ * The replay of that same 409 does carry the header, because the replay
+ * path adds it from the recorded body, so a fresh answer and its replay
+ * differ in a header declared on both. That asymmetry is a defect in the
+ * envelope rather than in the declaration, and it is owned elsewhere.
+ *
+ * **Delete this entry when that route throws instead of returning.** It
+ * exists to keep the declaration honest in the meantime, not to bless the
+ * shape.
+ */
+const RESPONSES_WITHOUT_ERROR_CODE = new Set(["patch /items/{id} 409"]);
+
+/**
+ * Statuses an idempotency claim releases rather than records.
+ *
+ * `RELEASED_STATUSES` in the middleware gives the key back on 401 and 403,
+ * so neither is ever stored and neither can ever be replayed. Declaring the
+ * replay marker on them is the same over-claiming this change exists to
+ * remove.
+ */
+const NEVER_REPLAYED_STATUSES = new Set([401, 403]);
 
 /** `{ "X-Request-ID": { "$ref": … }, … }` for the named headers. */
 function headerRefs(names: readonly string[]): Record<string, unknown> {
@@ -426,6 +481,7 @@ function headerRefs(names: readonly string[]): Record<string, unknown> {
 function withResponseHeaders(
   operation: Record<string, unknown>,
   replays: boolean,
+  operationKey: string,
 ): Record<string, unknown> {
   const responses = operation.responses;
   if (responses === null || typeof responses !== "object") return operation;
@@ -443,9 +499,16 @@ function withResponseHeaders(
     // `default` and any other non-numeric key parses to NaN, and NaN fails
     // both comparisons — so an unrecognized key gets the universal set and
     // no claim this code cannot support.
-    if (code >= 400) names.push("X-Error-Code");
+    if (
+      code >= 400 &&
+      !RESPONSES_WITHOUT_ERROR_CODE.has(`${operationKey} ${status}`)
+    ) {
+      names.push("X-Error-Code");
+    }
     if (code === 429) names.push("Retry-After");
-    if (replays) names.push("Idempotency-Replayed");
+    if (replays && !NEVER_REPLAYED_STATUSES.has(code)) {
+      names.push("Idempotency-Replayed");
+    }
 
     const existing = (response as { headers?: Record<string, unknown> })
       .headers;
@@ -512,6 +575,7 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   // reference has no way to know which routes the reflection happened to
   // see.
   for (const [pathKey, methods] of Object.entries(nextPaths)) {
+    if (UNSERVED_PATHS.has(pathKey)) continue;
     const withHeaders: Record<string, unknown> = {};
     for (const [method, op] of Object.entries(methods)) {
       if (op === null || typeof op !== "object") {
@@ -526,6 +590,7 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
       withHeaders[method] = withResponseHeaders(
         { ...operation, responses },
         IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`),
+        `${method} ${pathKey}`,
       );
     }
     nextPaths[pathKey] = withHeaders;
