@@ -95,10 +95,19 @@ interface DatabaseConnections {
    *  a gap here. */
   clients: Record<string, Record<string, number>>;
   /**
-   * This process's own query pool, which is the one a request competes
-   * for. The figures above are the whole database and answer a different
-   * question: a cluster with plenty of headroom can still be serving a
+   * The query pool a request competes for, which the figures above do not
+   * answer: a cluster with plenty of headroom can still be serving a
    * container whose own three slots are all taken.
+   *
+   * **Attributed by role, not by process**, and the difference only shows
+   * when a role runs more than one replica. `application_name` carries
+   * `MARFA_PROCESS_ROLE`, so every replica of a role stamps one label and
+   * lands in one bucket, while `size` stays a single process's own `max`.
+   * With one process per role — every shape this deploys in today, since
+   * neither compose file sets `replicas` — the two agree and this is that
+   * process's pool. With more, `in_use` sums the role and stops being
+   * comparable to `size`, which is why the verdict refuses that case rather
+   * than judging it.
    */
   pool: PoolUsage;
 }
@@ -185,7 +194,7 @@ async function withBudget<T>(work: Promise<T>): Promise<T | typeof TIMED_OUT> {
  * fill while making the probe a rounding error against the traffic that
  * asks for it.
  */
-const CONNECTIONS_CACHE_MS = 15_000;
+export const CONNECTIONS_CACHE_MS = 15_000;
 
 /**
  * Read how many connections this database is carrying, from the database's
@@ -215,6 +224,12 @@ const CONNECTIONS_CACHE_MS = 15_000;
  *  so a new pool anywhere needs adding here or it reports as somebody
  *  else's traffic. */
 const MARFA_CLIENT = /^marfa(-[a-z]+)?:(app|session|lock|exclusive|consent)$/;
+// NOTE: this independently decides whether a label survives, and one it
+// rejects is bucketed as `other` — which now means the pool tally below finds
+// nothing, reports `in_use: 0`, and can never degrade. Safe today only
+// because `parseProcessRole` restricts the role to `web|worker|both`, all of
+// which this matches. A role introduced outside that set would fail open,
+// quietly.
 
 /** A backend sitting in the pool, free to be handed out. */
 const IDLE_STATE = "idle";
@@ -232,6 +247,7 @@ async function readDatabaseConnections(
       coalesce(nullif(application_name, ''), 'other') as client,
       coalesce(state, 'unknown') as state,
       count(*)::int as connections,
+      count(*) filter (where pid = pg_backend_pid())::int as self,
       current_setting('max_connections')::int as max_connections,
       current_setting('superuser_reserved_connections')::int as reserved
     from pg_stat_activity
@@ -241,11 +257,14 @@ async function readDatabaseConnections(
     client: string;
     state: string;
     connections: number;
+    self: number;
     max_connections: number;
     reserved: number;
   }[];
 
   const clients: Record<string, Record<string, number>> = {};
+  /** This backend's own row, per state, within the app-pool bucket. */
+  const selfRows: Record<string, number> = {};
   let total = 0;
   let maxConnections = 0;
   let reserved = 0;
@@ -261,15 +280,37 @@ async function readDatabaseConnections(
     total += row.connections;
     maxConnections = row.max_connections;
     reserved = row.reserved;
+    // Kept apart from `clients`, which reports the database as it is — this
+    // backend included, because a reading that omitted itself would let a
+    // total of zero mean two different things. Only the pool tally below
+    // takes the observer out.
+    if (key === appClient) selfRows[row.state] = row.self;
   }
+  // **This backend is not occupancy.** The reading runs on the app pool
+  // (`storage.pgClient`), so at the moment `pg_stat_activity` is sampled the
+  // connection taking it is `active` in this very bucket. Counting it adds a
+  // constant one to every reading a process ever takes of itself, which is
+  // not information: it is the instrument's own weight. On a pool of three
+  // it is a third of the range, and it silently moved the verdict below from
+  // "the pool is full" to "the pool is full apart from the health check" —
+  // two concurrent requests rather than three.
+  //
+  // Removed by `pid`, per state bucket, because the observer sits in exactly
+  // one of them and which one is not fixed: `active` while the query runs,
+  // and this survives that assumption changing.
   const own = clients[appClient] ?? {};
   let inUse = 0;
   let idleInTransaction = 0;
   for (const [state, count] of Object.entries(own)) {
+    // NOTE: every state but `idle` counts as spoken for, which includes the
+    // `unknown` bucket `coalesce(state, …)` synthesises for a NULL. Reported
+    // that was harmless; feeding a verdict it is not. Left as-is pending a
+    // check of whether a NULL state can co-occur with a matching
+    // `application_name` at all.
     if (state === IDLE_STATE) continue;
-    inUse += count;
-    if (state.startsWith(IDLE_IN_TRANSACTION_PREFIX))
-      idleInTransaction += count;
+    const held = count - (selfRows[state] ?? 0);
+    inUse += held;
+    if (state.startsWith(IDLE_IN_TRANSACTION_PREFIX)) idleInTransaction += held;
   }
 
   return {
@@ -291,6 +332,51 @@ async function readDatabaseConnections(
 }
 
 /**
+ * How many readings in a row must find the pool exhausted before the database
+ * component says so.
+ *
+ * Two, and the reason is the cache rather than statistics. A reading is held
+ * for `CONNECTIONS_CACHE_MS`, so two of them are at least that far apart and
+ * this is "the pool was full, and fifteen seconds later it was still full".
+ *
+ * One reading was not enough, and the failure was worse than a false alarm:
+ * a single exhausted sample was cached, so a pool that cleared a moment later
+ * went on being reported exhausted for the rest of the window. The verdict
+ * outlived the condition, on evidence that was already stale when it was
+ * served. Requiring the next reading to agree means a burst cannot page and a
+ * recovery cannot be masked, because both are decided by fresh evidence.
+ *
+ * Only a reading that was actually taken counts. One that timed out or threw
+ * is not a reading that disagreed; it is no reading at all, and it leaves the
+ * count where it was rather than clearing a signal that may still be true.
+ */
+const SUSTAINED_EXHAUSTED_READINGS = 2;
+
+/**
+ * Whether a reading shows this process's pool with nothing left to hand out.
+ *
+ * Two readings are refused rather than judged, and both refusals matter more
+ * than they look:
+ *
+ * - **No pool size** is not a reading.
+ * - **More connections in use than the pool can hold** means the tally is not
+ *   describing one pool. `application_name` carries the process *role*, not
+ *   the process, so two replicas of one role stamp the same label and land in
+ *   the same bucket — while `size` stays a single process's `max`. Judging
+ *   that comparison degrades at roughly half true occupancy and then stays
+ *   degraded once both replicas are warm, which is exactly backwards: scaling
+ *   out is the natural response to pool pressure, so the check would go red
+ *   for doing the right thing. A pool mid-recycle can also briefly exceed its
+ *   size. Neither is a state this can speak to, so it does not.
+ */
+function poolIsExhausted(connections: DatabaseConnections): boolean {
+  const pool = connections.pool;
+  if (pool.size <= 0) return false;
+  if (pool.in_use > pool.size) return false;
+  return pool.free <= 0;
+}
+
+/**
  * Why the database component may report `degraded` while the probe itself
  * still answers.
  *
@@ -302,12 +388,10 @@ async function readDatabaseConnections(
  * counts needed to do better were already being gathered and published; what
  * was missing was a verdict on them.
  *
- * **The verdict is that the pool has no free slot while the probe still
- * answers.** That is a state strictly between healthy and gone: the database
- * is reachable and quick, and the next query still has to wait for a slot
- * rather than getting one. It is also unambiguous in a way a threshold is
- * not — a pool holding one idle connection, or with one slot it has not
- * opened, reports `ok`, so nothing here fires on a pool that is merely busy.
+ * **The verdict is that the pool has been found with no free slot on two
+ * successive readings while the probe still answers.** That is a state
+ * strictly between healthy and gone: the database is reachable and quick, and
+ * the next query still has to wait for a slot rather than getting one.
  *
  * **Why not a threshold that leaves one slot spare**, which is the earlier
  * warning an operator asks for first. The pools here are three and two, so
@@ -319,13 +403,13 @@ async function readDatabaseConnections(
  * having to shout. Reporting a number and degrading on a state is the split
  * this file draws everywhere else.
  *
- * Returns the reason, or `null` when there is nothing to report. A pool with
- * no size to compare against is not a reading and says nothing either way.
+ * That argument is only honest because the tally excludes this backend. With
+ * the reading counting itself, "no free slot" on a pool of three meant two
+ * concurrent requests, and the design would have landed on the very threshold
+ * it rejected — while paging, which the rejected one did not.
  */
-function poolExhausted(connections: DatabaseConnections): string | null {
+function poolExhaustedReason(connections: DatabaseConnections): string {
   const pool = connections.pool;
-  if (pool.size <= 0) return null;
-  if (pool.free > 0) return null;
   const held =
     pool.idle_in_transaction > 0
       ? `, ${String(pool.idle_in_transaction)} of them held by an open transaction rather than running a query`
@@ -363,6 +447,12 @@ export function healthRoutes(
   const appPoolSize = config.dbPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS;
   let connectionsCache: { at: number; value: DatabaseConnections } | null =
     null;
+  /**
+   * Readings in a row that found the pool exhausted. Advanced only where a
+   * fresh one is taken, so serving many requests from one cached reading
+   * cannot turn a single sample into a sustained signal.
+   */
+  let exhaustedReadings = 0;
   let deadLettersCache: { at: number; value: number } | null = null;
 
   // Read once rather than per request. The file cannot change under a
@@ -415,6 +505,9 @@ export function healthRoutes(
           if (outcome !== TIMED_OUT) {
             databaseConnections = outcome;
             connectionsCache = { at: performance.now(), value: outcome };
+            exhaustedReadings = poolIsExhausted(outcome)
+              ? exhaustedReadings + 1
+              : 0;
           }
         } catch {
           // Omitted rather than guessed. Whatever stopped this from
@@ -450,13 +543,20 @@ export function healthRoutes(
         // The probe answered, which used to be the whole question. It is
         // now the first of two: a pool with no slot left answers just as
         // quickly as an idle one, so the answer alone cannot tell them
-        // apart. The reading may be up to `CONNECTIONS_CACHE_MS` old, so a
-        // pool that has since cleared can still be reported held for that
-        // long — the alternative is taking a slot per health check to
-        // measure the slots, which is the probe this cache exists to avoid.
-        const exhausted = databaseConnections
-          ? poolExhausted(databaseConnections)
-          : null;
+        // apart.
+        //
+        // The *numbers* below may come from a reading up to
+        // `CONNECTIONS_CACHE_MS` old, which is the right currency for a
+        // figure that moves this slowly, and is what keeps a health check
+        // from taking a pool slot in order to measure pool slots. The
+        // *verdict* does not: it needs successive readings to agree, so a
+        // cached sample can no longer keep a decision alive after the
+        // condition behind it has gone.
+        const exhausted =
+          databaseConnections !== undefined &&
+          exhaustedReadings >= SUSTAINED_EXHAUSTED_READINGS
+            ? poolExhaustedReason(databaseConnections)
+            : null;
         components.database = exhausted
           ? { status: "degraded", latency_ms: latencyMs, error: exhausted }
           : { status: "ok", latency_ms: latencyMs };
@@ -477,19 +577,25 @@ export function healthRoutes(
       const outcome = await withBudget(
         blobBackend.exists("sha256:healthcheck"),
       );
+      // Latency on every branch, for the reason the database probe gives
+      // above: this is the other bounded probe, and a blob store that
+      // refused after most of its budget is a different fault from one that
+      // refused at once. `identity_providers` and `dead_letters` carry none,
+      // and should not — neither is a timed round trip whose duration means
+      // anything on its own.
+      const blobLatencyMs = Math.round(performance.now() - blobStart);
       components.blob_storage =
         outcome === TIMED_OUT
           ? {
               status: "degraded",
+              latency_ms: blobLatencyMs,
               error: `no answer within ${String(PROBE_TIMEOUT_MS)}ms`,
             }
-          : {
-              status: "ok",
-              latency_ms: Math.round(performance.now() - blobStart),
-            };
+          : { status: "ok", latency_ms: blobLatencyMs };
     } catch (err) {
       components.blob_storage = {
         status: "down",
+        latency_ms: Math.round(performance.now() - blobStart),
         error: err instanceof Error ? err.message : "unknown",
       };
     }

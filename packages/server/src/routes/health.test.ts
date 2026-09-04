@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { healthRoutes, PROBE_TIMEOUT_MS } from "./health.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  healthRoutes,
+  CONNECTIONS_CACHE_MS,
+  PROBE_TIMEOUT_MS,
+} from "./health.js";
 import { setStoredValueScan } from "../storage/stored-value-scan.js";
 import type { AppConfig } from "../config.js";
 import type { Storage } from "../storage/interface.js";
@@ -458,8 +462,8 @@ describe("GET /health unrecognized stored values", () => {
  * The database component's verdict on pool occupancy.
  *
  * Fakes rather than a database, and for a sharper reason than the blocks
- * above: the property under test is what the endpoint concludes from a set
- * of figures, so the figures are the input. Driving a real pool to its limit
+ * above: the property under test is what the endpoint concludes from a set of
+ * figures, so the figures are the input. Driving a real pool to its limit
  * would test the pool, take a shared machine's Postgres with it, and still
  * assert nothing beyond the numbers written directly below.
  */
@@ -467,6 +471,8 @@ interface ActivityRow {
   client: string;
   state: string;
   connections: number;
+  /** How many of `connections` are the backend taking this reading. */
+  self: number;
   max_connections: number;
   reserved: number;
 }
@@ -475,8 +481,11 @@ interface PoolBody {
   status: string;
   components: {
     database?: { status: string; latency_ms?: number; error?: string };
+    blob_storage?: { status: string; latency_ms?: number; error?: string };
   };
   database_connections?: {
+    total: number;
+    clients: Record<string, Record<string, number>>;
     pool: {
       size: number;
       in_use: number;
@@ -487,15 +496,15 @@ interface PoolBody {
 }
 
 /**
- * A storage whose `pgClient` answers the `pg_stat_activity` query with the
- * given rows. `readDatabaseConnections` calls the client as a tagged
- * template and reads the result as rows, so a function returning them is the
- * whole of what it needs.
+ * A storage whose `pgClient` answers the `pg_stat_activity` query from a
+ * mutable holder, so a test can change what the database says between two
+ * requests. `readDatabaseConnections` calls the client as a tagged template
+ * and reads the result as rows, so a function returning them is all it needs.
  */
-function buildPooledStorage(rows: ActivityRow[]): Storage {
+function buildPooledStorage(rows: { current: ActivityRow[] }): Storage {
   return {
     keys: { count: () => Promise.resolve(3) },
-    pgClient: () => Promise.resolve(rows),
+    pgClient: () => Promise.resolve(rows.current),
   } as unknown as Storage;
 }
 
@@ -516,25 +525,67 @@ const pooledConfig = {
 const APP_POOL = "marfa-both:app";
 
 /**
- * This process's own pool in the given backend states, on a managed tier's
- * shape: 25 advertised, 3 held back for superusers.
+ * This process's pool in the given backend states, on a managed tier's shape:
+ * 25 advertised, 3 held back for superusers. `self` counts the reading's own
+ * backend within a state, and defaults to none so a test says when it is
+ * modelling the observer.
  */
-function activity(states: Record<string, number>): ActivityRow[] {
+function activity(
+  states: Record<string, number>,
+  self: Record<string, number> = {},
+): ActivityRow[] {
   return Object.entries(states).map(([state, connections]) => ({
     client: APP_POOL,
     state,
     connections,
+    self: self[state] ?? 0,
     max_connections: 25,
     reserved: 3,
   }));
 }
 
-function pooled(states: Record<string, number>) {
+function pooledApp(rows: { current: ActivityRow[] }) {
   return healthRoutes(
-    buildPooledStorage(activity(states)),
+    buildPooledStorage(rows),
     buildBlobs(() => Promise.resolve(false)),
     pooledConfig,
   );
+}
+
+function pooled(states: Record<string, number>, self?: Record<string, number>) {
+  return pooledApp({ current: activity(states, self) });
+}
+
+/**
+ * Read `/health` twice with the connection cache expired in between, so both
+ * reads take a fresh reading.
+ *
+ * The verdict needs successive readings to agree and the reading is cached,
+ * so a test that asks twice in a row is asking once.
+ *
+ * The clock is a stub on `performance.now` rather than vitest's fake timers.
+ * Faking timers wholesale also replaces `withBudget`'s `setTimeout`, and
+ * faking only `performance` made `performance.now()` return something the
+ * subtraction turned into `NaN` — which serialises to `null`, so every
+ * latency assertion failed reporting a type rather than the thing under
+ * test. A stub returning a number this function controls has neither
+ * problem, and the elapsed figures it produces are zero rather than
+ * arbitrary.
+ */
+async function readTwice(
+  app: ReturnType<typeof pooledApp>,
+  between?: () => void,
+): Promise<PoolBody> {
+  let clock = 0;
+  const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+  try {
+    await app.request("/");
+    between?.();
+    clock += CONNECTIONS_CACHE_MS + 1;
+    return (await (await app.request("/")).json()) as PoolBody;
+  } finally {
+    now.mockRestore();
+  }
 }
 
 describe("GET /health pool occupancy", () => {
@@ -554,20 +605,37 @@ describe("GET /health pool occupancy", () => {
     expect(body.components.database?.status).toBe("ok");
   });
 
+  // The reading runs on the app pool, so at the moment `pg_stat_activity` is
+  // sampled the connection taking it is `active` in this very bucket.
+  // Counting it adds a constant one to every reading a process takes of
+  // itself — a third of the range on a pool of three — and it moved the
+  // verdict from "the pool is full" to "the pool is full apart from the
+  // health check", which is one fewer request than the design claims.
+  it("leaves its own backend out of the pool it is measuring", async () => {
+    const body = (await (
+      await pooled({ active: 2, idle: 1 }, { active: 1 }).request("/")
+    ).json()) as PoolBody;
+
+    // One of the two active backends is the observer.
+    expect(body.database_connections?.pool.in_use).toBe(1);
+    expect(body.database_connections?.pool.free).toBe(2);
+    // And it is still in the database-wide figures, which describe the
+    // database as it is rather than as this process would like it.
+    expect(body.database_connections?.total).toBe(3);
+    expect(body.database_connections?.clients[APP_POOL]).toEqual({
+      active: 2,
+      idle: 1,
+    });
+  });
+
   // The regression the verdict exists for. Before it this response was
   // byte-for-byte the healthy one: the probe answers either way, so a pool
   // with nothing left reported exactly what an idle pool reported.
-  it("degrades on a fully held pool while the probe still answers", async () => {
-    const res = await pooled({
-      active: 1,
-      "idle in transaction": 2,
-    }).request("/");
+  it("degrades on a pool found exhausted twice running", async () => {
+    const body = await readTwice(
+      pooledApp({ current: activity({ active: 1, "idle in transaction": 2 }) }),
+    );
 
-    // Still 200. The container's own liveness probe reads the code, and a
-    // degraded deployment that is serving is still serving.
-    expect(res.status).toBe(200);
-
-    const body = (await res.json()) as PoolBody;
     expect(body.status).toBe("degraded");
     expect(body.components.database?.status).toBe("degraded");
     // The probe itself was fine, which is the whole point of the verdict.
@@ -579,16 +647,76 @@ describe("GET /health pool occupancy", () => {
     expect(body.database_connections?.pool.free).toBe(0);
   });
 
+  // One sample is a burst, not an outage. Degrading on it would page for a
+  // moment of ordinary concurrency, which is the noise this design rejected
+  // a one-slot-spare threshold to avoid.
+  it("does not degrade on a single exhausted reading", async () => {
+    const body = (await (
+      await pooled({ active: 3 }).request("/")
+    ).json()) as PoolBody;
+
+    expect(body.database_connections?.pool.free).toBe(0);
+    expect(body.components.database?.status).toBe("ok");
+    expect(body.status).toBe("ok");
+  });
+
+  // The latch, and the reason the verdict cannot be taken from one sample.
+  // A reading is cached for fifteen seconds, so a second request inside that
+  // window is served figures that were already taken. Deciding on those
+  // meant a verdict outliving the condition behind it: a pool that had
+  // completely cleared went on being reported exhausted for the rest of the
+  // window. Here the clock does NOT move, so the second request is answered
+  // from the cache — exactly the case that failed.
+  it("does not serve a verdict from a cached reading", async () => {
+    const rows = { current: activity({ active: 1, "idle in transaction": 2 }) };
+    const app = pooledApp(rows);
+
+    const clock = 0;
+    const now = vi.spyOn(performance, "now").mockImplementation(() => clock);
+    try {
+      await app.request("/");
+      // The pool clears, but nothing re-reads it: the cache is still warm.
+      rows.current = activity({ idle: 3 });
+      const body = (await (await app.request("/")).json()) as PoolBody;
+
+      // The numbers are still the cached ones — that is what the cache is
+      // for, and it is not the defect.
+      expect(body.database_connections?.pool.free).toBe(0);
+      // The verdict is not, because one sample never earns it.
+      expect(body.components.database?.status).toBe("ok");
+      expect(body.status).toBe("ok");
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  // And once the cache does expire, the fresh reading converges: the figures
+  // catch up and the verdict stays clear.
+  it("clears when the pool clears, rather than holding the cached verdict", async () => {
+    const rows = { current: activity({ active: 1, "idle in transaction": 2 }) };
+    const body = await readTwice(pooledApp(rows), () => {
+      rows.current = activity({ idle: 3 });
+    });
+
+    expect(body.database_connections?.pool).toEqual({
+      size: WEB_POOL_SIZE,
+      in_use: 0,
+      idle_in_transaction: 0,
+      free: WEB_POOL_SIZE,
+    });
+    expect(body.components.database?.status).toBe("ok");
+    expect(body.status).toBe("ok");
+  });
+
   // Busy is not wedged. Every slot doing work and one still free is the
   // ordinary shape of a loaded server, and a component that degraded here
   // would be one an operator learns to ignore.
   it("stays ok while any slot is free, however busy the rest are", async () => {
-    const body = (await (
-      await pooled({ active: 2, idle: 1 }).request("/")
-    ).json()) as PoolBody;
+    const body = await readTwice(
+      pooledApp({ current: activity({ active: 2, idle: 1 }) }),
+    );
 
     expect(body.components.database?.status).toBe("ok");
-    expect(body.status).toBe("ok");
     expect(body.database_connections?.pool.free).toBe(1);
   });
 
@@ -606,72 +734,79 @@ describe("GET /health pool occupancy", () => {
       idle_in_transaction: 0,
       free: 2,
     });
-    expect(body.components.database?.status).toBe("ok");
   });
 
   // `idle in transaction (aborted)` is the same connection in the same
   // predicament, and matching the exact string would have missed it.
   it("counts an aborted transaction's connection as held", async () => {
-    const body = (await (
-      await pooled({
-        "idle in transaction": 1,
-        "idle in transaction (aborted)": 2,
-      }).request("/")
-    ).json()) as PoolBody;
+    const body = await readTwice(
+      pooledApp({
+        current: activity({
+          "idle in transaction": 1,
+          "idle in transaction (aborted)": 2,
+        }),
+      }),
+    );
 
     expect(body.database_connections?.pool.idle_in_transaction).toBe(3);
     expect(body.components.database?.status).toBe("degraded");
   });
 
-  // Another client's traffic is not this pool's occupancy. The whole
-  // database's figures answer a different question and are reported
-  // separately; a cluster under pressure elsewhere must not degrade a
-  // container whose own slots are free.
-  it("ignores connections that are not this process's own pool", async () => {
-    const app = healthRoutes(
-      buildPooledStorage([
-        {
-          client: "other",
-          state: "active",
-          connections: 18,
-          max_connections: 25,
-          reserved: 3,
-        },
-      ]),
-      buildBlobs(() => Promise.resolve(false)),
-      pooledConfig,
+  // `application_name` carries the process role, so two replicas of one role
+  // land in one bucket while `size` stays a single process's own max. Judged,
+  // that comparison degrades at about half true occupancy and then stays
+  // degraded once both replicas are warm — so the check would go red for
+  // scaling out, which is the natural response to pool pressure.
+  it("refuses to judge a tally larger than one pool can hold", async () => {
+    const body = await readTwice(
+      pooledApp({ current: activity({ active: 5 }) }),
     );
 
-    const body = (await (await app.request("/")).json()) as PoolBody;
-    expect(body.database_connections?.pool.in_use).toBe(0);
+    expect(body.database_connections?.pool.in_use).toBe(5);
+    // Floored rather than negative: a pool cannot have less than none free,
+    // and publishing a negative would invite arithmetic nobody intended.
+    expect(body.database_connections?.pool.free).toBe(0);
     expect(body.components.database?.status).toBe("ok");
+    expect(body.status).toBe("ok");
   });
 
   // A probe that failed after most of its budget and one that failed at once
   // are different faults, and the branch that said nothing was the one where
-  // the number said most.
-  it("reports the probe's latency on every branch, not only the healthy one", async () => {
-    const refused = healthRoutes(
+  // the number said most. Both bounded probes, because the argument is the
+  // same for each.
+  it("reports probe latency on every branch of both bounded probes", async () => {
+    const dbDown = healthRoutes(
       buildStorage(() => Promise.reject(new Error("connection refused"))),
       buildBlobs(() => Promise.resolve(false)),
       config,
     );
-    const timedOut = healthRoutes(
+    const blobDown = healthRoutes(
+      buildStorage(() => Promise.resolve(3)),
+      buildBlobs(() => Promise.reject(new Error("bucket unreachable"))),
+      config,
+    );
+    const bothStalled = healthRoutes(
       buildStorage(() => never),
-      buildBlobs(() => Promise.resolve(false)),
+      buildBlobs(() => never),
       config,
     );
 
-    const down = (await (await refused.request("/")).json()) as PoolBody;
-    const degraded = (await (await timedOut.request("/")).json()) as PoolBody;
+    const a = (await (await dbDown.request("/")).json()) as PoolBody;
+    const b = (await (await blobDown.request("/")).json()) as PoolBody;
+    const c = (await (await bothStalled.request("/")).json()) as PoolBody;
 
-    expect(down.components.database?.status).toBe("down");
-    expect(typeof down.components.database?.latency_ms).toBe("number");
+    expect(a.components.database?.status).toBe("down");
+    expect(typeof a.components.database?.latency_ms).toBe("number");
 
-    expect(degraded.components.database?.status).toBe("degraded");
-    // Asserted as a number rather than against a duration. What is being
-    // pinned is that the field is there; a bound on the value would be
-    // measuring the machine this runs on.
-    expect(typeof degraded.components.database?.latency_ms).toBe("number");
+    expect(b.components.blob_storage?.status).toBe("down");
+    expect(typeof b.components.blob_storage?.latency_ms).toBe("number");
+
+    // Asserted as numbers rather than against durations. What is pinned is
+    // that the field is there; a bound on the value would be measuring the
+    // machine this runs on.
+    expect(c.components.database?.status).toBe("degraded");
+    expect(typeof c.components.database?.latency_ms).toBe("number");
+    expect(c.components.blob_storage?.status).toBe("degraded");
+    expect(typeof c.components.blob_storage?.latency_ms).toBe("number");
   }, 15_000);
 });

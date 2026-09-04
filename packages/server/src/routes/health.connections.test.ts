@@ -17,6 +17,10 @@ import type { TestContext } from "../test-utils.js";
 
 const isPg = process.env.DB_DIALECT === "pg";
 
+/** What an unlabeled pool stamps: `createConnection` defaults the role to
+ *  `both`, and the test harness passes no `applicationName`. */
+const APP_POOL = "marfa-both:app";
+
 interface ConnectionsBody {
   database_connections?: {
     total: number;
@@ -104,23 +108,31 @@ describe.skipIf(!isPg)("GET /health database connections", () => {
     // it was holding, which is the failure this figure exists to prevent.
     expect(pool.size).toBe(TEST_POOL_SIZE);
 
-    // The connection running the reading is itself in it, and it is
-    // running a query, so a zero here means the label this process
-    // reconstructs does not match the one its pools stamp — which is the
-    // silent way this figure goes wrong: it reports a permanently idle
-    // pool rather than reporting nothing.
-    expect(pool.in_use).toBeGreaterThan(0);
+    // The reading runs on the app pool, so its own backend is in this
+    // bucket and `active` while the query executes. `clients` shows it,
+    // because that block describes the database as it is; the pool tally
+    // must not, because a constant one added to every reading a process
+    // takes of itself is the instrument's own weight rather than
+    // occupancy — and on a pool of three it is a third of the range.
+    //
+    // Asserted as the exact difference rather than as a bound, because
+    // that is what proves `pg_backend_pid()` actually matched: a query
+    // that excluded nothing, and one that excluded everything, both
+    // satisfy an inequality.
+    const own = body.database_connections?.clients[APP_POOL] ?? {};
+    const nonIdle = Object.entries(own)
+      .filter(([state]) => state !== "idle")
+      .reduce((sum, [, count]) => sum + count, 0);
+    expect(nonIdle).toBeGreaterThan(0);
+    expect(pool.in_use).toBe(nonIdle - 1);
 
     expect(pool.idle_in_transaction).toBeLessThanOrEqual(pool.in_use);
     expect(pool.free).toBe(Math.max(0, pool.size - pool.in_use));
 
-    // And a pool with room is not a degraded component. Asserted here
-    // rather than only against fakes, because this is the path where the
-    // figure is derived from a real `pg_stat_activity` rather than one
-    // written by the test.
-    if (pool.free > 0) {
-      expect(body.components.database?.status).toBe("ok");
-    }
+    // A test context's pool is not under pressure, so the component is
+    // healthy. Asserted here rather than only against fakes because this
+    // is the path where the figure comes from a real `pg_stat_activity`.
+    expect(body.components.database?.status).toBe("ok");
   });
 
   it("serves the reading from cache rather than probing per request", async () => {
