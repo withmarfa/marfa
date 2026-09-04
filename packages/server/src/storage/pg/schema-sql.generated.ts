@@ -371,6 +371,19 @@ BEGIN
 END
 $$;
 
+CREATE TABLE IF NOT EXISTS public.idempotency_records (
+    id text NOT NULL,
+    space_id text,
+    idempotency_key text NOT NULL,
+    fingerprint text NOT NULL,
+    state text NOT NULL,
+    response_status integer,
+    response_content_type text,
+    response_body text,
+    created_at text NOT NULL,
+    completed_at text
+);
+
 CREATE TABLE IF NOT EXISTS public.inbound_webhook_events (
     id text NOT NULL,
     inbound_webhook_id text NOT NULL,
@@ -895,6 +908,20 @@ $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint c
+WHERE c.conrelid = 'public.idempotency_records'::regclass AND c.contype = 'p'
+  AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+            ORDER BY k.ord)
+      = ARRAY['id']::text[]) THEN
+    ALTER TABLE ONLY public.idempotency_records
+        ADD CONSTRAINT idempotency_records_pkey PRIMARY KEY (id);
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint c
 WHERE c.conrelid = 'public.inbound_webhook_events'::regclass AND c.contype = 'p'
   AND ARRAY(SELECT a.attname::text FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord)
             JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
@@ -1189,6 +1216,10 @@ CREATE INDEX IF NOT EXISTS idx_event_log_created_at ON public.event_log USING bt
 CREATE INDEX IF NOT EXISTS idx_event_log_edge_id ON public.event_log USING btree (edge_id);
 
 CREATE INDEX IF NOT EXISTS idx_event_log_originating_connection_id ON public.event_log USING btree (originating_connection_id, id);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_records_gc ON public.idempotency_records USING btree (space_id, created_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_records_key ON public.idempotency_records USING btree (COALESCE(space_id, ''::text), idempotency_key);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_inbound_webhook_events_dedup ON public.inbound_webhook_events USING btree (inbound_webhook_id, external_delivery_id);
 

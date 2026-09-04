@@ -2242,6 +2242,158 @@ export interface EventLogStore {
 // Settings store (instance-wide KV for bootstrap sentinel etc.)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Idempotency records
+// ---------------------------------------------------------------------------
+
+/** `in_flight` while the write runs; `complete` once it answered. */
+export type IdempotencyRecordState = "in_flight" | "complete";
+
+export interface IdempotencyRecord {
+  id: string;
+  space_id: string | null;
+  idempotency_key: string;
+  fingerprint: string;
+  state: IdempotencyRecordState;
+  response_status: number | null;
+  response_content_type: string | null;
+  /** NULL on a completed row means the body was above the store bound. */
+  response_body: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface ClaimIdempotencyKeyInput {
+  id: string;
+  space_id: string | null;
+  idempotency_key: string;
+  fingerprint: string;
+  created_at: string;
+}
+
+/**
+ * Three outcomes, and the third one is not a variant of either other.
+ *
+ * `claimed: true` means a row was inserted and this caller owns it, which
+ * is what makes the id it supplied safe to `complete()` against later.
+ * `held` names the row that beat it. The third says the INSERT lost and
+ * the winner was gone by the time it was read — a `release()` after a 5xx
+ * or the retention sweep landing in that gap — so nobody holds the key and
+ * nobody is coming to complete it.
+ *
+ * **Reported rather than folded into `claimed: true`.** That is what the
+ * first version of this did, and it was wrong in the one direction this
+ * whole mechanism exists to prevent: the caller went on to run the write
+ * believing it owned a record that had never been inserted, `complete()`
+ * updated nothing, and the next repeat of the same key found no record and
+ * wrote for real. A duplicate write, produced inside the feature whose
+ * purpose is to remove duplicate writes. The two cases have to be
+ * distinguishable at the seam or the caller cannot act on the difference.
+ */
+export type IdempotencyClaim =
+  | { claimed: true }
+  | { claimed: false; held: IdempotencyRecord }
+  | { claimed: false; held: null };
+
+/**
+ * What a write returned, keyed on the caller's `Idempotency-Key`.
+ *
+ * The store is deliberately dumb about what a repeat means: it takes a
+ * key or reports who holds it, and records an outcome against a key it
+ * gave out. Deciding whether an arrival is a retry, a client defect or a
+ * race is the middleware's, in one place, so both dialects cannot
+ * disagree about it.
+ */
+export interface IdempotencyStore {
+  /**
+   * Take the key for this request, or hand back the row already holding
+   * it.
+   *
+   * The claim is an INSERT against the unique index, so this is also what
+   * serializes two simultaneous arrivals: exactly one INSERT survives and
+   * the loser is handed the winner's row. Nothing in the application
+   * layer arbitrates, which is the property a check-then-write cannot
+   * have.
+   */
+  claim(input: ClaimIdempotencyKeyInput): Promise<IdempotencyClaim>;
+
+  /**
+   * Take over a claim whose holder is past its lease.
+   *
+   * A process that dies between claiming and completing leaves the key
+   * held with nothing coming to complete it, and the caller retrying is
+   * exactly the client this whole mechanism serves. `heldSince` is the
+   * `created_at` the caller read, so the UPDATE is a compare-and-swap:
+   * two callers meeting one abandoned claim, exactly one takes it.
+   *
+   * Returns whether this caller won.
+   */
+  takeOverExpiredClaim(input: {
+    id: string;
+    fingerprint: string;
+    heldSince: string;
+    now: string;
+  }): Promise<boolean>;
+
+  /**
+   * Record what went back, against a claim this caller still holds.
+   *
+   * **`heldSince` is a fence, not a lookup key.** `takeOverExpiredClaim`
+   * swaps a stale claim in place — same row, same id, new `created_at` —
+   * so an id names a row rather than a holder, and a writer that ran past
+   * its lease still carries the id of a row somebody else now owns.
+   * Matching on id alone lets that writer's outcome land on the newer
+   * writer's claim, and a third arrival then replays one writer's body for
+   * a write another is still performing.
+   *
+   * Returns whether a row was actually updated, which is false both when
+   * the row is gone and when the fence does not match. A bare UPDATE that
+   * matches nothing is indistinguishable from one that matched, and that
+   * silence is how a lost outcome went unnoticed once already. False is
+   * not an error the request can act on — the write has happened and the
+   * response is owed — but it is the one place the loss is visible, so the
+   * caller logs it.
+   */
+  complete(input: {
+    id: string;
+    /** The `created_at` this caller's claim carries. */
+    heldSince: string;
+    response_status: number;
+    response_content_type: string | null;
+    /** NULL when the body was above the store bound. */
+    response_body: string | null;
+    completed_at: string;
+  }): Promise<boolean>;
+
+  /**
+   * Give the key back without recording an outcome.
+   *
+   * For a server fault, or for a refusal that describes the credential
+   * rather than the request: neither is an outcome a caller should be
+   * pinned to for the retention window.
+   *
+   * **Fenced on `heldSince` for the same reason `complete` is**, and this
+   * is the sharper of the two. A slow writer that outlives its lease is
+   * displaced by a takeover which keeps the row id; when that writer then
+   * fails with a 5xx, an unfenced delete destroys the live claim of the
+   * writer that replaced it. The replacement finishes, records nothing,
+   * and the next repeat of the key writes for real — three writes from one
+   * logical request. The two preconditions are positively correlated,
+   * because a saturated machine produces both the overrun and the 5xx.
+   *
+   * Returns whether a row was deleted.
+   */
+  release(id: string, heldSince: string): Promise<boolean>;
+
+  /**
+   * Delete records older than the retention window. Same `spaceId`
+   * semantics as `EventLogStore.cleanup`: undefined sweeps everything, a
+   * string scopes to that space, `null` scopes to rows whose `space_id IS
+   * NULL`. Returns count deleted.
+   */
+  cleanup(retentionHours: number, spaceId?: string | null): Promise<number>;
+}
+
 export interface SettingsStore {
   /** Returns null when the key has not been set. */
   get(key: string): Promise<string | null>;
@@ -2951,6 +3103,10 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    *  dialects. The worker module reads + writes through this store; the
    *  route handler creates jobs + serves GET / DELETE. */
   bulkActionJobs: BulkActionJobStore;
+  /** What a write returned, keyed on the caller's `Idempotency-Key`.
+   *  Always wired on both dialects; the idempotency middleware and the
+   *  event-log retention sweep are its only readers. */
+  idempotency: IdempotencyStore;
 
   users?: UserStore;
   spaces?: SpaceStore;

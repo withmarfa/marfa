@@ -694,6 +694,13 @@
       "when": 1788442100000,
       "tag": "0098_catch_up_read_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1788512000000,
+      "tag": "0099_idempotency_records",
+      "breakpoints": true
     }
   ]
 }

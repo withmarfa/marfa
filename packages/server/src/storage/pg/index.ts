@@ -36,6 +36,7 @@ import { PgCoordinationStore } from "./coordination-store.js";
 import { PgSpaceQuotaStore } from "./space-quota-store.js";
 import { PgRateLimitStore } from "./rate-limit-store.js";
 import { PgBulkActionJobStore } from "./bulk-action-job-store.js";
+import { PgIdempotencyStore } from "./idempotency-store.js";
 import { PgAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { pgDeleteAccountCascade, pgDeleteSpace } from "./account-cascade.js";
 import { pgRequestContext } from "./request-context.js";
@@ -205,6 +206,12 @@ export async function createPgStorage(
     // `client.reserve()` — not needed in the store class itself, only at
     // the worker boundary.
     bulkActionJobs: new PgBulkActionJobStore(db),
+    // On `baseDb`, deliberately. A claim has to commit whether or not the
+    // write's own transaction does, so it must never join one — and the
+    // table is granted to nobody but the owner, so a future caller that
+    // put it inside the RLS wrapper would fail loudly rather than
+    // silently taking the request's transaction.
+    idempotency: new PgIdempotencyStore(baseDb),
     spaceQuotas: new PgSpaceQuotaStore(db),
     // Cluster-shared rate-limit + per-email throttle counters. Wired on
     // the wrapped instance so the request-context RLS proxy doesn't bypass

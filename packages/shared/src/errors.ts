@@ -392,6 +392,37 @@ export enum ErrorCode {
    * types is a deliberate operation rather than a side effect of a sync.
    */
   TYPE_MISMATCH = "type_mismatch",
+  /**
+   * An `Idempotency-Key` names a request that is still being served.
+   *
+   * The record is claimed by an INSERT against a unique index, so exactly
+   * one of two simultaneous arrivals holds it and the other is told this
+   * rather than being allowed to write. Retrying is the right response,
+   * and the claim carries a lease so a writer that dies mid-request
+   * cannot hold the key past it.
+   */
+  IDEMPOTENCY_KEY_IN_FLIGHT = "idempotency_key_in_flight",
+  /**
+   * An `Idempotency-Key` was replayed with a different request.
+   *
+   * A key stands for one request, so serving the stored result here would
+   * silently discard a write the caller believes it made — the failure the
+   * key exists to prevent, arriving from the other direction. Refusing
+   * names the defect at the caller instead. The comparison covers the
+   * method, the path, the query, the body and the credential.
+   */
+  IDEMPOTENCY_KEY_REUSED = "idempotency_key_reused",
+  /**
+   * A repeat resolved a record whose response body was not retained.
+   *
+   * A response above the retention bound is recorded without its body, so
+   * the repeat still performs no second write and still learns the status
+   * the first attempt returned — in `details.original_status` — but cannot
+   * be handed the original response. `422` rather than `409`: nothing got
+   * there first, so a client branching on `409` as a conflict must not
+   * catch it.
+   */
+  IDEMPOTENCY_RESULT_NOT_RETAINED = "idempotency_result_not_retained",
 }
 
 /** Maps each error code to its HTTP status code. */
@@ -477,6 +508,20 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,
   [ErrorCode.PROVENANCE_COLLISION]: 409,
   [ErrorCode.TYPE_MISMATCH]: 409,
+  // A genuine 409: the key is held by a request in flight, or contention
+  // kept it changing hands. Something else got there first, which is
+  // exactly what a client branching on 409 expects to mean.
+  [ErrorCode.IDEMPOTENCY_KEY_IN_FLIGHT]: 409,
+  // 422 rather than 409: the request is refused because of what the caller
+  // sent, not because of what the server holds, and a client branching on
+  // 409 to mean "somebody else got there first" must not catch this.
+  [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 422,
+  // 422 for the same reason, applied consistently. Nothing got there
+  // first: the record exists, the write is not repeated, and the only
+  // thing missing is the body — so a client that reads 409 as a conflict
+  // would act on this exactly wrongly. Keeping it a 409 while the reuse
+  // code moved to 422 was the inconsistency, not the reasoning.
+  [ErrorCode.IDEMPOTENCY_RESULT_NOT_RETAINED]: 422,
 };
 
 /** Returns the HTTP status code for a given error code. */

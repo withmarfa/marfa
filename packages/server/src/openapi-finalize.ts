@@ -19,6 +19,8 @@
  * drift.
  */
 
+import { IDEMPOTENT_WRITE_DOORS } from "./middleware/idempotency.js";
+
 // Loose typing — the document is a plain OpenAPI 3.1 object. `paths` is typed
 // `object` (not a precise Record) so the concrete `OpenAPIObject`, whose
 // `PathItemObject` values carry no index signature, still satisfies the
@@ -271,6 +273,43 @@ const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
   },
 };
 
+/**
+ * The `Idempotency-Key` header, added to every door that honors it.
+ *
+ * Derived from `IDEMPOTENT_WRITE_DOORS` rather than restated on ten
+ * `createRoute` definitions, so the reference cannot claim a door the
+ * middleware does not serve, or miss one it does. The table is written in
+ * Hono's path syntax and the spec uses OpenAPI's, which is the whole of
+ * the translation below.
+ *
+ * Declared here rather than as a `request.headers` schema on each route
+ * for a second reason: a header schema on a `createRoute` is a validator
+ * as well as a description, and the header is read by middleware that runs
+ * before the route is reached. Two places deciding what a valid key is is
+ * one more than there should be.
+ */
+const IDEMPOTENCY_HEADER_PARAM = {
+  name: "Idempotency-Key",
+  in: "header",
+  required: false,
+  schema: { type: "string", maxLength: 255 },
+  description:
+    "A client-chosen key identifying this write. The server records the status and body it returns against the key and answers a repeat carrying the same key with that stored result, performing no second write. A conflict is recorded like any other outcome, so a retry is told its first attempt collided rather than left to re-derive it. Scoped to the space; a key replayed with a different request is refused with `idempotency_key_reused`.",
+};
+
+/** `/items/:id/purge` as OpenAPI spells it: `/items/{id}/purge`. */
+function toOpenApiPath(honoPath: string): string {
+  return honoPath.replace(/:([A-Za-z0-9_]+)/g, "{$1}");
+}
+
+/** The doors, keyed the way the reflected document keys an operation. */
+const IDEMPOTENT_OPERATIONS = new Set(
+  IDEMPOTENT_WRITE_DOORS.map((door) => {
+    const [method, path] = door.split(" ");
+    return `${(method ?? "").toLowerCase()} ${toOpenApiPath(path ?? "")}`;
+  }),
+);
+
 /** Shape the reflected document into the published public reference. */
 export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   spec.tags = PUBLIC_TAGS;
@@ -290,6 +329,21 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
         typeof operationId === "string" &&
         INTERNAL_OPERATION_IDS.has(operationId)
       ) {
+        continue;
+      }
+      if (
+        IDEMPOTENT_OPERATIONS.has(`${method} ${pathKey}`) &&
+        op !== null &&
+        typeof op === "object"
+      ) {
+        const operation = op as { parameters?: unknown[] };
+        keptMethods[method] = {
+          ...operation,
+          parameters: [
+            ...(operation.parameters ?? []),
+            IDEMPOTENCY_HEADER_PARAM,
+          ],
+        };
         continue;
       }
       keptMethods[method] = op;

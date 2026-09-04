@@ -29,6 +29,7 @@ import { SqliteCoordinationStore } from "./coordination-store.js";
 import { SqliteSpaceQuotaStore } from "./space-quota-store.js";
 import { SqliteRateLimitStore } from "./rate-limit-store.js";
 import { SqliteBulkActionJobStore } from "./bulk-action-job-store.js";
+import { SqliteIdempotencyStore } from "./idempotency-store.js";
 import { SqliteAccountLifecycleStore } from "./account-lifecycle-store.js";
 import { reportSeedCollisions } from "../seed-collisions.js";
 import { projectPlatformRows } from "../platform-family.js";
@@ -187,6 +188,10 @@ export async function createSqliteStorage(
     // Async bulk-action substrate — single-process; see
     // bulk-action-job-store.ts for the claim-without-FOR-UPDATE path.
     bulkActionJobs: new SqliteBulkActionJobStore(db),
+    // Same reasoning as the Postgres wiring: a claim has to commit
+    // whether or not the write's own transaction does. SQLite has no RLS
+    // wrapper to escape, so `db` is already the only instance there is.
+    idempotency: new SqliteIdempotencyStore(db),
     spaceQuotas: new SqliteSpaceQuotaStore(db),
     // Rate-limit + per-email throttle counters. Same shape as the PG
     // wiring; SQLite is single-process by file lock so "cluster-shared"

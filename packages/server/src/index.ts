@@ -335,26 +335,37 @@ async function main() {
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-space config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
-  const runEventLogCleanup = () =>
-    runSpaceCleanup({
+  const runEventLogCleanup = () => {
+    // Idempotency records ride this sweep rather than getting a sweeper of
+    // their own, and the window is the same one deliberately: an
+    // `Idempotency-Key` is answerable for exactly as long as the events
+    // around it stay replayable, so a client that can still catch up on
+    // the stream can still ask what its write did. A second job would be a
+    // second window to keep in step, and per-space retention is already
+    // resolved here.
+    let purgedRecords = 0;
+    return runSpaceCleanup({
       jobName: "event-log-cleanup",
       coordination: storage.coordination,
       fanout: eventLogFanout,
       instanceDefault: eventLogRetentionHours,
       unitMs: 3_600_000,
-      sweep: (retention, spaceId) =>
-        storage.eventLog.cleanup(retention, spaceId),
+      sweep: async (retention, spaceId) => {
+        purgedRecords += await storage.idempotency.cleanup(retention, spaceId);
+        return storage.eventLog.cleanup(retention, spaceId);
+      },
     })
       .then((deleted) => {
-        if (deleted > 0)
+        if (deleted > 0 || purgedRecords > 0)
           log(
             "info",
-            `Purged ${String(deleted)} event_log entries (instance default: ${String(eventLogRetentionHours)} hours; per-space overrides honored)`,
+            `Purged ${String(deleted)} event_log entries and ${String(purgedRecords)} idempotency records (instance default: ${String(eventLogRetentionHours)} hours; per-space overrides honored)`,
           );
       })
       .catch((err: unknown) => {
         logJobTickFailure("Event-log cleanup", err, shuttingDown);
       });
+  };
   let eventLogCleanupDelay: ReturnType<typeof setTimeout> | null = null;
   let eventLogCleanupInterval: ReturnType<typeof setInterval> | null = null;
   scheduleJob(

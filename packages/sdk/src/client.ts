@@ -799,6 +799,25 @@ export interface SecureStorage {
   get(account: string): Promise<string | null>;
 }
 
+/**
+ * A key identifying one logical write, so a retry after a lost response
+ * learns what the first attempt did instead of colliding with it.
+ *
+ * The server records the status and body it returned and answers a repeat
+ * carrying the same key from that record, performing no second write. Use
+ * one fresh key per write and reuse it only when retrying that same write:
+ * a key sent with a different request is refused, since serving the stored
+ * result there would silently discard a write the caller believes it made.
+ *
+ * Offered only on the methods that issue exactly one request with exactly
+ * one body. `items.update` and `edges.update` are absent deliberately — a
+ * conflict strategy may re-send a merged body, and that second body under
+ * the first body's key is the refusal above rather than a retry.
+ */
+export interface IdempotentWriteOptions {
+  idempotencyKey?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Client
 // ---------------------------------------------------------------------------
@@ -886,11 +905,17 @@ export class MarfaClient {
          *  targets with the new item as source. */
         edges?: Record<string, string[]>;
       },
+      options?: IdempotentWriteOptions,
     ): Promise<Item> => {
       const res = await this.transport.request<{ item: Item }>(
         "POST",
         "/items",
-        { body: input },
+        {
+          body: input,
+          ...(options?.idempotencyKey !== undefined && {
+            idempotencyKey: options.idempotencyKey,
+          }),
+        },
       );
       return res.item;
     },
@@ -1099,8 +1124,15 @@ export class MarfaClient {
       );
     },
 
-    delete: async (id: string): Promise<void> => {
-      await this.transport.request<undefined>("DELETE", `/items/${id}`);
+    delete: async (
+      id: string,
+      options?: IdempotentWriteOptions,
+    ): Promise<void> => {
+      await this.transport.request<undefined>("DELETE", `/items/${id}`, {
+        ...(options?.idempotencyKey !== undefined && {
+          idempotencyKey: options.idempotencyKey,
+        }),
+      });
     },
 
     /** Permanently delete a trashed item (admin only). Item must already
@@ -1610,11 +1642,19 @@ export class MarfaClient {
 
     /** Create a single edge. Server enforces cardinality / type
      *  constraints / cycle prevention; throws on violation. */
-    create: async (input: CreateEdgeInput): Promise<Edge> => {
+    create: async (
+      input: CreateEdgeInput,
+      options?: IdempotentWriteOptions,
+    ): Promise<Edge> => {
       const res = await this.transport.request<{ edge: Edge }>(
         "POST",
         "/edges",
-        { body: input },
+        {
+          body: input,
+          ...(options?.idempotencyKey !== undefined && {
+            idempotencyKey: options.idempotencyKey,
+          }),
+        },
       );
       return res.edge;
     },
@@ -1666,8 +1706,15 @@ export class MarfaClient {
       return res.edge;
     },
 
-    delete: async (id: string): Promise<void> => {
-      await this.transport.request<{ ok: true }>("DELETE", `/edges/${id}`);
+    delete: async (
+      id: string,
+      options?: IdempotentWriteOptions,
+    ): Promise<void> => {
+      await this.transport.request<{ ok: true }>("DELETE", `/edges/${id}`, {
+        ...(options?.idempotencyKey !== undefined && {
+          idempotencyKey: options.idempotencyKey,
+        }),
+      });
     },
 
     /**

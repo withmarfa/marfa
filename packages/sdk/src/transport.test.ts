@@ -464,6 +464,8 @@ interface AuthFixture {
   storage: InMemoryTokenStorage;
   /** Bearer header seen on each API call, in order. */
   apiCalls: (string | undefined)[];
+  /** `Idempotency-Key` seen on each API call, in order. */
+  idempotencyKeys: (string | undefined)[];
   /** Refresh token presented on each token-endpoint exchange, in order. */
   tokenExchanges: string[];
   signOuts: number[];
@@ -476,6 +478,7 @@ async function makeAuthFixture(options: {
   tokenResponse: () => Response;
 }): Promise<AuthFixture> {
   const apiCalls: (string | undefined)[] = [];
+  const idempotencyKeys: (string | undefined)[] = [];
   const tokenExchanges: string[] = [];
   const signOuts: number[] = [];
   const storage = new InMemoryTokenStorage();
@@ -503,6 +506,11 @@ async function makeAuthFixture(options: {
 
     const header = sentBearer(init);
     apiCalls.push(header);
+    idempotencyKeys.push(
+      (init?.headers as Record<string, string> | undefined)?.[
+        "Idempotency-Key"
+      ],
+    );
     const token = header?.replace(/^Bearer /, "") ?? "";
     return Promise.resolve(
       options.accepts(token)
@@ -539,7 +547,14 @@ async function makeAuthFixture(options: {
     fetch: fetchImpl,
   });
 
-  return { transport, storage, apiCalls, tokenExchanges, signOuts };
+  return {
+    transport,
+    storage,
+    apiCalls,
+    idempotencyKeys,
+    tokenExchanges,
+    signOuts,
+  };
 }
 
 describe("HttpTransport — refresh on 401", () => {
@@ -677,5 +692,56 @@ describe("HttpTransport — refresh on 401", () => {
       fixture.transport.request("GET", "/items"),
     ).resolves.toStrictEqual({ ok: true });
     expect(fixture.tokenExchanges).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Idempotency-Key
+// ---------------------------------------------------------------------------
+
+describe("Idempotency-Key", () => {
+  function headersOf(init: RequestInit | undefined): Record<string, string> {
+    return (init?.headers ?? {}) as Record<string, string>;
+  }
+
+  it("sends the key when one is given, and nothing when none is", async () => {
+    const seen: (string | undefined)[] = [];
+    const fetchImpl = vi.fn((_url: string, init?: RequestInit) => {
+      seen.push(headersOf(init)["Idempotency-Key"]);
+      return Promise.resolve(makeJsonResponse(201, { item: { id: "i1" } }));
+    });
+    const transport = makeTransport(fetchImpl as unknown as typeof fetch);
+
+    await transport.request("POST", "/items", {
+      body: { type: "core.note" },
+      idempotencyKey: "abc",
+    });
+    await transport.request("POST", "/items", { body: { type: "core.note" } });
+
+    // Both directions. A transport that always set the header, or that
+    // minted one per call, would satisfy a one-sided assertion and make
+    // every attempt its own key — which reads as working right up until a
+    // response is lost.
+    expect(seen).toEqual(["abc", undefined]);
+  });
+
+  it("re-sends the same key on the 401 credential retry", async () => {
+    // The retry is a second attempt at one write, so it must carry the
+    // first attempt's key. Minting a fresh one there would turn a renewed
+    // credential into a duplicate write, which is exactly the failure the
+    // header exists to remove — and nothing else in the SDK would notice.
+    const fixture = await makeAuthFixture({
+      accepts: (token) => token === "fresh_at",
+      tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
+    });
+
+    await fixture.transport.request("POST", "/items", {
+      body: { type: "core.note" },
+      idempotencyKey: "one-write",
+    });
+
+    // Two API calls, because the first was refused and retried.
+    expect(fixture.apiCalls).toHaveLength(2);
+    expect(fixture.idempotencyKeys).toStrictEqual(["one-write", "one-write"]);
   });
 });
