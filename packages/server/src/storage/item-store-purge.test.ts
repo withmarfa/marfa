@@ -72,6 +72,36 @@ async function ageItem(itemId: string, isoDate: string): Promise<void> {
   }
 }
 
+/**
+ * Moves the modification time alone, leaving the stamp exactly where it is.
+ *
+ * `ageItem` moves both by design, which is right for "make this row look
+ * old" and is why the one case where the two clocks disagree cannot be
+ * written with it.
+ */
+async function ageUpdatedAtOnly(
+  itemId: string,
+  isoDate: string,
+): Promise<void> {
+  if (isPg()) {
+    const s = ctx.storage as unknown as {
+      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
+    };
+    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
+      isoDate,
+      itemId,
+    ]);
+  } else {
+    const s = ctx.storage as unknown as {
+      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+    };
+    await s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
+      isoDate,
+      itemId,
+    ]);
+  }
+}
+
 /** Reads the stamp back, for the assertions about the column itself. */
 async function readTrashedAt(itemId: string): Promise<string | null> {
   if (isPg()) {
@@ -395,10 +425,52 @@ describe("ItemStore.purgeTrashedOlderThan — the clock it reads", () => {
       },
       undefined,
     );
-    // Old as far as the modification time is concerned, and binned just
-    // now. The two clocks disagree and the stamp is the one that decides.
-    await ageItem(itemId, LONG_AGO);
     await ctx.storage.items.delete(itemId);
+
+    expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
+    expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
+  });
+
+  /**
+   * The one case where the two clocks disagree in the direction that
+   * matters: a stamp inside the window, a modification time outside it.
+   *
+   * **The write paths cannot produce this row, and that is deliberate.**
+   * Every write stamps `updated_at` with `now`, and the stamp is only ever
+   * set by a transition that stamps `updated_at` alongside it, so
+   * `trashed_at <= updated_at` holds on every row the API can make. The
+   * fixture is built by hand for that reason, and what it pins is the
+   * predicate rather than a reachable state: while a stamp exists it
+   * decides alone, and the modification time is a fallback rather than a
+   * second vote.
+   *
+   * Worth holding because the two rewrites a later reader is most likely
+   * to reach for — `LEAST(trashed_at, updated_at)`, or asking both
+   * columns and purging when either is old — read as more robust and are
+   * caught by nothing else in this block. `LEAST` is worse than
+   * equivalent: SQLite's `MIN` answers NULL when either argument is NULL
+   * where Postgres's `LEAST` skips it, so the same expression would take
+   * the fallback away in one dialect and keep it in the other.
+   */
+  it("does not let the modification time vote once a stamp exists", async () => {
+    const itemId = id("c15c");
+    await ctx.storage.items.create(
+      {
+        id: itemId,
+        type: "core.note",
+        properties: { body: "stamp inside, modification time outside" },
+        tier: "library",
+      },
+      undefined,
+    );
+    await ctx.storage.items.delete(itemId);
+    await ageUpdatedAtOnly(itemId, LONG_AGO);
+
+    // The fixture is the point, so it is asserted rather than assumed.
+    const stamp = await readTrashedAt(itemId);
+    expect(stamp).not.toBeNull();
+    expect(stamp! > CUTOFF).toBe(true);
+    expect(await readUpdatedAt(itemId)).toBe(LONG_AGO);
 
     expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);
     expect(await ctx.storage.items.getIncludingTrashed(itemId)).not.toBeNull();
