@@ -1202,7 +1202,7 @@ export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
  * keeping the name test looks equivalent only because every system type
  * ships under `system.` today, and stops being so the moment one does not.
  */
-function hasBoundedLifecycle(typeId: string): boolean {
+export function hasBoundedLifecycle(typeId: string): boolean {
   return SYSTEM_TYPE_IDS.has(typeId) || isSystemType(typeId);
 }
 
