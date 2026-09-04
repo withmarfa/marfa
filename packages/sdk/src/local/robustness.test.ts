@@ -136,6 +136,86 @@ describe("a server that will not answer (seam: offline)", () => {
   });
 });
 
+describe("a start that is abandoned or times out", () => {
+  it("leaves nothing armed when it is stopped during its first read", async () => {
+    seam.mode = "offline";
+    const engine = engineOver(store, {
+      connectTimeoutMs: 60,
+      initialRetryMs: 5,
+    });
+    const starting = engine.start();
+    engine.stop();
+    await expect(starting).rejects.toThrow(/stopped/);
+
+    // The give-up timer is cleared on every path out of `start`, including
+    // the one that leaves before the wait is awaited. Left armed it fires
+    // later, reports offline over the stopped state the app was last
+    // shown, and — holding a reference — keeps the event loop alive, so a
+    // command-line tool that stops the engine and expects to exit does not.
+    events.length = 0;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(events).toEqual([]);
+  });
+
+  it("can be started again after it gave up waiting", async () => {
+    seam.mode = "offline";
+    const engine = engineOver(store, {
+      connectTimeoutMs: 60,
+      initialRetryMs: 5,
+    });
+    await expect(engine.start()).rejects.toThrow(/did not connect/);
+
+    // The message says to start again when the server is reachable, so
+    // starting again has to be something this object can do. Giving up on
+    // a connection must not retire the engine: the second attempt would
+    // otherwise reject saying it was stopped before the stream announced,
+    // which is both false and unactionable.
+    seam.mode = "online";
+    await expect(engine.start()).resolves.toBeUndefined();
+    expect((await engine.status()).connection).toBe("online");
+  });
+});
+
+describe("a listener that throws, and one that is not there", () => {
+  it("does not turn a reported failure into an unhandled one", async () => {
+    seam.mode = "server_error";
+    const engine = engineOver(store, {
+      connectTimeoutMs: 150,
+      initialRetryMs: 5,
+    });
+    engine.on(() => {
+      throw new Error("a listener that cannot cope");
+    });
+
+    // The one path whose whole purpose is not to crash reports through the
+    // listeners, so a listener that throws would put the rejection
+    // straight back where it was taken from.
+    await expect(engine.start()).rejects.toThrow();
+    expect(
+      events.some(
+        (event) => event.type === "sync.error" && event.scope === "stream",
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the last failure where an app that polls can find it", async () => {
+    seam.mode = "server_error";
+    const engine = engineOver(store, {
+      connectTimeoutMs: 150,
+      initialRetryMs: 5,
+    });
+    await expect(engine.start()).rejects.toThrow();
+
+    // Reported to a listener is thinner than it reads: an app that polls
+    // rather than subscribes, or one that attached a listener after the
+    // failure, has no way to learn that a catch-up has been failing all
+    // afternoon.
+    const status = await engine.status();
+    expect(status.lastError).toMatchObject({ scope: "stream" });
+    expect(status.lastError?.message).toEqual(expect.any(String));
+  });
+});
+
 describe("a handle another engine is holding", () => {
   it("refuses to follow the stream, with the reason", async () => {
     const second = await openLocalStore({ path, identity });

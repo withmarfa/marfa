@@ -37,6 +37,17 @@ export interface LocalEngineStatus {
   lastDrainedAt: string | null;
   /** Where the stream has reached, or null before it has said. */
   cursor: string | null;
+  /**
+   * The last thing the engine could not finish, or null if nothing has
+   * failed since it was built.
+   *
+   * Here as well as on the event stream because an app that polls rather
+   * than subscribes, or one that attached a listener after the fact, has
+   * no other way to learn that a catch-up has been failing all afternoon.
+   * It is not cleared by a later success: it says what went wrong last,
+   * and an app that wants "is it wrong now" reads `connection`.
+   */
+  lastError: { scope: string; message: string; at: string } | null;
   hydration: {
     /** Whether the first full read has completed. */
     done: boolean;
@@ -90,9 +101,11 @@ export interface LocalEngine {
  */
 export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
   const { store, client } = options;
+  const now = options.now ?? (() => new Date().toISOString());
   const listeners = new Set<LocalEngineEventListener>();
 
   let connection: ConnectionState = "idle";
+  let lastError: LocalEngineStatus["lastError"] = null;
   let hydrationItems = 0;
   let hydrationEdges = 0;
   let totalItems: number | undefined;
@@ -111,7 +124,43 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
       totalItems = event.totalItems;
     }
     if (event.type === "connection.changed") connection = event.state;
-    for (const listener of listeners) listener(event);
+    if (event.type === "sync.error") {
+      lastError = {
+        scope: event.scope,
+        message: event.message,
+        at: now(),
+      };
+    }
+
+    // A listener that throws must not take the emit down with it. This is
+    // reached from the handler that catches a detached failure, whose
+    // whole purpose is not to crash, so a throw here would put the
+    // rejection straight back where it was just taken from — and the
+    // caller would see an unhandled rejection naming their own listener.
+    // The failure is still visible: each listener is given the event
+    // whatever the one before it did, and the throw is reported below.
+    const refused: unknown[] = [];
+    for (const listener of listeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        refused.push(error);
+      }
+    }
+    for (const error of refused) report("a listener threw", error);
+
+    // Nowhere to report to is not the same as nothing to report. An
+    // engine with no listener at all would otherwise drop a genuine
+    // programming error in detached work silently, which is the failure
+    // this whole path exists to avoid.
+    if (listeners.size === 0 && event.type === "sync.error") {
+      report(`${event.scope} failed`, event.error ?? event.message);
+    }
+  };
+
+  /** The last resort, when there is nobody to tell. */
+  const report = (what: string, error: unknown): void => {
+    console.error(`@withmarfa/sdk/local: ${what}`, error);
   };
 
   /** Refuse the two things a handle another engine holds cannot do. */
@@ -161,11 +210,15 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
     drain: async () => {
       requireWriter();
       const result = await drain.drain();
-      // The drain corroborates the stream rather than replacing it: it is
-      // the only part that gets a direct answer, so an offline pass is
-      // evidence even when the stream has not noticed yet. A successful
-      // pass says nothing the stream is not already saying, so it does not
-      // overwrite a state the stream owns.
+      // The drain corroborates the stream in one direction only, and the
+      // asymmetry is a choice rather than a property of the evidence: a
+      // completed round trip is direct and newer than anything a stream
+      // mid-backoff is saying. It is still not allowed to clear `offline`,
+      // because the two answer different questions — a drain that worked
+      // proves the server is reachable, and this field says whether the
+      // engine is following it. Letting reachability overwrite that would
+      // mask exactly the state it exists to surface: a healthy network
+      // with a subscription that has been retrying for an hour.
       if (result.offline) connection = "offline";
     },
 
@@ -191,6 +244,7 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
         deadLetters: (await store.deadLetters.list()).length,
         lastDrainedAt: state?.lastDrainedAt ?? null,
         cursor: state?.cursor ?? null,
+        lastError,
         hydration: {
           done: state?.hydratedAt != null,
           items: hydrationItems,

@@ -79,14 +79,33 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
     options.onEvent?.(event);
   };
 
-  const controller = new AbortController();
+  /**
+   * Retires the engine. Aborted by `stop` and by the caller's own signal,
+   * never by a connection giving up — an engine that could not reach the
+   * server has not been stopped, and the message it rejects with tells the
+   * caller to try again, which it has to be able to do.
+   */
+  const retired = new AbortController();
   if (options.signal) {
-    if (options.signal.aborted) controller.abort();
+    if (options.signal.aborted) retired.abort();
     else
       options.signal.addEventListener("abort", () => {
-        controller.abort();
+        retired.abort();
       });
   }
+
+  /** Cancels the subscription of one `start`. Replaced on each attempt. */
+  let attempt = new AbortController();
+  /** Whichever of the two fires first cancels the stream. */
+  const linkAttempt = (): AbortSignal => {
+    attempt = new AbortController();
+    const stop = (): void => {
+      attempt.abort();
+    };
+    if (retired.signal.aborted) stop();
+    else retired.signal.addEventListener("abort", stop, { once: true });
+    return attempt.signal;
+  };
 
   let subscription: Subscription | undefined;
   /** Settles the wait in `start`: resolved by the announcement, rejected
@@ -117,7 +136,7 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
     work: () => Promise<void>,
   ): void => {
     void work().catch((error: unknown) => {
-      if (controller.signal.aborted) return;
+      if (attempt.signal.aborted) return;
       emit({
         type: "sync.error",
         scope,
@@ -240,7 +259,7 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       ...(options.initialRetryMs === undefined
         ? {}
         : { initialRetryMs: options.initialRetryMs }),
-      signal: controller.signal,
+      signal: attempt.signal,
       onOpen: () => {
         opens += 1;
         emit({ type: "connection.changed", state: "online" });
@@ -287,8 +306,13 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
           // announcement as this store's cursor and carry on live, with
           // the rows the re-import would have pruned still held and
           // nothing left that could ever notice them.
-          if (!(await reimport())) return;
-          if (!controller.signal.aborted) subscription = subscribe(undefined);
+          if (!(await reimport())) {
+            // The subscription is gone with the refusal, so the state it
+            // last reported is a connection that no longer exists.
+            emit({ type: "connection.changed", state: "offline" });
+            return;
+          }
+          if (!attempt.signal.aborted) subscription = subscribe(undefined);
         });
       },
     });
@@ -306,7 +330,15 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
         );
       }
 
+      // A fresh cancellation scope for this attempt, so a previous one
+      // that gave up waiting does not carry its abort into this one.
+      linkAttempt();
+
       const budget = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+      // Left undeclared rather than initialized: every path that skips
+      // the assignment below throws out of `start`, so a default would be
+      // a value nothing can read.
+      let hydratedAt: string | null | undefined;
       let giveUp: ReturnType<typeof setTimeout> | undefined;
       let stopWaiting: (() => void) | undefined;
       const announced = new Promise<void>((resolve, reject) => {
@@ -326,11 +358,11 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
             ),
           );
         };
-        if (controller.signal.aborted) abandon();
+        if (retired.signal.aborted) abandon();
         else {
-          controller.signal.addEventListener("abort", abandon);
+          retired.signal.addEventListener("abort", abandon);
           stopWaiting = () => {
-            controller.signal.removeEventListener("abort", abandon);
+            retired.signal.removeEventListener("abort", abandon);
           };
         }
 
@@ -345,10 +377,11 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
             ),
           );
           emit({ type: "connection.changed", state: "offline" });
-          // The subscription goes with the rejection. Leaving one running
-          // behind a start that failed is a background reconnect loop
-          // nobody asked for and nobody can see.
-          controller.abort();
+          // This attempt's subscription goes with the rejection — leaving
+          // one running behind a start that failed is a background
+          // reconnect loop nobody asked for and nobody can see — and only
+          // that attempt's, so the engine stays startable.
+          attempt.abort();
         }, budget);
       });
 
@@ -357,24 +390,32 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       // stops without awaiting cannot land its stop in a gap where
       // nothing is listening — and the budget covers the whole of `start`
       // rather than only the part after a database read.
-      const state = await store.syncState.read(store.identity);
-      const resume = state?.cursor ?? undefined;
-      if (controller.signal.aborted) await announced;
-
-      emit({ type: "connection.changed", state: "connecting" });
-      subscription = subscribe(resume);
-      // The stream is open and has told us where it stands before a single
-      // row is read. Everything the read then misses is something the
-      // subscription is already holding.
+      // Everything from the read onwards is inside the cleanup, including
+      // the early exit. Left outside it, a stop landing during the read
+      // returns through a path that clears nothing: the give-up timer
+      // stays armed, fires later, reports offline over the stopped state
+      // the app was last shown, and — holding a reference — keeps the
+      // event loop alive, so a command-line tool that stops the engine and
+      // expects to exit does not.
       try {
+        const state = await store.syncState.read(store.identity);
+        const resume = state?.cursor ?? undefined;
+        if (retired.signal.aborted) await announced;
+
+        emit({ type: "connection.changed", state: "connecting" });
+        subscription = subscribe(resume);
+        // The stream is open and has told us where it stands before a
+        // single row is read. Everything the read then misses is something
+        // the subscription is already holding.
         await announced;
+        hydratedAt = state?.hydratedAt ?? null;
       } finally {
         clearTimeout(giveUp);
         stopWaiting?.();
         announceOnce = undefined;
       }
 
-      if (state?.hydratedAt == null) {
+      if (hydratedAt == null) {
         // What the server says it holds, read once before the walk so the
         // progress below has a denominator. Best-effort: a credential that
         // cannot see the stats route, or a server that will not answer,
@@ -407,7 +448,8 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
     },
 
     stop: () => {
-      controller.abort();
+      retired.abort();
+      attempt.abort();
       subscription?.close();
       // The abort above is what settles a `start` still waiting on an
       // announcement that is now never coming.
