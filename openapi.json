@@ -7650,7 +7650,8 @@
                           "enum": [
                             "active",
                             "archived",
-                            "trashed"
+                            "trashed",
+                            "revoked"
                           ]
                         },
                         "tier": {
@@ -8090,7 +8091,8 @@
                             "enum": [
                               "active",
                               "archived",
-                              "trashed"
+                              "trashed",
+                              "revoked"
                             ]
                           },
                           "source": {
@@ -8165,7 +8167,8 @@
                             "enum": [
                               "active",
                               "archived",
-                              "trashed"
+                              "trashed",
+                              "revoked"
                             ]
                           },
                           "source": {
@@ -8237,7 +8240,8 @@
                             "enum": [
                               "active",
                               "archived",
-                              "trashed"
+                              "trashed",
+                              "revoked"
                             ]
                           },
                           "source": {
@@ -8315,7 +8319,8 @@
                             "enum": [
                               "active",
                               "archived",
-                              "trashed"
+                              "trashed",
+                              "revoked"
                             ]
                           },
                           "source": {
@@ -8389,7 +8394,8 @@
                             "enum": [
                               "active",
                               "archived",
-                              "trashed"
+                              "trashed",
+                              "revoked"
                             ]
                           },
                           "source": {
@@ -8462,7 +8468,8 @@
                             "enum": [
                               "active",
                               "archived",
-                              "trashed"
+                              "trashed",
+                              "revoked"
                             ]
                           },
                           "source": {

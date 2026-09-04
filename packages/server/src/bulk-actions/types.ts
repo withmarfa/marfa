@@ -7,6 +7,7 @@
  * enforced by the openapi-freshness CI gate.
  */
 import { z } from "@hono/zod-openapi";
+import { ItemStateEnum } from "../routes/_schemas.js";
 
 /**
  * The bulk-action match set, and the only declaration of it.
@@ -27,7 +28,7 @@ import { z } from "@hono/zod-openapi";
 export const BulkActionFilterSchema = z
   .object({
     type: z.string().optional(),
-    state: z.enum(["active", "archived", "trashed"]).optional(),
+    state: ItemStateEnum.optional(),
     source: z.string().optional(),
     tier: z.enum(["library", "feed"]).optional(),
     tags: z.array(z.string()).optional(),

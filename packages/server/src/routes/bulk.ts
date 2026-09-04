@@ -64,6 +64,7 @@ import { publish } from "../pubsub.js";
 import { applyInlineEdges, announceInlineEdges } from "./_edges-inline.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
+import { ItemStateEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
   BulkActionFilterSchema,
@@ -88,7 +89,14 @@ const BulkInputItemSchema = z.object({
   id: z.string().optional(),
   type: z.string(),
   properties: z.record(z.string(), z.unknown()).optional(),
-  state: z.enum(["active", "archived", "trashed"]).optional(),
+  /** Every state the platform has, not the three a non-system type can
+   *  reach. Naming a state its type's lifecycle does not contain is
+   *  refused further down by `validateTransition`, which gives each type
+   *  its own answer — and that is the gate `POST /items` uses, where the
+   *  same create in `revoked` on a `system.*` type succeeds. A narrower
+   *  enum here refused it before the graph was consulted, so the two
+   *  create doors disagreed. */
+  state: ItemStateEnum.optional(),
   tier: z.enum(["library", "feed"]).optional(),
   timestamp: z.string().optional(),
   /** Ignored on the wire — server stamps `source` from the credential. */

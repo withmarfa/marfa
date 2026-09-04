@@ -3,6 +3,26 @@
  * edges.ts). Centralized so the Item/Edge shape is declared once.
  */
 import { z } from "@hono/zod-openapi";
+import { ITEM_STATES } from "@withmarfa/shared";
+import type { ItemState } from "@withmarfa/shared";
+
+/**
+ * The lifecycle states an item can be in, as a Zod enum.
+ *
+ * Derived from the canonical list rather than restated, because restating
+ * it is how the platform ended up with doors that disagreed about how many
+ * states there are: the bulk-action filter enumerated three of the four and
+ * so could not select the reserved namespace at all, whose types use a
+ * bounded `active | revoked` lifecycle and nothing else.
+ *
+ * **This is the enum for naming a state, not for reaching one.** A
+ * transition's *target* is a narrower set than this and is written out
+ * separately on the doors that take one, because which states a type can
+ * move to is the lifecycle graph's answer and differs per type.
+ */
+export const ItemStateEnum = z.enum(
+  ITEM_STATES as unknown as [ItemState, ...ItemState[]],
+);
 
 export const EdgeSchema = z.object({
   id: z.string(),
@@ -31,7 +51,7 @@ export const ItemSchema = z.object({
   id: z.string(),
   type: z.string(),
   properties: z.record(z.string(), z.unknown()),
-  state: z.enum(["active", "archived", "trashed", "revoked"]),
+  state: ItemStateEnum,
   /** Optional — `system.*` items have no tier. */
   tier: z.enum(["library", "feed"]).optional(),
   /**
