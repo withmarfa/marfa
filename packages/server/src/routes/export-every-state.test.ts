@@ -10,7 +10,7 @@
  * corpus meant two or more full walks stitched together.
  *
  * Both output formats are covered because they are one door with one query
- * schema: a sentinel honoured by the NDJSON path and stripped by the
+ * schema: a sentinel honored by the NDJSON path and stripped by the
  * archive path would be worse than neither.
  */
 import { createGunzip } from "node:zlib";
@@ -121,7 +121,7 @@ describe("GET /export — the all-states sentinel", () => {
     expect(ids.sort()).toEqual([activeId, archivedId, trashedId].sort());
   });
 
-  it("still honours a single named state", async () => {
+  it("still honors a single named state", async () => {
     expect(await ndjsonIds("?type=core.note&state=trashed")).toEqual([
       trashedId,
     ]);

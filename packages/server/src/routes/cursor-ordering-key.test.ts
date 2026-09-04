@@ -149,7 +149,7 @@ describe("GET /items — the cursor is bound to the ordering that issued it", ()
     expectOrderingRefusal(await listItems(`${TYPE}&cursor=${cursor}`));
   });
 
-  it("honours a cursor whose ordering is spelled out rather than defaulted", async () => {
+  it("honors a cursor whose ordering is spelled out rather than defaulted", async () => {
     // The compatibility case, and the reason the key is computed from the
     // resolved ordering rather than from the raw parameters: a client that
     // omits `sort` on one page and names the default on the next is asking
@@ -173,9 +173,9 @@ describe("GET /items — the cursor is bound to the ordering that issued it", ()
       JSON.stringify({ v: last.created_at, id: last.id }),
     ).toString("base64url");
 
-    const honoured = await listItems(`${TYPE}&cursor=${unkeyed}&limit=1`);
-    expect(honoured.status).toBe(200);
-    expect(honoured.page?.data[0]?.id).not.toBe(last.id);
+    const honored = await listItems(`${TYPE}&cursor=${unkeyed}&limit=1`);
+    expect(honored.status).toBe(200);
+    expect(honored.page?.data[0]?.id).not.toBe(last.id);
 
     expectOrderingRefusal(
       await listItems(`${TYPE}&sort=timestamp&cursor=${unkeyed}`),
@@ -209,17 +209,17 @@ describe("a cursor minted before the key named the direction", () => {
     );
   }
 
-  it("honours a bare `created_at` on the default listing", async () => {
+  it("honors a bare `created_at` on the default listing", async () => {
     const { page } = await listItems(`${TYPE}&limit=1`);
     const last = page!.data[0]!;
     const legacy = legacyCursor(last.created_at, last.id, "created_at");
 
-    const honoured = await listItems(`${TYPE}&cursor=${legacy}&limit=1`);
-    expect(honoured.status).toBe(200);
-    expect(honoured.page?.data).toHaveLength(1);
-    // Advanced rather than merely accepted: a cursor that was honoured but
+    const honored = await listItems(`${TYPE}&cursor=${legacy}&limit=1`);
+    expect(honored.status).toBe(200);
+    expect(honored.page?.data).toHaveLength(1);
+    // Advanced rather than merely accepted: a cursor that was honored but
     // ignored would re-serve the row already delivered.
-    expect(honoured.page?.data[0]?.id).not.toBe(last.id);
+    expect(honored.page?.data[0]?.id).not.toBe(last.id);
 
     // And only there. `created_at` meant the default listing when it was
     // written, so mapping it must not widen into an ordering it never named.
@@ -228,7 +228,7 @@ describe("a cursor minted before the key named the direction", () => {
     );
   });
 
-  it("honours a bare `updated_at` under the catch-up filter", async () => {
+  it("honors a bare `updated_at` under the catch-up filter", async () => {
     const catchUp = `${TYPE}&updated_after=1970-01-01T00:00:00.000Z`;
     const { page } = await listItems(`${catchUp}&limit=1`);
     const last = page!.data[0]!;
@@ -236,10 +236,10 @@ describe("a cursor minted before the key named the direction", () => {
     // cursor carries there is the modification time.
     const legacy = legacyCursor(last.updated_at, last.id, "updated_at");
 
-    const honoured = await listItems(`${catchUp}&cursor=${legacy}&limit=1`);
-    expect(honoured.status).toBe(200);
-    expect(honoured.page?.data).toHaveLength(1);
-    expect(honoured.page?.data[0]?.id).not.toBe(last.id);
+    const honored = await listItems(`${catchUp}&cursor=${legacy}&limit=1`);
+    expect(honored.status).toBe(200);
+    expect(honored.page?.data).toHaveLength(1);
+    expect(honored.page?.data[0]?.id).not.toBe(last.id);
 
     // `updated_at` named the catch-up and nothing else. The same column
     // sorted the other way is a different ordering and is refused.

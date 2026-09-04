@@ -470,7 +470,7 @@ async function handleArchiveExport(
   }
   // The NDJSON path's twin, and it has to read the parameter the same way:
   // the two formats are one door with one query schema, so a sentinel
-  // honoured by one and stripped by the other would be worse than neither.
+  // honored by one and stripped by the other would be worse than neither.
   const { state, all_states: allStates } = resolveStateFilter(
     c.req.query("state"),
   );
