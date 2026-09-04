@@ -1242,10 +1242,11 @@ export class PgItemStore implements ItemStore {
   ): Promise<number> {
     // Deliberately not routed through `purgeTrashedOlderThan`: activity
     // rows are `active` and never trashed, so the predicate differs at
-    // both ends — type instead of state, `created_at` instead of
-    // `updated_at`. An activity row is written once and never revised,
-    // so the two timestamps agree; `created_at` is the one that says
-    // what the window means.
+    // both ends — type instead of state, and `created_at` instead of the
+    // stamp that sweep reads. An activity row never enters the bin, so it
+    // carries no removal time to key off, and it is written once and
+    // never revised, so `created_at` is both available and the one that
+    // says what the window means.
     const baseConditions = [
       eq(items.type, "system.activity"),
       lt(items.created_at, beforeDate),
