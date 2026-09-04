@@ -1110,3 +1110,57 @@ export const enrichmentState = sqliteTable("enrichment_state", {
   config_signature: text("config_signature"),
   updated_at: text("updated_at").notNull(),
 });
+
+/**
+ * What a write returned, so a client that lost the response can ask.
+ *
+ * A row is claimed before the write runs and completed with the status and
+ * body that went back, so a repeat carrying the same key is answered from
+ * here rather than by asking the door again. That distinction is the whole
+ * point: a door asked twice answers honestly about the second ask, which is
+ * a collision, a version conflict or a missing row depending on the verb,
+ * and none of those is the question a retry is asking.
+ *
+ * `fingerprint` is what makes a repeat a repeat: a digest of the method,
+ * path, query, body and calling credential. A key arriving with a different
+ * one is refused rather than served, because serving it would silently drop
+ * a write the caller believes it made.
+ *
+ * Rows age out on the event-log retention sweep rather than through a
+ * sweeper of their own, which is also what bounds how long a client may
+ * wait before retrying and still be told.
+ */
+export const idempotencyRecords = sqliteTable(
+  "idempotency_records",
+  {
+    id: text("id").primaryKey(),
+    space_id: text("space_id"),
+    idempotency_key: text("idempotency_key").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    /** `in_flight` while the write runs, `complete` once it answered. */
+    state: text("state").notNull(),
+    response_status: integer("response_status"),
+    response_content_type: text("response_content_type"),
+    /** NULL on a completed row means the body was above the store bound. */
+    response_body: text("response_body"),
+    created_at: text("created_at").notNull(),
+    completed_at: text("completed_at"),
+  },
+  (table) => [
+    // COALESCE rather than a plain (space_id, idempotency_key) composite,
+    // mirroring `idx_items_source_dedup`: `space_id` is nullable and NULL
+    // never equals NULL in a unique index, so the plain shape would stop
+    // deduping the null-space bucket entirely — every request on a
+    // single-space self-host, and every platform-admin request anywhere.
+    // The same defect was found and repaired on `bulk_action_jobs`, which
+    // reached for NULLS NOT DISTINCT instead; COALESCE says it once and is
+    // the same expression in both dialects.
+    uniqueIndex("idx_idempotency_records_key").on(
+      sql`COALESCE(${table.space_id}, '')`,
+      table.idempotency_key,
+    ),
+    // Serves the retention sweep, which is a range over `created_at`
+    // within a space scope.
+    index("idx_idempotency_records_gc").on(table.space_id, table.created_at),
+  ],
+);

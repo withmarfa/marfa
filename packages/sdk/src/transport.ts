@@ -35,6 +35,25 @@ export interface RawRequestOptions {
   query?:
     Record<string, string | number | boolean | string[] | undefined> | object;
   headers?: Record<string, string>;
+  /**
+   * Sent as `Idempotency-Key` on the item and edge write doors.
+   *
+   * The server records the status and body it returns against the key and
+   * answers a repeat carrying the same key from that record, performing no
+   * second write — so a retry after a lost response learns what the first
+   * attempt did instead of colliding with it.
+   *
+   * **Choose a fresh key per logical write, and reuse it only for a
+   * retry of that same write.** The server compares the whole request
+   * against the key and refuses a key replayed with a different one, since
+   * serving the stored result there would silently discard a write the
+   * caller believes it made.
+   *
+   * Set explicitly rather than generated per call. A transport that minted
+   * one on every request would make each attempt its own key and answer
+   * nothing, which reads as working right up until a response is lost.
+   */
+  idempotencyKey?: string;
   /** Per-call timeout override (ms). Falls back to transport default. */
   timeoutMs?: number;
   /** Caller-owned cancellation, aborting in addition to the timeout.
@@ -152,6 +171,8 @@ export class HttpTransport {
        *  default (30s). Used by polling helpers that want a tighter
        *  per-request budget than the default global. */
       timeoutMs?: number;
+      /** Sent as `Idempotency-Key`. See {@link RawRequestOptions}. */
+      idempotencyKey?: string;
     },
   ): Promise<T> {
     const { data } = await this.requestWithStatus<T>(method, path, options);
@@ -189,6 +210,8 @@ export class HttpTransport {
         | Record<string, string | number | boolean | string[] | undefined>
         | object;
       timeoutMs?: number;
+      /** Sent as `Idempotency-Key`. See {@link RawRequestOptions}. */
+      idempotencyKey?: string;
     },
   ): Promise<{ data: T; status: number }> {
     const response = await this.rawRequest(method, path, options);
@@ -282,6 +305,14 @@ export class HttpTransport {
       Authorization: authHeader,
       ...options?.headers,
     };
+    // After the spread, so an explicit `headers` entry does not silently
+    // lose to the option named for it — and before the auth retry below,
+    // which re-dispatches with the same options and so re-sends the same
+    // key. That is the point: a retried write must not become a second
+    // write just because the credential was renewed between attempts.
+    if (options?.idempotencyKey !== undefined) {
+      headers["Idempotency-Key"] = options.idempotencyKey;
+    }
 
     const controller = new AbortController();
     const effectiveTimeoutMs = options?.timeoutMs ?? this.timeoutMs;

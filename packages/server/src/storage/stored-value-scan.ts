@@ -210,6 +210,21 @@ export const DELIBERATELY_UNSCANNED: readonly {
       "decorates a response.",
   },
   {
+    table: "idempotency_records",
+    column: "state",
+    castType: "IdempotencyRecordState",
+    because:
+      "Fail-closed in the safe direction. Only `complete` replays a stored " +
+      "outcome, so a value this build cannot read is treated as a claim " +
+      "still in flight rather than as a result: the caller is refused with " +
+      "`idempotency_key_in_flight` and the claim's lease then admits a " +
+      "takeover, so an unreadable row costs one lease interval and heals " +
+      "itself. It can never hand back a body the row does not attest to, " +
+      "which is the only outcome worth counting for. Rows also churn on " +
+      "the retention sweep, so a boot count would report on whatever was " +
+      "in flight at that boot.",
+  },
+  {
     table: "custom_types",
     column: "origin",
     castType: 'LoadedType["origin"]',

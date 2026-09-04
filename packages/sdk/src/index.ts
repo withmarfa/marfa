@@ -2,6 +2,7 @@
 export { MarfaClient } from "./client.js";
 export type {
   ClientConfig,
+  IdempotentWriteOptions,
   UpdateOptions,
   ListFilters,
   SearchFilters,

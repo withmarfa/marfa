@@ -83,6 +83,10 @@ import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
 import { rlsSpaceContextMiddleware } from "./middleware/rls-space-context.js";
+import {
+  idempotencyMiddleware,
+  IDEMPOTENT_WRITE_DOORS,
+} from "./middleware/idempotency.js";
 import type { PgClient, PgDb } from "./storage/pg/connection.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
@@ -121,13 +125,15 @@ export function createApp(
 ) {
   const app = new OpenAPIHono<AppEnv>();
 
-  // Global error handler
-  app.onError(
-    createErrorHandler({
-      errorWebhookUrl: config.errorWebhookUrl,
-      errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
-    }),
-  );
+  // Global error handler. Held in a variable because the idempotency
+  // middleware renders a thrown error through this same handler rather
+  // than re-deriving what it produces — a stored body that is nearly the
+  // one that went out is worse than storing nothing.
+  const errorHandler = createErrorHandler({
+    errorWebhookUrl: config.errorWebhookUrl,
+    errorWebhookTimeoutMs: config.errorWebhookTimeoutMs,
+  });
+  app.onError(errorHandler);
 
   // An unmatched route never throws, so it never reaches `onError` — Hono
   // answers it with a bare `404 Not Found` in plain text. That is the one
@@ -455,6 +461,26 @@ export function createApp(
         aggregateMultiplier: config.rateLimitAggregateMultiplier,
       }),
     );
+  }
+
+  // `Idempotency-Key` on the item and edge write doors, so a client that
+  // lost a response can ask what its first attempt did instead of asking
+  // the door again and being told about the second ask.
+  //
+  // **Registered ahead of the RLS wrapper deliberately.** A claim has to
+  // commit whether or not the write's own transaction does; inside the
+  // wrapper it would roll back with a failed write and the retry would
+  // then write for real, which is the defect this removes.
+  //
+  // Registered per door through Hono's own router rather than matched by
+  // hand: the table is the registered patterns, so the coverage test can
+  // compare it against `app.routes` without a second notion of what a
+  // path is.
+  const idempotency = idempotencyMiddleware({ storage, errorHandler });
+  for (const door of IDEMPOTENT_WRITE_DOORS) {
+    const [method, path] = door.split(" ");
+    if (method === undefined || path === undefined) continue;
+    app.on(method, path, idempotency);
   }
 
   // Postgres RLS request-level enforcement. Wraps each space-bounded

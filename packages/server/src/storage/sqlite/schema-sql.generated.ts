@@ -436,6 +436,19 @@ CREATE TABLE IF NOT EXISTS "items" (
 	\`tier\` text DEFAULT 'library' NOT NULL
 , "starts_at_utc" text, "ends_at_utc" text, \`written_by_connection_id\` text);
 
+CREATE TABLE IF NOT EXISTS "idempotency_records" (
+  "id" text PRIMARY KEY NOT NULL,
+  "space_id" text,
+  "idempotency_key" text NOT NULL,
+  "fingerprint" text NOT NULL,
+  "state" text NOT NULL,
+  "response_status" integer,
+  "response_content_type" text,
+  "response_body" text,
+  "created_at" text NOT NULL,
+  "completed_at" text
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_api_keys_connection_id\` ON \`api_keys\` (\`connection_id\`) WHERE \`connection_id\` IS NOT NULL;
@@ -545,6 +558,12 @@ CREATE INDEX IF NOT EXISTS \`idx_event_log_created_at\` ON \`event_log\` (\`crea
 CREATE INDEX IF NOT EXISTS \`idx_event_log_edge_id\` ON \`event_log\` (\`edge_id\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_event_log_originating_connection_id\` ON \`event_log\` (\`originating_connection_id\`, \`id\`);
+
+CREATE INDEX IF NOT EXISTS "idx_idempotency_records_gc"
+  ON "idempotency_records" ("space_id", "created_at");
+
+CREATE UNIQUE INDEX IF NOT EXISTS "idx_idempotency_records_key"
+  ON "idempotency_records" (COALESCE("space_id", ''), "idempotency_key");
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_inbound_webhook_events_dedup\` ON \`inbound_webhook_events\` (\`inbound_webhook_id\`, \`external_delivery_id\`);
 
