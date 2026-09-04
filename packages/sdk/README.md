@@ -26,6 +26,33 @@ const note = await client.items.create({
 
 The OAuth helpers (PKCE, device flow, token storages, `MarfaAuth`) ship under the `@withmarfa/sdk/auth` subpath.
 
+## Local engine
+
+`@withmarfa/sdk/local` is a durable store for apps that must keep working with no network: a write lands on disk first and reaches the server afterwards. `@libsql/client` and `drizzle-orm` are optional peers, so a consumer that does not want one does not pay for it.
+
+```ts
+import {
+  openLocalStore,
+  createTypeGraph,
+  createBlobStore,
+  createLocalEngine,
+} from "@withmarfa/sdk/local";
+
+const store = await openLocalStore({ path: "./marfa.db", identity });
+const types = createTypeGraph({ store, client });
+const blobs = createBlobStore({ store, client });
+
+await types.load(); // the cached type graph, with no network
+const engine = createLocalEngine({ store, client, types, blobs });
+await engine.start();
+```
+
+Three things it does that a network client cannot.
+
+- **A write the type forbids is refused before it is queued**, by the same rules the server applies, so a person is told while the edit is still in front of them rather than an hour later. The type graph comes from `@withmarfa/shared` for platform types and from `GET /types` for custom ones, cached on disk. A type the client has never seen is not refused — the server decides what exists.
+- **An attachment is usable at once.** `blobs.stage(bytes, mimeType)` hashes locally and returns the hash, so an item can reference it before anything is uploaded. The upload is queued and always lands before the write that names it; on reconnect a probe tells an upload that landed from one that was lost. An upload the server refuses for good is reported as a dead letter and the bytes are kept.
+- **Search works offline**, over the same fields server search indexes, so a term that finds an item online finds it offline. Ranking may differ: both rank by BM25, which is relative to the documents in the index, and a local store holds what this client has rather than the whole space.
+
 ### Browser sign-out
 
 Browser clients that request `openid` can end the hosted Marfa session with
