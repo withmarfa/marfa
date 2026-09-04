@@ -1,3 +1,4 @@
+import { setMaxListeners } from "node:events";
 import type { MarfaClient } from "../client.js";
 import type { Subscription } from "../events.js";
 import { applyEvent } from "./apply.js";
@@ -75,8 +76,52 @@ export interface LocalSync {
 export function createLocalSync(options: LocalSyncOptions): LocalSync {
   const { store, client, drain } = options;
   const now = options.now ?? (() => new Date().toISOString());
+  /**
+   * How many listener failures are worth printing before it is clear the
+   * listener is simply broken.
+   *
+   * Hydration progress is reported per row, so a listener that always
+   * throws would otherwise print a line for every row of a full read —
+   * which buries the first one, the only one that says anything.
+   */
+  const REPORTED_THROWS = 5;
+  let throwsSeen = 0;
+
+  /** The last resort, when there is nobody left to tell. */
+  const report = (what: string, error: unknown): void => {
+    console.error(`@withmarfa/sdk/local: ${what}`, error);
+  };
+
+  /**
+   * Tell the app, without letting the telling become the failure.
+   *
+   * The guard belongs here rather than in whatever composes this, because
+   * this is where the throw is actually caught: the detached failure path
+   * calls this from inside its own catch, so an unguarded call hands the
+   * throw straight back to a promise nobody holds and Node ends the
+   * process — the exact failure that path exists to prevent. `sync.ts` is
+   * a public export, so a consumer reaches it with no engine in the way.
+   */
   const emit = (event: LocalEngineEvent): void => {
-    options.onEvent?.(event);
+    const listener = options.onEvent;
+    if (listener === undefined) {
+      // Nowhere to report to is not the same as nothing to report: a
+      // genuine programming error in detached work would otherwise go
+      // nowhere at all.
+      if (event.type === "sync.error") {
+        report(`${event.scope} failed`, event.error ?? event.message);
+      }
+      return;
+    }
+    try {
+      listener(event);
+    } catch (error) {
+      throwsSeen += 1;
+      if (throwsSeen <= REPORTED_THROWS) report("a listener threw", error);
+      else if (throwsSeen === REPORTED_THROWS + 1) {
+        report("a listener keeps throwing; further ones are not reported", "");
+      }
+    }
   };
 
   /**
@@ -96,14 +141,24 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
 
   /** Cancels the subscription of one `start`. Replaced on each attempt. */
   let attempt = new AbortController();
-  /** Whichever of the two fires first cancels the stream. */
+  // One listener for the life of the engine, reading whichever attempt is
+  // current. Registered per start instead — even with `once` — it
+  // accumulates one per start on a signal that may never fire, so an app
+  // retrying `start` on a timer collects them until Node warns.
+  // A ceiling low enough that accumulation is loud. An abort signal warns
+  // about nothing by default, so a future change that went back to
+  // registering a listener per start would leak one on every attempt in
+  // silence — an app retrying a start on a timer collects them for as long
+  // as the server is down, and nothing anywhere would say so. Two is above
+  // what correct code here uses and far below any plausible legitimate
+  // growth.
+  setMaxListeners(2, retired.signal);
+  retired.signal.addEventListener("abort", () => {
+    attempt.abort();
+  });
   const linkAttempt = (): AbortSignal => {
     attempt = new AbortController();
-    const stop = (): void => {
-      attempt.abort();
-    };
-    if (retired.signal.aborted) stop();
-    else retired.signal.addEventListener("abort", stop, { once: true });
+    if (retired.signal.aborted) attempt.abort();
     return attempt.signal;
   };
 
@@ -135,8 +190,15 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
     scope: "stream" | "cursor" | "catchup" | "reimport",
     work: () => Promise<void>,
   ): void => {
+    // The controller this work was started under, captured rather than
+    // read back later: `linkAttempt` replaces the binding on every start,
+    // so in-flight work from an abandoned attempt would otherwise check
+    // the *new* attempt's signal, find it running, and report an error
+    // about an attempt nobody is waiting on — which is the noise the
+    // check exists to suppress.
+    const under = attempt;
     void work().catch((error: unknown) => {
-      if (attempt.signal.aborted) return;
+      if (under.signal.aborted) return;
       emit({
         type: "sync.error",
         scope,
@@ -431,7 +493,15 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
       // stronger obligation: this store holds rows and some of them may be
       // gone from the server, which only a prune can find.
       if (owesReimport) {
-        await reimport();
+        if (!(await reimport())) {
+          // The subscription is live and following from the announced
+          // head, and the store is still not a faithful copy: rows the
+          // server dropped may be held, and only the prune this could not
+          // run would find them. Reporting online here would tell an app
+          // it is up to date over exactly that. The flag survives, so the
+          // next start tries again.
+          emit({ type: "connection.changed", state: "offline" });
+        }
         return;
       }
 

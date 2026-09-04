@@ -16,6 +16,7 @@ import {
   type KeysModeFixture,
 } from "../test-harness.js";
 import { createLocalEngine, type LocalEngine } from "./engine.js";
+import { createLocalSync } from "./sync.js";
 import { createOfflineSeam, type OfflineSeam } from "./offline-seam.js";
 import { openLocalStore, type LocalStore } from "./store/index.js";
 import {
@@ -185,16 +186,22 @@ describe("a listener that throws, and one that is not there", () => {
       connectTimeoutMs: 150,
       initialRetryMs: 5,
     });
+    // Registered before the recording listener, deliberately. The other
+    // way round the array fills whatever the guard does, so only the
+    // does-not-become-unhandled half is pinned; this way a fan-out that
+    // stops at the first throw is caught too.
     engine.on(() => {
       throw new Error("a listener that cannot cope");
     });
+    const after: LocalEngineEvent[] = [];
+    engine.on((event) => after.push(event));
 
     // The one path whose whole purpose is not to crash reports through the
     // listeners, so a listener that throws would put the rejection
     // straight back where it was taken from.
     await expect(engine.start()).rejects.toThrow();
     expect(
-      events.some(
+      after.some(
         (event) => event.type === "sync.error" && event.scope === "stream",
       ),
     ).toBe(true);
@@ -251,6 +258,139 @@ describe("a re-import that did not finish", () => {
     expect(await store.server.items.get(stale.id)).toBeUndefined();
     expect(await store.server.items.list()).toHaveLength(1);
     expect((await store.syncState.read(identity))?.reimportOwedAt).toBeNull();
+  });
+});
+
+describe("an owed re-import a drain cannot clear (seam: online)", () => {
+  it("does not report online with the obligation outstanding", async () => {
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "on the server" },
+    });
+    await engineOver(store).start();
+    for (const running of engines.splice(0)) running.stop();
+
+    // A queue no drain can empty: a create parked for review with an edit
+    // to the same row behind it.
+    const held = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "parked" },
+    });
+    const parked = (await store.outbox.list())[0];
+    if (parked === undefined) throw new Error("expected a queued create");
+    await store.outbox.block(parked.seq, "needs_review", AT);
+    await store.mutations.updateItem(held.id, { title: "waits behind it" });
+    await store.syncState.setReimportOwed(store.identity, AT);
+
+    const engine = engineOver(store);
+    await engine.start();
+
+    // Starting succeeds and the subscription is live, following from the
+    // announced head — and the store is still not a faithful copy, because
+    // the prune that would find what the server dropped could not run.
+    // Reporting online here tells an app it is up to date over exactly
+    // that.
+    const status = await engine.status();
+    expect(status.connection).toBe("offline");
+    expect(status.lastError).toMatchObject({ scope: "reimport" });
+    expect(
+      (await store.syncState.read(store.identity))?.reimportOwedAt,
+    ).not.toBeNull();
+  });
+});
+
+describe("an engine started again and again", () => {
+  it("does not accumulate a cancellation listener per attempt", async () => {
+    const warnings: string[] = [];
+    const watch = (warning: Error): void => {
+      warnings.push(warning.name);
+    };
+    process.on("warning", watch);
+
+    try {
+      seam.mode = "offline";
+      const engine = engineOver(store, {
+        connectTimeoutMs: 20,
+        initialRetryMs: 5,
+      });
+      // Past Node's ten-listener threshold. An app retrying `start` on a
+      // timer reaches this in the ordinary course of a server being down,
+      // and a listener registered per attempt on a signal that may never
+      // fire is never removed.
+      for (let index = 0; index < 12; index += 1) {
+        await expect(engine.start()).rejects.toThrow(/did not connect/);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off("warning", watch);
+    }
+
+    expect(warnings).not.toContain("MaxListenersExceededWarning");
+  });
+});
+
+describe("a re-import whose read fails part-way", () => {
+  it("leaves the obligation recorded", async () => {
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "on the server" },
+    });
+    await engineOver(store).start();
+    for (const running of engines.splice(0)) running.stop();
+    await store.syncState.setReimportOwed(store.identity, AT);
+
+    // The subscription connects, and the read that follows does not. The
+    // flag is cleared only once the read has finished, so a refactor that
+    // hoisted the clear above it would leave this store believing it had
+    // re-read a corpus it never touched.
+    seam.after(1, "offline");
+    const engine = engineOver(store, { connectTimeoutMs: 200 });
+    await expect(engine.start()).rejects.toThrow();
+
+    // Still recorded. The stamp is refreshed on each attempt, so what is
+    // asserted is the obligation rather than the instant it was first
+    // noticed.
+    expect(
+      (await store.syncState.read(store.identity))?.reimportOwedAt,
+    ).not.toBeNull();
+  });
+});
+
+describe("the sync used on its own", () => {
+  it("does not let a throwing listener become an unhandled rejection", async () => {
+    // `createLocalSync` is a public export, so a consumer reaches this
+    // without the engine's fan-out in the way. The detached failure path
+    // catches the work's own rejection and then calls the listener from
+    // inside that catch: an unguarded call there hands the throw straight
+    // back to a promise nobody holds, which is the process exit this path
+    // exists to prevent, on a supported entry point.
+    const unhandled: unknown[] = [];
+    const watch = (error: unknown): void => {
+      unhandled.push(error);
+    };
+    process.on("unhandledRejection", watch);
+
+    try {
+      seam.mode = "server_error";
+      const sync = createLocalSync({
+        store,
+        client,
+        connectTimeoutMs: 150,
+        initialRetryMs: 5,
+        onEvent: () => {
+          throw new Error("a listener that cannot cope");
+        },
+      });
+      await expect(sync.start()).rejects.toThrow();
+      sync.stop();
+      // A turn of the loop, so a rejection with nobody holding it would
+      // have been reported by now.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } finally {
+      process.off("unhandledRejection", watch);
+    }
+
+    expect(unhandled).toEqual([]);
   });
 });
 

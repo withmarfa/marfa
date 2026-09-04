@@ -132,35 +132,30 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
       };
     }
 
-    // A listener that throws must not take the emit down with it. This is
-    // reached from the handler that catches a detached failure, whose
-    // whole purpose is not to crash, so a throw here would put the
-    // rejection straight back where it was just taken from — and the
-    // caller would see an unhandled rejection naming their own listener.
-    // The failure is still visible: each listener is given the event
-    // whatever the one before it did, and the throw is reported below.
-    const refused: unknown[] = [];
+    // Every listener gets the event whatever the one before it did, which
+    // is this layer's own duty: one consumer's bug must not stop another
+    // consumer hearing anything. Reporting is not this layer's duty, so
+    // the first failure is re-thrown once the fan-out is done — the sync
+    // catches it where the throw actually matters, being the thing that
+    // calls this from inside its own catch, and reports it there. A
+    // second report here would be the same line twice.
+    //
+    // Re-throwing also leaves the drain's documented behavior intact: a
+    // listener that throws abandons that pass, which costs nothing
+    // because the state it was reporting is already committed.
+    let refused: unknown;
+    let refusedAny = false;
     for (const listener of listeners) {
       try {
         listener(event);
       } catch (error) {
-        refused.push(error);
+        if (!refusedAny) {
+          refused = error;
+          refusedAny = true;
+        }
       }
     }
-    for (const error of refused) report("a listener threw", error);
-
-    // Nowhere to report to is not the same as nothing to report. An
-    // engine with no listener at all would otherwise drop a genuine
-    // programming error in detached work silently, which is the failure
-    // this whole path exists to avoid.
-    if (listeners.size === 0 && event.type === "sync.error") {
-      report(`${event.scope} failed`, event.error ?? event.message);
-    }
-  };
-
-  /** The last resort, when there is nobody to tell. */
-  const report = (what: string, error: unknown): void => {
-    console.error(`@withmarfa/sdk/local: ${what}`, error);
+    if (refusedAny) throw refused;
   };
 
   /** Refuse the two things a handle another engine holds cannot do. */
