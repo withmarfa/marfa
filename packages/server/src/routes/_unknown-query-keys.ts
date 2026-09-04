@@ -1,6 +1,6 @@
 /**
- * Refusing a query parameter or filter field the door does not declare,
- * and the judgement in doing it at all.
+ * Refusing a query parameter, a filter field or a request field the door
+ * does not declare, and the judgement in doing it at all.
  *
  * The request validator strips keys it does not declare rather than
  * rejecting them, so a caller who misspells a filter gets a successful
@@ -14,6 +14,14 @@
  * key turns `{action: "purge", filter: {timestamp_before: "..."}}` into a
  * purge with an empty filter — every item in the space, and under the
  * match cap it does not even error.
+ *
+ * The same door's *envelope* is worse again, and is the one that reads as
+ * out of scope until it is written down: `dry_run` is taken as
+ * `body.dry_run ?? false`, so a misspelling is stripped and the action
+ * runs for real against whatever the filter matched. The caller asked for
+ * a rehearsal, is answered `202`, and the job is queued. That is why
+ * `refuseUnknownBodyKeys` exists beside the filter one rather than
+ * instead of it: they are two different silences on one request.
  *
  * ## Why this is called per door rather than installed as middleware
  *
