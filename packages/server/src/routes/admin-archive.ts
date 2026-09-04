@@ -737,11 +737,33 @@ export function adminArchiveRoutes(
     // receiving one for a row it has never heard of has no way to resolve
     // it. Announcing only the edges was worse than announcing neither for
     // exactly that reason.
+    //
+    // Fan-out is declined, as it is on every other door that writes in
+    // bulk. A restore carries up to `MAX_ARCHIVE_ITEMS` rows, and driving
+    // outbound work per row per subscribed connection would push an
+    // archive's worth of writes back out to whatever an installed
+    // bidirectional connection is joined to — work nobody asked for, and
+    // work a restore is the least likely write to want. The flag governs
+    // only the outbound side effects: the log row and the stream frame
+    // land either way, which is the whole point of announcing these at
+    // all. It rides the persisted row too, so a drainer elected in
+    // another process reaches the same answer.
     for (const { item, metadata } of restoredItems) {
-      await publish({ type: "created", item, metadata, spaceId });
+      await publish({
+        type: "created",
+        item,
+        metadata,
+        spaceId,
+        enableFanout: false,
+      });
     }
     for (const edge of restoredEdges) {
-      await publishEdge({ type: "edge_created", edge, spaceId });
+      await publishEdge({
+        type: "edge_created",
+        edge,
+        spaceId,
+        enableFanout: false,
+      });
     }
 
     await storage.audit.log({
