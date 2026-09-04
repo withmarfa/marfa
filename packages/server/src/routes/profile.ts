@@ -31,6 +31,7 @@ import {
   isValidTimeZone,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { withPreparedHeaders } from "../prepared-headers.js";
 import { requireAuth, requireProfilePermission } from "../middleware/auth.js";
 import { reserveQuota } from "../middleware/quota.js";
 import { log } from "../middleware/logger.js";
@@ -736,17 +737,20 @@ export function profileRoutes(
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid username");
     }
     const svg = renderPlaceholderSvg(username);
-    return new Response(svg, {
-      status: 200,
-      headers: {
-        "Content-Type": "image/svg+xml",
-        // Daily revalidation; placeholder SVGs are pure functions of
-        // username so a long cache is safe. Strong ETag from the SHA of
-        // the body itself for revalidation cheapness.
-        "Cache-Control": "public, max-age=86400, immutable",
-        ETag: `"${createHash("sha256").update(svg).digest("hex").slice(0, 16)}"`,
-      },
-    });
+    return withPreparedHeaders(
+      c,
+      new Response(svg, {
+        status: 200,
+        headers: {
+          "Content-Type": "image/svg+xml",
+          // Daily revalidation; placeholder SVGs are pure functions of
+          // username so a long cache is safe. Strong ETag from the SHA of
+          // the body itself for revalidation cheapness.
+          "Cache-Control": "public, max-age=86400, immutable",
+          ETag: `"${createHash("sha256").update(svg).digest("hex").slice(0, 16)}"`,
+        },
+      }),
+    );
   });
 
   return router;

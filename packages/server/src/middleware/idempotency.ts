@@ -4,6 +4,7 @@ import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
+import { withPreparedHeaders } from "../prepared-headers.js";
 
 /**
  * A write that is retried after a lost response learns what its first
@@ -226,6 +227,25 @@ function errorCodeOf(body: string): string | null {
 }
 
 /**
+ * A replay is a fresh `Response`, so it starts with none of the headers the
+ * middleware chain prepared for this request — the same discard the error
+ * handler compensates for by copying `c.res.headers` before it renders.
+ * `replay` re-added `X-Error-Code` by hand for that reason and stopped
+ * there, leaving a replayed response with no `X-Request-ID` and, where the
+ * deployment rate limits, no `X-RateLimit-*` trio.
+ *
+ * Both are worth more on a replay than anywhere else. A retry is the
+ * request a client is most likely to be debugging and it had no id to
+ * quote, and the replayed request consumes its rate-limit window like any
+ * other, so a client polling a retry loop was losing sight of the budget it
+ * was spending.
+ *
+ * `withPreparedHeaders` is shared with the handlers that build a `Response`
+ * by hand for the same reason — see that function for what Hono does with
+ * the prepared bag afterwards, which is not what the merge alone suggests.
+ */
+
+/**
  * `Idempotency-Key` on the item and edge write doors.
  *
  * **Mounted outside the RLS transaction wrapper**, which is not a
@@ -286,7 +306,7 @@ export function idempotencyMiddleware(opts: {
     const digest = await fingerprint(c, bodyText);
 
     const held = await acquire(storage, spaceId, key, digest);
-    if ("answer" in held) return held.answer;
+    if ("answer" in held) return withPreparedHeaders(c, held.answer);
 
     const { recordId, heldSince } = held;
     let response: Response;

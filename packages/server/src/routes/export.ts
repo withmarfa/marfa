@@ -14,6 +14,7 @@ import type { ItemState } from "@withmarfa/shared";
 import * as tar from "tar-stream";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { withPreparedHeaders } from "../prepared-headers.js";
 import { resolveBlobForSpace } from "../storage/blob-reader.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -399,10 +400,13 @@ export function exportRoutes(
       },
     });
 
-    return new Response(stream, {
-      status: 200,
-      headers: { "Content-Type": "application/x-ndjson" },
-    });
+    return withPreparedHeaders(
+      c,
+      new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "application/x-ndjson" },
+      }),
+    );
   });
 
   return router;
@@ -650,11 +654,14 @@ async function handleArchiveExport(
   const webStream = Readable.toWeb(passthrough) as ReadableStream;
 
   const date = new Date().toISOString().split("T")[0] ?? "today";
-  return new Response(webStream, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/gzip",
-      "Content-Disposition": `attachment; filename="marfa-export-${date}.tar.gz"`,
-    },
-  });
+  return withPreparedHeaders(
+    c,
+    new Response(webStream, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/gzip",
+        "Content-Disposition": `attachment; filename="marfa-export-${date}.tar.gz"`,
+      },
+    }),
+  );
 }

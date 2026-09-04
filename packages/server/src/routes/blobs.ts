@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { withPreparedHeaders } from "../prepared-headers.js";
 import { resolveBlobForSpace } from "../storage/blob-reader.js";
 import type { ResolvedBlob } from "../storage/blob-reader.js";
 import {
@@ -460,8 +461,19 @@ export function blobRoutes(
     return c.json({ hash, mime_type: mimeType, size: data.length }, 201);
   });
 
-  // HEAD /blobs/:hash — check blob existence without downloading
-  // HEAD is not supported by createRoute, use .on() directly
+  // HEAD /blobs/:hash — check blob existence without downloading.
+  // HEAD is not supported by createRoute, so this is mounted with .on().
+  //
+  // **Unreachable as mounted.** A HEAD request is answered by the GET
+  // handler below, not here: a HEAD for a missing blob returns the error
+  // handler's JSON envelope with `X-Error-Code: blob_not_found`, where this
+  // branch would return a bare 404 with neither. Confirmed three ways — a
+  // marker header set here never appears on the wire, removing the GET
+  // handler's own header merge changes what a HEAD response carries, and
+  // the 400 branch behaves the same way. Left exactly as it is rather than
+  // deleted or repaired, because which of those is right is a question for
+  // whoever owns this route; noting it is what stops the next reader
+  // assuming it runs.
   router.on("HEAD", "/:hash", async (c) => {
     const apiKey = requireAuth(c);
 
@@ -511,13 +523,16 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
     }
 
-    return new Response(new Uint8Array(data), {
-      status: 200,
-      headers: {
-        "Content-Type": record.mime_type,
-        "Content-Length": String(data.length),
-      },
-    });
+    return withPreparedHeaders(
+      c,
+      new Response(new Uint8Array(data), {
+        status: 200,
+        headers: {
+          "Content-Type": record.mime_type,
+          "Content-Length": String(data.length),
+        },
+      }),
+    );
   });
 
   // GET /blobs/:hash/url — presigned download URL

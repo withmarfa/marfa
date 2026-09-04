@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { ErrorCode, MarfaError, matchesTypeFilter } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { withPreparedHeaders } from "../prepared-headers.js";
 import {
   requireAuth,
   computeTypeFilter,
@@ -983,13 +984,16 @@ export function eventRoutes(
         },
       });
 
-      return new Response(stream, {
-        headers: {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
-        },
-      });
+      return withPreparedHeaders(
+        c,
+        new Response(stream, {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            Connection: "keep-alive",
+          },
+        }),
+      );
     }
   });
 
