@@ -19,6 +19,7 @@ import {
   createTestContext,
   readSse,
   request,
+  settle,
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
@@ -178,5 +179,115 @@ describe.skipIf(!isPg)("streaming RLS cross-space regression (PG only)", () => {
     // with the item id; an RLS bypass would render it visible to
     // space A's getAfter() call. RLS filters at the row level.
     expect(text).not.toContain(itemBId);
+  });
+
+  /**
+   * The cursor `/events` announces on connect is read under RLS
+   * enforcement, and nothing else covered it.
+   *
+   * That read is the one the route makes outside the replay reservation,
+   * and it takes a different fence — `withRlsSpaceTransaction` on the app
+   * pool rather than a reserved session. The branch is chosen by
+   * `rlsEnforce`, which defaults to true in production and is falsy under
+   * a bare `createTestContext()`, so every existing test of the
+   * announcement exercised the other arm.
+   *
+   * **The failure that arm has is a plausible value rather than a
+   * throw.** `event_log` carries an RLS policy the app role is held to,
+   * so a read reaching it without `marfa.space_id` set is denied every
+   * space-scoped row: `MAX(id)` answers NULL, the route reads NULL as an
+   * empty log, and the stream announces `0`. Nothing fails. A client
+   * adopts a cursor pointing at the start of the log and believes it.
+   *
+   * Three assertions rather than one, because the wrong answers sit on
+   * different sides. `0` is the denied-rows shape. Space B's higher id is
+   * the unscoped-read shape, which a space-scoped equality alone would
+   * pass if the log happened to end on space A. And a cursor that never
+   * moves would satisfy both of those while being useless, so the last
+   * step writes again and watches it advance.
+   */
+  it("GET /events SSE: announces this space's head under RLS, not zero and not the other space's", async () => {
+    /** The space's true head, walked from the rows the owner connection
+     *  sees. Deliberately not `getMaxId`, which is what the route asks:
+     *  an oracle that calls the method under test agrees with it however
+     *  wrong both are. */
+    const headOf = async (spaceId: string | null): Promise<bigint> => {
+      const rows = await ctx.storage.eventLog.getAfter(0n, 10_000);
+      return rows
+        .filter((row) => spaceId === null || row.space_id === spaceId)
+        .reduce((max, row) => (row.id > max ? row.id : max), 0n);
+    };
+
+    const announcedFor = async (key: string): Promise<string> => {
+      const res = await ctx.app.request("/events", {
+        headers: { authorization: `Bearer ${key}` },
+      });
+      expect(res.status).toBe(200);
+      const { text } = await readSse(res, {
+        until: (t) => t.includes("event: stream_cursor"),
+      });
+      const frame = text
+        .split("\n\n")
+        .find((f) => f.split("\n").includes("event: stream_cursor"));
+      expect(
+        frame,
+        "the stream must announce a cursor on connect",
+      ).toBeDefined();
+      const line = (frame ?? "")
+        .split("\n")
+        .find((l) => l.startsWith("data: "));
+      if (line === undefined) throw new Error("cursor frame carried no data");
+      const { cursor } = JSON.parse(line.slice("data: ".length)) as {
+        cursor: string;
+      };
+      // Let the departed subscriber's cleanup run before anything below
+      // writes, so no later assertion depends on a stream that is going.
+      await settle();
+      return cursor;
+    };
+
+    // Space B writes last, so the log's global head belongs to B and a
+    // read that forgot to scope by space would visibly overshoot.
+    await request(ctx.app, "POST", "/items", {
+      key: keyA,
+      body: { type: "core.note", properties: { body: "cursor probe A" } },
+    });
+    const headA = await headOf(spaceA);
+    await request(ctx.app, "POST", "/items", {
+      key: keyB,
+      body: { type: "core.note", properties: { body: "cursor probe B" } },
+    });
+    const globalHead = await headOf(null);
+    expect(
+      globalHead,
+      "the premise: space B must be ahead, or the scoping assertion proves nothing",
+    ).toBeGreaterThan(headA);
+
+    const cursor = await announcedFor(keyA);
+    expect(
+      cursor,
+      "a cursor of 0 is what a read denied every row announces, and it is not an empty log",
+    ).not.toBe("0");
+    expect(
+      cursor,
+      "the announcement must name this space's head under RLS enforcement",
+    ).toBe(String(headA));
+    expect(
+      BigInt(cursor),
+      "a space A connection must not be told where space B got to",
+    ).toBeLessThan(globalHead);
+
+    // And it tracks: a cursor pinned to one value would pass everything
+    // above while telling a reconnecting client nothing true.
+    await request(ctx.app, "POST", "/items", {
+      key: keyA,
+      body: { type: "core.note", properties: { body: "cursor probe A again" } },
+    });
+    const movedHeadA = await headOf(spaceA);
+    expect(movedHeadA).toBeGreaterThan(headA);
+    expect(
+      await announcedFor(keyA),
+      "a later connection must announce the head as it now stands",
+    ).toBe(String(movedHeadA));
   });
 });
