@@ -267,70 +267,115 @@ describe("the server sends the headers the spec declares", () => {
     assertUniversal(replay, "replayed POST /items");
   });
 
-  it("sends the always-on headers on responses the handler builds itself", async () => {
-    // The assertion class that was missing. Every case above reaches a
-    // response Hono built — `c.json` and the error handler both keep the
-    // prepared headers on their own. A handler that returns `new Response`
-    // does not, and four of them did exactly that, so the universal four
-    // were declared on three 200s that shipped without them.
-    //
-    // It stayed invisible because it depends on deployment shape: Hono's
-    // cors middleware reads `c.res` before `next()` and materializes the
-    // response for everything behind it, so where `CORS_ORIGINS` is set the
-    // headers survived. The harness leaves it empty, which is also the
-    // default, so this is the configuration that actually shipped.
-    // NDJSON export — a streamed Response built by hand.
-    const ndjson = await request(ctx.app, "GET", "/export", {
-      key: ctx.adminKey,
-    });
-    expect(ndjson.status).toBe(200);
-    assertUniversal(ndjson, "GET /export");
-    await ndjson.body?.cancel();
+  /**
+   * The handlers that build their own `Response`, one case each.
+   *
+   * Split rather than bundled: an `expect` throws and halts the function, so
+   * a bundle makes every later route conditional on every earlier one
+   * passing. A blob upload failing for an unrelated reason would silently
+   * stop the SSE route being checked at all, and the run would still name
+   * only the upload. Independent `it` blocks make each route's coverage hold
+   * by construction rather than by reasoning about execution order.
+   *
+   * This is the assertion class that was missing. Every other wire case here
+   * reaches a response Hono built — `c.json` and the error handler both keep
+   * the prepared headers unaided — so nothing exercised the handlers that do
+   * not, and six of them shipped without the headers the document promises.
+   */
+  describe("responses the handler builds itself", () => {
+    /** Uploaded once: both blob cases read it, neither is about the upload. */
+    let blobHash: string;
 
-    // The gzip archive, which is a second hand-built Response on the same
-    // route behind a different query.
-    const archive = await request(ctx.app, "GET", "/export?format=archive", {
-      key: ctx.adminKey,
-    });
-    expect(archive.status).toBe(200);
-    assertUniversal(archive, "GET /export?format=archive");
-    await archive.body?.cancel();
+    beforeAll(async () => {
+      const uploaded = await ctx.app.request("/blobs", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/octet-stream",
+        },
+        body: new TextEncoder().encode("header probe bytes"),
+      });
+      expect(uploaded.status).toBe(201);
+      blobHash = ((await uploaded.json()) as { hash: string }).hash;
+    }, 60_000);
 
-    // Blob download. Upload first so there is something to fetch; the
-    // upload itself goes through `c.json` and is not the case under test.
-    const uploaded = await ctx.app.request("/blobs", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
-        "Content-Type": "application/octet-stream",
-      },
-      body: new TextEncoder().encode("header probe bytes"),
+    it("sends them on the NDJSON export stream", async () => {
+      const res = await request(ctx.app, "GET", "/export", {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(200);
+      assertUniversal(res, "GET /export");
+      await res.body?.cancel();
     });
-    expect(uploaded.status).toBe(201);
-    const { hash } = (await uploaded.json()) as { hash: string };
-    const blob = await request(ctx.app, "GET", `/blobs/${hash}`, {
-      key: ctx.adminKey,
-    });
-    expect(blob.status).toBe(200);
-    assertUniversal(blob, "GET /blobs/{hash}");
-    // The response's own headers must survive the merge — a blob served
-    // without its content type or length is a different defect.
-    expect(blob.headers.get("Content-Type")).toBe("application/octet-stream");
-    expect(blob.headers.get("Content-Length")).toBe("18");
-    await blob.body?.cancel();
 
-    // The SSE stream. Headers only: the body stays open by design, so it is
-    // cancelled rather than read.
-    const events = await request(ctx.app, "GET", "/events", {
-      key: ctx.adminKey,
+    it("sends them on the gzip export archive", async () => {
+      const res = await request(ctx.app, "GET", "/export?format=archive", {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(200);
+      assertUniversal(res, "GET /export?format=archive");
+      await res.body?.cancel();
     });
-    expect(events.status).toBe(200);
-    assertUniversal(events, "GET /events");
-    expect(events.headers.get("Content-Type")).toContain("text/event-stream");
-    // The prepared bag holds none of these names, so the stream keeps its
-    // own caching directives through the merge.
-    expect(events.headers.get("Cache-Control")).toBe("no-cache");
-    await events.body?.cancel();
+
+    it("sends them on a blob download, keeping the blob's own headers", async () => {
+      const res = await request(ctx.app, "GET", `/blobs/${blobHash}`, {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(200);
+      assertUniversal(res, "GET /blobs/{hash}");
+      // The response's own headers must survive the merge — a blob served
+      // without its content type or length is a different defect.
+      expect(res.headers.get("Content-Type")).toBe("application/octet-stream");
+      expect(res.headers.get("Content-Length")).toBe("18");
+      await res.body?.cancel();
+    });
+
+    it("sends them on a blob HEAD, which is mounted outside the typed routes", async () => {
+      // The sibling three lines above the download in the same file, and the
+      // one the first pass at this fix missed. `createRoute` has no HEAD, so
+      // it is mounted with `.on()` and is invisible to the specification —
+      // which is exactly why nothing else here would have covered it.
+      const res = await request(ctx.app, "HEAD", `/blobs/${blobHash}`, {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(200);
+      assertUniversal(res, "HEAD /blobs/{hash}");
+      expect(res.headers.get("Content-Length")).toBe("18");
+    });
+
+    it("sends them on the placeholder SVG", async () => {
+      // Public and unauthenticated, and a plain route because its body is
+      // SVG rather than JSON. Both reasons keep it out of the specification
+      // and neither changes what a caller needs to correlate it with a log.
+      const res = await request(
+        ctx.app,
+        "GET",
+        "/profile/placeholder/probe",
+        {},
+      );
+      expect(res.status).toBe(200);
+      assertUniversal(res, "GET /profile/placeholder/{filename}");
+      expect(res.headers.get("Content-Type")).toBe("image/svg+xml");
+      // Its own caching headers are not in the prepared bag, so the merge
+      // must leave them alone.
+      expect(res.headers.get("Cache-Control")).toBe(
+        "public, max-age=86400, immutable",
+      );
+    });
+
+    it("sends them on the SSE stream", async () => {
+      const res = await request(ctx.app, "GET", "/events", {
+        key: ctx.adminKey,
+      });
+      expect(res.status).toBe(200);
+      assertUniversal(res, "GET /events");
+      expect(res.headers.get("Content-Type")).toContain("text/event-stream");
+      // The prepared bag holds none of these names, so the stream keeps its
+      // own caching directives through the merge.
+      expect(res.headers.get("Cache-Control")).toBe("no-cache");
+      // Headers only: the body stays open by design.
+      await res.body?.cancel();
+    });
   });
 
   it("sends the same body on a replay as on the first attempt", async () => {

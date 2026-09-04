@@ -471,22 +471,25 @@ export function blobRoutes(
       hash = `sha256:${hash}`;
     }
     if (!isValidBlobHash(hash)) {
-      return new Response(null, { status: 400 });
+      return withPreparedHeaders(c, new Response(null, { status: 400 }));
     }
 
     // Space-scoped lookup. Cross-space probes return 404.
     const record = await resolveBlobForReader(storage, apiKey, hash);
     if (!record) {
-      return new Response(null, { status: 404 });
+      return withPreparedHeaders(c, new Response(null, { status: 404 }));
     }
 
-    return new Response(null, {
-      status: 200,
-      headers: {
-        "Content-Type": record.mime_type,
-        "Content-Length": String(record.size),
-      },
-    });
+    return withPreparedHeaders(
+      c,
+      new Response(null, {
+        status: 200,
+        headers: {
+          "Content-Type": record.mime_type,
+          "Content-Length": String(record.size),
+        },
+      }),
+    );
   });
 
   // GET /blobs/:hash — download blob binary

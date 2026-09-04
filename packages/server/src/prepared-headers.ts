@@ -33,6 +33,33 @@
  * chain prepared: it cannot, and the fix would have to be to clear the name
  * from `c.res` first.
  */
+/**
+ * **Which responses this covers, enumerated rather than assumed.** Every
+ * hand-built `Response` in the server was read to draw this line, because
+ * the first pass at it missed `HEAD /blobs/:hash` sitting three lines above
+ * the `GET` that was fixed.
+ *
+ * Wrapped, because they are the API surface a client calls: the SSE stream,
+ * both export shapes, and the blob download — plus two that are part of that
+ * surface and undeclared only because the typed-route plumbing cannot carry
+ * them. `HEAD /blobs/:hash` is mounted with `.on()` because `createRoute`
+ * has no HEAD, and `GET /profile/placeholder/:filename` is a plain route
+ * because its body is SVG rather than JSON. Neither is in the specification,
+ * so neither contradicts what the document claims — but both are answers to
+ * an API request, and a caller correlating one with a log line needs the
+ * same id as on any other.
+ *
+ * Deliberately not wrapped: the browser and protocol surfaces. The auth HTML
+ * pages and their redirects, the OAuth discovery documents, the MCP
+ * transport's refusal, and the account-deletion guard's 401. These are not
+ * the typed API and declare none of these headers, so there is nothing to
+ * make honest. The guard's response is the one to leave alone on purpose
+ * rather than merely by scope: it is constructed byte-for-byte identical to
+ * the wrong-password answer it stands in for, so that a network observer
+ * cannot enumerate accounts pending deletion, and a header added on one side
+ * of that pair and not the other is the distinguisher it exists to avoid.
+ * Extending the rule there is a security question, not a formatting one.
+ */
 export function withPreparedHeaders(
   c: { res: Response },
   response: Response,
