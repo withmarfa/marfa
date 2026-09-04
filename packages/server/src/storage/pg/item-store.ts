@@ -303,7 +303,16 @@ export class PgItemStore implements ItemStore {
       spaceId,
     });
     if (!validation.success) {
-      throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid properties", {
+      // The specific code, not the generic one. A durable client's failure
+      // classification is closed and keys on it: a schema refusal is
+      // permanent, and a code the client does not recognize falls through
+      // to transient and retries forever. This refusal used to be the only
+      // properties-versus-type mismatch answering `validation_error` --
+      // creating an item, upserting onto a new natural key and bulk-writing
+      // all reach it -- while the update, retype and strict-mode paths
+      // raised `invalid_properties` from the route layer for the identical
+      // failure. One failure cannot have two names and still be classified.
+      throw new MarfaError(ErrorCode.INVALID_PROPERTIES, "Invalid properties", {
         errors: validation.errors,
       });
     }

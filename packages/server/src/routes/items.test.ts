@@ -66,7 +66,7 @@ describe("POST /items", () => {
     });
     expect(res.status).toBe(400);
     const data = (await res.json()) as { error: { code: string } };
-    expect(data.error.code).toBe("validation_error");
+    expect(data.error.code).toBe("invalid_properties");
   });
 
   it("rejects a null byte in a string property with a 400, never a 500", async () => {
@@ -78,7 +78,7 @@ describe("POST /items", () => {
     });
     expect(res.status).toBe(400);
     const data = (await res.json()) as { error: { code: string } };
-    expect(data.error.code).toBe("validation_error");
+    expect(data.error.code).toBe("invalid_properties");
   });
 
   it("round-trips emoji, RTL, accents, newlines, and tabs byte-identically", async () => {
