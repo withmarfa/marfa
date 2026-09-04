@@ -385,3 +385,60 @@ describe("the resolution report", () => {
     expect("conflict_resolution" in answered.item).toBe(false);
   });
 });
+
+describe("a refusal and its replay describe one conflict", () => {
+  it("stamps X-Error-Code on a fresh 409 as well as on the replay", async () => {
+    const { id, base } = await collidingNote();
+    const key = `conflict-header-${Math.random().toString(36).slice(2, 10)}`;
+
+    const fresh = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      headers: { "Idempotency-Key": key },
+      body: { properties: { body: "header check" }, version: base },
+    });
+    expect(fresh.status).toBe(409);
+
+    const replay = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      headers: { "Idempotency-Key": key },
+      body: { properties: { body: "header check" }, version: base },
+    });
+    expect(replay.status).toBe(409);
+
+    // The replay reads the code out of the recorded body and sets the
+    // header. This refusal is returned rather than thrown, so the error
+    // handler that would otherwise set it never runs — and a client
+    // branching on the header saw it appear only on the retry.
+    expect(fresh.headers.get("X-Error-Code")).toBe("version_conflict");
+    expect(replay.headers.get("X-Error-Code")).toBe(
+      fresh.headers.get("X-Error-Code"),
+    );
+  });
+
+  it("names the ancestor_unavailable code in the header too", async () => {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "h1" } },
+    });
+    const { item } = (await created.json()) as CreatedItem;
+    for (const body of ["h2", "h3"]) {
+      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+        key: ctx.adminKey,
+        body: { properties: { body } },
+      });
+    }
+    const snapshots = await ctx.storage.versions.list(item.id);
+    await ctx.storage.versions.deleteByIds(
+      snapshots.filter((v) => v.version === item.version).map((v) => v.id),
+    );
+
+    const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { body: "no ancestor" }, version: item.version },
+    });
+    expect(res.status).toBe(409);
+    // The header carries the code that was actually sent, not a fixed
+    // literal — the two refusals share this door.
+    expect(res.headers.get("X-Error-Code")).toBe("ancestor_unavailable");
+  });
+});

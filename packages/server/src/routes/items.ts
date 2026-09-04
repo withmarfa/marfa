@@ -2810,6 +2810,13 @@ export function itemRoutes(storage: Storage) {
     });
 
     if ("error" in txResult) {
+      // Stamped here because this refusal is returned rather than thrown, so
+      // the error handler that normally sets it never runs. Without it the
+      // fresh answer and its idempotent replay describe one conflict
+      // differently: the replay reads the code out of the recorded body and
+      // sets the header, so a client that branches on it sees the header
+      // appear only on the retry.
+      c.header("X-Error-Code", txResult.error.code);
       return c.json(txResult, 409);
     }
 

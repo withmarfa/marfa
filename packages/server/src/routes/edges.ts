@@ -545,6 +545,10 @@ export function edgeRoutes(storage: Storage) {
       // the whole current edge: there is no route that reads one edge by
       // id, so a client refused here has nowhere else to go for the
       // version it needs to retry against.
+      // Returned rather than thrown, so the error handler that normally sets
+      // this never runs. Same rule as the item door: a fresh refusal and its
+      // idempotent replay must not describe one conflict differently.
+      c.header("X-Error-Code", "version_conflict");
       return c.json(
         {
           error: { code: "version_conflict" as const, status: 409 as const },
