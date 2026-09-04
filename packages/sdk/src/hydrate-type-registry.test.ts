@@ -25,6 +25,10 @@ const CHILD = "parity.child";
 // Hydrating into a space of its own is what makes the local half measure the
 // hydrated copy instead of the server's own registration.
 const CLIENT_SPACE = "01a02000-0000-7000-8000-0000000000f2";
+// A space of its own for the convergence round trip, so the removal it
+// asserts cannot be the other test's registrations going away.
+const CONVERGE_SPACE = "01a02000-0000-7000-8000-0000000000f4";
+const TRANSIENT = "parity.transient";
 
 interface Probe {
   name: string;
@@ -53,6 +57,7 @@ let fetchFn: typeof globalThis.fetch;
 let adminKey: string;
 let cleanup: () => void;
 let hydrated: string[] = [];
+let converged: string[] = [];
 
 beforeAll(async () => {
   const fixture = await createKeysModeFixture();
@@ -79,6 +84,8 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const id of hydrated.reverse()) unregisterTypeSchema(id, CLIENT_SPACE);
+  for (const id of converged.reverse())
+    unregisterTypeSchema(id, CONVERGE_SPACE);
   // The registry outlives this file inside a reused worker, so the server's
   // own registrations go too.
   await client.types.delete(CHILD, { force: true });
@@ -89,6 +96,7 @@ afterAll(async () => {
 /** What the server does with a create, as a plain accepted / refused. */
 async function serverAccepts(
   properties: Record<string, unknown>,
+  type: string = CHILD,
 ): Promise<boolean> {
   const res = await fetchFn("http://localhost/items", {
     method: "POST",
@@ -96,7 +104,7 @@ async function serverAccepts(
       "Content-Type": "application/json",
       Authorization: `Bearer ${adminKey}`,
     },
-    body: JSON.stringify({ type: CHILD, properties }),
+    body: JSON.stringify({ type, properties }),
   });
   return res.ok;
 }
@@ -162,5 +170,53 @@ describe("hydrateTypeRegistry against a live type payload", () => {
     expect(verdicts.map((v) => ({ name: v.name, verdict: v.local }))).toEqual(
       verdicts.map((v) => ({ name: v.name, verdict: v.server })),
     );
+  });
+});
+
+describe("a hydration that follows a server-side delete", () => {
+  it("stops validating against a type the listing no longer carries", async () => {
+    // The delete is the real one over `DELETE /types`, and the second
+    // listing is the real `GET /types` after it. Nothing here writes the
+    // payload, because the claim is about what a deletion looks like on the
+    // wire: it is not a tombstone, it is an absence, and absence is the only
+    // signal a client gets.
+    await client.types.register({
+      id: TRANSIENT,
+      version: 1,
+      fields: { headline: { type: "string", required: true } },
+    });
+
+    const before = hydrateTypeRegistry(await client.types.list(), {
+      spaceId: CONVERGE_SPACE,
+    });
+    converged = [...before.registered];
+    expect(before.registered).toContain(TRANSIENT);
+    expect(before.removed).toEqual([]);
+
+    // Both sides accept the write while the type exists, which is what makes
+    // the disagreement below a change of answer rather than a constant one.
+    const probe = { headline: "set" };
+    expect(await serverAccepts(probe, TRANSIENT)).toBe(true);
+    expect(
+      validateProperties(TRANSIENT, probe, { spaceId: CONVERGE_SPACE }).success,
+    ).toBe(true);
+
+    await client.types.delete(TRANSIENT, { force: true });
+
+    const after = hydrateTypeRegistry(await client.types.list(), {
+      spaceId: CONVERGE_SPACE,
+    });
+    converged = [...new Set([...converged, ...after.registered])];
+
+    expect(after.removed).toEqual([TRANSIENT]);
+    // The agreement that matters. A local `true` here is a write queued
+    // against a type the server has forgotten, refused on arrival, and
+    // refused in a way that reads as permanent.
+    const serverNow = await serverAccepts(probe, TRANSIENT);
+    const localNow = validateProperties(TRANSIENT, probe, {
+      spaceId: CONVERGE_SPACE,
+    }).success;
+    expect(serverNow).toBe(false);
+    expect(localNow).toBe(serverNow);
   });
 });
