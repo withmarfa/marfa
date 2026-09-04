@@ -28,7 +28,10 @@
 // space-scoped because custom types are. Hence the optional `spaceId` on
 // `typeSubtreeToSql`: omit it and it behaves exactly as before.
 
-import { declaredDescendantsOutsideNamespace } from "./type-registry.js";
+import {
+  declaredDescendantsOutsideNamespace,
+  isSubtypeOf,
+} from "./type-registry.js";
 
 /** Matches every type, including the reserved namespaces. */
 export const GLOBAL_TYPE_WILDCARD = "*";
@@ -195,6 +198,62 @@ export function typeSubtreeToSql(
     descendantPattern: `${escapeLikeLiteral(root)}.%`,
     extraTypes: declaredExtras(root, spaceId),
   };
+}
+
+/**
+ * Whether a type answers one entry of a `?type=` READ FILTER, for a caller
+ * holding a type in hand rather than a query.
+ *
+ * The JavaScript twin of {@link typeSubtreeToSql}, written to the same three
+ * clauses so a streamed answer and a queried one cannot disagree about the
+ * same filter: the global wildcard, the subtree root and everything under
+ * its name, and the types that declare their way there from outside it. The
+ * SSE stream is the caller — it filters events in JavaScript because there is
+ * no query to hang a predicate on — and before this existed it resolved the
+ * declared clause alone, so `*` and `core.media.*` matched nothing at all
+ * while the same spellings on `/items` matched everything and a subtree.
+ *
+ * The declared clause is asked of the one type in hand rather than resolved
+ * into a set. `declaredDescendantsOutsideNamespace`, which the SQL side uses,
+ * is *defined* as the types whose `isSubtypeOf` reaches the root, so a
+ * membership test against that list and this call answer the same question —
+ * but the list costs a pass over the space's whole vocabulary and this costs
+ * a walk up one chain. A query resolves the filter once and wants the set; a
+ * stream resolves it per event and wants the predicate.
+ *
+ * `spaceId` reads exactly as it does for {@link typeSubtreeToSql}:
+ * `undefined` means the caller resolves names only and the declared
+ * clause is skipped, `null` is the real null-space scope a single-space
+ * self-host registers into, and a string is that space.
+ *
+ * Ordered cheapest first, and the ordering is load-bearing rather than
+ * cosmetic. Both name clauses are string comparisons, so a filter naming a
+ * namespace answers for everything inside it without consulting the registry
+ * at all; only a type named outside the filter's namespace pays the walk, and
+ * only that type can raise the unresolvable-chain error the walk throws.
+ *
+ * Deliberately NOT the rule for permission patterns, which resolve names only
+ * — see `typePatternToSql` for why expanding a grant through declared
+ * parentage puts the list query and the single-item gate into disagreement.
+ */
+export function typeAnswersSubtreeFilter(
+  type: string,
+  filter: string,
+  spaceId?: string | null,
+): boolean {
+  if (filter === GLOBAL_TYPE_WILDCARD) return true;
+  const root = subtreeWildcardRoot(filter) ?? filter;
+  if (type === root) return true;
+  if (type.startsWith(`${root}.`)) return true;
+  // The same three-way reading of `spaceId` that `declaredExtras` gives
+  // the SQL side, and it has to be stated rather than inherited:
+  // `resolveSchema` treats `undefined` and `null` alike, so without this
+  // line a caller omitting the argument would resolve declared parentage
+  // where `typeSubtreeToSql` resolves none — the two disagreeing about
+  // the same filter, which is the one thing this function exists to
+  // prevent. `undefined` means names only; `null` is a real scope.
+  if (spaceId === undefined) return false;
+  return isSubtypeOf(type, root, spaceId);
 }
 
 // ---------------------------------------------------------------------------

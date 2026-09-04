@@ -69,6 +69,7 @@ export type {
   MarfaItemEvent,
   MarfaEdgeEvent,
   CatchupTooOld,
+  StreamIncomplete,
   SubscribeOptions,
   Subscription,
 } from "./events.js";

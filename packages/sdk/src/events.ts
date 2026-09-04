@@ -15,6 +15,13 @@
  *    wherever the network puts it, routinely mid-frame and even mid-UTF-8
  *    sequence. Parsing per chunk drops or corrupts events under exactly the
  *    load that makes them matter.
+ *  - **`stream_incomplete` means the server stopped delivering, and the
+ *    cursor is still good.** It arrives on a connection that was healthy,
+ *    carries no `id:`, and is followed by a close. Nothing after the gap
+ *    was sent, so the ordinary reconnect resumes exactly at it — the only
+ *    thing a caller loses by ignoring it is the reason. Surfaced through
+ *    `onStreamIncomplete` rather than left to reach `onEvent`, where it
+ *    would arrive typed as an event it is not.
  *  - **`catchup_too_old` is terminal and means "your cursor is unusable".**
  *    The server sends it when the requested `Last-Event-ID` predates the
  *    retention window, then closes. Reconnecting with the same cursor loops
@@ -76,6 +83,22 @@ export interface CatchupTooOld {
   requested: string;
 }
 
+/**
+ * Why the server stopped delivering on a connection that was healthy.
+ *
+ * `cursor` is the position the stream reached, repeated for a subscriber
+ * that is not tracking one of its own; it is null when the connection had
+ * delivered nothing yet.
+ */
+export interface StreamIncomplete {
+  reason:
+    | "replay_failed"
+    | "backlog_overflow"
+    | "live_delivery_failed"
+    | "edge_delivery_failed";
+  cursor: string | null;
+}
+
 export interface SubscribeOptions {
   /** Server-side type filter, matching `GET /events?type=`. One type, or
    *  several separated by commas (up to ten). A named type covers its
@@ -131,6 +154,26 @@ export interface SubscribeOptions {
    * being passed over in silence.
    */
   onCatchupTooOld?: (info: CatchupTooOld) => void;
+  /**
+   * Called when the server stopped delivering and closed, having sent
+   * nothing past the gap.
+   *
+   * **The opposite of `onCatchupTooOld`, and the reason it is a separate
+   * callback rather than a second reason on that one.** There the cursor
+   * is unusable and the only recovery is to re-read state; here the
+   * cursor is still good — everything past it is still in the log — so
+   * reconnecting with it replays exactly what was missed. This
+   * subscription does that on its own: the frame carries no `id:`, so no
+   * cursor moves, and the reconnect below picks up from the last real
+   * event. Nothing is required of the caller, which is why omitting this
+   * is not escalated to `onError` the way `onCatchupTooOld` is.
+   *
+   * Worth acting on when it repeats: `replay_failed` can be transient,
+   * while `backlog_overflow` says the connection could not open faster
+   * than the events it wanted were arriving, and reconnecting alone will
+   * not change that.
+   */
+  onStreamIncomplete?: (info: StreamIncomplete) => void;
   /**
    * Called on a connection failure, on a handler that rejected, and on a
    * frame whose payload would not parse. The first two reconnect afterwards
@@ -254,6 +297,7 @@ export function subscribeToEvents(
     onOpen,
     onCursor,
     onCatchupTooOld,
+    onStreamIncomplete,
     onError,
     reconnect = true,
     initialRetryMs = DEFAULT_INITIAL_RETRY_MS,
@@ -338,6 +382,19 @@ export function subscribeToEvents(
               // pointing it at the frame that said it was unusable would be
               // the one value guaranteed to fail again.
               return JSON.parse(frame.data) as CatchupTooOld;
+            }
+
+            if (frame.event === "stream_incomplete") {
+              // Not terminal, and not acknowledged. The server is about to
+              // close, but the cursor this subscription holds is still the
+              // right one to resume from — nothing after the gap was sent
+              // — so this falls through to the ordinary reconnect below
+              // rather than dropping the cursor the way `catchup_too_old`
+              // does. Intercepted here rather than left to fall through to
+              // `onEvent`, which would hand a caller a control frame typed
+              // as an event it is not a member of.
+              onStreamIncomplete?.(JSON.parse(frame.data) as StreamIncomplete);
+              return undefined;
             }
 
             if (frame.data !== "") {

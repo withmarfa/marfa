@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   subtreeWildcardRoot,
+  typeAnswersSubtreeFilter,
   typeMatchesPattern,
   typePatternToSql,
   typeSubtreeToSql,
@@ -178,6 +179,99 @@ describe("resolving names alone", () => {
     // A permission pattern never consults the registry, whatever is registered.
     expect(typePatternToSql("core.note.*").extraTypes).toEqual([]);
   });
+});
+
+/**
+ * The in-memory read filter answers what the SQL one selects.
+ *
+ * `typeAnswersSubtreeFilter` exists so the stream, which has no query to
+ * hang a predicate on, resolves `?type=` the way `/items` compiles it.
+ * That promise is only worth making if the two agree about every input,
+ * and the one that is easy to get wrong is the scope argument: the SQL
+ * side reads `undefined` as "resolve names only" and `null` as the real
+ * null-space bucket, while the registry lookup underneath the predicate
+ * treats the two alike. So a predicate that simply forwarded the value
+ * would resolve declared parentage where its twin resolves none — the
+ * disagreement it exists to prevent, in the one caller who omits the
+ * argument.
+ */
+describe("the read filter's predicate answers what its SQL twin selects", () => {
+  const SPACE = "space-predicate-parity";
+  const OUTSIDE = "user.declared_note";
+  /** Registered into the NULL-space bucket, which is what makes the
+   *  `undefined` case discriminating: `resolveSchema` reads `undefined`
+   *  and `null` alike, so a predicate that forwarded the value verbatim
+   *  would resolve this one while `typeSubtreeToSql` returns no declared
+   *  extras at all. A child registered only into a named space cannot
+   *  catch that — the lookup finds nothing either way. */
+  const NULL_BUCKET_CHILD = "user.null_bucket_note";
+
+  const declaredChild = (id: string): TypeSchema =>
+    ({
+      id,
+      name: id,
+      description: "test",
+      parent: "core.note",
+      version: 1,
+      fields: {},
+    }) as unknown as TypeSchema;
+
+  afterEach(() => {
+    unregisterTypeSchema(OUTSIDE, SPACE);
+    unregisterTypeSchema(NULL_BUCKET_CHILD, null);
+  });
+
+  /** Membership as the SQL clauses decide it, for comparison. */
+  const sqlAdmits = (
+    type: string,
+    filter: string,
+    spaceId?: string | null,
+  ): boolean => {
+    const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
+      filter,
+      spaceId,
+    );
+    if (global) return true;
+    if (exact !== null && type === exact) return true;
+    if (
+      descendantPattern !== null &&
+      type.startsWith(descendantPattern.replace(/\\(.)/g, "$1").slice(0, -1))
+    ) {
+      return true;
+    }
+    return extraTypes.includes(type);
+  };
+
+  for (const spaceId of [SPACE, null, undefined] as const) {
+    it(`agrees with the SQL decomposition for spaceId=${String(spaceId)}`, () => {
+      registerTypeSchema(declaredChild(OUTSIDE), SPACE);
+      registerTypeSchema(declaredChild(NULL_BUCKET_CHILD), null);
+
+      for (const [type, filter] of [
+        ["core.note", "core.note"],
+        ["core.note.private", "core.note"],
+        ["core.note.private", "core.note.*"],
+        ["core.media", "core.note"],
+        ["anything.at.all", "*"],
+        // The two the scope argument decides: named outside the filter's
+        // namespace, reachable only through a declared parent. The
+        // null-bucket one separates `undefined` from `null`, which the
+        // registry lookup underneath does not.
+        [OUTSIDE, "core.note"],
+        [NULL_BUCKET_CHILD, "core.note"],
+      ] as const) {
+        expect({
+          type,
+          filter,
+          admitted: typeAnswersSubtreeFilter(type, filter, spaceId),
+        }).toEqual({
+          type,
+          filter,
+          admitted: sqlAdmits(type, filter, spaceId),
+        });
+      }
+    });
+  }
 });
 
 describe("declared descendants are resolved per space", () => {
