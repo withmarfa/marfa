@@ -437,18 +437,19 @@ const UNSERVED_PATHS = new Set(["/oauth2/register"]);
  * Responses that answer with an error status without passing through the
  * error handler, so `X-Error-Code` is never set on them.
  *
- * The handler is what stamps the header, and every route reaches it by
- * throwing — except this one, which returns its conflict envelope directly.
- * The replay of that same 409 does carry the header, because the replay
- * path adds it from the recorded body, so a fresh answer and its replay
- * differ in a header declared on both. That asymmetry is a defect in the
- * envelope rather than in the declaration, and it is owned elsewhere.
+ * Empty, and worth keeping empty rather than deleting: it is the seam where
+ * a future response that answers 4xx without throwing gets declared honestly
+ * instead of silently claiming a header it does not send.
  *
- * **Delete this entry when that route throws instead of returning.** It
- * exists to keep the declaration honest in the meantime, not to bless the
- * shape.
+ * It held `patch /items/{id} 409` until the conflict envelope stopped being
+ * the one response whose fresh answer and replay differed in a declared
+ * header. That route still returns rather than throws — the exclusion's
+ * original wording anticipated the other fix — but it now stamps the header
+ * itself, on the code the response actually carries, so the declaration is
+ * true of it. The edge conflict envelope, the other 4xx that returns rather
+ * than throws, does the same.
  */
-const RESPONSES_WITHOUT_ERROR_CODE = new Set(["patch /items/{id} 409"]);
+const RESPONSES_WITHOUT_ERROR_CODE = new Set<string>([]);
 
 /**
  * Statuses an idempotency claim releases rather than records.
