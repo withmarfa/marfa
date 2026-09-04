@@ -313,6 +313,112 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
     expect(body.error.message).toContain("nonsense_field");
   });
 
+  /** The raw door, so a body can carry a key the typed helper would not. */
+  async function post(body: Record<string, unknown>): Promise<Response> {
+    return request(ctx.app, "POST", "/items/bulk-actions", {
+      key: ctx.adminKey,
+      body,
+    });
+  }
+
+  it("does not run for real when `dry_run` is misspelled", async () => {
+    // The more dangerous half, one level up from the filter. `dry_run` is
+    // read as `body.dry_run ?? false`, so a misspelling is stripped by the
+    // validator and the action executes against the match set for real —
+    // answering 202 and queueing the write, which reads to the caller as
+    // the dry run they asked for.
+    const res = await post({
+      action: "update_tags",
+      add: ["probe"],
+      dry_runn: true,
+      filter: { type: "core.note" },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("dry_runn");
+  });
+
+  it("does not drop the cap when `max_items` is misspelled", async () => {
+    // The same failure with the guard rail instead of the rehearsal: a
+    // stripped `max_items` restores the default cap, so a caller who asked
+    // for a hundred rows gets whatever the door's own maximum is.
+    const res = await post({
+      action: "update_tags",
+      add: ["probe"],
+      dry_run: true,
+      max_itmes: 1,
+      filter: { type: "core.note" },
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses an unknown key on an action that is not `purge`", async () => {
+    // `confirm` is read explicitly, so `purge` already fails safe when it
+    // is misspelled. Every other action reads its own fields the same way
+    // `dry_run` is read, and none of them had a guard.
+    for (const body of [
+      { action: "transition", state: "archived", stat: "trashed" },
+      { action: "update_tier", tier: "feed", teir: "library" },
+      {
+        action: "update_timestamp",
+        timestamp: "2020-01-01T00:00:00.000Z",
+        tz: 1,
+      },
+      { action: "update_properties", patch: { a: 1 }, pathc: { b: 2 } },
+      { action: "update_tags", add: ["probe"], adds: ["nope"] },
+    ]) {
+      const res = await post({ dry_run: true, ...body });
+      expect(res.status, `${body.action} accepted an unknown body key`).toBe(
+        400,
+      );
+    }
+  });
+
+  it("refuses a field belonging to a different action", async () => {
+    // `state` is the transition's own parameter and means nothing to a
+    // retag. Silently stripped, it reads as a caller who believes they
+    // asked for two things and got one.
+    const res = await post({
+      action: "update_tags",
+      add: ["probe"],
+      dry_run: true,
+      state: "trashed",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("ignores a body key in the client's reserved namespace", async () => {
+    // The same escape hatch the query doors give, on the door that takes
+    // its request in a body: a correlation id or a client tag has a
+    // spelling that works and keeps working.
+    const res = await post({
+      action: "update_tags",
+      add: ["probe"],
+      dry_run: true,
+      _client_trace: "abc123",
+      filter: { type: "core.note", _origin: "probe" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("still accepts every field it declares", async () => {
+    // The control. A refusal that also refused the real fields would pass
+    // every case above and break the door.
+    const res = await post({
+      action: "update_tags",
+      add: ["probe"],
+      remove: ["other"],
+      dry_run: true,
+      max_items: 5,
+      enable_fanout: false,
+      filter: {
+        type: "core.note",
+        timestamp_before: "1970-01-02T00:00:00.000Z",
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
   it("still refuses the retired names with their own message", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
       key: ctx.adminKey,

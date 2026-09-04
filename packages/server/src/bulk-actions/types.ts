@@ -8,6 +8,7 @@
  */
 import { z } from "@hono/zod-openapi";
 import { ItemStateEnum } from "../routes/_schemas.js";
+import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
 
 /**
  * The bulk-action match set, and the only declaration of it.
@@ -76,6 +77,29 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
 ]);
 
 export type BulkActionInput = z.infer<typeof BulkActionInputSchema>;
+
+/**
+ * The request shape each `action` selects, keyed by the action name.
+ *
+ * Read off the union's own options rather than restated, for the reason
+ * the filter above is declared once: a variant added to the union is in
+ * this map the moment it is added, so the body-field refusal covers it
+ * with no second edit and cannot fall behind.
+ *
+ * Declared over the union's own `action` so the refusal can index it
+ * without a not-found branch — and a not-found branch here could only
+ * ever be a silent skip, which is the failure this map serves a refusal
+ * against.
+ */
+export const BULK_ACTION_SHAPES: Record<
+  BulkActionInput["action"],
+  DeclaresKeys
+> = Object.fromEntries(
+  BulkActionInputSchema.options.map((option) => [
+    option.shape.action.value,
+    option,
+  ]),
+) as Record<string, DeclaresKeys>;
 
 export const BulkActionErrorEntrySchema = z.object({
   id: z.string(),

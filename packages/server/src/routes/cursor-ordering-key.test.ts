@@ -244,7 +244,9 @@ describe("a cursor minted before the key named the direction", () => {
     // `updated_at` named the catch-up and nothing else. The same column
     // sorted the other way is a different ordering and is refused.
     expectOrderingRefusal(
-      await listItems(`${TYPE}&sort=updated_at&direction=desc&cursor=${legacy}`),
+      await listItems(
+        `${TYPE}&sort=updated_at&direction=desc&cursor=${legacy}`,
+      ),
     );
   });
 

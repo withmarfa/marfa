@@ -35,7 +35,6 @@ import {
   generateId,
   isValidTimestamp,
   isValidTypeIdentifier,
-  ITEM_STATES,
   validateProperties,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
@@ -67,13 +66,15 @@ import { assertTierApplicable } from "./_tier-rules.js";
 import { ItemStateEnum } from "./_schemas.js";
 import { notifyBulkJobEnqueued } from "../bulk-actions/enqueue-signal.js";
 import {
-  BulkActionFilterSchema,
+  BULK_ACTION_SHAPES,
   BulkActionFilterShape,
+  BulkActionInputSchema,
   BulkActionJobSchema,
   type BulkActionResult as BulkActionResultType,
 } from "../bulk-actions/types.js";
 import { refuseRenamedTimeFilterKeys } from "./_renamed-time-filters.js";
 import {
+  refuseUnknownBodyKeys,
   refuseUnknownFilterKeys,
   UNKNOWN_FILTER_FIELD_NOTE,
 } from "./_unknown-query-keys.js";
@@ -145,40 +146,11 @@ const BulkResponseSchema = z.object({
   results: z.array(BulkResultEntrySchema),
 });
 
-const BulkActionBaseSchema = z.object({
-  filter: BulkActionFilterSchema,
-  dry_run: z.boolean().optional(),
-  max_items: z.number().int().positive().optional(),
-  enable_fanout: z.boolean().optional(),
-});
-
-const BulkActionRequestSchema = z.discriminatedUnion("action", [
-  BulkActionBaseSchema.extend({
-    action: z.literal("transition"),
-    state: z.enum(["active", "archived", "trashed"]),
-  }),
-  BulkActionBaseSchema.extend({
-    action: z.literal("purge"),
-    confirm: z.literal("PURGE").optional(),
-  }),
-  BulkActionBaseSchema.extend({
-    action: z.literal("update_tags"),
-    add: z.array(z.string()).optional(),
-    remove: z.array(z.string()).optional(),
-  }),
-  BulkActionBaseSchema.extend({
-    action: z.literal("update_tier"),
-    tier: z.enum(["library", "feed"]),
-  }),
-  BulkActionBaseSchema.extend({
-    action: z.literal("update_properties"),
-    patch: z.record(z.string(), z.unknown()),
-  }),
-  BulkActionBaseSchema.extend({
-    action: z.literal("update_timestamp"),
-    timestamp: z.string(),
-  }),
-]);
+// The request shape is `BulkActionInputSchema`, declared once in the
+// bulk-action substrate and imported here. The filter half was deduped
+// first and the envelope around it was left behind, which is the same
+// two-declarations-of-one-thing that let `dry_run` and `max_items` drift
+// out of step with the copy the specification is generated from.
 
 const BulkActionErrorSchema = z.object({
   id: z.string(),
@@ -287,7 +259,7 @@ const bulkActionRoute = createRoute({
     body: {
       content: {
         "application/json": {
-          schema: BulkActionRequestSchema,
+          schema: BulkActionInputSchema,
         },
       },
     },
@@ -1246,22 +1218,24 @@ export function bulkRoutes(storage: Storage) {
     // ran ahead of both — but a request that has not been authorized has
     // no claim on the shape of its own refusal.
     const rawBody: unknown = await c.req.json().catch(() => undefined);
-    if (
-      typeof rawBody === "object" &&
-      rawBody !== null &&
-      "filter" in rawBody
-    ) {
-      refuseRenamedTimeFilterKeys((rawBody as { filter?: unknown }).filter, {
-        catchUpFilter: "none",
-      });
-      // And then the general case, of which the two retired names are one
-      // instance. Unconditional on this door regardless of what the read
-      // doors do: a dropped filter field here is not a narrower match set
-      // but the whole space, and under the match cap it succeeds.
-      refuseUnknownFilterKeys(
-        (rawBody as { filter?: unknown }).filter,
-        BulkActionFilterShape,
-      );
+    if (typeof rawBody === "object" && rawBody !== null) {
+      const raw = rawBody as { filter?: unknown };
+      // The retired names first, wherever they sit, because they have a
+      // replacement to name and the general refusals below do not. Both
+      // filter helpers no-op on a body that carries no filter.
+      refuseRenamedTimeFilterKeys(raw.filter, { catchUpFilter: "none" });
+      // Then the envelope, then what it carries. The envelope is the more
+      // dangerous of the two and the one that had no guard: `dry_run` is
+      // read as `?? false`, so a misspelling is stripped and the action
+      // runs for real. `confirm` is checked by name, which is why `purge`
+      // already failed safe and nothing else did.
+      refuseUnknownBodyKeys(raw, BULK_ACTION_SHAPES[action]);
+      // And the general case inside the filter, of which the two retired
+      // names are one instance. Unconditional on this door regardless of
+      // what the read doors do: a dropped filter field here is not a
+      // narrower match set but the whole space, and under the match cap it
+      // succeeds.
+      refuseUnknownFilterKeys(raw.filter, BulkActionFilterShape);
     }
 
     // Validate filter fields up-front so a caller with a bad filter gets
@@ -1270,15 +1244,6 @@ export function bulkRoutes(storage: Storage) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         `Invalid type identifier: ${filter.type}`,
-      );
-    }
-    if (
-      filter.state &&
-      !(ITEM_STATES as readonly string[]).includes(filter.state)
-    ) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Invalid state: ${filter.state}`,
       );
     }
     if (action === "update_timestamp" && !isValidTimestamp(body.timestamp)) {
