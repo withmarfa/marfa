@@ -261,6 +261,51 @@ jobs:
             exit 1
           fi
 
+  surface-lock-drift:
+    name: Published surface holds its version
+    # Deliberately not gated on `needs.changes`. The change that motivates
+    # this check touches no file in the package it breaks: widening a type in
+    # `shared` moves what a `sdk` consumer compiles against while no `sdk`
+    # source is touched. A path filter derived from the affected package is
+    # exactly the filter that would let it through.
+    timeout-minutes: 10
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    # Only where it can block. On a push to `main` the merge has happened and
+    # there is nothing to refuse; the branch ruleset gates the pull request.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The base commit is the whole comparison. A shallow clone leaves
+          # the check unable to read its baseline, which it reports as a
+          # failure rather than as agreement.
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          # Cache only on runners known to keep no store between jobs. The
+          # rule, the reasoning and why `macos-` is left out are on the
+          # first `actions/setup-node` step in this file, in
+          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
+          # its own job's runs-on.
+          cache: >-
+            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
+            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
+            && 'pnpm' || '' }}
+
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      # No build step: the comparison reads two committed JSON files and the
+      # module it imports depends on nothing but `node:crypto`.
+      - name: Compare the lock against the base it merges into
+        run: pnpm --filter @withmarfa/server run surface-lock:drift "${{ github.event.pull_request.base.sha }}"
+
   openapi-freshness:
     name: OpenAPI spec freshness
     needs: changes
