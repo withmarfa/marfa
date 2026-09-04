@@ -262,7 +262,12 @@ export async function createConnection(
     );
   }
 
-  const appName = options?.applicationName ?? "marfa";
+  // Defaulted through the same helper rather than to a bare "marfa", so an
+  // unlabeled pool still carries a role and still matches what `/health`
+  // builds from `MARFA_PROCESS_ROLE`. A pool named something that function
+  // cannot produce reports as another client's traffic, and the pool figure
+  // then reads as permanently idle rather than as missing.
+  const appName = options?.applicationName ?? pgApplicationName(undefined);
   const client = postgres(connectionString, {
     // **This is also the ceiling on concurrent space-scoped requests**, which
     // the name does not say and which is the number a deployment actually

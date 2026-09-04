@@ -95,10 +95,18 @@ export interface TestContext {
  * afterAll hooks of long-running files can sit behind a multi-second
  * queue. Awaiting cleanup bounds per-file work.
  */
+/**
+ * Connections a test file's pool may open. Named because the config a test
+ * app is built with has to state the same number: `/health` reports the pool
+ * against `dbPoolSize`, so a config that omits it describes a pool ten wide
+ * that is actually three, and the figure reads as permanently roomy.
+ */
+export const TEST_POOL_SIZE = 3;
+
 export async function createPgTestStorage(options?: {
   authMode?: "hosted" | "keys";
-  /** Override the default pool-size cap. Default is 3 — see comment
-   *  inside this function for the rationale. */
+  /** Override the default pool-size cap. Default is `TEST_POOL_SIZE` — see
+   *  the comment inside this function for the rationale. */
   maxPoolSize?: number;
 }): Promise<{ storage: Storage; cleanup: () => Promise<void> }> {
   const clone = await cloneTemplate();
@@ -108,7 +116,7 @@ export async function createPgTestStorage(options?: {
   // template, saving hundreds of ms per storage creation under parallel load.
   const storage = await createPgStorage(clone.url, {
     ...options,
-    maxPoolSize: options?.maxPoolSize ?? 3,
+    maxPoolSize: options?.maxPoolSize ?? TEST_POOL_SIZE,
     skipBootstrap: true,
   });
   return {
@@ -592,6 +600,9 @@ async function buildTestContext(
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const config: AppConfig = {
     port: 0,
+    // What `createPgTestStorage` actually builds. Unset, `/health` would
+    // report this pool against the production default instead.
+    dbPoolSize: TEST_POOL_SIZE,
     storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
     databaseUrl: "",
