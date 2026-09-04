@@ -13,6 +13,7 @@ import { execFileSync } from "node:child_process";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assertLockShape,
   compareSurfaceLocks,
   decideSurfaceLockDrift,
   describeSurfaceLockDrift,
@@ -228,5 +229,38 @@ describe("the decision the check acts on", () => {
     expect(verdict.report).toContain("2 packages");
     expect(verdict.report).toContain("@withmarfa/sdk");
     expect(verdict.report).toContain("@withmarfa/shared");
+  });
+});
+
+describe("a baseline that parses but is not a lock", () => {
+  // The comparison skips a package the baseline does not carry, which is right
+  // for one that genuinely did not exist yet, and indistinguishable from a
+  // baseline carrying nothing at all. So every shape below used to produce an
+  // empty drift list and a green tick — the check reporting that it could not
+  // see as agreement, which is the one thing its docstring promises it never
+  // does. The head side has the tree check behind it; the baseline has nothing.
+  const rejected: [string, unknown][] = [
+    ["an empty object", {}],
+    ["an array", []],
+    ["null", null],
+    ["a string", '"lock"'],
+    ["an entry that is not an object", { "@withmarfa/sdk": 3 }],
+    ["an entry with no hash", { "@withmarfa/sdk": { version: "4.0.0" } }],
+    ["an entry with no version", { "@withmarfa/sdk": { hash: "aaa" } }],
+    ["a non-string version", { "@withmarfa/sdk": { version: 4, hash: "aaa" } }],
+  ];
+
+  for (const [what, value] of rejected) {
+    it(`refuses to treat ${what} as a baseline`, () => {
+      expect(
+        () => assertLockShape(value, "the baseline"),
+        "a value that carries no comparable entries was accepted as a lock, so the check would compare against nothing and report agreement",
+      ).toThrow();
+    });
+  }
+
+  it("accepts a lock that carries what the comparison reads", () => {
+    const ok = { "@withmarfa/sdk": entry("4.0.0", "aaa", 134) };
+    expect(assertLockShape(ok, "the baseline")).toBe(ok);
   });
 });

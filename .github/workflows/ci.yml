@@ -194,7 +194,7 @@ jobs:
           # `actions/setup-node` step in this file carries the same rule,
           # resolved through its own job's runs-on chain, and
           # `ci/cache-rule.test.ts` holds each one to it. This is the copy
-          # with the reasoning; the other seven point here.
+          # with the reasoning; the other eight point here.
           #
           # It is an allowlist rather than an exclusion, so a label nobody
           # recognizes gets no cache. A missed cache costs one slow install.
@@ -270,8 +270,15 @@ jobs:
     # exactly the filter that would let it through.
     timeout-minutes: 10
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    # Only where it can block. On a push to `main` the merge has happened and
-    # there is nothing to refuse; the branch ruleset gates the pull request.
+    # Only where there is something to refuse. On a push to `main` the merge
+    # has happened and the comparison has nothing left to say.
+    #
+    # This job is not yet in the branch ruleset's required contexts, so today
+    # it reports and does not block. Adding it is a one-line ruleset change
+    # and is the intent, but it cannot happen while pull requests opened
+    # before this job existed are still open: a required context that never
+    # reports blocks them forever. It goes in once this is on `main` and the
+    # open branches have picked it up.
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
@@ -303,8 +310,20 @@ jobs:
       - run: pnpm install --frozen-lockfile
       # No build step: the comparison reads two committed JSON files and the
       # module it imports depends on nothing but `node:crypto`.
+      # The base comes from the checkout rather than from the event payload,
+      # and the two are not always the same commit. `actions/checkout` builds
+      # `refs/pull/N/merge` against the base branch as it stands now, while
+      # the payload replays the `base.sha` recorded when the run was created.
+      # On a re-run of an older run those diverge, and every disagreement
+      # between them lands on the version-moved branch, which is a silent
+      # skip. Re-running a job is standing practice here, so that window is
+      # not hypothetical. `HEAD^1` is the base parent of the merge commit,
+      # which is the commit the lock on disk was actually merged against.
       - name: Compare the lock against the base it merges into
-        run: pnpm --filter @withmarfa/server run surface-lock:drift "${{ github.event.pull_request.base.sha }}"
+        run: |
+          base="$(git rev-parse HEAD^1)"
+          echo "comparing against base $base"
+          pnpm --filter @withmarfa/server run surface-lock:drift "$base"
 
   openapi-freshness:
     name: OpenAPI spec freshness

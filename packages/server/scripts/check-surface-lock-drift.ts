@@ -17,6 +17,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  assertLockShape,
   decideSurfaceLockDrift,
   type SurfaceLock,
 } from "../src/publishing/published-surface.js";
@@ -61,10 +62,10 @@ function lockAtRef(ref: string): SurfaceLock {
     process.exit(2);
   }
   try {
-    return JSON.parse(raw) as SurfaceLock;
+    return assertLockShape(JSON.parse(raw), `${LOCK_IN_REPO} at ${ref}`);
   } catch (err) {
     console.error(
-      `${LOCK_IN_REPO} at ${ref} is not readable JSON, so there is no baseline to compare against.\n` +
+      `${LOCK_IN_REPO} at ${ref} is not a lock this check can read, so there is no baseline to compare against.\n` +
         (err instanceof Error ? err.message : String(err)),
     );
     process.exit(2);
@@ -79,7 +80,10 @@ const baseline = lockAtRef(baseRef);
 // looking through a diff for a change that is not in it.
 let head: SurfaceLock;
 try {
-  head = JSON.parse(readFileSync(LOCK_PATH, "utf8")) as SurfaceLock;
+  head = assertLockShape(
+    JSON.parse(readFileSync(LOCK_PATH, "utf8")),
+    `the committed ${LOCK_IN_REPO}`,
+  );
 } catch (err) {
   console.error(
     `Could not read the committed ${LOCK_IN_REPO}, so there is nothing to compare against the baseline.\n` +

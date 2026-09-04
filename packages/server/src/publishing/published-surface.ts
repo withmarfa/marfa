@@ -49,14 +49,20 @@
  * diff, which is the property being bought", and the diff turned out to be
  * a property nothing was buying.** It shows up there and nothing read it.
  * The case that made it real is not a careless regeneration: a change
- * confined to `packages/shared` moves the kit's surface, because the kit
- * re-exports shared types — widening one moves what a kit consumer compiles
- * against while no kit source is touched and the kit's own export count does
- * not change. Nothing in such a change looks like a kit change, so the
- * reviewer has no reason to look at the kit's line in the lock, and the
- * artefact that would have shown the problem is the same artefact the
+ * confined to `packages/shared` moves `@withmarfa/sdk`'s surface, because
+ * that package re-exports shared types — widening one moves what a consumer
+ * compiles against while no `sdk` source is touched and its own export count
+ * does not change. Nothing in such a change looks like an `sdk` change, so
+ * the reviewer has no reason to look at its line in the lock, and the
+ * artifact that would have shown the problem is the same artifact the
  * regeneration overwrote. A regenerated lock is not evidence; it is what
  * erases the evidence.
+ *
+ * The package matters here rather than being an example: `@withmarfa/sdk`
+ * re-exports from `shared`, and `@withmarfa/runtime-sdk` imports from it
+ * without re-exporting. Surface text stops at the package boundary, so a
+ * referenced-but-not-re-exported type never reaches the hash. Naming the
+ * wrong one would describe a mechanism this repository does not have.
  *
  * So the comparison against the tree is joined by `compareSurfaceLocks`
  * below, which compares the committed lock against the lock on the base
@@ -289,7 +295,8 @@ export function blockingViolations(
 /**
  * A package whose recorded surface moved while its version stood still.
  *
- * Both locks are committed artefacts, so this is a statement about the
+ * The baseline is a committed lock and the head side is the file on disk,
+ * which are the same thing in CI and not locally. This is a statement about the
  * change rather than about the tree: whatever the working copy builds, this
  * pull request would leave the repository claiming that one version named
  * two different surfaces.
@@ -431,4 +438,39 @@ export function decideSurfaceLockDrift(
       `A published surface moved without its version moving, in ${String(drifts.length)} package${plural}:\n\n` +
       drifts.map((d) => `  - ${describeSurfaceLockDrift(d)}`).join("\n\n"),
   };
+}
+
+/**
+ * A parse is not a read.
+ *
+ * The comparison skips a package the baseline does not carry, which is right
+ * for a package that genuinely did not exist yet. It cannot tell that apart
+ * from a baseline that carries nothing at all — so `{}`, `[]`, or entries
+ * missing `version` or `hash` all produce an empty drift list and a green
+ * tick, which is precisely the "reports not knowing as agreement" this file's
+ * own docstring promises never happens. The head side has the tree check
+ * behind it; the baseline side has nothing, so the shape is asserted here.
+ */
+export function assertLockShape(value: unknown, what: string): SurfaceLock {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${what} is not a JSON object.`);
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length === 0) {
+    throw new Error(
+      `${what} records no packages. An empty lock compares equal to every tree.`,
+    );
+  }
+  for (const [name, entry] of entries) {
+    if (typeof entry !== "object" || entry === null) {
+      throw new Error(`${what}: ${name} is not an object.`);
+    }
+    const e = entry as Record<string, unknown>;
+    if (typeof e.version !== "string" || typeof e.hash !== "string") {
+      throw new Error(
+        `${what}: ${name} carries no version or no hash, so it would be skipped rather than compared.`,
+      );
+    }
+  }
+  return value as SurfaceLock;
 }
