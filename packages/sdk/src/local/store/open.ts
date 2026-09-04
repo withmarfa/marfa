@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { localFilePathFor } from "./paths.js";
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { migrate } from "drizzle-orm/libsql/migrator";
@@ -91,14 +92,10 @@ export async function openDatabase(path: string): Promise<OpenDbResult> {
 
 /** Open the connection and set the pragmas, with no opinion on schema. */
 async function openConnection(path: string): Promise<OpenDbResult> {
-  if (
-    path !== ":memory:" &&
-    !path.startsWith("file:") &&
-    !path.startsWith("http") &&
-    !path.startsWith("libsql:")
-  ) {
-    const dir = dirname(path);
-    if (dir && !existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const file = localFilePathFor(path);
+  if (file !== undefined) {
+    const dir = dirname(file);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 
   const raw = createClient({ url: toLibsqlUrl(path) });

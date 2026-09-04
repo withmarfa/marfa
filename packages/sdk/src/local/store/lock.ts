@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { uptime } from "node:os";
-import { linkSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname } from "node:path";
+import { localFilePathFor } from "./paths.js";
 
 /**
  * One writer per store.
@@ -92,10 +101,8 @@ const BOOT_TOLERANCE_MS = 5_000;
 /** Where the lock for a store lives. `:memory:` has no file, so it
  *  contends only in this process. */
 function lockPathFor(storePath: string): string | undefined {
-  if (storePath === ":memory:") return undefined;
-  if (/^(https?|libsql):/.test(storePath)) return undefined;
-  const file = storePath.startsWith("file:") ? storePath.slice(5) : storePath;
-  return `${file.split("?")[0] ?? file}.lock`;
+  const file = localFilePathFor(storePath);
+  return file === undefined ? undefined : `${file}.lock`;
 }
 
 /** Whether a process is still there to hold anything. */
@@ -178,6 +185,27 @@ export function acquireStoreLock(storePath: string): StoreLock {
     };
   }
 
+  /**
+   * The lock is a file, so it needs somewhere to live before it can be
+   * taken — and on a first launch nothing has made that anywhere yet.
+   *
+   * The store's own directory is created when the database is opened, and
+   * the lock is taken *before* that, because a store this build cannot read
+   * must not be moved aside by a caller that does not hold the write. So on
+   * a first launch the claim's staging write used to fail on a missing
+   * parent, get caught, and report the store as held by somebody else.
+   * Every write was then refused for the life of the process, with nothing
+   * raised and nothing written down, and the next launch worked — because
+   * by then the failed first launch had left the directory behind.
+   *
+   * It goes here rather than in the caller because this is where the
+   * failure happened: the lock needs its own directory whether or not a
+   * database is ever opened beside it, and putting it in the one current
+   * caller would leave that true and unwritten.
+   */
+  const dir = dirname(path);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+
   const token = randomUUID();
 
   /**
@@ -205,8 +233,16 @@ export function acquireStoreLock(storePath: string): StoreLock {
       );
       linkSync(staging, path);
       return true;
-    } catch {
-      return false;
+    } catch (error) {
+      // `EEXIST` is the whole point of linking: somebody else holds it.
+      // Everything else — a read-only volume, a full disk, a quota, a
+      // sandbox refusing to create a file — is this machine being unable
+      // to take a lock nobody is holding, and reporting that as contention
+      // is what made the missing-directory case invisible. It produced a
+      // holder nobody could find, `pid -1`, and refused every write for the
+      // life of the process without raising anything.
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+      throw error;
     } finally {
       try {
         unlinkSync(staging);

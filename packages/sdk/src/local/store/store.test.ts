@@ -1,4 +1,10 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -41,6 +47,89 @@ beforeEach(async () => {
 afterEach(() => {
   store.close();
   rmSync(dir, { recursive: true, force: true });
+});
+
+describe("opening a store the host has not made a directory for", () => {
+  // Every other test here reaches for `mkdtempSync` before it opens
+  // anything, so the parent directory always exists and this path was
+  // never once exercised. That is why 401 tests were green over it.
+  //
+  // A first launch on a real machine is the opposite: the application's
+  // data directory is whatever the host decided, and nothing has made it
+  // yet. The lock is taken before the database is opened, and only the
+  // database creates the directory, so the claim's staging write fails on
+  // a missing parent, is caught, and reports the lock as held by someone
+  // else. Every write is then refused for the life of the process, with
+  // no error raised and nothing written down — and the next launch works,
+  // because by then the directory exists.
+  it("is a writer on the first launch, not a reader that says nothing", async () => {
+    let parent: string | undefined;
+    let first: LocalStore | undefined;
+    try {
+      parent = mkdtempSync(join(tmpdir(), "marfa-local-first-"));
+      const fresh = join(parent, "not-made-yet", "store.db");
+      first = await openLocalStore({ path: fresh, identity });
+      expect(first.writer).toBe(true);
+
+      // The status is the claim; this is the consequence. A store that
+      // reports itself a reader refuses the write, so asserting only on
+      // the flag would pass against a store that had lost the ability to
+      // do the one thing it is for.
+      const note = await first.mutations.createItem({
+        type: "core.note",
+        properties: { body: "written on a first launch" },
+      });
+      expect(await first.outbox.count()).toBe(1);
+      expect(await first.visible.getItem(note.id)).toMatchObject({
+        id: note.id,
+      });
+    } finally {
+      first?.close();
+      if (parent !== undefined)
+        rmSync(parent, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("a lock that cannot be taken for a reason nobody is holding", () => {
+  // The missing-directory defect had one visible artefact: a refusal
+  // naming `pid -1`, a holder nobody could find. That came from `claim()`
+  // mapping every errno to "somebody else has it", so a machine unable to
+  // create a file looked identical to contention. Fixing the directory
+  // removed one cause and left the mechanism, and the next errno through
+  // it — a read-only volume, a full disk, a quota, a sandbox refusing to
+  // create a file — reproduces the silence exactly.
+  it("says so, rather than inventing a holder", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "marfa-local-locked-"));
+    const guarded = join(parent, "guarded");
+    mkdirSync(guarded);
+    chmodSync(guarded, 0o500); // readable and traversable, not writable
+
+    // Running as root defeats the mode, and so would a filesystem that
+    // does not honour it. Establish that the write really is refused
+    // before asserting on what the engine does about it, so this cannot
+    // quietly become a test of nothing.
+    let refused = false;
+    try {
+      writeFileSync(join(guarded, "probe"), "x");
+    } catch {
+      refused = true;
+    }
+    if (!refused) {
+      chmodSync(guarded, 0o700);
+      rmSync(parent, { recursive: true, force: true });
+      return;
+    }
+
+    try {
+      await expect(
+        openLocalStore({ path: join(guarded, "store.db"), identity }),
+      ).rejects.toThrow(/EACCES|permission/i);
+    } finally {
+      chmodSync(guarded, 0o700);
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("what the store keeps", () => {
