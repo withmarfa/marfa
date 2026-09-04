@@ -3,10 +3,13 @@ import type { TypeSchema } from "@withmarfa/types";
 import { hydrateTypeRegistry } from "./hydrate-type-registry.js";
 import {
   MAX_RESOLUTION_DEPTH,
+  SYSTEM_TYPE_IDS,
   getTypeSchema,
   listTypes,
+  softDeleteState,
   unregisterTypeSchema,
   validateProperties,
+  validateTransition,
 } from "./type-registry.js";
 import { ErrorCode, MarfaError } from "./errors.js";
 
@@ -219,6 +222,153 @@ describe("hydrateTypeRegistry", () => {
     expect(
       validateProperties("acme.memo", { body: "text" }, { spaceId: SPACE })
         .success,
+    ).toBe(true);
+  });
+
+  it("drops a type the listing no longer carries", () => {
+    // A refresh that only ever added left a deleted type valid locally for
+    // ever: it stops appearing in the listing rather than arriving as a
+    // tombstone, so nothing marked it gone. The client then accepted writes
+    // against a type the server had forgotten, and a queued write refused on
+    // arrival reads as permanent.
+    hydrate([
+      {
+        id: "acme.retired",
+        version: 1,
+        fields: { headline: { type: "string", required: true } },
+      },
+    ]);
+    expect(
+      validateProperties(
+        "acme.retired",
+        { headline: "set" },
+        {
+          spaceId: SPACE,
+        },
+      ).success,
+    ).toBe(true);
+
+    // The same space, listed again after the type was deleted server-side.
+    const result = hydrate([{ id: "acme.kept", version: 1, fields: {} }]);
+
+    // The compiled schema goes with the registration. A stale cache entry
+    // would keep answering `success` here with nothing left in the registry
+    // to evict it, which is the half that makes the removal worth doing.
+    const after = validateProperties(
+      "acme.retired",
+      { headline: "set" },
+      { spaceId: SPACE },
+    );
+    expect(after.success).toBe(false);
+    // Refused as an unknown type rather than on a field, which is what tells
+    // a removed registration from one still present that happens to reject
+    // this payload.
+    expect(after.success ? [] : after.errors.map((e) => e.field)).toEqual([
+      "_type",
+    ]);
+    expect(getTypeSchema("acme.retired", SPACE)).toBeUndefined();
+    // Convergence is not a purge: what the listing still carries stays.
+    expect(getTypeSchema("acme.kept", SPACE)).toBeDefined();
+    expect(result.removed).toEqual(["acme.retired"]);
+  });
+
+  it("leaves another space's overlay alone when it converges", () => {
+    // Removal is scoped to the bucket `spaceId` names, the same scope
+    // registration has. A hydration that reached past it would evict a space
+    // whose listing this payload says nothing about.
+    const other = "01a02000-0000-7000-8000-0000000000f3";
+    const elsewhere = hydrateTypeRegistry(
+      [{ id: "acme.neighbor", version: 1, fields: {} }],
+      { spaceId: other },
+    );
+    expect(elsewhere.registered).toEqual(["acme.neighbor"]);
+
+    try {
+      hydrate([{ id: "acme.mine", version: 1, fields: {} }]);
+      expect(getTypeSchema("acme.neighbor", other)).toBeDefined();
+    } finally {
+      unregisterTypeSchema("acme.neighbor", other);
+    }
+  });
+
+  it("gives an unshipped platform type the lifecycle its own family has", () => {
+    // An instance's shipped vocabulary is seeded data, so a listing can carry
+    // a `system.*` type this build never compiled in. `POST /types` refuses a
+    // reserved root for every credential, platform included, so such an id is
+    // necessarily platform-seeded rather than somebody's custom type — which
+    // is what makes classifying it by namespace sound.
+    const id = "system.unshipped_probe";
+    expect(SYSTEM_TYPE_IDS.has(id)).toBe(false);
+
+    const result = hydrate([{ id, version: 1, fields: {} }]);
+
+    // Both rules, because they read the same classification and a fix
+    // reaching only one leaves a delete putting the row into a state no
+    // transition can leave. The shipped comparison is the parity claim: the
+    // answer must not depend on whether this build happens to carry the type.
+    expect(softDeleteState(id)).toBe("revoked");
+    expect(softDeleteState(id)).toBe(softDeleteState("system.credential"));
+    expect(validateTransition(id, "active", "revoked")).toBeNull();
+    expect(validateTransition(id, "active", "trashed")).not.toBeNull();
+    expect(validateTransition(id, "active", "archived")).not.toBeNull();
+    expect(validateTransition(id, "active", "trashed")).toBe(
+      validateTransition("system.credential", "active", "trashed"),
+    );
+    expect(result.unshippedPlatform).toEqual([id]);
+  });
+
+  it("removes nothing when the payload is refused", () => {
+    hydrate([{ id: "acme.standing", version: 1, fields: {} }]);
+
+    const link = (n: number) => `acme.toodeep_${String(n)}`;
+    const payload: TypeSchema[] = [];
+    for (let n = MAX_RESOLUTION_DEPTH + 1; n >= 1; n -= 1) {
+      payload.push({
+        id: link(n),
+        version: 1,
+        parent: link(n - 1),
+        fields: {},
+      });
+    }
+    payload.push({ id: link(0), version: 1, fields: {} });
+
+    expect(() => hydrateTypeRegistry(payload, { spaceId: SPACE })).toThrow(
+      MarfaError,
+    );
+
+    // A refused payload names none of what the space already holds, so
+    // convergence running ahead of the ordering walk would empty the space
+    // and then throw. Registration is held behind the walk for the same
+    // reason and has a test of its own; this is the other half.
+    expect(getTypeSchema("acme.standing", SPACE)).toBeDefined();
+  });
+
+  it("names a child whose parent the listing has dropped", () => {
+    hydrate([
+      {
+        id: "acme.stem",
+        version: 1,
+        fields: { headline: { type: "string", required: true } },
+      },
+      { id: "acme.frond", version: 1, parent: "acme.stem", fields: {} },
+    ]);
+    expect(
+      validateProperties("acme.frond", {}, { spaceId: SPACE }).success,
+    ).toBe(false);
+
+    // The parent has left the listing; the child has not. This call is what
+    // breaks the chain, so a report taken before the removals would say the
+    // chain was whole and send nobody to refetch.
+    const result = hydrate([
+      { id: "acme.frond", version: 1, parent: "acme.stem", fields: {} },
+    ]);
+
+    expect(result.removed).toEqual(["acme.stem"]);
+    expect(result.unresolvedParents).toEqual(["acme.frond"]);
+    // And the shortfall the entry is warning about: the requirement the
+    // removed ancestor declared is no longer enforced anywhere.
+    expect(
+      validateProperties("acme.frond", {}, { spaceId: SPACE }).success,
     ).toBe(true);
   });
 });

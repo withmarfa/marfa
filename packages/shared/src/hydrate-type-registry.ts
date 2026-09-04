@@ -3,9 +3,24 @@ import { ErrorCode, MarfaError } from "./errors.js";
 import {
   MAX_RESOLUTION_DEPTH,
   TYPE_REGISTRY,
+  classifyNamespace,
   getTypeSchema,
+  listTypes,
   registerTypeSchema,
+  unregisterTypeSchema,
 } from "./type-registry.js";
+
+/**
+ * The tiers the platform owns outright — exactly the three `POST /types`
+ * refuses for every credential, platform included. An id under one of them
+ * can only have arrived by being seeded, never by being registered, which is
+ * what lets this helper classify one by name.
+ */
+const PLATFORM_TIERS: ReadonlySet<string> = new Set([
+  "core",
+  "system",
+  "marfa",
+]);
 
 /** Options for {@link hydrateTypeRegistry}. */
 export interface HydrateTypeRegistryOptions {
@@ -44,6 +59,40 @@ export interface TypeRegistryHydration {
    */
   unresolvedParents: string[];
   /**
+   * Ids evicted from this space's overlay because the listing no longer
+   * carries them, in the order the registry held them.
+   *
+   * A deleted type stops appearing in the listing rather than arriving as a
+   * tombstone, so nothing but absence says it is gone. Hydration that only
+   * ever added kept it valid locally for ever, and the client went on
+   * accepting writes against a type the server had forgotten — refused on
+   * arrival, and a refusal for an unknown type reads as permanent rather
+   * than retryable.
+   *
+   * Scoped to the bucket `spaceId` names and to types this build does not
+   * ship. Nothing global is touched: the platform map is shared by every
+   * space, so one space's listing may not evict from it.
+   */
+  removed: string[];
+  /**
+   * Registered ids under a tier the platform owns (`core.*`, `system.*`,
+   * `marfa.*`) that this build does not ship. Every id here is also in
+   * `registered`.
+   *
+   * An instance's shipped vocabulary is seeded data, so a listing can carry
+   * platform types a client's own build never compiled in. They register into
+   * the overlay because that is the only map a client may write — the
+   * platform map is global, and a space-scoped listing may not reach it — and
+   * the lifecycle rules read the identifier rather than the map, so the type
+   * still gets the lifecycle its family has.
+   *
+   * Reported because the overlay is not where the server keeps them, and a
+   * caller comparing its vocabulary against the server's should be able to
+   * see the gap rather than infer it. A non-empty entry means the build is
+   * behind the instance it is talking to.
+   */
+  unshippedPlatform: string[];
+  /**
    * Registered ids whose declared parent chain closes on itself.
    *
    * Registered rather than skipped, because the server holds the same rows
@@ -61,8 +110,17 @@ export interface TypeRegistryHydration {
  * the server.
  *
  * Not a second registration entry point. It filters the payload down to the
- * types this build does not already ship, works out an order, and calls
- * `registerTypeSchema` — the one that already exists — for each.
+ * types this build does not already ship, works out an order, calls
+ * `registerTypeSchema` — the one that already exists — for each, and then
+ * drops whatever the space still held that the listing did not carry.
+ *
+ * **A hydration converges on the payload rather than accumulating.** The
+ * listing is the whole of what the space may see, so a type missing from it
+ * has been deleted, and the client's copy is only useful while it says the
+ * same thing. Adding alone left a deleted type valid locally for ever, which
+ * is the expensive direction: local validation accepted a write the server
+ * then refused, and an unknown-type refusal reads as permanent rather than
+ * retryable, so a queue built on this helper dead-letters it.
  *
  * **Order is for the report, not for the registry.** Field resolution is
  * lazy: `getResolvedFields` walks the parent chain when a schema is compiled,
@@ -74,16 +132,26 @@ export interface TypeRegistryHydration {
  * rather than correctness — and anyone tempted to rely on it should know the
  * map does not.
  *
- * **Pass the whole listing, not a slice of one.** Within a single call every
- * type is re-registered after its ancestors, and each registration drops its
- * own compiled schema, so a full payload leaves nothing stale. A subset does
- * not: registering an ancestor that has become visible, while a descendant of
- * it sits outside the payload and already has a compiled schema, leaves that
- * descendant validating against the narrower field set with nothing to evict
- * it. The shortfall is silent and it is the one this helper exists to prevent
- * — a requirement the ancestor declares goes unenforced, so the client accepts
- * a write the server refuses. `GET /types` returns the whole vocabulary, which
- * is why this is a precondition rather than a parameter.
+ * **Pass the whole listing, not a slice of one.** This was advisory while the
+ * helper only added; convergence makes it the contract, because a slice now
+ * says that everything outside it has been deleted and this deletes it.
+ *
+ * It stays a precondition rather than a parameter, and the reason is that
+ * there is no second answer to give. `GET /types` takes no filter and returns
+ * the whole vocabulary, so a partial payload is something a caller has to
+ * build deliberately — and a partial payload was already unsafe before any
+ * of this: registering an ancestor that has become visible, while a
+ * descendant of it sits outside the payload and already has a compiled
+ * schema, leaves that descendant validating against the narrower field set
+ * with nothing to evict it. A mode admitting a slice would therefore be a
+ * supported spelling of the defect this helper exists to prevent, so the
+ * signature would be documenting a choice that has only one correct value.
+ *
+ * What replaces the parameter is the report. `removed` names every eviction,
+ * so a caller that passes a slice sees the whole of the damage in the return
+ * value at the moment it happens, rather than meeting it later as a type
+ * that has quietly stopped resolving. Should `GET /types` ever grow a filter,
+ * that entry is what will make the need for a parameter obvious.
  *
  * **The payload is not re-validated.** These schemas are what the server
  * accepted at registration, and a client running an older `@withmarfa/shared`
@@ -97,6 +165,7 @@ export function hydrateTypeRegistry(
 ): TypeRegistryHydration {
   const spaceId = options?.spaceId;
   const skippedPlatform: string[] = [];
+  const unshippedPlatform: string[] = [];
   // Insertion order is the payload's order, which is what makes the walk
   // below deterministic for a payload that admits more than one valid order.
   const custom = new Map<string, TypeSchema>();
@@ -108,6 +177,16 @@ export function hydrateTypeRegistry(
     if (TYPE_REGISTRY.has(schema.id)) {
       skippedPlatform.push(schema.id);
       continue;
+    }
+    // Whether the type is already resolvable and whose vocabulary it belongs
+    // to are two questions, and only the second can be answered by name. The
+    // skip above asks the first and must keep asking the map; this asks the
+    // second, and asks it of the name because a reserved-tier id can only
+    // have been seeded — registration under one is refused for every
+    // credential. Registered like any other payload entry, and named here so
+    // a caller can see its build is behind the instance.
+    if (PLATFORM_TIERS.has(classifyNamespace(schema.id))) {
+      unshippedPlatform.push(schema.id);
     }
     custom.set(schema.id, schema);
   }
@@ -160,11 +239,38 @@ export function hydrateTypeRegistry(
 
   for (const schema of order) registerTypeSchema(schema, spaceId);
 
-  // Asked after every registration, and of the registry rather than of the
-  // payload, so a parent this space already held counts as resolved and a
-  // parent the payload supplied is not reported against its own child. The
-  // id reported is the one whose chain actually breaks, not every descendant
-  // that inherits the break.
+  // Convergence, and it runs after the registrations rather than before them
+  // so that a payload the ordering walk refuses leaves the space exactly as
+  // it found it. Nothing is half-applied: the walk throws before the first
+  // registration, and this loop is downstream of both.
+  //
+  // Overlay ids are read as what `listTypes` returns minus what the platform
+  // map holds, which is the same subtraction `skippedPlatform` describes from
+  // the other side. An overlay entry shadowing a shipped id survives it and
+  // is meant to: `resolveSchema` reads the platform map first, so such an
+  // entry is unreachable rather than authoritative, and hydration leaves the
+  // shipped vocabulary alone in both directions rather than only in the one
+  // it adds.
+  const listed = new Set(types.map((schema) => schema.id));
+  const removed: string[] = [];
+  for (const schema of listTypes(spaceId)) {
+    if (TYPE_REGISTRY.has(schema.id)) continue;
+    if (listed.has(schema.id)) continue;
+    removed.push(schema.id);
+  }
+  // `unregisterTypeSchema` evicts the compiled schema of every declared
+  // descendant as well as its own, which is what stops a kept child going on
+  // validating against fields its removed ancestor contributed.
+  for (const id of removed) unregisterTypeSchema(id, spaceId);
+
+  // Asked after every registration AND after the removals, and of the
+  // registry rather than of the payload, so a parent this space already held
+  // counts as resolved and a parent the payload supplied is not reported
+  // against its own child. Asking before the removals would miss the case
+  // convergence introduces: a listing carrying a child whose parent it has
+  // dropped leaves that child's chain broken, and the break is the entry this
+  // report tells callers to act on. The id reported is the one whose chain
+  // actually breaks, not every descendant that inherits the break.
   const unresolvedParents: string[] = [];
   for (const schema of order) {
     // Truthy rather than a test against `undefined`, matching every other
@@ -182,6 +288,8 @@ export function hydrateTypeRegistry(
   return {
     registered: order.map((schema) => schema.id),
     skippedPlatform,
+    removed,
+    unshippedPlatform,
     unresolvedParents,
     cycles: order.map((schema) => schema.id).filter((id) => cycles.has(id)),
   };
