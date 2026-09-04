@@ -318,6 +318,59 @@ describe("a token expired mid-drain (seam: online for one write, then unauthoriz
   });
 });
 
+describe("what a sent write leaves behind (seam: online)", () => {
+  it("keeps the tags on a row the server only trashed", async () => {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "tagged" },
+    });
+    await drain.drain();
+    await client.metadata.addTags(note.id, ["filed"]);
+    const tags = await client.metadata.get(note.id);
+    await store.server.metadata.put(tags);
+
+    await store.mutations.deleteItem(note.id);
+    await drain.drain();
+
+    // A delete is a trash. The server keeps the row and everything hanging
+    // off it, so taking the tags here would leave a restore bringing the
+    // item back stripped, with nothing to correct it until a metadata
+    // event or a full re-read happens along. The layers are separate so
+    // that one layer's write cannot reach the other.
+    expect(await store.server.metadata.get(note.id)).toMatchObject({
+      tags: ["filed"],
+    });
+  });
+
+  it("does not overwrite a newer row with the answer to an older write", async () => {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "first" },
+    });
+    await drain.drain();
+
+    // An edit on its way out, and the row moving on underneath it before
+    // the answer lands. Whatever the server says about this write, it
+    // describes a version older than the one already held.
+    seam.mode = "offline";
+    await store.mutations.updateItem(note.id, { title: "mine" });
+    seam.mode = "online";
+    const ahead = await client.items.update(note.id, { body: "from ahead" });
+    await store.server.items.put({ ...ahead, version: ahead.version + 5 });
+
+    await drain.drain();
+
+    // Settling a write is a write into server state like any other, and
+    // the same comparison governs it. Without that, the response to a
+    // write the client made overwrites an event that arrived while it was
+    // in flight — and no event will ever redeliver what was lost.
+    expect(await store.server.items.get(note.id)).toMatchObject({
+      version: ahead.version + 5,
+      properties: { body: "from ahead" },
+    });
+  });
+});
+
 describe("the key a mutation was written with (seam: offline, then online)", () => {
   it("goes out on every door that takes one", async () => {
     seam.mode = "offline";

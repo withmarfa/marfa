@@ -80,7 +80,7 @@ async function applyInto(
     // Gone for good, so the copy goes with it — along with its metadata,
     // which has nothing left to hang from. Nothing will ever correct a
     // copy kept past this, which is what separates it from a trashing.
-    await tx.server.items.remove(event.item.id);
+    await tx.server.items.purge(event.item.id);
     return "applied";
   }
 

@@ -169,7 +169,9 @@ export async function importAll(options: ImportOptions): Promise<ImportResult> {
   await store.transaction(async (tx) => {
     for (const id of heldItems) {
       if (seenItems.has(id) || claimed.has(id)) continue;
-      await tx.server.items.remove(id);
+      // Absent from a read of every state, so the server does not have it
+      // in any form. The sidecar goes with it.
+      await tx.server.items.purge(id);
       prunedItems += 1;
     }
     // Edges as well as items, and this half is easy to leave out because

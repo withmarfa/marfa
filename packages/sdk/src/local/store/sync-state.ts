@@ -12,10 +12,9 @@ import { syncState } from "./schema.js";
  * stream consumer's; the row exists here so the store's shape is settled
  * before it arrives.
  *
- * Nothing refuses a store opened against a different identity yet. The row
- * records what the store belongs to; the refusal is a separate piece of
- * work, and until it lands the recorded identity is a fact rather than a
- * gate.
+ * The recorded identity is a gate rather than a note: opening a store
+ * against one it does not match is refused, in `openLocalStore`, before
+ * anything reads or writes it.
  */
 export interface SyncStateLayer {
   read(identity: StoreIdentity): Promise<SyncStateRow | undefined>;

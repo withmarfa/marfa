@@ -1,10 +1,5 @@
-import {
-  openSync,
-  closeSync,
-  readFileSync,
-  unlinkSync,
-  writeSync,
-} from "node:fs";
+import { randomUUID } from "node:crypto";
+import { linkSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 /**
  * One writer per store.
@@ -44,8 +39,38 @@ export interface StoreLock {
 
 export interface LockHolder {
   pid: number;
+  /** Distinguishes this hold from any other, including a later hold by
+   *  this same process. Without it, releasing means trusting a process id
+   *  to identify a hold, and a process only ever holds one at a time by
+   *  accident. */
+  token: string;
   since: string;
+  /**
+   * When the machine the holder runs on was started.
+   *
+   * A process id is not an identity across a restart: the machine reboots,
+   * the number is handed out again, and a liveness check on it answers yes
+   * for a process that has nothing to do with this store — leaving it
+   * read-only for ever with no way for anyone to work out why. Comparing
+   * the boot the lock was written under against the current one settles
+   * that without needing to inspect a process this one does not own.
+   *
+   * It does not cover a process id recycled *within* one boot, which is
+   * far rarer and would need the holder's own start time — not something
+   * a portable API will give for a process this one does not own.
+   */
+  bootedAt: number;
 }
+
+/** When this machine started, to the nearest second's worth of jitter. */
+function machineBootedAt(): number {
+  return Math.round(Date.now() - process.uptime() * 1000);
+}
+
+/** How far two readings of the boot instant may differ and still mean the
+ *  same boot. `uptime` is sampled against a moving clock, so two processes
+ *  never compute it identically. */
+const BOOT_TOLERANCE_MS = 5_000;
 
 /** Where the lock for a store lives. `:memory:` has no file, so it
  *  contends only in this process. */
@@ -75,13 +100,31 @@ function readHolder(path: string): LockHolder | undefined {
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
     const holder = parsed as Partial<LockHolder>;
     if (typeof holder.pid !== "number") return undefined;
-    return { pid: holder.pid, since: holder.since ?? "unknown" };
+    return {
+      pid: holder.pid,
+      token: holder.token ?? "unknown",
+      since: holder.since ?? "unknown",
+      bootedAt: holder.bootedAt ?? 0,
+    };
   } catch {
-    // An unreadable or truncated lockfile is one a process died in the
-    // middle of writing. Treating it as nobody's is right: the alternative
-    // is a store nothing can ever open again.
+    // A lockfile that will not parse is one nothing valid ever wrote —
+    // the claim below puts the holder in place atomically, so there is no
+    // half-written state to meet. Treating it as nobody's is right: the
+    // alternative is a store nothing can ever open again.
     return undefined;
   }
+}
+
+/** Whether the process named by a holder can still be running. */
+function stillHolding(holder: LockHolder): boolean {
+  // Written under a different boot, so the process id names something
+  // else now — or nothing. Checked before liveness, because liveness on a
+  // reused number answers yes and would keep this store read-only for
+  // good.
+  if (Math.abs(holder.bootedAt - machineBootedAt()) > BOOT_TOLERANCE_MS) {
+    return false;
+  }
+  return alive(holder.pid);
 }
 
 /**
@@ -99,7 +142,12 @@ export function acquireStoreLock(storePath: string): StoreLock {
   if (heldInProcess.has(key)) {
     return {
       writer: false,
-      heldBy: { pid: process.pid, since: "this process" },
+      heldBy: {
+        pid: process.pid,
+        token: "held-here",
+        since: "this process",
+        bootedAt: machineBootedAt(),
+      },
       release: () => undefined,
     };
   }
@@ -113,23 +161,42 @@ export function acquireStoreLock(storePath: string): StoreLock {
     };
   }
 
+  const token = randomUUID();
+
+  /**
+   * Take the lock, with the holder already in it.
+   *
+   * Written to a private file and then hard-linked into place, because
+   * `link` fails when the target exists and carries the payload with it.
+   * An exclusive create followed by a write is not the same thing: between
+   * the two the file exists and is empty, and a second opener arriving
+   * there finds a file it cannot read, concludes nobody holds it, removes
+   * it and claims — so both believe they hold the lock and the first
+   * writes into a file that is no longer linked to anything.
+   */
   const claim = (): boolean => {
+    const staging = `${path}.${String(process.pid)}.${token}.claim`;
     try {
-      // `wx` fails when the file exists, and it does so in one syscall —
-      // which is what makes this a lock rather than a check followed by a
-      // write that another process can land between.
-      const fd = openSync(path, "wx");
-      try {
-        writeSync(
-          fd,
-          JSON.stringify({ pid: process.pid, since: new Date().toISOString() }),
-        );
-      } finally {
-        closeSync(fd);
-      }
+      writeFileSync(
+        staging,
+        JSON.stringify({
+          pid: process.pid,
+          token,
+          since: new Date().toISOString(),
+          bootedAt: machineBootedAt(),
+        }),
+      );
+      linkSync(staging, path);
       return true;
     } catch {
       return false;
+    } finally {
+      try {
+        unlinkSync(staging);
+      } catch {
+        // Never created, or already gone. The link, if it was made, keeps
+        // the content alive independently of this name.
+      }
     }
   };
 
@@ -138,7 +205,7 @@ export function acquireStoreLock(storePath: string): StoreLock {
     // A holder that is not running left the file behind when it died. Take
     // it over rather than refusing for ever: a crashed engine must not
     // make its own store permanently read-only.
-    if (holder !== undefined && alive(holder.pid)) {
+    if (holder !== undefined && stillHolding(holder)) {
       return { writer: false, heldBy: holder, release: () => undefined };
     }
     try {
@@ -150,7 +217,12 @@ export function acquireStoreLock(storePath: string): StoreLock {
     if (!claim()) {
       return {
         writer: false,
-        heldBy: readHolder(path) ?? { pid: -1, since: "unknown" },
+        heldBy: readHolder(path) ?? {
+          pid: -1,
+          token: "unknown",
+          since: "unknown",
+          bootedAt: 0,
+        },
         release: () => undefined,
       };
     }
@@ -162,11 +234,16 @@ export function acquireStoreLock(storePath: string): StoreLock {
     heldBy: undefined,
     release: () => {
       heldInProcess.delete(key);
+      // Only this hold's own file. A lock taken over by something that
+      // judged this process dead now belongs to whoever is writing, and
+      // deleting it would let a third opener take a store two engines are
+      // already using — which is the failure this whole file exists to
+      // prevent, arriving on the way out.
+      if (readHolder(path)?.token !== token) return;
       try {
         unlinkSync(path);
       } catch {
-        // Already gone, or taken over by something that judged this
-        // process dead. Either way there is nothing left to release.
+        // Taken over between the read above and here. Nothing to release.
       }
     },
   };

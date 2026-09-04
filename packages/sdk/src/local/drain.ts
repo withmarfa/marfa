@@ -1,5 +1,6 @@
 import type { Edge, Item } from "@withmarfa/shared";
 import type { MarfaClient } from "../client.js";
+import { putEdgeIfNotOlder, putItemIfNotOlder } from "./apply.js";
 import { classifyFailure, type Verdict } from "./classify.js";
 import type { LocalStore } from "./store/index.js";
 import type {
@@ -189,13 +190,24 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
     result: Extract<SendResult, { ok: true }>,
   ): Promise<void> => {
     await store.transaction(async (tx) => {
-      if ("item" in result) await tx.server.items.put(result.item);
-      else if ("edge" in result) await tx.server.edges.put(result.edge);
+      // Through the same comparison the stream uses. What the server
+      // returns describes the row at the version this write produced,
+      // which is not necessarily the newest one held: an event carrying a
+      // later version can arrive and be applied while this write is still
+      // in flight, and writing the answer over it unconditionally would
+      // undo an event no later delivery will repeat.
+      if ("item" in result) await putItemIfNotOlder(tx, result.item);
+      else if ("edge" in result) await putEdgeIfNotOlder(tx, result.edge);
       else if (result.removed === "item") {
         // The server has trashed the row. It is gone from what this client
         // holds until the stream's own event or a re-import brings it back
         // as trashed — leaving it in server state instead would put it back
         // on screen the moment the mutation left the queue.
+        //
+        // The tags stay. A trashing keeps the row on the server, so taking
+        // the sidecar here would leave a restore bringing the item back
+        // stripped, with nothing to correct it until a metadata event or a
+        // full re-read happens along.
         await tx.server.items.remove(entry.targetId);
       } else {
         await tx.server.edges.remove(entry.targetId);

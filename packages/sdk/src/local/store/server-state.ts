@@ -40,7 +40,24 @@ export interface ServerItemLayer {
   listIds(): Promise<string[]>;
   maxUpdatedAt: MaxUpdatedAt;
   put(item: Item): Promise<void>;
+  /**
+   * Drop the item row, and nothing else.
+   *
+   * For a row the server still has: a trashing, where the server keeps
+   * the item and everything hanging off it. Taking the sidecar here would
+   * leave a restore bringing the row back stripped of its tags, with
+   * nothing able to correct it until a metadata event or a full re-read
+   * happens along.
+   */
   remove(id: string): Promise<void>;
+  /**
+   * Drop the item row and its metadata together.
+   *
+   * For a row the server no longer has at all — purged, or absent from a
+   * full read. The sidecar is keyed by item and has nothing left to hang
+   * from, and no event will ever mention it again.
+   */
+  purge(id: string): Promise<void>;
 }
 
 export interface ServerEdgeLayer {
@@ -127,6 +144,9 @@ export function createServerStateLayer(exec: Executor): ServerStateLayer {
           });
       },
       remove: async (id) => {
+        await exec.delete(serverItems).where(eq(serverItems.id, id));
+      },
+      purge: async (id) => {
         await exec.delete(serverItems).where(eq(serverItems.id, id));
         await exec.delete(serverMetadata).where(eq(serverMetadata.itemId, id));
       },

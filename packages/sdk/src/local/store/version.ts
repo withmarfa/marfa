@@ -111,10 +111,13 @@ async function rescueRows(
  * Write the unsent work to a sidecar and move the store out of the way.
  *
  * The order is the whole guarantee, and it only runs one way: read, write
- * the sidecar, verify it is there, and only then move the store. Anything
- * that fails before the move leaves the store exactly as it was and
- * refuses, so the failure mode is a store that will not open rather than
- * one that opened empty.
+ * the sidecar, and only then move the store. The write is an exclusive
+ * create, so it throws rather than returning quietly when it cannot land
+ * or when something is already at that name — which is what makes it safe
+ * to move the store on the next line without asking again. Anything that
+ * fails before the move leaves the store exactly as it was and refuses, so
+ * the failure mode is a store that will not open rather than one that
+ * opened empty.
  *
  * That direction is deliberate. An engine that always recovers, and
  * sometimes silently loses everything, is worse than one that recovers

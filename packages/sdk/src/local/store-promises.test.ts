@@ -29,6 +29,13 @@ let dir: string;
 let path: string;
 let open: LocalStore[];
 
+const AT = "2026-09-01T00:00:00.000Z";
+
+/** When this machine started, as the lock records it. */
+function machineBootedAt(): number {
+  return Math.round(Date.now() - process.uptime() * 1000);
+}
+
 const identity = {
   origin: "http://localhost",
   spaceId: SINGLE_SPACE,
@@ -105,6 +112,48 @@ describe("one writer per store", () => {
     expect(second.writer).toBe(true);
   });
 
+  it("does not delete a lock it no longer holds", async () => {
+    const first = await openAt();
+    expect(first.writer).toBe(true);
+
+    // The lock taken over by something that judged this process dead —
+    // wrongly, or after a stall. Closing must not delete it: the file now
+    // belongs to whoever is writing, and removing it would let a third
+    // opener take a store two engines are already using.
+    writeFileSync(
+      `${path}.lock`,
+      JSON.stringify({
+        pid: process.pid + 1,
+        token: "somebody-else",
+        since: AT,
+        bootedAt: machineBootedAt(),
+      }),
+    );
+    first.close();
+
+    expect(existsSync(`${path}.lock`)).toBe(true);
+  });
+
+  it("treats a lock written before this machine started as stale", async () => {
+    // A process id says nothing on its own across a restart: the machine
+    // reboots, the number is handed to something unrelated, and a
+    // liveness check on it answers yes for ever. The boot the lock was
+    // written under is what separates a holder that is still running from
+    // a number that has been reused.
+    writeFileSync(
+      `${path}.lock`,
+      JSON.stringify({
+        pid: process.pid,
+        token: "from-a-previous-boot",
+        since: AT,
+        bootedAt: machineBootedAt() - 86_400_000,
+      }),
+    );
+
+    const store = await openAt();
+    expect(store.writer).toBe(true);
+  });
+
   it("takes over from a holder that is no longer running", async () => {
     // The lockfile a process leaves behind when it dies. Refusing for ever
     // on one would make a crash permanent: the engine's own store would be
@@ -112,11 +161,33 @@ describe("one writer per store", () => {
     // about.
     writeFileSync(
       `${path}.lock`,
-      JSON.stringify({ pid: 999_999_999, since: "2026-01-01T00:00:00.000Z" }),
+      JSON.stringify({
+        pid: 999_999_999,
+        token: "gone",
+        since: AT,
+        bootedAt: machineBootedAt(),
+      }),
     );
 
     const store = await openAt();
     expect(store.writer).toBe(true);
+  });
+
+  it("writes the holder and the file in one step", async () => {
+    const first = await openAt();
+    expect(first.writer).toBe(true);
+
+    // The file exists only once it already carries who holds it. Created
+    // empty and filled in afterwards, there is a window in which a second
+    // opener finds a file it cannot read, concludes nobody holds it,
+    // removes it and claims — leaving two writers and the first one
+    // writing into an unlinked file.
+    const holder = JSON.parse(readFileSync(`${path}.lock`, "utf8")) as {
+      pid: number;
+      token: string;
+    };
+    expect(holder.pid).toBe(process.pid);
+    expect(holder.token).toEqual(expect.any(String));
   });
 });
 
