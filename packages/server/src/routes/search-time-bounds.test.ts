@@ -12,6 +12,23 @@
  * and a bound that matched everything are indistinguishable by status, and
  * a count still passes if the filter silently matched a coincidental
  * number of rows.
+ *
+ * **The claim is parity, so the last case asks the two doors the same
+ * question and compares their answers.** Every case above it would pass
+ * against a search that bounded correctly on some other expression, and
+ * "the same filters as `GET /items`" is what the route's own description
+ * promises — a search answering a neighboring question is a worse failure
+ * than the absence it replaces, and no case that only reads `/search` can
+ * see it.
+ *
+ * Not covered, deliberately, and worth knowing before looking for it: the
+ * `COALESCE(timestamp, created_at)` both stores compile cannot be reached
+ * from a test, because `items.timestamp` is `NOT NULL` in both dialects
+ * and has been since the first migration. No row can have the null the
+ * fallback is for. It is written anyway because it is what the item
+ * listing compiles, and the parity below is the claim being made; a
+ * search store that spelled the expression its own way would be reading
+ * the same rows today and diverging the day the column changes.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -118,6 +135,47 @@ describe("GET /search — the time bounds it advertises", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
     expect(body.error.message).toContain("timestamp_after");
+  });
+
+  it("answers the same rows as the item listing for the same bound", async () => {
+    // The parity the route's description claims, asserted against the door
+    // it claims parity with. Comparing row identity rather than counts, and
+    // over the seeded rows only, because `/items` returns the space and
+    // `/search` returns what the token matched.
+    const seeded = new Set([oldId, midId, newId]);
+    const listedIds = async (query: string): Promise<string[]> => {
+      const res = await request(
+        ctx.app,
+        "GET",
+        `/items?type=core.note&limit=200&${query}`,
+        { key: ctx.adminKey },
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { data: { id: string }[] };
+      return body.data
+        .map((r) => r.id)
+        .filter((id) => seeded.has(id))
+        .sort();
+    };
+
+    for (const bound of [
+      "timestamp_after=2023-01-01T00:00:00.000Z",
+      "timestamp_before=2024-01-01T00:00:00.000Z",
+      "timestamp_after=2023-01-01T00:00:00.000Z&timestamp_before=2024-01-01T00:00:00.000Z",
+      // The inclusive edge, landing exactly on a row's own time, where an
+      // off-by-one in either store shows up as one door returning a row the
+      // other does not.
+      "timestamp_after=2023-06-15T12:00:00.000Z",
+      "timestamp_before=2023-06-15T12:00:00.000Z",
+      // And the narrower spelling, which is normalized before a lexical
+      // comparison sees it — separately in each store.
+      "timestamp_after=2023-06-15T12:00:00Z",
+    ]) {
+      expect(
+        await searchIds(`q=${TOKEN}&${bound}`),
+        `search and the item listing disagree under ${bound}`,
+      ).toEqual(await listedIds(bound));
+    }
   });
 
   it("refuses the retired names rather than searching the whole corpus", async () => {
