@@ -146,9 +146,14 @@ describe("the server resolves a conflict", () => {
     );
     expect(sibling).toBeDefined();
 
-    const meta = await request(ctx.app, "GET", `/items/${sibling?.id}`, {
-      key: ctx.adminKey,
-    });
+    const meta = await request(
+      ctx.app,
+      "GET",
+      `/items/${String(sibling?.id)}`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     const { metadata } = (await meta.json()) as {
       metadata: { tags: string[] };
     };
@@ -239,7 +244,10 @@ describe("a base version that has been thinned away", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.adminKey,
-      body: { properties: { body: "based on a version nobody kept" }, version: base },
+      body: {
+        properties: { body: "based on a version nobody kept" },
+        version: base,
+      },
     });
     expect(res.status).toBe(409);
     const conflict = (await res.json()) as {
@@ -329,9 +337,14 @@ describe("the resolution report", () => {
     // exists and a caller has no way to reach the row it just caused.
     const siblingId = answered.conflict_resolution?.conflicted_copy_id;
     expect(siblingId).toBeDefined();
-    const sibling = await request(ctx.app, "GET", `/items/${siblingId}`, {
-      key: ctx.adminKey,
-    });
+    const sibling = await request(
+      ctx.app,
+      "GET",
+      `/items/${String(siblingId)}`,
+      {
+        key: ctx.adminKey,
+      },
+    );
     expect(sibling.status).toBe(200);
     const { item } = (await sibling.json()) as {
       item: { properties: Record<string, unknown> };

@@ -164,7 +164,6 @@ function allowedTypesCondition(
   return or(...clauses);
 }
 
-
 type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
 /**

@@ -258,8 +258,12 @@ export function conflictedSiblingId(input: {
   const digest = sha256Hex(
     // Joined on a separator an id, a version and a key cannot contain, so no
     // two different triples can spell one string.
-    ["conflicted-copy", input.itemId, input.baseVersion, input.idempotencyKey]
-      .join("\u0000"),
+    [
+      "conflicted-copy",
+      input.itemId,
+      input.baseVersion,
+      input.idempotencyKey,
+    ].join("\u0000"),
   );
   const version = "7";
   // The variant nibble has to be one of 8, 9, a or b; the rest of the digest
@@ -297,8 +301,8 @@ export function versionConflict(
       code: "version_conflict",
       status: 409,
       message:
-        `Version ${requestedVersion} is stale; current version is ` +
-        `${currentVersion}. Conflicting fields: ` +
+        `Version ${String(requestedVersion)} is stale; current version is ` +
+        `${String(currentVersion)}. Conflicting fields: ` +
         `${conflictingFields.length > 0 ? conflictingFields.join(", ") : "none"}.`,
     },
     current: { version: currentVersion, properties: currentProperties },
@@ -319,9 +323,9 @@ export function ancestorUnavailable(
       code: "ancestor_unavailable",
       status: 409,
       message:
-        `The snapshot for version ${requestedVersion} is no longer retained, ` +
-        `so this write cannot be merged. Re-read the item at version ` +
-        `${currentVersion} and re-apply the change.`,
+        `The snapshot for version ${String(requestedVersion)} is no longer ` +
+        `retained, so this write cannot be merged. Re-read the item at ` +
+        `version ${String(currentVersion)} and re-apply the change.`,
     },
     current: { version: currentVersion, properties: currentProperties },
     requested_version: requestedVersion,
@@ -357,5 +361,7 @@ export function attachResolution(
   item: Item,
   resolution: ConflictResolutionReport | undefined,
 ): ResolvedItem {
-  return resolution === undefined ? item : { ...item, conflict_resolution: resolution };
+  return resolution === undefined
+    ? item
+    : { ...item, conflict_resolution: resolution };
 }

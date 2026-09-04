@@ -2737,9 +2737,7 @@ export function itemRoutes(storage: Storage) {
       // and left to inference the union collapses to it — losing the
       // resolution report the store attaches on the other arm.
       const updated:
-        | ResolvedItem
-        | ConflictResponse
-        | AncestorUnavailableResponse =
+        ResolvedItem | ConflictResponse | AncestorUnavailableResponse =
         hasProperties || hasTier || hasTimestamp || hasSourceId
           ? await storage.items.update(
               id,

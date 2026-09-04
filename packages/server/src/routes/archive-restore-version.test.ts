@@ -19,7 +19,11 @@ import { createGunzip } from "node:zlib";
 import { Readable } from "node:stream";
 import { describe, expect, it, afterAll } from "vitest";
 import * as tar from "tar-stream";
-import { closeTestContexts, createTestContext, request } from "../test-utils.js";
+import {
+  closeTestContexts,
+  createTestContext,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
@@ -110,7 +114,9 @@ describe("a restore does not rewind a row's version", () => {
       .toString()
       .split("\n")
       .filter(Boolean)
-      .map((line) => JSON.parse(line) as { item: { id: string; version: number } })
+      .map(
+        (line) => JSON.parse(line) as { item: { id: string; version: number } },
+      )
       .find((line) => line.item.id === note.id);
     expect(itemLine?.item.version).toBe(archivedItem?.version);
 

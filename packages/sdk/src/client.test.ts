@@ -589,9 +589,7 @@ describe("items.update expectedVersion", () => {
     // One PATCH and nothing else. The kit used to fetch the type, create the
     // sibling and re-send the update — three more round trips, and no
     // arrangement of them that is atomic.
-    expect(calls).toEqual([
-      { method: "PATCH", path: `/items/${item.id}` },
-    ]);
+    expect(calls).toEqual([{ method: "PATCH", path: `/items/${item.id}` }]);
   });
 
   it("skips the GET when expectedVersion is provided", async () => {

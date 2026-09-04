@@ -994,11 +994,6 @@ export class PgItemStore implements ItemStore {
             strategy: plan.strategyByField,
             ...(siblingId !== undefined && { conflicted_copy_id: siblingId }),
           };
-        resolution = {
-          fields: result.conflicting_fields,
-          strategy: plan.strategyByField,
-          ...(siblingId !== undefined && { conflicted_copy_id: siblingId }),
-        };
         } else {
           resolvedProperties = result.merged;
         }
@@ -1051,12 +1046,7 @@ export class PgItemStore implements ItemStore {
         }
 
         await this.searchStore.remove(id);
-        await this.searchStore.index(
-          id,
-          resolvedProperties,
-          row.type,
-          spaceId,
-        );
+        await this.searchStore.index(id, resolvedProperties, row.type, spaceId);
 
         return attachResolution(
           rowToItem({

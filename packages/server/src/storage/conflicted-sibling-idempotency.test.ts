@@ -64,7 +64,7 @@ describe("a keep-both resolution that runs twice", () => {
       });
       expect(
         "error" in result,
-        `attempt ${attempt} should have resolved, not refused`,
+        `attempt ${String(attempt)} should have resolved, not refused`,
       ).toBe(false);
     }
 
