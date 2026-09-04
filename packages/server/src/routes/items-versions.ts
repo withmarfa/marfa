@@ -4,6 +4,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireTypeAccess } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { VersionSchema } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Local schemas
@@ -11,15 +12,6 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
 const IdParam = z.object({
   id: z.string().describe("Item id whose version history to return"),
-});
-
-const VersionSchema = z.object({
-  id: z.string(),
-  item_id: z.string(),
-  version: z.number(),
-  properties: z.record(z.string(), z.unknown()),
-  created_at: z.string(),
-  device: z.string().optional(),
 });
 
 // ---------------------------------------------------------------------------

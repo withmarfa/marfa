@@ -13,24 +13,13 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+import { EdgeSchema } from "./_schemas.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
-
-const EdgeSchema = z.object({
-  id: z.string(),
-  space_id: z.string().nullable().optional(),
-  source_id: z.string(),
-  target_id: z.string(),
-  edge_type: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  created_at: z.string(),
-  updated_at: z.string(),
-  version: z.number(),
-});
 
 /**
  * A refused update hands back the edge as it now stands.

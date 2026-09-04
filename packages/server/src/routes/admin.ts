@@ -47,6 +47,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { evictSpaceStatus } from "../middleware/space-suspension.js";
 import { PendingDeletePurger } from "../storage/retention.js";
 import { RoleRequestSchema, RoleResponseSchema } from "./role-schema.js";
+import { QuotaSchema } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -75,16 +76,6 @@ const AdminSpaceSchema = SpaceSchema.extend({
   // through was a hand-written query against the database — an irreversible
   // action driven by a lookup with no audit trail of its own.
   owner_auth_user_id: z.string().nullable(),
-});
-
-const QuotaSchema = z.object({
-  space_id: z.string(),
-  items_limit: z.number().int().nullable(),
-  webhooks_limit: z.number().int().nullable(),
-  blobs_limit: z.number().int().nullable(),
-  storage_bytes_limit: z.number().int().nullable(),
-  rate_per_minute_limit: z.number().int().nullable(),
-  updated_at: z.string().nullable(),
 });
 
 const ActivityEntrySchema = z.object({

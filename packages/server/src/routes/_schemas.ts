@@ -1,6 +1,14 @@
 /**
- * Reusable Zod schemas shared across route files (items.ts, search.ts,
- * edges.ts). Centralized so the Item/Edge shape is declared once.
+ * Reusable Zod schemas shared across route files. Centralized so each wire
+ * shape is declared once.
+ *
+ * The consumers are not listed here on purpose. That list was three route
+ * files and went stale without anything noticing, and a header naming its
+ * importers is a second place to update whenever one is added. What holds
+ * the claim is `wire-shape-declarations.test.ts`, which fails if a route
+ * file declares a shape this file already exports.
+ *
+ * Nothing here imports from a route file, so any of them can import this.
  */
 import { z } from "@hono/zod-openapi";
 
@@ -114,6 +122,21 @@ export const VersionSchema = z.object({
   properties: z.record(z.string(), z.unknown()),
   created_at: z.string(),
   device: z.string().optional(),
+});
+
+/**
+ * A space's quota row. Answered by the space's own quota route and by the
+ * admin view of the same row, which is why it is here: the two are one
+ * shape, and declaring it twice let them describe the same row differently.
+ */
+export const QuotaSchema = z.object({
+  space_id: z.string(),
+  items_limit: z.number().int().nullable(),
+  webhooks_limit: z.number().int().nullable(),
+  blobs_limit: z.number().int().nullable(),
+  storage_bytes_limit: z.number().int().nullable(),
+  rate_per_minute_limit: z.number().int().nullable(),
+  updated_at: z.string().nullable(),
 });
 
 /**
