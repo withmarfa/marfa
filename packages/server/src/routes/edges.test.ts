@@ -420,6 +420,59 @@ describe("GET /items/:id/edges + /backrefs", () => {
     expect(backData.data.length).toBe(1);
   });
 
+  /**
+   * The anchor lookup decides whether the whole call answers, and the two
+   * outcomes below share one line of code — a genuinely absent item and a
+   * trashed one both used to resolve to nothing, and only one of them was
+   * meant to.
+   *
+   * Edges carry no lifecycle column, and `GET /edges` returns an edge
+   * whether or not either endpoint is in the bin. Answering not-found here
+   * made the same edge reachable through one door and invisible through
+   * another, decided by the state of a row the edge does not belong to. A
+   * client reconciling its copy needs the edges of a trashed item: that is
+   * how it learns the item went to the bin with its relationships intact.
+   */
+  it("lists a trashed item's edges rather than answering not-found", async () => {
+    const a = await createItem();
+    const b = await createItem();
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    const trashed = await request(ctx.app, "DELETE", `/items/${a}`, {
+      key: ctx.adminKey,
+    });
+    expect(trashed.status).toBe(200);
+
+    const out = await request(ctx.app, "GET", `/items/${a}/edges`, {
+      key: ctx.adminKey,
+    });
+    expect(out.status).toBe(200);
+    const outData = (await out.json()) as { data: { target_id: string }[] };
+    expect(outData.data.map((e) => e.target_id)).toEqual([b]);
+
+    // The backref door resolves its anchor the same way, so the trashed
+    // endpoint on the other side of the edge has to answer too.
+    const back = await request(ctx.app, "GET", `/items/${b}/backrefs`, {
+      key: ctx.adminKey,
+    });
+    expect(back.status).toBe(200);
+    const backData = (await back.json()) as { data: { source_id: string }[] };
+    expect(backData.data.map((e) => e.source_id)).toEqual([a]);
+  });
+
+  it("still answers not-found for an item that does not exist", async () => {
+    const absent = "019537a0-7b80-7000-8000-00000000ab5e";
+    for (const path of [
+      `/items/${absent}/edges`,
+      `/items/${absent}/backrefs`,
+    ]) {
+      const res = await request(ctx.app, "GET", path, { key: ctx.adminKey });
+      expect(res.status).toBe(404);
+    }
+  });
+
   it("filters by comma-separated edge_type", async () => {
     const a = await createItem();
     const b = await createItem();

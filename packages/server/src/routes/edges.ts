@@ -755,7 +755,16 @@ export function itemEdgeListingRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     const spaceId = c.get("apiKey")?.space_id;
-    const item = await storage.items.get(id, spaceId);
+    // The trashed-inclusive read, matching the write doors above. Edges
+    // carry no lifecycle of their own, and the collection-level listing
+    // returns one whether or not an endpoint is in the bin — so the plain
+    // read made the same edge reachable through one door and absent
+    // through another, decided by the state of a row the edge does not
+    // belong to. A client reconciling its copy has to see a trashed
+    // item's edges; not-found tells it the item never existed, which is a
+    // different thing and leads it to the wrong repair. A genuinely
+    // absent item still answers not-found.
+    const item = await storage.items.getIncludingTrashed(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -775,7 +784,16 @@ export function itemEdgeListingRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     const spaceId = c.get("apiKey")?.space_id;
-    const item = await storage.items.get(id, spaceId);
+    // The trashed-inclusive read, matching the write doors above. Edges
+    // carry no lifecycle of their own, and the collection-level listing
+    // returns one whether or not an endpoint is in the bin — so the plain
+    // read made the same edge reachable through one door and absent
+    // through another, decided by the state of a row the edge does not
+    // belong to. A client reconciling its copy has to see a trashed
+    // item's edges; not-found tells it the item never existed, which is a
+    // different thing and leads it to the wrong repair. A genuinely
+    // absent item still answers not-found.
+    const item = await storage.items.getIncludingTrashed(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
