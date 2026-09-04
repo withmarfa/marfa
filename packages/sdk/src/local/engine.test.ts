@@ -186,7 +186,7 @@ describe("what the engine reports (seam: offline, then online)", () => {
   });
 });
 
-describe("the projection (seam: online)", () => {
+describe("the projection (seam: online, then offline for the unsent write)", () => {
   it("shows visible state, which is the queue over what the server said", async () => {
     const fromServer = await client.items.create({
       type: "core.note",
@@ -226,6 +226,39 @@ describe("the projection (seam: online)", () => {
     await store.mutations.deleteItem(fromServer.id);
     await notes.utils.refresh();
     expect([...notes.values()].map((row) => row.id)).toEqual([unsent.id]);
+
+    await notes.cleanup();
+  });
+
+  it("reflects a property a merge removed", async () => {
+    const note = await client.items.create({
+      type: "core.note",
+      properties: { body: "kept", draft: "goes away" },
+    });
+    await engine.start();
+
+    const notes = createProjection({ store, type: "core.note" });
+    await notes.preload();
+    expect([...notes.values()][0]?.properties).toMatchObject({
+      draft: "goes away",
+    });
+
+    // The row as it now stands, with one property gone. What is pinned
+    // here is the behaviour rather than the setting that would otherwise
+    // deliver it: the refresh replaces the collection wholesale, so a
+    // dropped property is reflected whatever the row-update mode says.
+    // A refresh that diffed instead would need that mode, and this is the
+    // assertion that would catch it going partial.
+    await store.server.items.put({
+      ...note,
+      version: note.version + 1,
+      properties: { body: "kept" },
+    });
+    await notes.utils.refresh();
+
+    const shown = [...notes.values()][0];
+    expect(shown?.properties).toEqual({ body: "kept" });
+    expect(shown?.properties).not.toHaveProperty("draft");
 
     await notes.cleanup();
   });

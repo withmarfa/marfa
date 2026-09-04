@@ -85,14 +85,19 @@ export function createProjection(
     getKey: (item) => item.id,
 
     sync: {
-      // A merge that removes a property has to reach the view, and the
-      // partial mode would leave the removed key sitting there: it applies
-      // the fields a write names and says nothing about the ones it does
-      // not. The server's own merge can drop a property, so the projection
-      // has to be able to show one dropped. It belongs on the sync config
-      // rather than beside `getKey`, and putting it in the wrong place is
-      // not a type error — it is an unknown property the collection
-      // ignores, so the default quietly stays in force.
+      // A merge that removes a property has to reach the view: the server's
+      // own merge can drop one, and the partial mode would leave the
+      // removed key sitting there, because it applies the fields a write
+      // names and says nothing about the others.
+      //
+      // What actually carries that today is the refresh below, which
+      // empties the collection and rewrites it, so no partial update is
+      // ever produced and this setting changes nothing that can be
+      // observed. It is set anyway, and that is a deliberate belt: a later
+      // refresh that diffed instead of replacing would otherwise pick up
+      // partial semantics silently, and misplacing this is not a type
+      // error — beside `getKey` it is an unknown property the collection
+      // ignores, leaving the default quietly in force.
       rowUpdateMode: "full",
       sync: ({ begin, write, commit, markReady, truncate }) => {
         let stopped = false;

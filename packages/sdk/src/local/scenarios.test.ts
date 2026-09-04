@@ -132,7 +132,7 @@ describe("a mutation queued after a create (seam: offline, then online)", () => 
   });
 });
 
-describe("a refused write (seam: online — the server itself refuses)", () => {
+describe("a refused write (seam: offline while queued, then online)", () => {
   it("dead-letters the create, cascades to what waited on it, and takes the ghost away", async () => {
     seam.mode = "offline";
     const good = await store.mutations.createItem({
@@ -220,7 +220,7 @@ describe("a refused write (seam: online — the server itself refuses)", () => {
   });
 });
 
-describe("a transient failure past the ceiling (seam: server_error)", () => {
+describe("a transient failure past the ceiling (seam: offline, then server_error)", () => {
   it("parks the mutation with its reason and tells the app", async () => {
     seam.mode = "offline";
     const note = await store.mutations.createItem({
@@ -318,7 +318,7 @@ describe("a token expired mid-drain (seam: online for one write, then unauthoriz
   });
 });
 
-describe("what a sent write leaves behind (seam: online)", () => {
+describe("what a sent write leaves behind (seam: online, one edit made offline)", () => {
   it("keeps the tags on a row the server only trashed", async () => {
     const note = await store.mutations.createItem({
       type: "core.note",
@@ -454,6 +454,111 @@ describe("a delete whose answer was lost (seam: lost_response, then online)", ()
     expect(await store.deadLetters.list()).toEqual([]);
     expect(await store.visible.getItem(note.id)).toBeUndefined();
     expect(await store.visible.listEdges()).toHaveLength(0);
+  });
+});
+
+describe("an edge edit (seam: offline, then online)", () => {
+  it("goes out with the version it was made against", async () => {
+    const anchor = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "anchor" },
+    });
+    const other = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "other" },
+    });
+    const edge = await store.mutations.createEdge({
+      source_id: anchor.id,
+      target_id: other.id,
+      edge_type: "references",
+    });
+    await drain.drain();
+
+    seam.mode = "offline";
+    await store.mutations.updateEdge(edge.id, { note: "added here" });
+    expect(await store.visible.getEdge(edge.id)).toMatchObject({
+      properties: { note: "added here" },
+    });
+
+    seam.reset();
+    seam.mode = "online";
+    expect(await drain.drain()).toMatchObject({ sent: 1, remaining: 0 });
+
+    // The version the edit was computed against, so a row that moved on
+    // underneath is refused rather than written over. Edges carry no merge
+    // policy, so an unconditional write here would be a silent
+    // last-writer-wins with nothing reporting it.
+    const patch = seam.requests.find((request) => request.method === "PATCH");
+    expect(patch?.body).toMatchObject({ version: 1 });
+    expect(
+      (await client.edges.list({ edge_type: "references" })).data[0],
+    ).toMatchObject({ properties: { note: "added here" } });
+  });
+});
+
+describe("an update whose answer was lost (seam: lost_response, then online)", () => {
+  it("parks for review, because an update carries no key", async () => {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "first" },
+    });
+    await drain.drain();
+    await store.mutations.updateItem(note.id, { title: "mine" });
+
+    // The write lands and the client is told nothing came back.
+    seam.mode = "lost_response";
+    expect(await drain.drain()).toMatchObject({ sent: 0, offline: true });
+
+    seam.mode = "online";
+    await drain.drain();
+
+    // A create repeats safely on the id the client minted and a delete on
+    // the key it carries. An update has neither: it re-sends the version
+    // it was computed against, the server has already moved past it, and
+    // the refusal is a conflict the engine may not settle. So the write
+    // that did land is followed by an edit parked for a person to redo.
+    //
+    // The contract's answer is that the key covers this too. What stands
+    // in the way is not the engine — it never merges, because the drain
+    // sends `manual` — but that the client's update options carry no key
+    // field at all, where the create and delete options do.
+    const parked = (await store.outbox.list())[0];
+    expect(parked).toMatchObject({
+      kind: "item.update",
+      state: "blocked",
+      blockedReason: "needs_review",
+    });
+    expect(await store.deadLetters.list()).toEqual([]);
+    // The edit did reach the server the first time, which is what makes
+    // this a lost answer rather than a lost write.
+    expect(await client.items.get(note.id)).toMatchObject({
+      properties: { title: "mine" },
+    });
+  });
+});
+
+describe("a queue that empties cleanly (seam: offline, then online)", () => {
+  it("records when it last did", async () => {
+    seam.mode = "offline";
+    await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "one" },
+    });
+    await drain.drain();
+    expect((await store.syncState.read(store.identity))?.lastDrainedAt).toBe(
+      null,
+    );
+
+    seam.mode = "online";
+    await drain.drain();
+
+    // Only when the queue actually emptied. A stamp written on every pass
+    // would say a client was up to date while something was still parked
+    // in front of it, which is the one question this field exists to
+    // answer.
+    expect(
+      (await store.syncState.read(store.identity))?.lastDrainedAt,
+    ).not.toBeNull();
   });
 });
 

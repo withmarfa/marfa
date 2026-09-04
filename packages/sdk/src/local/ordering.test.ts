@@ -99,7 +99,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-describe("what a queued write holds back", () => {
+describe("what a queued write holds back (seam: offline while queued, then online)", () => {
   it("holds an edge behind an endpoint's unsent create, and nothing else", async () => {
     seam.mode = "offline";
     const anchor = await store.mutations.createItem({
@@ -184,7 +184,7 @@ describe("what a queued write holds back", () => {
   });
 });
 
-describe("a reconnect while something is queued", () => {
+describe("a reconnect while something is queued (seam: stream_close, then online)", () => {
   it("catches up rather than refusing over the queue", async () => {
     await client.items.create({
       type: "core.note",
@@ -208,6 +208,73 @@ describe("a reconnect while something is queued", () => {
     expect(await store.outbox.count()).toBe(1);
   });
 
+  it("asks from the older of the two marks, not the newer", async () => {
+    const anchor = await client.items.create({
+      type: "core.note",
+      properties: { body: "anchor" },
+    });
+    const other = await client.items.create({
+      type: "core.note",
+      properties: { body: "other" },
+    });
+    await importAll({ store, client, prune: false });
+
+    // Two halves of the graph at different points in time. The edge half
+    // is behind, because nothing has written an edge yet.
+    const edge = await client.edges.create({
+      edge_type: "references",
+      source_id: anchor.id,
+      target_id: other.id,
+    });
+    await store.server.edges.put({ ...edge, updated_at: edge.created_at });
+    await client.items.update(anchor.id, { title: "much later" });
+    await importAll({
+      store,
+      client,
+      prune: false,
+      updatedAfter: (await store.server.edges.maxUpdatedAt()) ?? "",
+    });
+
+    const itemMark = await store.server.items.maxUpdatedAt();
+    const edgeMark = await store.server.edges.maxUpdatedAt();
+    if (itemMark === undefined || edgeMark === undefined) {
+      throw new Error("expected both halves to hold something");
+    }
+    expect(edgeMark < itemMark).toBe(true);
+
+    // Something changed on the older half after that half's mark and
+    // before the newer half's.
+    await client.edges.update(edge.id, { note: "changed in the gap" });
+    const changed = (await client.edges.list({ edge_type: "references" }))
+      .data[0];
+    if (changed === undefined) throw new Error("expected the edge");
+
+    // Already hydrated, so starting does not read the corpus again and
+    // move the marks this scenario just arranged.
+    await store.syncState.setHydratedAt(identity, AT);
+
+    // Through a reconnect, which is what runs the catch-up. Every
+    // connection carries its opening frame and then ends, so nothing
+    // arrives live and the catch-up is the only way the change can reach
+    // this store.
+    seam.mode = "stream_close";
+    await startSync(5).start();
+    await reports((event) => event.type === "catchup.finished");
+
+    // Taking the newer of the two marks would ask both halves for
+    // everything since the item's clock, which is past the edge's own, so
+    // a change to the older half in between is never asked for and
+    // nothing later mentions it.
+    const caught = events.find((event) => event.type === "catchup.finished");
+    expect(caught).toMatchObject({ since: edgeMark });
+    expect(changed.properties).toMatchObject({ note: "changed in the gap" });
+
+    await settles(
+      () => store.server.edges.get(edge.id),
+      (row) => row?.properties.note === "changed in the gap",
+    );
+  });
+
   it("reads a slice over a pending write and refuses only a prune", async () => {
     await client.items.create({
       type: "core.note",
@@ -229,3 +296,14 @@ describe("a reconnect while something is queued", () => {
     );
   });
 });
+
+async function settles<T>(
+  read: () => Promise<T>,
+  want: (value: T) => boolean,
+): Promise<T> {
+  for (;;) {
+    const value = await read();
+    if (want(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}

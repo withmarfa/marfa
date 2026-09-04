@@ -139,26 +139,39 @@ describe("the fixture's event log", () => {
   });
 });
 
-/** Open one subscription with a resume cursor and report what it got. */
+/**
+ * Open one subscription with a resume cursor and report what it got.
+ *
+ * The two outcomes race each other, and both are positive: either the
+ * stream refuses the cursor, or it delivers a frame — which it can only do
+ * if it is still open, so it did not refuse. Concluding "no refusal"
+ * from a timer instead makes the answer a function of how busy the machine
+ * is: the server announces, awaits a read, and only then refuses, so a
+ * loaded box turns a correct engine into a wrong answer in whichever
+ * direction the caller happened to be checking.
+ */
 function askWithCursor(cursor: string): Promise<{
   announced: string | undefined;
   tooOld: { min_retained_id: string; requested: string } | undefined;
 }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let announced: string | undefined;
     const subscription = client.events.subscribe({
       lastEventId: cursor,
       reconnect: false,
-      onEvent: () => undefined,
+      onEvent: () => {
+        // A frame arrived, so the stream is live and past the point where
+        // a refusal would have come.
+        subscription.close();
+        resolve({ announced, tooOld: undefined });
+      },
       onCursor: (value) => {
         announced = value;
-        // Nothing else is coming on a stream that was going to refuse:
-        // the refusal is the first frame after the announcement, and the
-        // announcement is the last thing a healthy one says unprompted.
-        setTimeout(() => {
-          subscription.close();
-          resolve({ announced, tooOld: undefined });
-        }, 50);
+        // Something for a healthy stream to deliver. A refusal is sent
+        // instead of the backlog, so only one of the two can happen.
+        client.items
+          .create({ type: "core.note", properties: { body: "a live frame" } })
+          .catch(reject);
       },
       onCatchupTooOld: (info) => {
         subscription.close();
@@ -209,8 +222,15 @@ describe("a cursor the log can no longer serve (seam: online)", () => {
     expect(await store.server.items.get(goes.id)).toBeUndefined();
     expect(await store.server.items.get(kept.id)).toBeDefined();
     // Resumed from the announcement the new connection made, not from the
-    // cursor that was refused.
-    expect((await store.syncState.read(identity))?.cursor).not.toBe("0");
+    // cursor that was refused. Settled on rather than read immediately:
+    // the re-import clears the cursor before it reads, so the instant it
+    // finishes the value is null — which is not "0" and would satisfy a
+    // bare inequality without the new announcement ever being observed.
+    const resumedAt = await settles(
+      () => store.syncState.read(identity),
+      (row) => row?.cursor != null,
+    );
+    expect(resumedAt?.cursor).not.toBe("0");
   });
 });
 

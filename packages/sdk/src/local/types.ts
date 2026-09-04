@@ -76,10 +76,16 @@ export interface OutboxEntry {
    *
    * Stored rather than generated at send time, because a key generated per
    * attempt makes every attempt its own write, which is the failure the
-   * key exists to prevent arriving under cover of appearing to work. The
-   * drain sends this on every door that accepts one; the two update doors
-   * do not yet, because a strategy that re-sends a merged body would be
-   * replaying the key with a different request, which the server refuses.
+   * key exists to prevent arriving under cover of appearing to work.
+   *
+   * The drain sends it on every door that accepts one, which is not yet
+   * the two update doors — and the reason is narrower than it looks. It
+   * is not that a retry might carry a merged body: this engine never
+   * merges, because the drain states `manual` and the server has the
+   * conflict. It is that the client's update options carry no key field
+   * at all, where the create and delete options do. Until they do, an
+   * update whose answer is lost re-sends the version it was computed
+   * against, meets the row already past it, and parks for review.
    */
   idempotencyKey: string;
   state: OutboxRowState;

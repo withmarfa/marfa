@@ -364,17 +364,32 @@ describe("re-importing after being away (seam: online, no subscription)", () => 
     expect(await store.server.items.get(kept.id)).toBeDefined();
   });
 
-  it("never removes a row this client has not sent yet", async () => {
-    // A create the server has never seen, parked for review so that a
-    // drain cannot clear it. The row exists nowhere but here, so the read
-    // was never going to return it — and pruning against that read would
-    // delete the write itself.
-    const unsent = await store.mutations.createItem({
+  it("never removes a row this client still has work queued for", async () => {
+    const held = await client.items.create({
       type: "core.note",
-      properties: { body: "only here" },
+      properties: { body: "queued against" },
     });
+    const swept = await client.items.create({
+      type: "core.note",
+      properties: { body: "nothing queued against it" },
+    });
+    await importAll({ store, client, prune: false });
+
+    // Both rows are in server state, and neither is in the read that
+    // follows. That is what makes this a test of the protection at all: a
+    // row that lives only in the outbox is absent from the prune's
+    // candidate set to begin with, so guarding it proves nothing — remove
+    // the guard entirely and a scenario built that way stays green.
+    await client.items.delete(held.id);
+    await client.items.purge(held.id);
+    await client.items.delete(swept.id);
+    await client.items.purge(swept.id);
+
+    // Work this client has not sent, against one of them. Parked for
+    // review so a drain cannot clear it.
+    await store.mutations.updateItem(held.id, { title: "still mine" });
     const queued = (await store.outbox.list())[0];
-    if (queued === undefined) throw new Error("expected a queued create");
+    if (queued === undefined) throw new Error("expected a queued mutation");
     await store.outbox.block(
       queued.seq,
       "needs_review",
@@ -383,10 +398,12 @@ describe("re-importing after being away (seam: online, no subscription)", () => 
 
     const result = await importAll({ store, client, prune: true });
 
-    expect(result.prunedItems).toBe(0);
-    expect(await store.visible.getItem(unsent.id)).toMatchObject({
-      properties: { body: "only here" },
-    });
+    // One went, the one the queue names stayed. Pruning a row a mutation
+    // is still waiting on takes the row out from under the write, and the
+    // write then has nothing to be applied over.
+    expect(result.prunedItems).toBe(1);
+    expect(await store.server.items.get(swept.id)).toBeUndefined();
+    expect(await store.server.items.get(held.id)).toBeDefined();
   });
 
   it("refuses to read over a write that is still going out", async () => {
