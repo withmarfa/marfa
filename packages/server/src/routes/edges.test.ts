@@ -436,9 +436,17 @@ describe("GET /items/:id/edges + /backrefs", () => {
   it("lists a trashed item's edges rather than answering not-found", async () => {
     const a = await createItem();
     const b = await createItem();
+    const c = await createItem();
+    // One edge out of `a` and one into it, so both doors are asked about
+    // the trashed item as their own anchor rather than about a live
+    // neighbor — which is the only way each door's own lookup is exercised.
     await request(ctx.app, "POST", "/edges", {
       key: ctx.adminKey,
       body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: c, target_id: a, edge_type: "about" },
     });
     const trashed = await request(ctx.app, "DELETE", `/items/${a}`, {
       key: ctx.adminKey,
@@ -452,14 +460,12 @@ describe("GET /items/:id/edges + /backrefs", () => {
     const outData = (await out.json()) as { data: { target_id: string }[] };
     expect(outData.data.map((e) => e.target_id)).toEqual([b]);
 
-    // The backref door resolves its anchor the same way, so the trashed
-    // endpoint on the other side of the edge has to answer too.
-    const back = await request(ctx.app, "GET", `/items/${b}/backrefs`, {
+    const back = await request(ctx.app, "GET", `/items/${a}/backrefs`, {
       key: ctx.adminKey,
     });
     expect(back.status).toBe(200);
     const backData = (await back.json()) as { data: { source_id: string }[] };
-    expect(backData.data.map((e) => e.source_id)).toEqual([a]);
+    expect(backData.data.map((e) => e.source_id)).toEqual([c]);
   });
 
   it("still answers not-found for an item that does not exist", async () => {
