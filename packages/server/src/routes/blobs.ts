@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { withPreparedHeaders } from "../prepared-headers.js";
 import { resolveBlobForSpace } from "../storage/blob-reader.js";
 import type { ResolvedBlob } from "../storage/blob-reader.js";
 import {
@@ -511,13 +512,16 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob data not found");
     }
 
-    return new Response(new Uint8Array(data), {
-      status: 200,
-      headers: {
-        "Content-Type": record.mime_type,
-        "Content-Length": String(data.length),
-      },
-    });
+    return withPreparedHeaders(
+      c,
+      new Response(new Uint8Array(data), {
+        status: 200,
+        headers: {
+          "Content-Type": record.mime_type,
+          "Content-Length": String(data.length),
+        },
+      }),
+    );
   });
 
   // GET /blobs/:hash/url — presigned download URL

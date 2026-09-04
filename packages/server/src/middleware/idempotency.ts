@@ -4,6 +4,7 @@ import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
 import type { AppEnv } from "./auth.js";
 import { log } from "./logger.js";
 import type { Storage } from "../storage/interface.js";
+import { withPreparedHeaders } from "../prepared-headers.js";
 
 /**
  * A write that is retried after a lost response learns what its first
@@ -226,31 +227,23 @@ function errorCodeOf(body: string): string | null {
 }
 
 /**
- * Put back the headers the middleware chain had already prepared.
- *
- * A replay is a fresh `Response`, and Hono drops the context's prepared
- * headers whenever one of those is returned — the same discard the error
+ * A replay is a fresh `Response`, so it starts with none of the headers the
+ * middleware chain prepared for this request — the same discard the error
  * handler compensates for by copying `c.res.headers` before it renders.
  * `replay` re-added `X-Error-Code` by hand for that reason and stopped
- * there, so a replayed response was the only response the server sends
- * with no `X-Request-ID` and, on a deployment that rate limits, no
- * `X-RateLimit-*` trio.
+ * there, leaving a replayed response with no `X-Request-ID` and, where the
+ * deployment rate limits, no `X-RateLimit-*` trio.
  *
  * Both are worth more on a replay than anywhere else. A retry is the
- * request a client is most likely to be debugging, and it is the one that
- * had no id to quote; the rate-limit window is consumed by the replayed
- * request like any other, so a client polling a retry loop was losing
- * sight of its own budget exactly while spending it.
+ * request a client is most likely to be debugging and it had no id to
+ * quote, and the replayed request consumes its rate-limit window like any
+ * other, so a client polling a retry loop was losing sight of the budget it
+ * was spending.
  *
- * The stored response wins every collision: its `Content-Type`, its
- * `Idempotency-Replayed`, its `X-Error-Code` all describe the answer being
- * served, and nothing prepared for this request may overwrite them.
+ * `withPreparedHeaders` is shared with the handlers that build a `Response`
+ * by hand for the same reason — see that function for what Hono does with
+ * the prepared bag afterwards, which is not what the merge alone suggests.
  */
-function replayWithPreparedHeaders(c: Context<AppEnv>, answer: Response) {
-  const headers = new Headers(c.res.headers);
-  for (const [name, value] of answer.headers) headers.set(name, value);
-  return new Response(answer.body, { status: answer.status, headers });
-}
 
 /**
  * `Idempotency-Key` on the item and edge write doors.
@@ -313,7 +306,7 @@ export function idempotencyMiddleware(opts: {
     const digest = await fingerprint(c, bodyText);
 
     const held = await acquire(storage, spaceId, key, digest);
-    if ("answer" in held) return replayWithPreparedHeaders(c, held.answer);
+    if ("answer" in held) return withPreparedHeaders(c, held.answer);
 
     const { recordId, heldSince } = held;
     let response: Response;
