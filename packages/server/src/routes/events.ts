@@ -773,7 +773,7 @@ export function eventRoutes(
           const holdFrame = (frame: HeldFrame): void => {
             if (heldFrames.length >= MAX_HELD_FRAMES) {
               console.warn(
-                `[events] closing the stream: ${String(MAX_HELD_FRAMES)} live frames were held while the catch-up ran and it has not finished`,
+                `[events] closing the stream: ${String(MAX_HELD_FRAMES)} live frames accumulated while it was still opening, and the prologue has not finished`,
               );
               failStream("backlog_overflow");
               return;
