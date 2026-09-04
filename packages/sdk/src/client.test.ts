@@ -1611,20 +1611,28 @@ describe("items.bulkAction", () => {
   });
 
   it("filter.state and filter.tier stay narrower than GET /items — the route has no revoked-state or all-tier match", () => {
+    // The assertion here is the compile step, not a runtime expectation.
+    // Each `@ts-expect-error` fails the build the moment the error it
+    // names stops happening, which is exactly what widening the field
+    // back would do. Types are erased before this body runs, so no
+    // runtime check on these values can distinguish a narrowed type from
+    // a wide one — the sibling test below is what holds the server's
+    // half. This one goes red under `typecheck` rather than under the
+    // test runner.
     // @ts-expect-error — `revoked` is a system.*-only lifecycle value;
     // POST /items/bulk-actions filters over the ordinary three-state
     // lifecycle only, so this must not typecheck.
-    const stateFilter: BulkActionFilter = { state: "revoked" };
+    const rejectedState: BulkActionFilter = { state: "revoked" };
     // @ts-expect-error — the bulk-action route has no `"all"` catch-all
     // on tier; that only exists on GET /items' wider ListFilters.
-    const tierFilter: BulkActionFilter = { tier: "all" };
+    const rejectedTier: BulkActionFilter = { tier: "all" };
 
-    // The type guard above is necessary but not sufficient on its own —
-    // it only stops a caller who lets the compiler see the literal.
-    // These lock in that the server backs it: a value that slips past
-    // the type (a raw HTTP client, a cast, plain JS) still gets refused.
-    expect(stateFilter.state).toBe("revoked");
-    expect(tierFilter.tier).toBe("all");
+    // The other half, so this pins a narrowing to exactly two values
+    // rather than to anything narrower: both of these must still assign.
+    const acceptedState: BulkActionFilter = { state: "trashed" };
+    const acceptedTier: BulkActionFilter = { tier: "library" };
+
+    void [rejectedState, rejectedTier, acceptedState, acceptedTier];
   });
 
   it("the server refuses filter.state: revoked and filter.tier: all with validation_error", async () => {
