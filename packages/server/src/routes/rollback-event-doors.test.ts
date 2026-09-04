@@ -618,19 +618,22 @@ const doors: Door[] = [
       const res = await request(ctx.app, "POST", `/items/${s.item}/promote`, {
         key: ctx.adminKey,
       });
-      if (res.status !== 201) return false;
-      // The promoted copy's id, which only the response carries: the door
-      // announces an item event for it as well as the edge, and `setup`
-      // cannot know an id the door has not minted yet. `other` is otherwise
-      // unused by this door.
-      s.other = ((await res.json()) as { item: { id: string } }).item.id;
-      return true;
+      return res.status === 201;
     },
     // Both halves. The item is announced first and the edge behind it, so
     // guarding one would leave the other free to move inside the
     // transaction and describe a promotion that rolled back.
+    //
+    // The copy is identified by elimination rather than by its id, because
+    // its id only exists on the successful run — the response carries it and
+    // the broken run has no response. Reading it from there left the broken
+    // run comparing against an empty string, so a phantom item event was
+    // heard and attributed to nothing, and the guard passed while the defect
+    // it names was present. Within `act`'s window this door writes exactly
+    // one item and never touches the mirror, so an item event that is not
+    // the mirror's is the copy's.
     attributable: (h, s) => [
-      ...itemEventsFor(h, s.other),
+      ...h.items.filter((e) => e.item.id !== s.item),
       ...edgeEventsTouching(h, [s.item]),
     ],
     landed: async (s) =>
