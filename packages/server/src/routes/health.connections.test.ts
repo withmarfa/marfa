@@ -17,8 +17,9 @@ import type { TestContext } from "../test-utils.js";
 
 const isPg = process.env.DB_DIALECT === "pg";
 
-/** What an unlabeled pool stamps: `createConnection` defaults the role to
- *  `both`, and the test harness passes no `applicationName`. */
+/** What the test harness's pool stamps. It passes `pgApplicationName` with
+ *  no role, matching the `AppConfig` the health routes are built with, so
+ *  this is the label the endpoint looks for. */
 const APP_POOL = "marfa-both:app";
 
 interface ConnectionsBody {
@@ -28,7 +29,7 @@ interface ConnectionsBody {
     max_connections: number;
     reserved: number;
     clients: Record<string, Record<string, number>>;
-    pool: {
+    pool?: {
       size: number;
       in_use: number;
       idle_in_transaction: number;
@@ -129,9 +130,11 @@ describe.skipIf(!isPg)("GET /health database connections", () => {
     expect(pool.idle_in_transaction).toBeLessThanOrEqual(pool.in_use);
     expect(pool.free).toBe(Math.max(0, pool.size - pool.in_use));
 
-    // A test context's pool is not under pressure, so the component is
-    // healthy. Asserted here rather than only against fakes because this
-    // is the path where the figure comes from a real `pg_stat_activity`.
+    // The component says nothing about occupancy — the probe answered, which
+    // is the whole question it asks. Asserted here rather than only against
+    // fakes because this is the path where the figures come from a real
+    // `pg_stat_activity`, so it is the one that would catch the reading being
+    // wired back into the status.
     expect(body.components.database?.status).toBe("ok");
   });
 

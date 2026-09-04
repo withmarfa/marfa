@@ -76,6 +76,32 @@ export function pgApplicationName(processRole: string | undefined): string {
   return `marfa-${processRole ?? "both"}`;
 }
 
+/**
+ * The label a pool carries when whoever built it did not say who it is.
+ *
+ * **Deliberately outside the space `pgApplicationName` can produce**, which
+ * always appends a role. That keeps two things apart that a shared label
+ * would merge. `/health` reports `database_connections.pool` by finding this
+ * process's own app-pool label among every client in `pg_stat_activity`, so
+ * whatever an unnamed pool stamps is what the endpoint counts as its own.
+ *
+ * Defaulting this through `pgApplicationName` instead reads as the tidier
+ * option and is the wrong trade. The callers that pass no label are one-shot
+ * admin scripts — seeding, the retired migrations — and each opens a pool of
+ * its own. Run co-resident with a server that has no `MARFA_PROCESS_ROLE`,
+ * which is the single-container self-host, both would stamp `marfa-both:app`
+ * and the script's ten connections would be reported as the server's pool
+ * filling up. Production sets `web` and `worker` explicitly and would not
+ * have seen it, which is what makes it worth stating rather than assuming.
+ *
+ * Under this label the same script is reported honestly: it still matches the
+ * shape `/health` publishes under its own name, so it appears as its own
+ * client rather than folded in with everything else, and it cannot be
+ * mistaken for a pool a request competes for. Anything that genuinely is one
+ * of the server's own pools passes `applicationName`; the test harness does.
+ */
+export const PG_UNNAMED_APPLICATION_NAME = "marfa";
+
 const POOL_IDLE_TIMEOUT_SECONDS = 30;
 
 /**
@@ -262,12 +288,7 @@ export async function createConnection(
     );
   }
 
-  // Defaulted through the same helper rather than to a bare "marfa", so an
-  // unlabeled pool still carries a role and still matches what `/health`
-  // builds from `MARFA_PROCESS_ROLE`. A pool named something that function
-  // cannot produce reports as another client's traffic, and the pool figure
-  // then reads as permanently idle rather than as missing.
-  const appName = options?.applicationName ?? pgApplicationName(undefined);
+  const appName = options?.applicationName ?? PG_UNNAMED_APPLICATION_NAME;
   const client = postgres(connectionString, {
     // **This is also the ceiling on concurrent space-scoped requests**, which
     // the name does not say and which is the number a deployment actually
@@ -289,9 +310,11 @@ export async function createConnection(
     // spending this budget while it waits, and `POST /connections/{id}/
     // proxy/*` is the one that does.
     //
-    // The deployment's own budget note counts these connections as a
-    // steady-state number, which is right for their count and wrong for how
-    // long each is held.
+    // So sizing this pool against the database's connection ceiling answers
+    // only half the question. The count is what competes for `max_connections`
+    // and is the number to hold under the tier's limit; how long each slot is
+    // held is what decides whether the pool is a pool or a queue, and no
+    // connection budget can see that.
     max: options?.maxPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS,
     connection: { application_name: `${appName}:app` },
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,

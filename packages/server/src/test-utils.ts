@@ -6,6 +6,7 @@ import type { EmailTransport } from "./email/transport.js";
 import type { DeadLetterOps } from "./integrations/local-runtime/dead-letters.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
+import { pgApplicationName } from "./storage/pg/connection.js";
 import { cloneTemplate } from "./storage/pg/test-template.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
@@ -117,6 +118,13 @@ export async function createPgTestStorage(options?: {
   const storage = await createPgStorage(clone.url, {
     ...options,
     maxPoolSize: options?.maxPoolSize ?? TEST_POOL_SIZE,
+    // Named rather than left to default, because this pool stands in for a
+    // server's own and `/health` finds that pool by its label. Unnamed it
+    // would carry `PG_UNNAMED_APPLICATION_NAME`, which is deliberately not a
+    // label any role produces, and the endpoint would report a pool it never
+    // found as an idle one. `buildTestContext` builds its `AppConfig` with no
+    // `processRole`, so this is the same expression the endpoint evaluates.
+    applicationName: pgApplicationName(undefined),
     skipBootstrap: true,
   });
   return {
