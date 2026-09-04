@@ -9,6 +9,7 @@ import {
   BulkActionWorker,
 } from "@withmarfa/server";
 import { MarfaClient } from "./client.js";
+import type { BulkActionFilter } from "./client.js";
 import {
   ConflictError,
   NotFoundError,
@@ -1607,6 +1608,52 @@ describe("items.bulkAction", () => {
     ).rejects.toMatchObject({
       code: "bulk_cap_exceeded",
     });
+  });
+
+  it("filter.state and filter.tier stay narrower than GET /items — the route has no revoked-state or all-tier match", () => {
+    // @ts-expect-error — `revoked` is a system.*-only lifecycle value;
+    // POST /items/bulk-actions filters over the ordinary three-state
+    // lifecycle only, so this must not typecheck.
+    const stateFilter: BulkActionFilter = { state: "revoked" };
+    // @ts-expect-error — the bulk-action route has no `"all"` catch-all
+    // on tier; that only exists on GET /items' wider ListFilters.
+    const tierFilter: BulkActionFilter = { tier: "all" };
+
+    // The type guard above is necessary but not sufficient on its own —
+    // it only stops a caller who lets the compiler see the literal.
+    // These lock in that the server backs it: a value that slips past
+    // the type (a raw HTTP client, a cast, plain JS) still gets refused.
+    expect(stateFilter.state).toBe("revoked");
+    expect(tierFilter.tier).toBe("all");
+  });
+
+  it("the server refuses filter.state: revoked and filter.tier: all with validation_error", async () => {
+    const tag = `ba-narrow-${Math.random().toString(36).slice(2, 8)}`;
+    await seedTagged(1, tag);
+
+    await expect(
+      client.items.bulkAction({
+        action: "transition",
+        state: "archived",
+        filter: {
+          tags: [tag],
+          state: "revoked",
+        } as unknown as BulkActionFilter,
+        dry_run: true,
+      }),
+    ).rejects.toMatchObject({ code: "validation_error" });
+
+    await expect(
+      client.items.bulkAction({
+        action: "transition",
+        state: "archived",
+        filter: {
+          tags: [tag],
+          tier: "all",
+        } as unknown as BulkActionFilter,
+        dry_run: true,
+      }),
+    ).rejects.toMatchObject({ code: "validation_error" });
   });
 });
 

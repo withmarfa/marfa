@@ -456,14 +456,17 @@ export interface BulkEdgeResult {
   results: BulkEdgeResultEntry[];
 }
 
-/** Filter shape for `POST /items/bulk-actions`. Mirrors the `GET /items`
+/** Filter shape for `POST /items/bulk-actions`. Close to the `GET /items`
  *  query grammar — every field is AND-composed, `filter` accepts the
- *  full filter-SQL DSL. */
+ *  full filter-SQL DSL — but narrower on two axes: this route has no
+ *  `"any"` / `"all"` catch-all, and `state` excludes `revoked` (a
+ *  `system.*`-only lifecycle value bulk actions never match). Widen
+ *  either only if the route itself starts accepting the wider value. */
 export interface BulkActionFilter {
   type?: string;
-  state?: ItemState;
+  state?: Exclude<ItemState, "revoked">;
   source?: string;
-  tier?: Tier | "all";
+  tier?: Tier;
   tags?: string[];
   timestamp_after?: string;
   timestamp_before?: string;
