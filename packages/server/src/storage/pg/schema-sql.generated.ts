@@ -431,7 +431,8 @@ CREATE TABLE IF NOT EXISTS public.items (
     search_vector tsvector,
     starts_at_utc text,
     ends_at_utc text,
-    written_by_connection_id text
+    written_by_connection_id text,
+    trashed_at text
 );
 
 CREATE TABLE IF NOT EXISTS public.metadata (

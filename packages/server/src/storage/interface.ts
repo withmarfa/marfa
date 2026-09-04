@@ -677,9 +677,18 @@ export interface ItemStore {
     by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**
-   * Hard-delete every trashed item whose `updated_at` is strictly older
-   * than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
-   * for each row. Returns the number of rows deleted.
+   * Hard-delete every trashed item that entered the bin strictly before
+   * `beforeDate` (an ISO 8601 timestamp). Cleans the search index for
+   * each row. Returns the number of rows deleted.
+   *
+   * The window is measured from `trashed_at`, the time of the transition
+   * into the soft-deleted state, falling back to `updated_at` for a row
+   * carrying no stamp. `updated_at` alone used to decide it, and it is
+   * the modification time rather than the removal time: any write to a
+   * trashed row moved it, so editing something already in the bin
+   * restarted its retention clock. The fallback covers only rows soft-
+   * deleted by a build predating the column, where reproducing the old
+   * behavior beats a row nothing can purge.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of

@@ -44,7 +44,7 @@ export interface SpaceFanout {
 }
 
 /**
- * Hard-deletes trashed items whose `updated_at` is older than the
+ * Hard-deletes trashed items that entered the bin longer ago than the
  * configured retention window. Pattern mirrors `VersionThinner`:
  * single-process timer, synchronous `runOnce()` entry point for tests,
  * idempotent sweep.
