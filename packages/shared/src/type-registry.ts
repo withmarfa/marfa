@@ -481,6 +481,44 @@ export function classifyNamespace(id: string): NamespaceTier {
   return "publisher";
 }
 
+/**
+ * Which tiers the platform owns outright. Exhaustive over
+ * {@link NamespaceTier} rather than a list of the three that answer `true`,
+ * so a tier added to the union stops the package compiling here until
+ * somebody has said which side it falls on. {@link seedPlatformTypes} makes
+ * the same trade with a `switch` over the family union, for the same reason:
+ * a value reaching neither branch is not inert.
+ */
+const PLATFORM_TIER_MEMBERSHIP: Readonly<Record<NamespaceTier, boolean>> = {
+  core: true,
+  system: true,
+  marfa: true,
+  app: false,
+  user: false,
+  publisher: false,
+};
+
+/**
+ * The tiers the platform owns outright — exactly the three that `POST /types`
+ * and an archive restore refuse for every credential, platform included. An
+ * id under one of them can only have arrived by being seeded, never by being
+ * registered, which is what lets a caller classify one by name alone.
+ *
+ * Exported for the reason {@link isReservedRoot} gives about its own set, and
+ * the reason binds harder here because there is no second grammar to fall
+ * back on. Three sites decided this independently — the registration door,
+ * the archive-restore door, and the hydration helper — and a tier present in
+ * one copy and absent from another is a namespace one door refuses while
+ * another treats it as somebody's custom type, which is a security question
+ * rather than a tidiness one. Adding a member to {@link NamespaceTier} is the
+ * move that would have done it silently in every copy at once.
+ */
+export const PLATFORM_TIERS: ReadonlySet<NamespaceTier> = new Set(
+  (Object.keys(PLATFORM_TIER_MEMBERSHIP) as NamespaceTier[]).filter(
+    (tier) => PLATFORM_TIER_MEMBERSHIP[tier],
+  ),
+);
+
 /** Returns true if the type identifier belongs to the core namespace. */
 export function isCoreType(id: string): boolean {
   return classifyNamespace(id) === "core";

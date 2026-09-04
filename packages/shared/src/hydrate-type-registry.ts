@@ -2,6 +2,7 @@ import type { TypeSchema } from "@withmarfa/types";
 import { ErrorCode, MarfaError } from "./errors.js";
 import {
   MAX_RESOLUTION_DEPTH,
+  PLATFORM_TIERS,
   TYPE_REGISTRY,
   classifyNamespace,
   getTypeSchema,
@@ -9,18 +10,6 @@ import {
   registerTypeSchema,
   unregisterTypeSchema,
 } from "./type-registry.js";
-
-/**
- * The tiers the platform owns outright — exactly the three `POST /types`
- * refuses for every credential, platform included. An id under one of them
- * can only have arrived by being seeded, never by being registered, which is
- * what lets this helper classify one by name.
- */
-const PLATFORM_TIERS: ReadonlySet<string> = new Set([
-  "core",
-  "system",
-  "marfa",
-]);
 
 /** Options for {@link hydrateTypeRegistry}. */
 export interface HydrateTypeRegistryOptions {

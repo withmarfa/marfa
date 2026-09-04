@@ -3,14 +3,22 @@ import type { TypeSchema } from "@withmarfa/types";
 import { hydrateTypeRegistry } from "./hydrate-type-registry.js";
 import {
   MAX_RESOLUTION_DEPTH,
+  PLATFORM_TIERS,
   SYSTEM_TYPE_IDS,
+  TYPE_REGISTRY,
+  classifyNamespace,
   getTypeSchema,
+  hasBoundedLifecycle,
   listTypes,
   softDeleteState,
   unregisterTypeSchema,
   validateProperties,
   validateTransition,
 } from "./type-registry.js";
+import {
+  PLATFORM_TIERS as tiersFromPackageRoot,
+  hasBoundedLifecycle as boundedLifecycleFromPackageRoot,
+} from "./index.js";
 import { ErrorCode, MarfaError } from "./errors.js";
 
 // A space of its own per file: the registry is a module-level singleton, so a
@@ -317,6 +325,28 @@ describe("hydrateTypeRegistry", () => {
     expect(result.unshippedPlatform).toEqual([id]);
   });
 
+  it("keeps the bounded lifecycle to the system tier", () => {
+    // The negative control for the test above, and the one the change needs
+    // most. `hasBoundedLifecycle`'s namespace half is `isSystemType` — one
+    // tier — while the tier set the platform owns has three, so widening it
+    // to the set reads like tidying two spellings of the same idea into one.
+    // It is not: the server gives `core.*` and `marfa.*` the canonical
+    // three-state graph, so a client on the widened rule would refuse an
+    // archive the server accepts and aim a delete at a state the type has no
+    // transition to. Both ids sit outside `SYSTEM_TYPE_IDS` and outside this
+    // build's shipped map, so the family set answers for neither and the
+    // namespace test is the only thing deciding.
+    for (const id of ["core.unshipped_probe", "marfa.unshipped_probe"]) {
+      expect(SYSTEM_TYPE_IDS.has(id)).toBe(false);
+      expect(TYPE_REGISTRY.has(id)).toBe(false);
+      expect(PLATFORM_TIERS.has(classifyNamespace(id))).toBe(true);
+      expect(hasBoundedLifecycle(id)).toBe(false);
+      expect(softDeleteState(id)).toBe("trashed");
+      expect(validateTransition(id, "active", "archived")).toBeNull();
+      expect(validateTransition(id, "active", "revoked")).not.toBeNull();
+    }
+  });
+
   it("removes nothing when the payload is refused", () => {
     hydrate([{ id: "acme.standing", version: 1, fields: {} }]);
 
@@ -370,5 +400,27 @@ describe("hydrateTypeRegistry", () => {
     expect(
       validateProperties("acme.frond", {}, { spaceId: SPACE }).success,
     ).toBe(true);
+  });
+});
+
+describe("the package root", () => {
+  // Both symbols exist for a consumer outside this package: the server
+  // decides the bounded-lifecycle question at sites of its own, and asks the
+  // tier set at the two registration doors. Neither can reach a symbol the
+  // package entry point does not carry, and every other test in this file
+  // imports straight from `./type-registry.js`, so the export could be
+  // dropped and all of them would still pass. The compiler does not close
+  // that gap either — it catches an export naming something that does not
+  // exist, never a symbol nobody exported.
+  //
+  // The identity assertions are not enough on their own and are not left to
+  // carry it: two absent exports are both `undefined`, so `toBe` holds
+  // between them and the check passes in exactly the state it exists to
+  // catch. The shape assertions are what make it fail.
+  it("carries the pair the server imports", () => {
+    expect(boundedLifecycleFromPackageRoot).toBeTypeOf("function");
+    expect(tiersFromPackageRoot).toBeInstanceOf(Set);
+    expect(boundedLifecycleFromPackageRoot).toBe(hasBoundedLifecycle);
+    expect(tiersFromPackageRoot).toBe(PLATFORM_TIERS);
   });
 });
