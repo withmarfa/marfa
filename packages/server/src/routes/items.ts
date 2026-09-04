@@ -13,7 +13,7 @@ import {
   ITEM_STATES,
   SYSTEM_DEFAULT_STATE,
   validateTransition,
-  SYSTEM_TYPE_IDS,
+  hasBoundedLifecycle,
   resolveEnforcement,
   isTypeInStrictMode,
   getSourceAllowlist,
@@ -1328,7 +1328,13 @@ export function itemRoutes(storage: Storage) {
     }
     // `system.*` items have no tier; reject explicit values on write, and
     // stamp `undefined` rather than the library default.
-    const isSystemTypeWrite = SYSTEM_TYPE_IDS.has(type);
+    //
+    // Asked through the same predicate the delete door uses, so the two
+    // cannot answer differently for a reserved-root type this build did not
+    // seed: one refusing the tier while the other still stamps a default is
+    // how a platform record ends up with a field its own lifecycle has no
+    // room for.
+    const isSystemTypeWrite = hasBoundedLifecycle(type);
     if (isSystemTypeWrite && body.tier !== undefined) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
