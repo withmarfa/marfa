@@ -30,7 +30,7 @@ afterAll(async () => {
 });
 
 interface Page {
-  data: { id: string; created_at: string }[];
+  data: { id: string; created_at: string; updated_at: string }[];
   cursor: string | null;
   has_more: boolean;
 }
@@ -179,6 +179,85 @@ describe("GET /items — the cursor is bound to the ordering that issued it", ()
 
     expectOrderingRefusal(
       await listItems(`${TYPE}&sort=timestamp&cursor=${unkeyed}`),
+    );
+  });
+});
+
+/**
+ * The compatibility path, which only matters once — for the few minutes
+ * after a deploy, while cursors minted by the previous build are still in
+ * flight — and which nothing else in this file reaches.
+ *
+ * The build now running mints `k: "created_at:desc"`. The one being
+ * replaced mints a bare `k: "created_at"`, and that spelling is not the
+ * absent key the case above covers: an absent key is read as the default
+ * ordering by `UNKEYED_CURSOR_ORDERING`, while a present-but-old one has
+ * to be mapped by `LEGACY_CURSOR_KEYS` or it fails the equality check and
+ * every page in flight breaks at the moment of deploy.
+ *
+ * So the cursors here are built by hand. There is no way to obtain one
+ * from this server — the code that issued them is the code being replaced
+ * — and a test that could only use what this build mints would leave the
+ * mapping unexercised while reporting a full green.
+ */
+describe("a cursor minted before the key named the direction", () => {
+  /** A cursor in the shape the previous build wrote: the sort value, the
+   *  id, and a column name with no direction on it. */
+  function legacyCursor(sortValue: string, id: string, k: string): string {
+    return Buffer.from(JSON.stringify({ v: sortValue, id, k })).toString(
+      "base64url",
+    );
+  }
+
+  it("honours a bare `created_at` on the default listing", async () => {
+    const { page } = await listItems(`${TYPE}&limit=1`);
+    const last = page!.data[0]!;
+    const legacy = legacyCursor(last.created_at, last.id, "created_at");
+
+    const honoured = await listItems(`${TYPE}&cursor=${legacy}&limit=1`);
+    expect(honoured.status).toBe(200);
+    expect(honoured.page?.data).toHaveLength(1);
+    // Advanced rather than merely accepted: a cursor that was honoured but
+    // ignored would re-serve the row already delivered.
+    expect(honoured.page?.data[0]?.id).not.toBe(last.id);
+
+    // And only there. `created_at` meant the default listing when it was
+    // written, so mapping it must not widen into an ordering it never named.
+    expectOrderingRefusal(
+      await listItems(`${TYPE}&sort=created_at&direction=asc&cursor=${legacy}`),
+    );
+  });
+
+  it("honours a bare `updated_at` under the catch-up filter", async () => {
+    const catchUp = `${TYPE}&updated_after=1970-01-01T00:00:00.000Z`;
+    const { page } = await listItems(`${catchUp}&limit=1`);
+    const last = page!.data[0]!;
+    // The catch-up walks `(updated_at, id)` ascending, so the sort value a
+    // cursor carries there is the modification time.
+    const legacy = legacyCursor(last.updated_at, last.id, "updated_at");
+
+    const honoured = await listItems(`${catchUp}&cursor=${legacy}&limit=1`);
+    expect(honoured.status).toBe(200);
+    expect(honoured.page?.data).toHaveLength(1);
+    expect(honoured.page?.data[0]?.id).not.toBe(last.id);
+
+    // `updated_at` named the catch-up and nothing else. The same column
+    // sorted the other way is a different ordering and is refused.
+    expectOrderingRefusal(
+      await listItems(`${TYPE}&sort=updated_at&direction=desc&cursor=${legacy}`),
+    );
+  });
+
+  it("refuses a legacy spelling that named no ordering this server has", async () => {
+    // The safe direction, and the reason the map is a map rather than a
+    // "strip the direction and compare" rule: `timestamp` was never a
+    // legacy key, so a cursor carrying it is guessed at by nobody.
+    const { page } = await listItems(`${TYPE}&limit=1`);
+    const last = page!.data[0]!;
+    expectOrderingRefusal(
+      await listItems(
+        `${TYPE}&sort=timestamp&cursor=${legacyCursor(last.created_at, last.id, "timestamp")}`,
+      ),
     );
   });
 });
