@@ -483,6 +483,21 @@ export interface ItemWriterInput {
  */
 export type ResolvedItem = Item & {
   conflict_resolution?: ConflictResolutionReport;
+  /**
+   * The sibling row this write created, for the route to announce.
+   *
+   * **Server-internal, and stripped before the response.** It is here because
+   * `publish` lives at the route and the row is written in the store's
+   * transaction, so the two need a way to meet. A write that reaches no
+   * `event_log` row is one a client can never learn about — see
+   * `routes/bulk-reaches-the-log.test.ts` — and the whole point of a
+   * conflicted copy is that the losing edit stays findable.
+   *
+   * Absent when the sibling already existed, which is the idempotent retry:
+   * the run that actually wrote it announced it, and announcing again would
+   * report a create that did not happen.
+   */
+  conflict_sibling?: Item;
 };
 
 export interface ConflictResolutionInput {

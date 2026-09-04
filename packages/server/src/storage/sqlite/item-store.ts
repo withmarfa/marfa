@@ -53,11 +53,13 @@ import type {
   AncestorUnavailableResponse,
   ConflictResolutionReport,
   ConflictResponse,
+  Tier,
   ItemState,
   PaginatedResult,
 } from "@withmarfa/shared";
 import type {
   ItemStore,
+  ResolvedItem,
   ItemFilters,
   ItemGetOptions,
   SortDirection,
@@ -183,6 +185,7 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
  */
 async function insertConflictedSibling(
   tx: SqliteTx,
+  searchStore: SqliteSearchStore,
   args: {
     siblingId: string;
     row: { type: string; source: string | null; tier: string };
@@ -190,8 +193,9 @@ async function insertConflictedSibling(
     now: string;
     properties: Record<string, unknown>;
   },
-): Promise<void> {
+): Promise<Item | null> {
   const { siblingId, row, spaceId, now, properties } = args;
+  const schemaVersion = getTypeSchema(row.type, spaceId)?.version ?? 1;
   const inserted = await tx
     .insert(items)
     .values({
@@ -206,12 +210,15 @@ async function insertConflictedSibling(
       timestamp: now,
       source: row.source,
       version: 1,
-      schema_version: getTypeSchema(row.type, spaceId)?.version ?? 1,
+      schema_version: schemaVersion,
       ...instantColumnValues(properties),
     })
     .onConflictDoNothing()
     .returning({ id: items.id });
-  if (inserted.length === 0) return;
+  // Already there: the idempotent retry. The run that wrote it did the
+  // indexing and the announcing, and doing either again would report a
+  // create that did not happen.
+  if (inserted.length === 0) return null;
 
   await tx
     .insert(metadata)
@@ -221,6 +228,26 @@ async function insertConflictedSibling(
     })
     .onConflictDoNothing()
     .run();
+
+  // Everything `create()` does, because this row is a create. Skipping the
+  // index left the sibling unfindable by the search that is the ordinary way
+  // to go looking for a conflicted copy.
+  await searchStore.index(siblingId, properties, row.type, spaceId);
+
+  return {
+    id: siblingId,
+    type: row.type,
+    state: "active",
+    tier: row.tier as Tier,
+    space_id: spaceId ?? null,
+    properties,
+    created_at: now,
+    updated_at: now,
+    timestamp: now,
+    version: 1,
+    schema_version: schemaVersion,
+    source: row.source ?? "unknown",
+  } satisfies Item;
 }
 
 export class SqliteItemStore implements ItemStore {
@@ -791,7 +818,7 @@ export class SqliteItemStore implements ItemStore {
     id: string,
     input: StoredUpdateItemInput,
     spaceId?: string,
-  ): Promise<Item | ConflictResponse | AncestorUnavailableResponse> {
+  ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse> {
     const whereClause = this.spaceWhere(id, spaceId);
 
     return await this.db.transaction(async (tx) => {
@@ -957,6 +984,8 @@ export class SqliteItemStore implements ItemStore {
       // asked the server to resolve it.
       let resolvedProperties: Record<string, unknown>;
       let resolution: ConflictResolutionReport | undefined;
+      // Null on the idempotent retry, where the row already existed.
+      let sibling: Item | null = null;
 
       if (result.type === "conflict") {
         if (input.conflict_mode !== "auto") {
@@ -985,7 +1014,7 @@ export class SqliteItemStore implements ItemStore {
         let siblingId: string | undefined;
         if (plan.keepBothFields.length > 0) {
           siblingId = conflictedSiblingIdFor(id, input.version, input);
-          await insertConflictedSibling(tx, {
+          sibling = await insertConflictedSibling(tx, this.searchStore, {
             siblingId,
             row,
             spaceId,
@@ -1064,6 +1093,7 @@ export class SqliteItemStore implements ItemStore {
           }),
         }),
         resolution,
+        sibling ?? undefined,
       );
     });
   }

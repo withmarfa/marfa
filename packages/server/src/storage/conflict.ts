@@ -123,9 +123,16 @@ export function detectConflict(input: ConflictInput): ConflictResult {
 // ---------------------------------------------------------------------------
 // Automatic resolution
 //
-// The server resolves a conflict inside the update's transaction. This is the
-// only implementation: the kits send `conflict=auto` and read the result, so
-// two engines cannot answer one collision differently.
+// The server resolves a conflict inside the update's transaction, so that a
+// kit which sends `conflict=auto` does no merging of its own.
+//
+// **That is not yet the whole fleet.** The TypeScript kit sends it. The Swift
+// kit does not: it still receives the 409 envelope and resolves locally, in
+// the opposite direction on a `last_writer_wins` field, so today two engines
+// can still answer one collision differently. What ends that is the Swift kit
+// sending the parameter, not anything in this file — until then this is the
+// only implementation for the callers that opt in, rather than the only one
+// that exists.
 // ---------------------------------------------------------------------------
 
 /** How a caller wants a colliding update resolved. */
@@ -360,8 +367,12 @@ export const CONFLICTED_COPY_TAG = "conflicted-copy";
 export function attachResolution(
   item: Item,
   resolution: ConflictResolutionReport | undefined,
+  sibling?: Item,
 ): ResolvedItem {
-  return resolution === undefined
-    ? item
-    : { ...item, conflict_resolution: resolution };
+  if (resolution === undefined) return item;
+  return {
+    ...item,
+    conflict_resolution: resolution,
+    ...(sibling !== undefined && { conflict_sibling: sibling }),
+  };
 }

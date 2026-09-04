@@ -50,6 +50,11 @@ const EdgeConflictSchema = z.object({
   error: z.object({
     code: z.literal("version_conflict"),
     status: z.literal(409),
+    /** Prose for a person, as on the item door. Branch on `code`, never on
+     *  this text. It is here because an envelope that describes itself on
+     *  one door and not its sibling is the disagreement a client discovers
+     *  the hard way. */
+    message: z.string(),
   }),
   edge: EdgeSchema,
 });
@@ -551,7 +556,17 @@ export function edgeRoutes(storage: Storage) {
       c.header("X-Error-Code", "version_conflict");
       return c.json(
         {
-          error: { code: "version_conflict" as const, status: 409 as const },
+          error: {
+            code: "version_conflict" as const,
+            status: 409 as const,
+            // No ancestor and no field list to name here — an edge has no
+            // per-version history — so the message says the one thing this
+            // refusal knows and the caller needs.
+            message:
+              `Version ${String(body.version)} is stale; the edge is now at ` +
+              `version ${String(result.current.version)}. Re-apply the change ` +
+              `over the edge returned here and send again.`,
+          },
           edge: result.current,
         },
         409,

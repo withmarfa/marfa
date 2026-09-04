@@ -2820,10 +2820,32 @@ export function itemRoutes(storage: Storage) {
       return c.json(txResult, 409);
     }
 
+    // Off the item before anything reads it. It describes what this write
+    // did, not what the row is, and the row has no such column — leaving it
+    // on would put a field in the published event, and in the response's
+    // `item`, that no read of the item ever returns.
+    const {
+      conflict_resolution: resolution,
+      conflict_sibling: sibling,
+      ...resolvedItem
+    } = txResult;
+
     const metadata = await storage.metadata.get(id);
+    // The sibling first, then the row that gave its value up. A subscriber
+    // then never observes a window in which the losing edit has left the
+    // original and does not yet exist anywhere — which is the state this
+    // whole feature exists to prevent.
+    if (sibling) {
+      await publish({
+        type: "created",
+        item: sibling,
+        metadata: await storage.metadata.get(sibling.id),
+        spaceId: tid,
+      });
+    }
     await publish({
       type: "updated",
-      item: txResult,
+      item: resolvedItem,
       metadata,
       spaceId: tid,
     });
@@ -2841,10 +2863,6 @@ export function itemRoutes(storage: Storage) {
       resource_id: id,
     });
     const hydrated = await hydrateEdgesForItem(storage, id);
-    // Off the item and onto the envelope. It describes what this write did,
-    // not what the row is, and the row has no such column — leaving it inside
-    // `item` would put a field there that no read of the item ever returns.
-    const { conflict_resolution: resolution, ...resolvedItem } = txResult;
     return c.json(
       {
         item: {
