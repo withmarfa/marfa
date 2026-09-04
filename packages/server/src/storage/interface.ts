@@ -485,7 +485,26 @@ export interface ConflictResolutionInput {
   idempotency_key?: string;
 }
 
-export type StoredCreateItemInput = CreateItemInput & ItemWriterInput;
+/**
+ * The version a row is being recreated at, for a restore.
+ *
+ * **Server-internal, and set on exactly one path.** A create otherwise starts
+ * at 1; only a restore has a prior version to honour, and it is honoured
+ * because the row keeps its id. A row that came back at 1 under an id that had
+ * reached 12 lets a client's stale precondition pass, later, against content
+ * it never read — the one thing a version exists to prevent. Never
+ * caller-supplied: a client that could choose its own version could forge
+ * exactly that state.
+ */
+export interface RestoredRowInput {
+  version?: number;
+}
+
+export type StoredCreateItemInput = CreateItemInput &
+  ItemWriterInput &
+  RestoredRowInput;
+
+export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
 export type StoredUpdateItemInput = UpdateItemInput &
   ItemWriterInput &
   ConflictResolutionInput;
@@ -2459,7 +2478,7 @@ export interface EdgeListFilters {
 
 export interface EdgeStore {
   /** Create an edge. Constraint enforcement (cardinality / cycles / type) sits outside. */
-  createRaw(input: CreateEdgeInput, spaceId?: string): Promise<Edge>;
+  createRaw(input: StoredCreateEdgeInput, spaceId?: string): Promise<Edge>;
   get(id: string): Promise<Edge | null>;
   /** Outbound edges — this item is the source. */
   listFromSource(

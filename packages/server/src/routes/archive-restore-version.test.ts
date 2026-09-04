@@ -1,0 +1,146 @@
+/**
+ * A restored row keeps the version it was archived at.
+ *
+ * A row that reached version 12, was archived and was restored used to come
+ * back at version 1 while keeping its id. Nothing read a version across a
+ * restore, so it cost nothing — until a conflict resolves against a version.
+ * Then a client holding (id, 12) from before the archive meets a row climbing
+ * back through 12 on unrelated content, and its precondition passes against a
+ * row state it never read. That is the one thing a version exists to make
+ * impossible.
+ *
+ * The version was always in the archive: the export serializes the whole row,
+ * so `items.ndjson` and `edges.ndjson` have carried it all along. Only the
+ * restore was dropping it, which is why this needs no archive format change
+ * and why archives written before this still restore correctly.
+ */
+
+import { createGunzip } from "node:zlib";
+import { Readable } from "node:stream";
+import { describe, expect, it, afterAll } from "vitest";
+import * as tar from "tar-stream";
+import { closeTestContexts, createTestContext, request } from "../test-utils.js";
+import type { TestContext } from "../test-utils.js";
+
+async function extractArchive(data: Buffer): Promise<Map<string, Buffer>> {
+  const entries = new Map<string, Buffer>();
+  const extract = tar.extract();
+  const gunzip = createGunzip();
+  await new Promise<void>((resolve, reject) => {
+    extract.on("entry", (header, stream, next) => {
+      const chunks: Buffer[] = [];
+      stream.on("data", (c: Buffer) => chunks.push(c));
+      stream.on("end", () => {
+        entries.set(header.name, Buffer.concat(chunks));
+        next();
+      });
+      stream.resume();
+    });
+    extract.on("finish", resolve);
+    extract.on("error", reject);
+    Readable.from(data).pipe(gunzip).pipe(extract);
+  });
+  return entries;
+}
+
+const contexts: TestContext[] = [];
+async function newContext(): Promise<TestContext> {
+  const ctx = await createTestContext();
+  contexts.push(ctx);
+  return ctx;
+}
+
+afterAll(async () => {
+  await closeTestContexts(contexts);
+});
+
+describe("a restore does not rewind a row's version", () => {
+  it("brings items and edges back at the version they were archived at", async () => {
+    const source = await newContext();
+    const destination = await newContext();
+    const space = `t-av-${Math.random().toString(36).slice(2, 10)}`;
+
+    const note = await source.storage.items.create(
+      { type: "core.note", properties: { body: "v1" }, source: "av-seed" },
+      space,
+    );
+    const other = await source.storage.items.create(
+      { type: "core.note", properties: { body: "target" }, source: "av-seed" },
+      space,
+    );
+    // Climb well past 1, so a restore that re-mints at 1 is unmistakable
+    // rather than coincidentally right.
+    for (const body of ["v2", "v3", "v4"]) {
+      const bumped = await source.storage.items.update(
+        note.id,
+        { properties: { body } },
+        space,
+      );
+      expect("error" in bumped).toBe(false);
+    }
+    const edge = await source.storage.edges.createRaw(
+      { source_id: note.id, target_id: other.id, edge_type: "references" },
+      space,
+    );
+    const bumpedEdge = await source.storage.edges.updateProperties(
+      edge.id,
+      { weight: 2 },
+      space,
+    );
+    expect(bumpedEdge.ok).toBe(true);
+
+    const archivedItem = await source.storage.items.get(note.id, space);
+    const archivedEdge = await source.storage.edges.get(edge.id);
+    expect(archivedItem?.version).toBeGreaterThan(1);
+    expect(archivedEdge?.version).toBeGreaterThan(1);
+
+    const exportRes = await request(
+      source.app,
+      "GET",
+      `/export?format=archive&target_space_id=${space}`,
+      { key: source.adminKey },
+    );
+    expect(exportRes.status).toBe(200);
+    const archive = Buffer.from(await exportRes.arrayBuffer());
+
+    // The version is in the archive already; only the restore ignored it.
+    const entries = await extractArchive(archive);
+    const itemLine = entries
+      .get("items.ndjson")!
+      .toString()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { item: { id: string; version: number } })
+      .find((line) => line.item.id === note.id);
+    expect(itemLine?.item.version).toBe(archivedItem?.version);
+
+    const restoreRes = await destination.app.request(
+      `/admin/restore-archive?target_space_id=${space}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${destination.adminKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
+      },
+    );
+    expect(restoreRes.status).toBe(200);
+
+    const restoredItem = await destination.storage.items.get(note.id, space);
+    const restoredEdge = await destination.storage.edges.get(edge.id);
+    expect(restoredItem).not.toBeNull();
+    expect(restoredEdge).not.toBeNull();
+
+    // Both halves move together. Fixing one and not the other leaves the
+    // same hole reachable through the other door.
+    expect(
+      restoredItem?.version,
+      "a restored item came back at a version a client could already have read from different content",
+    ).toBe(archivedItem?.version);
+    expect(
+      restoredEdge?.version,
+      "a restored edge came back at a version a client could already have read from different content",
+    ).toBe(archivedEdge?.version);
+  });
+});

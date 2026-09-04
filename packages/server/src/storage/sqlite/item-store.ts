@@ -333,7 +333,10 @@ export class SqliteItemStore implements ItemStore {
             // Null unless the caller is a runtime credential (D63). Set by
             // the route from `writerConnectionOf`, never by the caller.
             written_by_connection_id: input.written_by_connection_id ?? null,
-            version: 1,
+            // A restore recreates a row under its archived id, so it also
+            // carries the version that id had reached. Every other create
+            // starts at 1.
+            version: input.version ?? 1,
             schema_version: schemaVersion,
             device: input.device,
             capture_latitude: input.capture_latitude,
@@ -378,7 +381,7 @@ export class SqliteItemStore implements ItemStore {
         created_at: now,
         updated_at: now,
         timestamp: input.timestamp ?? now,
-        version: 1,
+        version: input.version ?? 1,
         schema_version: schemaVersion,
         source: input.source ?? "unknown",
         ...(input.source_id != null && { source_id: input.source_id }),
