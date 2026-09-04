@@ -628,7 +628,9 @@ Reserved namespaces are documented here so accidental general-purpose use ("just
 
 **One consequence worth naming: the handler now gives a connection back and has to get one again**, so a phase after the upstream call can queue where nothing queued before. That is the trade the fix is, and it is the right way round — an unbounded queue on the app pool needs something holding a connection forever, which is what this removes.
 
-Guard: `routes/connection-proxy.pooled-connection.test.ts`. It observes `pg_stat_activity` from inside the stubbed upstream call and asserts no application-pool backend is `idle in transaction` at that moment, drives an unrelated space-scoped request through a pool of one while a proxied call is parked, and pins the cross-space 404 that the fence rather than the wrapper now produces.
+Guard: `routes/connection-proxy.pooled-connection.test.ts`. It observes `pg_stat_activity` from inside the stubbed upstream call and asserts no application-pool backend is `idle in transaction` at that moment, and drives an unrelated space-scoped request through a pool of one while a proxied call is parked.
+
+**The fence needs a test aimed at a read the application layer does not already narrow, and a cross-space 404 through the door is not one.** `requireConnectionProxyAccess` resolves the connection through `items.get(id, spaceId)`, so that 404 arrives with `createRlsFence` deleted — it pins the application-layer predicate and says nothing about RLS. The read with nothing in front of it is `connectionOauthTokens.get(id)` on the refresh path, which passes no space argument and so reaches Postgres unnarrowed; the same file reads that row through a fence bound to the owning space and through one bound to another, and drives a due refresh end to end against a pool of one so the session-pool lock and the app-pool fence inside it are exercised in the order that could deadlock.
 
 ## Per-connection upstream_base_url override
 

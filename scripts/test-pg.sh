@@ -358,6 +358,12 @@ echo "→ Running server tests (Postgres)"
 # breaks config resolution when the root vitest.config.ts owns the projects
 # list. The server tests are the only ones that exercise the dialect env vars.
 #
+# Arguments are forwarded to vitest as file filters, so a change to one
+# dialect-specific file can be exercised without the whole suite. That
+# matters on a machine that also runs the CI pool: without it, checking a
+# single Postgres-only test costs a full run, and the usual response is to
+# skip the check and let CI find out.
+#
 # Two PG URLs are exported:
 #   - DATABASE_URL — historical compat, points at ${PG_DB} (marfa_test).
 #     The globalSetup uses it only as a fallback to derive the admin URL.
@@ -386,7 +392,7 @@ DB_DIALECT=pg \
   MARFA_TEST_PG_ADMIN_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/postgres" \
   MARFA_TEST_PGBOUNCER_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${BOUNCER_PORT}/${POOLER_DB}" \
   MARFA_TEST_PGBOUNCER_DIRECT_URL="postgres://${PG_USER}:${PG_PASSWORD}@localhost:${PG_PORT}/${POOLER_DB}" \
-  pnpm test &
+  pnpm test "$@" &
 TEST_PID=$!
 set +m
 

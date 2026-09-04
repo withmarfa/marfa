@@ -72,14 +72,22 @@ import type { PgDb } from "../storage/pg/connection.js";
  * connection, and taking a connection can fail. Detached, that rejection
  * has nothing waiting on it and takes the process down rather than the one
  * write it belongs to, so the catch here restores the property the bare
- * call already had.
+ * call already had — and logs, because the failure it catches is the one
+ * the layer below never sees.
  */
 function auditFenced(
   fence: RlsFence,
   storage: Storage,
   entry: AuditLogEntry,
 ): void {
-  void fence(() => storage.audit.log(entry)).catch(() => undefined);
+  void fence(() => storage.audit.log(entry)).catch((err: unknown) => {
+    // The layer below logs a write that fails on its way to the table.
+    // Nothing logs a transaction that never opened — a connection the
+    // pool could not give out, a BEGIN that was refused — so without this
+    // an audit row lost to pool exhaustion leaves no trace at all, which
+    // is the one circumstance in which somebody would go looking for it.
+    console.warn("[connection-proxy] fenced audit write failed", err);
+  });
 }
 
 interface OAuthConfig {
@@ -1042,10 +1050,3 @@ export function connectionProxyRoutes(
 
   return r;
 }
-
-// Re-exported for tests; direct mutation of inFlightRefresh is forbidden.
-export const __internals = {
-  refreshAccessToken,
-  sha256Hex,
-  PROACTIVE_REFRESH_LEEWAY_SEC,
-};
