@@ -309,7 +309,7 @@ describe("a token expired mid-drain (seam: online for one write, then unauthoriz
 
     // Nothing was dropped, so a working credential drains the rest.
     seam.mode = "online";
-    await store.outbox.retryAll(new Date().toISOString());
+    await store.outbox.retryAll("auth", new Date().toISOString());
     const recovered = await drain.drain();
     expect(recovered).toMatchObject({ sent: 2, remaining: 0 });
     expect(await client.items.get(third.id)).toMatchObject({

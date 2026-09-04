@@ -181,6 +181,47 @@ describe("visible state", () => {
   });
 });
 
+describe("putting parked mutations back", () => {
+  it("recovers only the reason being recovered from", async () => {
+    const first = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "waiting on a credential" },
+    });
+    const second = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "waiting on a person" },
+    });
+    const queued = await store.outbox.list();
+    const spentCredential = queued[0];
+    const forReview = queued[1];
+    if (spentCredential === undefined || forReview === undefined) {
+      throw new Error("expected two queued mutations");
+    }
+
+    const at = "2026-09-01T00:00:00.000Z";
+    await store.outbox.block(spentCredential.seq, "auth", at);
+    await store.outbox.block(forReview.seq, "needs_review", at);
+
+    // A credential coming back says nothing about a write whose base
+    // version is gone. Sweeping every blocked row would send that one
+    // straight back into the refusal it is parked on, spend a request on
+    // it, park it again, and tell the app in between that it was moving.
+    expect(await store.outbox.retryAll("auth", at)).toBe(1);
+
+    const after = new Map(
+      (await store.outbox.list()).map((entry) => [entry.targetId, entry]),
+    );
+    expect(after.get(first.id)).toMatchObject({
+      state: "pending",
+      blockedReason: null,
+    });
+    expect(after.get(second.id)).toMatchObject({
+      state: "blocked",
+      blockedReason: "needs_review",
+    });
+  });
+});
+
 describe("sync state", () => {
   it("records the identity the store was opened against", async () => {
     expect(await store.syncState.read(identity)).toEqual({

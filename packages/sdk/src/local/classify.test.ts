@@ -103,6 +103,20 @@ describe("the failure classification", () => {
     ).toMatchObject({ class: "transient" });
   });
 
+  it("parks a write whose outcome the server can no longer report", () => {
+    // The key was kept, so the write will not be performed twice, and the
+    // stored answer is gone, so nothing can say whether the first attempt
+    // landed. Retrying gets this same answer for ever and dead-lettering
+    // claims a refusal that may never have happened, so it goes to the
+    // person along with the rest of what cannot be settled here.
+    expect(
+      classifyFailure(
+        new MarfaError("idempotency_result_not_retained", "body gone", 422),
+        "item.create",
+      ),
+    ).toMatchObject({ class: "blocked", reason: "needs_review" });
+  });
+
   it("parks a refusal whose stated cause will pass", () => {
     // The status says nothing about permanence on its own — a 403 is
     // usually final and a 429 is usually a wait. The code is what

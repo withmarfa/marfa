@@ -76,10 +76,22 @@ export interface OutboxLayer {
   /** Park every unsent mutation. Used when the credential is spent: the
    *  refusal belongs to the queue, not to the one write that met it. */
   blockAll(reason: BlockedReason, now: string): Promise<number>;
-  /** Put a blocked mutation back in the queue and let it start its retry
-   *  budget again. */
+  /** Put one blocked mutation back in the queue and let it start its retry
+   *  budget again. Whatever it was parked for: the caller has named a row,
+   *  so this is a person or an app deciding about that row rather than a
+   *  recovery sweeping past it. */
   retry(seq: number, now: string): Promise<void>;
-  retryAll(now: string): Promise<number>;
+  /**
+   * Put back every mutation parked for one reason.
+   *
+   * Scoped to the reason rather than to the state, because the reasons do
+   * not clear together. Recovering a credential says nothing about a
+   * mutation parked for review, whose base version is gone and which meets
+   * the same refusal on the very next pass — so an unscoped sweep spends a
+   * request and re-parks the row on every recovery, and tells the app its
+   * write is moving again when nothing has changed for it.
+   */
+  retryAll(reason: BlockedReason, now: string): Promise<number>;
 }
 
 export function createOutboxLayer(exec: Executor): OutboxLayer {
@@ -211,7 +223,7 @@ export function createOutboxLayer(exec: Executor): OutboxLayer {
         .where(and(eq(outbox.seq, seq), eq(outbox.state, "blocked")));
     },
 
-    retryAll: async (now) => {
+    retryAll: async (reason, now) => {
       const rows = await exec
         .update(outbox)
         .set({
@@ -220,7 +232,9 @@ export function createOutboxLayer(exec: Executor): OutboxLayer {
           attempts: 0,
           updatedAt: now,
         })
-        .where(eq(outbox.state, "blocked"))
+        .where(
+          and(eq(outbox.state, "blocked"), eq(outbox.blockedReason, reason)),
+        )
         .returning({ seq: outbox.seq });
       return rows.length;
     },

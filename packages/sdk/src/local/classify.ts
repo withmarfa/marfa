@@ -18,8 +18,9 @@ export type Verdict =
    *  refresh, so this parks the whole queue rather than the one write that
    *  met it. */
   | { class: "auth"; message: string }
-  /** Refused for a reason that will pass: a suspended space, an exhausted
-   *  quota. The mutation waits with the reason the app can show. */
+  /** Parked, with the reason the app can show. What clears it is the
+   *  reason's business rather than this verdict's: a suspended space and an
+   *  exhausted quota pass on their own, a write awaiting review does not. */
   | { class: "blocked"; reason: BlockedReason; message: string }
   /**
    * The server refused an update because the row had moved on, and did not
@@ -73,6 +74,23 @@ const UNREACHABLE_CODES = new Set(["network_error", "timeout"]);
 const KEY_IN_FLIGHT = "idempotency_key_in_flight";
 
 /**
+ * A repeat resolved a key whose stored result is no longer held.
+ *
+ * The server kept the key, so it will not perform the write a second time,
+ * and it lost the answer, so it cannot say what the first attempt did. The
+ * client therefore cannot learn whether its write landed, and nothing it
+ * does on its own will change that.
+ *
+ * Neither of the obvious readings is honest. Retrying gets this same
+ * answer for ever, because the record is not coming back. Dead-lettering
+ * tells the app a write was refused when it may well have succeeded, and a
+ * person shown that would reasonably make the edit again. So it parks for
+ * review, on the same grounds as a base the server can no longer merge
+ * against: the server cannot tell you, and you must not guess.
+ */
+const RESULT_NOT_RETAINED = "idempotency_result_not_retained";
+
+/**
  * Decide what becomes of a write the server did not accept.
  *
  * The mutation's kind is a parameter because one status means two things:
@@ -106,6 +124,10 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
   }
 
   if (code === KEY_IN_FLIGHT) return { class: "transient", message };
+
+  if (code === RESULT_NOT_RETAINED) {
+    return { class: "blocked", reason: "needs_review", message };
+  }
 
   // An update the server would not settle. That covers a base version the
   // row has moved past, and a base whose snapshot has been thinned so far
