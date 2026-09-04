@@ -3,7 +3,7 @@
  * edges.ts). Centralized so the Item/Edge shape is declared once.
  */
 import { z } from "@hono/zod-openapi";
-import { ITEM_STATES } from "@withmarfa/shared";
+import { ITEM_STATES, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 
 /**
@@ -23,6 +23,40 @@ import type { ItemState } from "@withmarfa/shared";
 export const ItemStateEnum = z.enum(
   ITEM_STATES as unknown as [ItemState, ...ItemState[]],
 );
+
+/**
+ * The `?state=` value that means "every state, trashed included".
+ *
+ * Deliberately not a member of the lifecycle vocabulary: it is a widening
+ * of the default rather than a state a row can be in, and nothing may
+ * compare it against the column.
+ */
+export const ALL_STATES = "any";
+
+/**
+ * Resolve a `?state=` parameter into the pair the storage filter takes.
+ *
+ * One implementation for every door that reads items, because the doors
+ * disagreed: the item listing gained the sentinel and `GET /export` did
+ * not, so the one read whose whole purpose is a complete copy was the one
+ * that could not ask for every state and quietly returned the space minus
+ * its bin. The archive an export writes is what a restore reads back, so
+ * that omission is silently lossy in the place it matters most.
+ *
+ * The sentinel is resolved before the membership check rather than after.
+ * Cast first and it would be validated as a lifecycle value and refused
+ * for not being one.
+ */
+export function resolveStateFilter(raw: string | undefined): {
+  state: ItemState | undefined;
+  all_states: boolean;
+} {
+  if (raw === ALL_STATES) return { state: undefined, all_states: true };
+  if (raw !== undefined && !(ITEM_STATES as readonly string[]).includes(raw)) {
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${raw}`);
+  }
+  return { state: raw as ItemState | undefined, all_states: false };
+}
 
 export const EdgeSchema = z.object({
   id: z.string(),

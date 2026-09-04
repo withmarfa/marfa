@@ -10,7 +10,6 @@ import {
   getTypeSchema,
   getEdgeTypeSchema,
   validateProperties,
-  ITEM_STATES,
   SYSTEM_DEFAULT_STATE,
   validateTransition,
   SYSTEM_TYPE_IDS,
@@ -88,21 +87,13 @@ import {
   ItemWithMetadataSchema,
   ItemDetailSchema,
   MetadataSchema,
+  ALL_STATES,
+  resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
-
-/**
- * The `?state=` value that means "every state, trashed included".
- *
- * Deliberately not a member of the lifecycle vocabulary: it is a
- * widening of the default rather than a state a row can be in, and
- * nothing may compare it against the column. Named here rather than
- * spelled inline so the route and its description cannot drift.
- */
-const ALL_STATES = "any";
 
 // ---------------------------------------------------------------------------
 // Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
@@ -473,7 +464,7 @@ const listItemsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Filter by lifecycle state. `any` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.",
+          `Filter by lifecycle state. \`${ALL_STATES}\` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.`,
         ),
       source: z.string().optional().describe("Filter by source credential"),
       tier: z
@@ -2159,18 +2150,8 @@ export function itemRoutes(storage: Storage) {
     }
 
     // `any` is a widening, not a state, so it never reaches the column
-    // comparison. Resolved before the enum check for that reason: cast
-    // first and it would be validated as a lifecycle value and refused.
-    const allStates = query.state === ALL_STATES;
-    const state = allStates
-      ? undefined
-      : (query.state as ItemState | undefined);
-    if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Invalid state: ${state}`,
-      );
-    }
+    // comparison. Shared with `GET /export`, which reads the same filter.
+    const { state, all_states: allStates } = resolveStateFilter(query.state);
 
     const tagsParam = query.tags;
     const tags = tagsParam
