@@ -2184,10 +2184,22 @@ export function itemRoutes(storage: Storage) {
     const edgeClauses: string[] = [];
     const shorthandRe = EDGE_SHORTHAND_KEY;
     for (const [key, val] of rawQuery.entries()) {
-      // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- using String#match for boolean shape check; no captures needed
-      if (key.match(shorthandRe) && val) {
-        edgeClauses.push(`${key} eq "${val.replace(/"/g, '\\"')}"`);
+      if (!shorthandRe.test(key)) continue;
+      // A shorthand with nothing after the `=` used to be skipped here,
+      // which returned an unfiltered page at 200 — the failure the
+      // unknown-parameter refusal exists to remove, reached through the
+      // exemption that keeps the shorthand working. The exemption matches
+      // on the key alone, because the type is part of the key; the value
+      // has to be checked where it is read. `updated_after` carries
+      // `.min(1)` for the same reason on this same door.
+      if (val === "") {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `The "${key}" filter was sent with no value. An edge shorthand names the item on the other end of the edge, so an empty one narrows nothing and would return the whole listing.`,
+          { empty_parameters: [key] },
+        );
       }
+      edgeClauses.push(`${key} eq "${val.replace(/"/g, '\\"')}"`);
     }
     let filter = query.filter ?? undefined;
     if (edgeClauses.length > 0) {

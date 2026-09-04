@@ -114,6 +114,41 @@ describe("GET /items — an unknown parameter is refused", () => {
     expect(res.status).toBe(200);
   });
 
+  it("refuses an edge shorthand carrying no value", async () => {
+    // The hole the allow-pattern opened. The pattern matches on the key
+    // alone, so `edge[about]=` clears the unknown-parameter refusal — and
+    // the clause builder then skips it for having an empty value, which
+    // returns an unfiltered page at 200. That is the exact failure this
+    // whole change exists to remove, reached through the exemption written
+    // to keep the shorthand working.
+    //
+    // `updated_after` carries `.min(1)` for the same reason on the same
+    // door: a filter parameter with nothing in it is a caller mistake, not
+    // a request for everything.
+    const empty = await idsFrom(
+      `/items?limit=50&${encodeURIComponent("edge[about]")}=`,
+    );
+    for (const id of excluded) expect(empty.ids).not.toContain(id);
+    expect(empty.status).toBe(400);
+
+    const named = await request(
+      ctx.app,
+      "GET",
+      `/items?limit=50&${encodeURIComponent("edge[about]")}=`,
+      { key: ctx.adminKey },
+    );
+    const body = (await named.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("edge[about]");
+  });
+
+  it("refuses a backref shorthand carrying no value", async () => {
+    const empty = await idsFrom(
+      `/items?limit=50&${encodeURIComponent("backref[about]")}=`,
+    );
+    for (const id of excluded) expect(empty.ids).not.toContain(id);
+    expect(empty.status).toBe(400);
+  });
+
   it("ignores a parameter in the client's reserved namespace", async () => {
     // The escape hatch that pays for refusing: a cache-buster or an
     // analytics tag has a spelling that works and keeps working.
