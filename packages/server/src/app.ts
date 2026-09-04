@@ -796,7 +796,16 @@ export function createApp(
   // Connection OAuth proxy — POST/GET/etc.
   // /connections/:id/proxy/* forwards to the connection's configured
   // upstream URL with Authorization: Bearer <decrypted access_token>.
-  app.route("/connections", connectionProxyRoutes(storage));
+  // Exempt from the request-wide RLS transaction and fenced per phase
+  // instead, so `pgDb` + `rlsEnforce` have to reach the route. See the
+  // header of `routes/connection-proxy.ts`.
+  app.route(
+    "/connections",
+    connectionProxyRoutes(storage, {
+      rlsEnforce: config.rlsEnforce ?? false,
+      pgDb: (storage.pgDb as PgDb | undefined) ?? null,
+    }),
+  );
   // OAuth bootstrap — POST /connections/:id/oauth/start (admin-gated)
   // returns the upstream authorize URL with signed state; the public
   // GET /oauth/callback exchanges the code and persists tokens under the

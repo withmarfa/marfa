@@ -148,7 +148,7 @@ The Drizzle PG instance is wrapped in a per-request context proxy (`storage/pg/r
 - **Platform-admin / anonymous / bootstrap** — requests with no `apiKey.space_id` skip the wrapper and run as the owner. `requireAdmin` stays load-bearing for cross-space authority.
 - **Better Auth** — `storage.betterAuthDb` is the unwrapped base instance. The auth library manages its own connection context outside the data-plane request middleware; auth tables (`auth_*`) carry no RLS.
 
-Streaming responses (`/events` SSE + `/export` NDJSON / archive) are a special case: wrapping them in a transaction would pin a pool connection for the response's full duration. They are exempt from the transaction wrapper but apply session-level RLS internally (see next section).
+Two shapes of handler are exempt from the wrapper, for one reason: the handler's lifetime is not the lifetime of its database work, so the wrapper would spend a pooled connection on time the database has no interest in. Streaming responses (`/events` SSE + `/export` NDJSON / archive) hold the response open for an arbitrary duration; `/connections/:id/proxy/*` blocks mid-handler on a third party's API. **Neither is exempt from RLS**, and the two apply it differently — streaming uses session-level RLS on a reserved connection (see next section), the proxy fences each of its database phases in a short transaction of its own (see "The proxy route's own fence").
 
 ## Streaming RLS
 
@@ -187,7 +187,7 @@ Guards: `storage/pg/connection.test.ts` and `storage/pg/endpoint.test.ts` for th
 
 If any condition is false the route runs on the owner connection, matching the per-request middleware's bypass semantics.
 
-**Transaction-wrapper exemption.** `STREAMING_PATH_PREFIXES` in `middleware/rls-space-context.ts` exempts `/events` + `/export` from the per-request transaction wrapper. They apply session-level RLS internally (above) instead.
+**Transaction-wrapper exemption.** `STREAMING_PATH_PREFIXES` in `middleware/rls-space-context.ts` exempts `/events` + `/export` from the per-request transaction wrapper. They apply session-level RLS internally (above) instead. `UPSTREAM_CALL_PATH_PATTERNS` beside it exempts the connection proxy, which fences per phase instead; it is a pattern list rather than a second prefix list because the connection id sits mid-path and a prefix anchored at the start cannot express it.
 
 ## The change stream
 
@@ -612,6 +612,23 @@ The metadata layer's `extensions` map is a free-form JSON sidecar keyed by names
 **The reserved `connection.` root has two consequences, and one predicate decides both.** A write under it is silent on the event stream, and it also leaves `items.updated_at` where it was. Every other metadata write — every tag write, and every extension write outside that root — moves the item's modification time, because an incremental catch-up filters on that column and a change it cannot see is a short list that looks complete. The rule is that **a metadata write a client can learn about moves the modification time; one that is deliberately invisible does not**, so a namespace silent on the stream and loud on catch-up cannot happen. `announcesMetadataChange` in `src/metadata-namespaces.ts` is the single predicate; the two **extension** publish doors and the metadata store's write door call it, and neither carries its own list of namespaces. The four tag doors do not, and correctly so — a tag write always announces, so there is nothing for them to ask, and the store decides the tag arm structurally rather than through the predicate. Do not go looking for the call in `items.ts`. That module sits outside both layers precisely so the store never has to reach into `routes/`. **The store writes `items` before `metadata`, and that order is load-bearing rather than incidental**: `ItemStore.update` locks the item row and two routes call a metadata write inside that transaction, so taking the sidecar first would close a deadlock cycle that Postgres resolves by aborting somebody's write.
 
 Reserved namespaces are documented here so accidental general-purpose use ("just stash some stuff") doesn't conflict with platform semantics. Application-defined extensions should use namespaced keys that don't collide with reserved roots.
+
+## The proxy route's own fence
+
+`ALL /connections/:id/proxy/*` awaits a third party in the middle of its handler, so it is exempt from the request-wide RLS transaction. Wrapped, it held one of the web container's three application connections for however long the upstream took, which made three slow proxied calls the concurrency ceiling for the whole tier — nothing deadlocked and nothing errored, so it presented as the server being slow.
+
+**The exemption and the fence ship together or not at all.** Taking the route out of the wrapper without fencing leaves every read running as the connection owner with no `marfa.space_id` set, which is faster and reads every space. `createRlsFence(pgDb, rlsEnforce, spaceId)` in `middleware/rls-space-context.ts` returns the per-phase form of the wrapper and makes the same three-way decision on the same inputs, so the route fences exactly when a wrapped one would and is a pass-through exactly when a wrapped one would be. It lives beside the middleware rather than at the call site precisely so the two cannot drift, and the way a copied condition drifts is by fencing less.
+
+**A phase is as much work as can be done without waiting on anything outside the database**, and two rules bound them:
+
+- **No fence spans a `fetch`.** That is the defect, and it comes back the moment a fence is widened to cover an upstream call. `refreshAccessToken` is the one to watch: it reads a token row, exchanges it at the provider, then writes the rotated row, so it takes the fence and applies it to each end rather than to itself.
+- **No fence encloses `withRefreshLock`.** That lock reserves from the session pool and its holder runs work that needs an app connection; a caller holding an app connection while waiting for the lock closes the wait into a cycle. It is the rule the coordination store already states — a lock's connection must come from a pool the locked work never queries — read from the other side.
+
+**A fire-and-forget audit write goes through `auditFenced`, never a bare `void`.** `audit.log` never rejects, which is what makes `void`-ing it safe; a transaction around it can, because opening one takes a connection. Detached, that rejection has nothing waiting on it and ends the process rather than the write.
+
+**One consequence worth naming: the handler now gives a connection back and has to get one again**, so a phase after the upstream call can queue where nothing queued before. That is the trade the fix is, and it is the right way round — an unbounded queue on the app pool needs something holding a connection forever, which is what this removes.
+
+Guard: `routes/connection-proxy.pooled-connection.test.ts`. It observes `pg_stat_activity` from inside the stubbed upstream call and asserts no application-pool backend is `idle in transaction` at that moment, drives an unrelated space-scoped request through a pool of one while a proxied call is parked, and pins the cross-space 404 that the fence rather than the wrapper now produces.
 
 ## Per-connection upstream_base_url override
 

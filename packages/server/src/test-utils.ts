@@ -581,7 +581,16 @@ async function buildTestContext(
   let storage: Storage;
   let pgCleanup: (() => Promise<void>) | undefined;
   if (dialect === "pg") {
-    const clone = await createPgTestStorage({ authMode: storageAuthMode });
+    // `dbPoolSize` is a real config field, so a test that sets it means
+    // it: a suite about what a request does to the pool needs the pool it
+    // asked for, and the default of three hides an exhaustion the code
+    // would reach at one. Absent, the default stands.
+    const clone = await createPgTestStorage({
+      authMode: storageAuthMode,
+      ...(overrides?.dbPoolSize !== undefined && {
+        maxPoolSize: overrides.dbPoolSize,
+      }),
+    });
     storage = clone.storage;
     pgCleanup = clone.cleanup;
   } else {
