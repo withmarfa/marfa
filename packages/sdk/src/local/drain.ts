@@ -1,0 +1,363 @@
+import type { Edge, Item } from "@withmarfa/shared";
+import type { MarfaClient } from "../client.js";
+import { classifyFailure, type Verdict } from "./classify.js";
+import type { LocalStore } from "./store/index.js";
+import type {
+  LocalEngineEvent,
+  LocalEngineEventListener,
+  OutboxEntry,
+} from "./types.js";
+
+/**
+ * How many attempts a transient failure gets before the mutation parks with
+ * its reason.
+ *
+ * Only attempts made while the server was reachable count. Being offline is
+ * not a failed attempt, so a laptop shut for a week arrives with its queue
+ * intact rather than with everything parked.
+ */
+export const DEFAULT_RETRY_CEILING = 5;
+
+export interface DrainOptions {
+  store: LocalStore;
+  client: MarfaClient;
+  /** Transient attempts a mutation gets before it parks. */
+  retryCeiling?: number;
+  /**
+   * Where the engine tells the app that work has stopped moving. Called
+   * after the change is committed, so a listener that throws abandons the
+   * pass without losing anything: the queue is restartable and the state it
+   * reports is already on disk.
+   */
+  onEvent?: LocalEngineEventListener;
+  now?: () => string;
+}
+
+export interface DrainResult {
+  /** Mutations the server accepted on this pass. */
+  sent: number;
+  /** Mutations still queued afterwards, pending and blocked alike. */
+  remaining: number;
+  /** Whether the whole queue parked on auth. */
+  parked: boolean;
+  /** Whether the pass stopped because the server could not be reached. */
+  offline: boolean;
+}
+
+export interface OutboxDrain {
+  /**
+   * Send what can be sent, in the order it was written.
+   *
+   * One pass. Nothing here loops or waits: when a mutation is retried is
+   * the caller's decision, and a queue that retried on a timer of its own
+   * would be a second scheduler beside the app's.
+   */
+  drain(): Promise<DrainResult>;
+}
+
+type SendResult =
+  | { ok: true; item: Item }
+  | { ok: true; edge: Edge }
+  | { ok: true; removed: "item" | "edge" }
+  | { ok: false; error: unknown };
+
+/** Every id a mutation waits behind: its own target, plus an edge's two
+ *  endpoints. */
+function heldIds(entry: OutboxEntry): string[] {
+  return [entry.targetId, ...entry.dependsOn];
+}
+
+export function createOutboxDrain(options: DrainOptions): OutboxDrain {
+  const { store, client } = options;
+  const ceiling = options.retryCeiling ?? DEFAULT_RETRY_CEILING;
+  const now = options.now ?? (() => new Date().toISOString());
+  const emit = (event: LocalEngineEvent): void => {
+    options.onEvent?.(event);
+  };
+
+  const send = async (entry: OutboxEntry): Promise<SendResult> => {
+    try {
+      switch (entry.kind) {
+        case "item.create": {
+          const payload = entry.payload as {
+            id: string;
+            type: string;
+            properties: Record<string, unknown>;
+            tier?: Item["tier"];
+            timestamp?: string;
+            source_id?: string;
+          };
+          return { ok: true, item: await client.items.create(payload) };
+        }
+        case "item.update": {
+          const payload = entry.payload as {
+            properties: Record<string, unknown>;
+            type?: string;
+          };
+          // The version the row was read at. A null on the entry means the
+          // row's own create was still queued when the edit was made, so
+          // the version to name is the one that create's response carried —
+          // which is in server state precisely because this pass sent the
+          // create first.
+          const known = await store.server.items.get(entry.targetId);
+          const expectedVersion = entry.baseVersion ?? known?.version;
+          const item = await client.items.update(
+            entry.targetId,
+            payload.properties,
+            {
+              ...(expectedVersion === undefined ? {} : { expectedVersion }),
+              ...(payload.type === undefined
+                ? known === undefined
+                  ? {}
+                  : { type: known.type }
+                : { type: payload.type }),
+            },
+          );
+          return { ok: true, item };
+        }
+        case "item.delete": {
+          await client.items.delete(entry.targetId);
+          return { ok: true, removed: "item" };
+        }
+        case "edge.create": {
+          const payload = entry.payload as {
+            id: string;
+            edge_type: string;
+            source_id: string;
+            target_id: string;
+            properties: Record<string, unknown>;
+          };
+          return { ok: true, edge: await client.edges.create(payload) };
+        }
+        case "edge.update": {
+          const payload = entry.payload as {
+            properties: Record<string, unknown>;
+          };
+          const known = await store.server.edges.get(entry.targetId);
+          const version = entry.baseVersion ?? known?.version;
+          const edge = await client.edges.update(
+            entry.targetId,
+            payload.properties,
+            version === undefined ? undefined : { version },
+          );
+          return { ok: true, edge };
+        }
+        case "edge.delete": {
+          await client.edges.delete(entry.targetId);
+          return { ok: true, removed: "edge" };
+        }
+      }
+    } catch (error) {
+      return { ok: false, error };
+    }
+  };
+
+  /**
+   * Write what the server answered into server state and take the mutation
+   * off the queue, as one transaction.
+   *
+   * Two statements that must not come apart: settle in two steps and a
+   * crash between them either loses the write or sends it twice.
+   */
+  const settle = async (
+    entry: OutboxEntry,
+    result: Extract<SendResult, { ok: true }>,
+  ): Promise<void> => {
+    await store.transaction(async (tx) => {
+      if ("item" in result) await tx.server.items.put(result.item);
+      else if ("edge" in result) await tx.server.edges.put(result.edge);
+      else if (result.removed === "item") {
+        // The server has trashed the row. It is gone from what this client
+        // holds until the stream's own event or a re-import brings it back
+        // as trashed — leaving it in server state instead would put it back
+        // on screen the moment the mutation left the queue.
+        await tx.server.items.remove(entry.targetId);
+      } else {
+        await tx.server.edges.remove(entry.targetId);
+      }
+      await tx.outbox.remove(entry.seq);
+    });
+  };
+
+  /**
+   * Move a refused mutation to the dead-letter log, and take its dependants
+   * with it when the refusal was a create.
+   *
+   * A create the server refused leaves nothing for a later edit or an edge
+   * to name, so retrying those would only produce the same refusal with a
+   * less useful reason. An update or a delete refused against a row that
+   * does exist takes nothing with it.
+   */
+  const deadLetter = async (
+    entry: OutboxEntry,
+    verdict: Extract<Verdict, { class: "permanent" }>,
+  ): Promise<LocalEngineEvent[]> => {
+    const at = now();
+    const events: LocalEngineEvent[] = [];
+
+    await store.transaction(async (tx) => {
+      await tx.deadLetters.record({
+        id: entry.id,
+        seq: entry.seq,
+        kind: entry.kind,
+        targetKind: entry.targetKind,
+        targetId: entry.targetId,
+        payload: entry.payload,
+        reason: "refused",
+        code: verdict.code,
+        message: verdict.message,
+        httpStatus: verdict.httpStatus,
+        failedAt: at,
+      });
+      await tx.outbox.remove(entry.seq);
+      events.push({
+        type: "mutation.dead_lettered",
+        seq: entry.seq,
+        id: entry.id,
+        reason: "refused",
+        code: verdict.code,
+        message: verdict.message,
+      });
+
+      if (!entry.kind.endsWith(".create")) return;
+
+      // Close over the dependants: an edge that cascades takes the edits to
+      // that edge with it.
+      const doomed = new Set([entry.targetId]);
+      const queued = await tx.outbox.list();
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const candidate of queued) {
+          if (doomed.has(candidate.targetId)) continue;
+          if (heldIds(candidate).some((id) => doomed.has(id))) {
+            doomed.add(candidate.targetId);
+            grew = true;
+          }
+        }
+      }
+
+      for (const candidate of queued) {
+        if (!heldIds(candidate).some((id) => doomed.has(id))) continue;
+        await tx.deadLetters.record({
+          id: candidate.id,
+          seq: candidate.seq,
+          kind: candidate.kind,
+          targetKind: candidate.targetKind,
+          targetId: candidate.targetId,
+          payload: candidate.payload,
+          reason: "cascaded",
+          code: verdict.code,
+          message: `Waiting on ${entry.kind} ${entry.targetId}, which the server refused: ${verdict.message}`,
+          httpStatus: verdict.httpStatus,
+          failedAt: at,
+        });
+        await tx.outbox.remove(candidate.seq);
+        events.push({
+          type: "mutation.dead_lettered",
+          seq: candidate.seq,
+          id: candidate.id,
+          reason: "cascaded",
+          code: verdict.code,
+          message: `Waiting on ${entry.kind} ${entry.targetId}, which the server refused`,
+        });
+      }
+    });
+
+    return events;
+  };
+
+  const finish = async (
+    sent: number,
+    parked: boolean,
+    offline: boolean,
+  ): Promise<DrainResult> => {
+    const remaining = await store.outbox.count();
+    if (remaining === 0 && sent > 0) {
+      await store.syncState.setLastDrainedAt(store.identity, now());
+    }
+    emit({ type: "drain.finished", sent, remaining });
+    return { sent, remaining, parked, offline };
+  };
+
+  return {
+    drain: async () => {
+      const queued = await store.outbox.list();
+      /** Ids with unsent work in front of them on this pass. */
+      const waiting = new Set<string>();
+      let sent = 0;
+
+      for (const entry of queued) {
+        const ids = heldIds(entry);
+        const held = ids.some((id) => waiting.has(id));
+        if (entry.state === "blocked" || held) {
+          for (const id of ids) waiting.add(id);
+          continue;
+        }
+
+        const result = await send(entry);
+        if (result.ok) {
+          await settle(entry, result);
+          sent += 1;
+          continue;
+        }
+
+        const verdict = classifyFailure(result.error);
+        switch (verdict.class) {
+          case "offline":
+            // Nothing was refused and nothing else in the queue will reach
+            // the server either, so the pass ends here with no attempt
+            // recorded against anything.
+            return finish(sent, false, true);
+
+          case "auth": {
+            const parked = await store.outbox.blockAll("auth", now());
+            emit({
+              type: "queue.parked",
+              reason: "auth",
+              parked,
+              message: verdict.message,
+            });
+            return finish(sent, true, false);
+          }
+
+          case "blocked": {
+            await store.outbox.block(entry.seq, verdict.reason, now());
+            emit({
+              type: "mutation.blocked",
+              seq: entry.seq,
+              id: entry.id,
+              reason: verdict.reason,
+              message: verdict.message,
+            });
+            for (const id of ids) waiting.add(id);
+            break;
+          }
+
+          case "permanent": {
+            for (const event of await deadLetter(entry, verdict)) emit(event);
+            break;
+          }
+
+          case "transient": {
+            await store.outbox.recordAttempt(entry.seq, verdict.message, now());
+            if (entry.attempts + 1 >= ceiling) {
+              await store.outbox.block(entry.seq, "retry_ceiling", now());
+              emit({
+                type: "mutation.blocked",
+                seq: entry.seq,
+                id: entry.id,
+                reason: "retry_ceiling",
+                message: verdict.message,
+              });
+            }
+            for (const id of ids) waiting.add(id);
+            break;
+          }
+        }
+      }
+
+      return finish(sent, false, false);
+    },
+  };
+}
