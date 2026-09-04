@@ -316,11 +316,22 @@ jobs:
           # at all.
           #
           # Links belong in fields, as Markdown; the title stays plain prose.
-          jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
-                --arg u "$RUN_URL" --arg r "[$REPO]($REPO_URL)" --arg j "$RESULTS" \
-                --argjson x "$EXTRA" \
-            '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
-              fields:({Repository:$r} + $x + {Jobs:$j})}' \
+          BODY="$(
+            jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
+                  --arg u "$RUN_URL" --arg r "[$REPO]($REPO_URL)" --arg j "$RESULTS" \
+                  --argjson x "$EXTRA" \
+              '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
+                fields:({Repository:$r} + $x + {Jobs:$j})}'
+          )" || {
+            echo "::error::The alert body could not be built. Nothing was sent."
+            exit 1
+          }
+          if [ -z "$BODY" ]; then
+            echo "::error::The alert body came out empty. Nothing was sent."
+            exit 1
+          fi
+
+          printf '%s' "$BODY" \
           | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
               "${AUTH[@]}" \
               -H "Content-Type: application/json" --data @- \
