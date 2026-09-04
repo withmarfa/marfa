@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, uptime as osUptime } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -31,9 +31,27 @@ let open: LocalStore[];
 
 const AT = "2026-09-01T00:00:00.000Z";
 
-/** When this machine started, as the lock records it. */
-function machineBootedAt(): number {
-  return Math.round(Date.now() - process.uptime() * 1000);
+/**
+ * The boot instant the lock actually records, read back out of a real
+ * lockfile.
+ *
+ * Read rather than recomputed, and that is the whole point. A test that
+ * recomputes the expression the code uses is testing that two copies of
+ * one expression agree, which they do however wrong the expression is —
+ * and inside a single process any such expression is self-consistent, so
+ * every assertion built on a private copy stays green through a
+ * substitution that breaks the code for two processes.
+ */
+async function recordedBootedAt(): Promise<number> {
+  const store = await openLocalStore({ path, identity });
+  try {
+    const holder = JSON.parse(readFileSync(`${path}.lock`, "utf8")) as {
+      bootedAt: number;
+    };
+    return holder.bootedAt;
+  } finally {
+    store.close();
+  }
 }
 
 const identity = {
@@ -126,7 +144,7 @@ describe("one writer per store", () => {
         pid: process.pid + 1,
         token: "somebody-else",
         since: AT,
-        bootedAt: machineBootedAt(),
+        bootedAt: await recordedBootedAt(),
       }),
     );
     first.close();
@@ -146,7 +164,7 @@ describe("one writer per store", () => {
         pid: process.pid,
         token: "from-a-previous-boot",
         since: AT,
-        bootedAt: machineBootedAt() - 86_400_000,
+        bootedAt: (await recordedBootedAt()) - 86_400_000,
       }),
     );
 
@@ -165,12 +183,34 @@ describe("one writer per store", () => {
         pid: 999_999_999,
         token: "gone",
         since: AT,
-        bootedAt: machineBootedAt(),
+        bootedAt: await recordedBootedAt(),
       }),
     );
 
     const store = await openAt();
     expect(store.writer).toBe(true);
+  });
+
+  it("records when the machine started, not when this process did", async () => {
+    // Checked against an independent reading of the same fact rather than
+    // against a copy of the code's own arithmetic. `process.uptime()` is
+    // how long *this process* has run and reads as a plausible spelling of
+    // the same idea; on a machine that has been up for days the two are
+    // days apart, and every process on it computes a different one.
+    //
+    // That difference is not a race. `stillHolding` compares boots before
+    // it ever asks whether the holder is alive, so a second opener that
+    // started a minute after the holder computes a minute's "boot
+    // difference", judges a live holder to be from a previous boot,
+    // unlinks its lockfile and claims — leaving two writers on every
+    // ordinary second launch.
+    const recorded = await recordedBootedAt();
+    const machine = Date.now() - osUptime() * 1000;
+    expect(Math.abs(recorded - machine)).toBeLessThan(5_000);
+
+    // On a machine booted moments ago the two readings coincide and this
+    // cannot discriminate; on any machine that has been up longer than the
+    // tolerance it separates them outright.
   });
 
   it("writes the holder and the file in one step", async () => {

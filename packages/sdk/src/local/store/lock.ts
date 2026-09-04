@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { uptime } from "node:os";
 import { linkSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 /**
@@ -46,7 +47,7 @@ export interface LockHolder {
   token: string;
   since: string;
   /**
-   * When the machine the holder runs on was started.
+   * When the **machine** was started, not when the holder was.
    *
    * A process id is not an identity across a restart: the machine reboots,
    * the number is handed out again, and a liveness check on it answers yes
@@ -55,6 +56,14 @@ export interface LockHolder {
    * the boot the lock was written under against the current one settles
    * that without needing to inspect a process this one does not own.
    *
+   * **The value has to be one every process on the machine agrees on**,
+   * and that requirement is easy to lose sight of while reasoning about
+   * reboots. `process.uptime()` describes this process and reads as a
+   * plausible spelling of the same idea; it makes every process compute a
+   * different boot, so two of them started minutes apart each conclude the
+   * other belongs to a previous boot — which is not a rare race but every
+   * ordinary second launch, and it ends with both of them writing.
+   *
    * It does not cover a process id recycled *within* one boot, which is
    * far rarer and would need the holder's own start time — not something
    * a portable API will give for a process this one does not own.
@@ -62,14 +71,22 @@ export interface LockHolder {
   bootedAt: number;
 }
 
-/** When this machine started, to the nearest second's worth of jitter. */
+/** When this machine started. `os.uptime()` is a property of the machine,
+ *  so every process on it computes the same instant. */
 function machineBootedAt(): number {
-  return Math.round(Date.now() - process.uptime() * 1000);
+  return Math.round(Date.now() - uptime() * 1000);
 }
 
-/** How far two readings of the boot instant may differ and still mean the
- *  same boot. `uptime` is sampled against a moving clock, so two processes
- *  never compute it identically. */
+/**
+ * How far two readings of the boot instant may differ and still mean the
+ * same boot.
+ *
+ * Not slack for processes starting at different times — they do not differ
+ * on this at all, which is the point of reading it from the machine. It
+ * covers the sampling: `Date.now()` and `uptime()` are read a moment
+ * apart, and `uptime()` has second granularity on some platforms, so two
+ * correct readings of one boot land a little way from each other.
+ */
 const BOOT_TOLERANCE_MS = 5_000;
 
 /** Where the lock for a store lives. `:memory:` has no file, so it
