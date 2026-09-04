@@ -6,20 +6,38 @@ import {
   createTestContext,
   request,
   collectEdgeEvents,
+  collectItemEvents,
   settle,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { initEventLog, __resetCycleDetectionForTests } from "../pubsub.js";
 
 let ctx: TestContext;
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  // `createTestContext` does not wire the log — the server's bootstrap
+  // does. Without this `publish` appends nothing, and the assertions that
+  // read the log to prove a restore is replayable would find it empty
+  // whatever the route did.
+  initEventLog(ctx.storage.eventLog);
 });
 
 afterAll(async () => {
+  __resetCycleDetectionForTests();
   await ctx.cleanup();
 });
+
+/** Highest id in the log right now, so a case reads only its own rows. */
+async function logCursor(): Promise<bigint> {
+  const rows = await ctx.storage.eventLog.getAfter(0n, 100_000);
+  return rows.reduce((max, r) => (r.id > max ? r.id : max), 0n);
+}
+
+async function logSince(cursor: bigint) {
+  return ctx.storage.eventLog.getAfter(cursor, 100_000);
+}
 
 async function buildArchive(
   manifest: Record<string, unknown>,
@@ -571,7 +589,219 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
   });
 });
 
+/**
+ * The items a restore writes reach the stream and the event log.
+ *
+ * The edges already did, and that was the worse half of the gap: a durable
+ * client received relationships whose endpoints it had never heard of and
+ * had no way to resolve. Nothing later repairs it — the restored rows exist
+ * server-side, so no re-sync rewrites them, and the log is the only
+ * catch-up there is.
+ *
+ * Asserted on the log as well as on the emitter. The emitter is what a
+ * subscriber attached at that moment sees; the log is what a client that
+ * was away reads, and a door that emitted without appending would pass an
+ * emitter-only test.
+ */
 describe("POST /admin/restore-archive — the items it writes", () => {
+  it("announces each restored item, ahead of the edges between them", async () => {
+    const source = `archive-items-${Math.random().toString(36).slice(2, 8)}`;
+    const sourceId = "019537a0-7b80-7000-8000-000000000101";
+    const targetId = "019537a0-7b80-7000-8000-000000000102";
+    const edgeId = "019537a0-7b80-7000-8000-000000000103";
+
+    const archive = await buildArchive(
+      {
+        version: 1,
+        format: "marfa-archive-v1",
+        created_at: new Date().toISOString(),
+        item_count: 2,
+        blob_count: 0,
+        blobs: {},
+      },
+      [
+        JSON.stringify({
+          item: {
+            id: sourceId,
+            type: "core.note",
+            properties: { body: "announced source" },
+            source,
+            source_id: "ai-1",
+          },
+          metadata: { tags: ["restored"], extensions: {} },
+        }),
+        JSON.stringify({
+          item: {
+            id: targetId,
+            type: "core.note",
+            properties: { body: "announced target" },
+            source,
+            source_id: "ai-2",
+          },
+        }),
+      ],
+      [],
+      [
+        JSON.stringify({
+          edge: {
+            id: edgeId,
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: "references",
+            properties: {},
+          },
+        }),
+      ],
+    );
+
+    const cursor = await logCursor();
+    const controller = new AbortController();
+    const { events, done } = collectItemEvents(controller.signal);
+    await settle();
+
+    const res = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: new Uint8Array(archive),
+    });
+    expect(res.status).toBe(200);
+    await settle();
+    controller.abort();
+    await done;
+
+    const announced = events.filter(
+      (e) => e.item.id === sourceId || e.item.id === targetId,
+    );
+    expect(announced.map((e) => e.item.id).sort()).toEqual(
+      [sourceId, targetId].sort(),
+    );
+    expect(announced.every((e) => e.type === "created")).toBe(true);
+    // The metadata rides along, so a subscriber does not have to read the
+    // item back to learn its tags.
+    expect(
+      announced.find((e) => e.item.id === sourceId)?.metadata?.tags,
+    ).toEqual(["restored"]);
+
+    // And a client that was away finds them by replaying the log.
+    const rows = await logSince(cursor);
+    const itemRows = rows.filter(
+      (r) => r.item_id === sourceId || r.item_id === targetId,
+    );
+    expect(itemRows.map((r) => r.event_type)).toEqual(["created", "created"]);
+
+    // Items before edges. An edge naming an endpoint the client has not
+    // yet been told about is the state this whole announcement exists to
+    // prevent, so the order is part of the contract rather than incidental.
+    const edgeRow = rows.find((r) => r.event_type === "edge_created");
+    expect(edgeRow).toBeDefined();
+    expect(itemRows.every((r) => r.id < edgeRow!.id)).toBe(true);
+  });
+
+  it("announces nothing when a later edge rolls the restore back", async () => {
+    const source = `archive-items-rb-${Math.random().toString(36).slice(2, 8)}`;
+    const sourceId = "019537a0-7b80-7000-8000-000000000111";
+    const targetId = "019537a0-7b80-7000-8000-000000000112";
+
+    const archive = await buildArchive(
+      {
+        version: 1,
+        format: "marfa-archive-v1",
+        created_at: new Date().toISOString(),
+        item_count: 2,
+        blob_count: 0,
+        blobs: {},
+      },
+      [
+        JSON.stringify({
+          item: {
+            id: sourceId,
+            type: "core.note",
+            properties: { body: "rolled-back source" },
+            source,
+            source_id: "airb-1",
+          },
+        }),
+        JSON.stringify({
+          item: {
+            id: targetId,
+            type: "core.note",
+            properties: { body: "rolled-back target" },
+            source,
+            source_id: "airb-2",
+          },
+        }),
+      ],
+      [],
+      [
+        JSON.stringify({
+          edge: {
+            id: "019537a0-7b80-7000-8000-000000000113",
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: "references",
+            properties: {},
+          },
+        }),
+        JSON.stringify({
+          edge: {
+            id: "019537a0-7b80-7000-8000-000000000114",
+            source_id: targetId,
+            target_id: sourceId,
+            edge_type: "references",
+            properties: {},
+          },
+        }),
+      ],
+    );
+
+    const cursor = await logCursor();
+    const controller = new AbortController();
+    const { events, done } = collectItemEvents(controller.signal);
+    await settle();
+
+    const store = ctx.storage.edges;
+    const realCreate = store.createRaw.bind(store);
+    let creates = 0;
+    store.createRaw = async (input, space) => {
+      creates += 1;
+      if (creates === 2) throw new Error("simulated storage failure");
+      return realCreate(input, space);
+    };
+    let res: Response;
+    try {
+      res = await ctx.app.request("/admin/restore-archive", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: new Uint8Array(archive),
+      });
+    } finally {
+      store.createRaw = realCreate;
+    }
+    expect(creates).toBe(2);
+    await settle();
+    controller.abort();
+    await done;
+
+    expect(res.status).not.toBe(200);
+    // Collected inside the transaction and announced after it commits, so
+    // a rollback takes the rows and their frames together. Announcing from
+    // inside would have described items the undo then removed.
+    expect(
+      events.filter((e) => e.item.id === sourceId || e.item.id === targetId),
+    ).toHaveLength(0);
+    const rows = await logSince(cursor);
+    expect(
+      rows.filter((r) => r.item_id === sourceId || r.item_id === targetId),
+    ).toHaveLength(0);
+    expect(await ctx.storage.items.get(sourceId)).toBeNull();
+  });
+
   /**
    * Every namespace of an item in one write.
    *

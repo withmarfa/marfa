@@ -25,8 +25,8 @@ import { Readable } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
-import { publishEdge } from "../pubsub.js";
-import type { Edge } from "@withmarfa/shared";
+import { publish, publishEdge } from "../pubsub.js";
+import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
@@ -529,6 +529,7 @@ export function adminArchiveRoutes(
     );
 
     // Filled inside the transaction, announced after it commits.
+    const restoredItems: { item: Item; metadata: Metadata }[] = [];
     const restoredEdges: Edge[] = [];
     let result;
     try {
@@ -585,10 +586,26 @@ export function adminArchiveRoutes(
             // separately cost namespaces times items on the one path
             // whose purpose is moving a lot of rows at once. What is
             // stored is identical either way.
-            await storage.metadata.setExtensions(
+            const extensions = archiveExtensions(meta);
+            const stored = await storage.metadata.setExtensions(
               created.id,
-              archiveExtensions(meta),
+              extensions,
             );
+            // Collected, not announced — for the same reason as the edges
+            // below. A rollback would take the row away and the
+            // `event_log` append with it, leaving a live subscriber
+            // holding a frame no replay can repair.
+            restoredItems.push({
+              item: created,
+              metadata: {
+                item_id: created.id,
+                // `archiveTags` answers `undefined` for "the archive named
+                // none", which is what `create` wants and what a `Metadata`
+                // cannot hold — an item with no tags carries an empty list.
+                tags: archiveTags(meta) ?? [],
+                extensions: stored,
+              },
+            });
           } catch (err) {
             if (
               err instanceof MarfaError &&
@@ -713,8 +730,16 @@ export function adminArchiveRoutes(
 
     // After the transaction committed. A restore is a write like any
     // other from a subscriber's side: a client connected while an archive
-    // is restored would otherwise receive the items and none of the graph
-    // between them, and nothing later repairs it.
+    // is restored has to learn about the rows it wrote, and nothing later
+    // repairs a gap here — the event log is the only catch-up there is.
+    //
+    // Items before edges, because an edge names two endpoints and a client
+    // receiving one for a row it has never heard of has no way to resolve
+    // it. Announcing only the edges was worse than announcing neither for
+    // exactly that reason.
+    for (const { item, metadata } of restoredItems) {
+      await publish({ type: "created", item, metadata, spaceId });
+    }
     for (const edge of restoredEdges) {
       await publishEdge({ type: "edge_created", edge, spaceId });
     }
