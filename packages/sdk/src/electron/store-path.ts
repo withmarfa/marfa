@@ -27,6 +27,30 @@ const DIGEST_LENGTH = 16;
 /** As much of the origin as makes a legible folder name. */
 const HINT_LENGTH = 32;
 
+/** What separates the three fields, and what none of them may contain. */
+const SEPARATOR = "\u0000";
+
+/**
+ * Refuse an identity that could collide with another.
+ *
+ * A field containing the separator makes the three ambiguous again:
+ * `space="b\u0000c" account="d"` and `space="b" account="c\u0000d"` produce
+ * one digest, one directory and one store for two accounts. Refused rather
+ * than escaped, because an identity with a NUL in it is wrong wherever it
+ * came from, and a path that took it would be the second store nobody can
+ * account for.
+ */
+function assertSeparable(identity: StoreIdentity): void {
+  for (const field of ["origin", "spaceId", "accountId"] as const) {
+    if (identity[field].includes(SEPARATOR)) {
+      throw new Error(
+        `@withmarfa/sdk/electron: this store identity's ${field} contains a NUL, which is what separates the three ` +
+          `fields when they are hashed into a path. Two identities carrying one could share a store.`,
+      );
+    }
+  }
+}
+
 export interface LocalStoreLocation {
   /** `app.getPath("userData")`. */
   userData: string;
@@ -69,13 +93,16 @@ function hint(origin: string): string {
  * `space=bc account=d` and `space=b account=cd` onto one directory, so two
  * accounts would open one store, and the engine's identity check — which
  * exists to catch exactly this — would never see a mismatch to refuse.
- * A NUL cannot appear in any of the three, so no pair of identities can
- * produce one string.
+ *
+ * A NUL separates them because nothing upstream produces one. That is a
+ * property of the callers rather than of the type, and this is exported, so
+ * {@link assertSeparable} makes it a rule rather than an assumption: a field
+ * carrying the separator reproduces the collision the separator prevents.
  */
 function digest(identity: StoreIdentity): string {
   return createHash("sha256")
     .update(
-      [identity.origin, identity.spaceId, identity.accountId].join("\u0000"),
+      [identity.origin, identity.spaceId, identity.accountId].join(SEPARATOR),
     )
     .digest("hex")
     .slice(0, DIGEST_LENGTH);
@@ -93,6 +120,7 @@ function digest(identity: StoreIdentity): string {
  */
 export function localStoreDirectory(options: LocalStoreLocation): string {
   const { userData, identity } = options;
+  assertSeparable(identity);
   return join(
     userData,
     STORES_DIRECTORY,

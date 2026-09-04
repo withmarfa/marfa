@@ -6,11 +6,10 @@ import type { IpcMain, WebContents } from "electron";
 import { MarfaClient } from "../client.js";
 import type { StoreIdentity } from "../local/types.js";
 import {
-  LOCAL_BRIDGE_KEY,
-  LOCAL_EVENT_CHANNEL,
   LOCAL_INVOKE_CHANNEL,
   LOCAL_METHODS,
   forRenderer,
+  refusalNameOf,
 } from "./protocol.js";
 import type { BridgeEngineEvent, InvokeResult } from "./protocol.js";
 import { openElectronLocalStore, sandboxedWebPreferences } from "./host.js";
@@ -73,6 +72,27 @@ afterEach(() => {
 });
 
 /**
+ * What `contextBridge` leaves of a rejection.
+ *
+ * Electron does not hand the renderer the preload's Error object: it
+ * serializes what it can and rebuilds one in the renderer's realm. Custom
+ * properties do not survive that, and `error.name = "..."` on an instance is
+ * a custom property — it shadows the prototype's rather than replacing it.
+ * `message` does survive, which is why the class travels there.
+ *
+ * Modelled rather than reached for real, and the modelling is the point: a
+ * harness where both halves share a realm has no such boundary, so a test
+ * that read `.name` off the caught error would pass while the application
+ * failed.
+ */
+function acrossContextBridge(error: Error | undefined): Error | undefined {
+  if (error === undefined) return undefined;
+  const rebuilt = new Error(error.message);
+  rebuilt.stack = error.stack;
+  return rebuilt;
+}
+
+/**
  * A stand-in for the pair Electron puts either side of the boundary.
  *
  * The two halves of this subpath are only correct together — a channel name
@@ -98,6 +118,13 @@ function ipcPair(): {
       channel: string,
       listener: (event: unknown, ...args: unknown[]) => unknown,
     ) => {
+      // Electron refuses a second handler on one channel, and a harness that
+      // accepted one would hide a host that never removes its own.
+      if (handlers.has(channel)) {
+        throw new Error(
+          `Attempted to register a second handler for '${channel}'`,
+        );
+      }
       handlers.set(channel, listener);
     },
     removeHandler: (channel: string) => {
@@ -263,9 +290,9 @@ describe("the bridge between the host and a sandboxed renderer", () => {
       .catch((error: unknown) => error as Error);
     expect(refusal?.message).toMatch(/no item itm_nothing/);
 
-    // The one that matters: a class an app keys on to decide what to put in
-    // front of a person, arriving as itself. A second host over the same
-    // store is a reader, and every write through its bridge refuses.
+    // The one that matters: the class an app keys on to decide what to put
+    // in front of a person. A second host over the same store is a reader,
+    // and every write through its bridge refuses.
     const reader = await host(userData);
     const readerPair = ipcPair();
     reader.serve({
@@ -277,7 +304,18 @@ describe("the bridge between the host and a sandboxed renderer", () => {
       .createItem({ type: "core.note", properties: {} })
       .then(() => undefined)
       .catch((error: unknown) => error as Error);
-    expect(readOnly?.name).toBe("ReadOnlyStoreError");
+
+    // Through `contextBridge`, not beside it. Electron rebuilds a thrown
+    // Error in the renderer's realm from the fields it serializes, and a
+    // `name` assigned on an instance is an own property rather than the
+    // prototype's — so it does not make the trip. Reading `.name` here
+    // would pass in this harness, where both halves share a realm, and
+    // would be wrong in the application: the mechanism that destroys the
+    // name is the one thing the harness does not have.
+    expect(refusalNameOf(acrossContextBridge(readOnly))).toBe(
+      "ReadOnlyStoreError",
+    );
+    expect(refusalNameOf(acrossContextBridge(refusal))).toBe("Error");
   });
 
   it("pushes engine events to the renderers it is given", async () => {
@@ -338,6 +376,91 @@ describe("the bridge between the host and a sandboxed renderer", () => {
   });
 });
 
+describe("what the host refuses from a renderer", () => {
+  it("refuses a create whose id is not a string", async () => {
+    // The boundary's own comment names "an id that is not a string reaching
+    // a query builder" as the thing worth catching, and the first version of
+    // this checked the outer object and none of the fields inside it — so a
+    // number went straight through to the outbox as a target id.
+    const opened = await host(userDataDir());
+    const { ipcMain, ipcRenderer, renderer } = ipcPair();
+    opened.serve({ ipcMain, renderers: () => [renderer] });
+    const bridge = createLocalBridge(ipcRenderer);
+
+    await expect(
+      bridge.createItem({
+        type: "core.note",
+        properties: {},
+        id: 42 as unknown as string,
+      }),
+    ).rejects.toThrow(/id/);
+    expect(await bridge.listItems()).toEqual([]);
+  });
+
+  it("refuses a create with no type", async () => {
+    const opened = await host(userDataDir());
+    const { ipcMain, ipcRenderer, renderer } = ipcPair();
+    opened.serve({ ipcMain, renderers: () => [renderer] });
+    const bridge = createLocalBridge(ipcRenderer);
+
+    await expect(
+      bridge.createItem({ properties: {} } as unknown as {
+        type: string;
+        properties: Record<string, unknown>;
+      }),
+    ).rejects.toThrow(/type/);
+  });
+
+  it("refuses an edge whose endpoints are not strings", async () => {
+    const opened = await host(userDataDir());
+    const { ipcMain, ipcRenderer, renderer } = ipcPair();
+    opened.serve({ ipcMain, renderers: () => [renderer] });
+    const bridge = createLocalBridge(ipcRenderer);
+
+    await expect(
+      bridge.createEdge({
+        source_id: 1 as unknown as string,
+        target_id: "itm_b",
+        edge_type: "references",
+      }),
+    ).rejects.toThrow(/source_id/);
+  });
+});
+
+describe("a host that has been closed", () => {
+  it("gives the channel back, so a replacement host can take it", async () => {
+    // Signing out and back in as another account is a second host over one
+    // `ipcMain`. Electron refuses a second handler on a channel, so a host
+    // that does not remove its own on close makes that the last thing the
+    // application ever does.
+    const userData = userDataDir();
+    const first = await host(userData);
+    const pair = ipcPair();
+    first.serve({ ipcMain: pair.ipcMain, renderers: () => [pair.renderer] });
+    first.close();
+    open.splice(open.indexOf(first), 1);
+
+    const second = await host(userData);
+    expect(() => {
+      second.serve({ ipcMain: pair.ipcMain, renderers: () => [pair.renderer] });
+    }).not.toThrow();
+    expect((await createLocalBridge(pair.ipcRenderer).status()).writer).toBe(
+      true,
+    );
+  });
+
+  it("can be closed twice", async () => {
+    // `window-all-closed` and an explicit teardown both reach for it, and an
+    // application should not have to remember which one ran.
+    const opened = await host(userDataDir());
+    opened.close();
+    open.splice(open.indexOf(opened), 1);
+    expect(() => {
+      opened.close();
+    }).not.toThrow();
+  });
+});
+
 describe("the engine's writer lock and Electron's single-instance lock", () => {
   it("makes a second handle on one store read-only, whatever the app did about second instances", async () => {
     // Two different questions. Electron's single-instance lock decides
@@ -364,11 +487,20 @@ describe("the webPreferences a renderer reaching the engine must have", () => {
     expect(preferences.preload).toBe("/app/dist/preload.cjs");
   });
 
-  it("names the channels and the global the two halves agree on", () => {
-    // Constants rather than literals at either end. A renderer reading a
-    // different global, or a preload sending on a different channel, is a
-    // blank window with nothing in any log.
-    expect(LOCAL_BRIDGE_KEY).toBe("marfaLocal");
-    expect(LOCAL_INVOKE_CHANNEL).not.toBe(LOCAL_EVENT_CHANNEL);
+  it("leaves no second way into the renderer", () => {
+    // Absence, which is the half a positive assertion cannot state. Each of
+    // these re-opens what `sandbox` and `contextIsolation` close: a subframe
+    // or a <webview> carrying Node is a renderer that can open the store
+    // directly and become a second writer, and none of them announces
+    // itself.
+    // Named one at a time against Electron's own `WebPreferences` rather
+    // than looked up in a list of strings: a flag Electron renames stops
+    // compiling here, where a string would go on passing about a key that no
+    // longer exists.
+    const preferences = sandboxedWebPreferences("/app/dist/preload.cjs");
+    expect(preferences.nodeIntegration).toBe(false);
+    expect(preferences.nodeIntegrationInSubFrames ?? false).toBe(false);
+    expect(preferences.nodeIntegrationInWorker ?? false).toBe(false);
+    expect(preferences.webviewTag ?? false).toBe(false);
   });
 });

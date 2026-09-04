@@ -90,6 +90,12 @@
     <h2>Engine events</h2>
     <ul id="events"></ul>
 
-    <script type="module" src="../dist/renderer.js"></script>
+    <!--
+      A classic script, not a module. A `<script type="module">` is fetched
+      under CORS, and a `file://` page has an opaque origin, so it never
+      loads — silently, with or without the policy above. `loadFile` gives a
+      file URL, so this page has to be served by one or the other.
+    -->
+    <script src="../dist/renderer.js"></script>
   </body>
 </html>

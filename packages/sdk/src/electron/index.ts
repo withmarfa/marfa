@@ -31,7 +31,9 @@ export {
   LOCAL_EVENT_CHANNEL,
   LOCAL_INVOKE_CHANNEL,
   LOCAL_METHODS,
+  PLAIN_REFUSAL,
   forRenderer,
+  refusalNameOf,
 } from "./protocol.js";
 export type {
   BridgeEngineEvent,

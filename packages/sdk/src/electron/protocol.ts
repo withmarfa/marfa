@@ -109,8 +109,10 @@ export type LocalMethod = Exclude<keyof MarfaLocalBridge, "on">;
  *
  * `satisfies` holds it to the type in one direction — nothing here can name
  * a method the bridge does not have. The other direction, that every bridge
- * method appears here, is what `bridge.test.ts` checks; a tuple's members
- * are not something a type can require to be exhaustive.
+ * method appears here, is not something a type can require of a tuple, so it
+ * is checked at runtime: `host.test.ts`, "publishes every method the
+ * renderer's contract names, and no more", compares this list against the
+ * keys of a built bridge.
  */
 export const LOCAL_METHODS = [
   "start",
@@ -150,6 +152,41 @@ export interface InvokeRequest {
 export type InvokeResult =
   | { ok: true; value: unknown }
   | { ok: false; error: { name: string; message: string } };
+
+/**
+ * The name a refusal carries when it is an ordinary failure rather than one
+ * of the engine's classes. Not written into a message.
+ */
+export const PLAIN_REFUSAL = "Error";
+
+/**
+ * The class of a refusal, read back out of a message that crossed
+ * `contextBridge`.
+ *
+ * **`.name` does not survive the trip and cannot be made to.** Electron does
+ * not hand the renderer the preload's Error: it serializes what it can and
+ * rebuilds one in the renderer's realm, and custom properties are not part
+ * of that. `error.name = "ReadOnlyStoreError"` on an instance is a custom
+ * property — it shadows the prototype's `name` rather than replacing it — so
+ * the renderer sees `"Error"`. A subclass fares no better, because the
+ * prototype does not cross either.
+ *
+ * `message` does survive, so that is where the class travels: the bridge
+ * writes `"<Name>: <message>"` and this reads it back. The engine's own
+ * messages are prefixed `@withmarfa/sdk/local:`, so the two are
+ * distinguishable — a name is a bare identifier and the prefix it replaces
+ * is not.
+ *
+ * Returns `"Error"` for anything unprefixed, which is what an ordinary
+ * failure is, and undefined for something that is not an Error at all.
+ */
+export function refusalNameOf(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const split = error.message.indexOf(": ");
+  if (split <= 0) return "Error";
+  const candidate = error.message.slice(0, split);
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(candidate) ? candidate : "Error";
+}
 
 /**
  * An engine event as the renderer receives it.

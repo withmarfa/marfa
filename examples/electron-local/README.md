@@ -77,6 +77,54 @@ forty for the five. That is the honest trade.
 The versions are pinned exactly and `libsql` itself arrives through
 `@libsql/client`, so bumping that means bumping these in step.
 
+### What the check does and does not observe
+
+It reads `node_modules` on the machine running it. It says the bindings a
+packager could copy are present and are for the platforms they claim; it does
+not open an artifact, and **this sample has no packaging step to open one**
+— `build` is a bundle and a check, and `electron .` runs it from the tree.
+An application that adds `electron-builder` or `electron-forge` still has to
+make sure the packager copies the platform packages into the artifact it
+produces, which is that packager's configuration.
+
+The reader looks at the object headers, so it separates a Windows package
+holding a macOS binary from one holding a Windows one, and a universal binary
+that carries the architecture it needs from one that carries only the other.
+It cannot tell glibc from musl, which no header records.
+
+### Installing them with something other than pnpm
+
+These five packages declare `os` and `cpu` for platforms the build host is
+mostly not. Package managers differ on that, verified rather than assumed:
+
+- **pnpm installs them without complaint** — no warning on a default install,
+  and `engine-strict=true` does not change it, because that setting governs
+  the `engines` field rather than `os`/`cpu`.
+- **npm refuses**, with `EBADPLATFORM` naming the first mismatched package,
+  and installs nothing. An application that has to support `npm install`
+  needs a different route to the same place.
+
+`pnpm.supportedArchitectures` is the sanctioned mechanism for pulling other
+platforms' packages, and it is deliberately not configured here: it applies to
+**optional** dependencies, and setting it in the workspace would pull every
+platform variant of every optional dependency in the whole tree —
+`esbuild`, `rollup`, `lightningcss` and the rest — to solve a problem five
+direct dependencies already solve.
+
+## Two things about the kit this sample has to work around
+
+- **`@withmarfa/sdk/electron` is ESM-only.** There is no `require` condition
+  on the subpath, and an Electron main process is overwhelmingly CommonJS, so
+  a CJS main cannot `require` it — this sample's main is an ES module
+  (`"type": "module"`, Electron 28 and later), and an application that is not
+  has to bundle the subpath or move its main to ESM.
+- **A `<script type="module">` never loads from a `file://` page.** Module
+  scripts are fetched under CORS and a file URL has an opaque origin, so the
+  request fails — with or without a Content-Security-Policy, in the same
+  directory or another. `loadFile` gives a file URL, so `src/renderer.ts` is
+  built as a classic script rather than a module. Verified in Chromium: the
+  module form left the page blank, the classic form ran, under identical CSP.
+
 ## Electron's binary
 
 Nothing here downloads Electron at install time: as of Electron 44 the package

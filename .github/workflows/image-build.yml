@@ -82,6 +82,12 @@ on:
       # this build's input: nothing else reads it.
       - "packages/server/fixtures/**"
       - ".github/workflows/image-build.yml"
+      # Sample applications are not in the image and cannot change it. They
+      # carry a `package.json` and a `tsup.config.ts`, which two of the
+      # wildcards above match, so without this every edit to one fires a
+      # hosted amd64 build of an image it has nothing to do with. A negation
+      # is applied after the patterns before it, so this stays last.
+      - "!examples/**"
   # Available against any branch, and the way a change to the Dockerfile or to
   # this file gets checked before it merges. It is not free — see the header.
   workflow_dispatch:

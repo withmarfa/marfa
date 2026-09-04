@@ -38,9 +38,19 @@ export default defineConfig([
     // Renderer. A browser bundle with no Node in it at all — which is not a
     // build setting so much as a statement about what the page is allowed to
     // be. It imports one type from the kit and nothing at runtime.
+    //
+    // A classic script rather than a module, and that is not a preference.
+    // **A `<script type="module">` never loads from a `file://` page**:
+    // module scripts are fetched under CORS, a file URL has an opaque
+    // origin, and the request fails — with or without a CSP, in the same
+    // directory or another. `loadFile` is a file URL, so the page would
+    // render and the script would silently never run. Verified in Chromium
+    // rather than reasoned about: the module form left the page blank and
+    // the classic form ran, under identical CSP.
     entry: { renderer: "src/renderer.ts" },
-    format: ["esm"],
+    format: ["iife"],
     platform: "browser",
     target: "es2022",
+    outExtension: () => ({ js: ".js" }),
   },
 ]);

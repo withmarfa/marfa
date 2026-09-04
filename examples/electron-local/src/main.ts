@@ -50,9 +50,7 @@ const identity = {
  * Holding this lock does not make a store writable, and holding the store
  * does not stop a second application starting.
  */
-if (!app.requestSingleInstanceLock()) {
-  app.quit();
-}
+const isOnlyInstance = app.requestSingleInstanceLock();
 
 let host: ElectronLocalHost | undefined;
 
@@ -97,20 +95,43 @@ async function start(): Promise<void> {
   }
 }
 
-app
-  .whenReady()
-  .then(start)
-  .catch((error: unknown) => {
-    // Nothing else is going to say this. A failure here leaves a window that
-    // never appeared and a process that never exits.
-    console.error("could not start:", error);
-    app.exit(1);
+// Everything below is the first instance's, and the `else` is load-bearing
+// rather than a style. `app.quit()` asks the application to quit; it does not
+// stop this module evaluating, so a second instance that only called it went
+// straight on to open the store the first one is holding — arriving at the
+// read-only window this lock exists to prevent, through the code that takes
+// the lock. Nothing in `quit()`'s signature says so, and Electron's own
+// documented shape for this is the same `else`.
+if (!isOnlyInstance) {
+  app.quit();
+} else {
+  // The first instance is told when a second is refused. A user who
+  // double-clicked twice should get the window they already have rather than
+  // nothing happening at all.
+  app.on("second-instance", () => {
+    const [existing] = BrowserWindow.getAllWindows();
+    if (existing === undefined) return;
+    if (existing.isMinimized()) existing.restore();
+    existing.focus();
   });
+
+  app
+    .whenReady()
+    .then(start)
+    .catch((error: unknown) => {
+      // Nothing else is going to say this. A failure here leaves a window
+      // that never appeared and a process that never exits.
+      console.error("could not start:", error);
+      app.exit(1);
+    });
+}
 
 app.on("window-all-closed", () => {
   // Closed rather than left to the process exiting, so the writer lock is
-  // released and the next launch is a writer. The macOS convention of staying
-  // resident is skipped deliberately: this sample is read by relaunching it.
+  // released and the next launch is a writer. `close` also gives the IPC
+  // channel back, which is why the stop function `serve` returns is not held
+  // here. The macOS convention of staying resident is skipped deliberately:
+  // this sample is read by relaunching it.
   host?.close();
   app.quit();
 });

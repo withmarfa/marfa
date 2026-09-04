@@ -1,4 +1,5 @@
-import type { MarfaLocalBridge } from "@withmarfa/sdk/electron/preload";
+import { refusalNameOf } from "@withmarfa/sdk/electron/renderer";
+import type { MarfaLocalBridge } from "@withmarfa/sdk/electron/renderer";
 
 /**
  * The page.
@@ -64,9 +65,15 @@ form.addEventListener("submit", (submit) => {
     .createItem({ type: "core.note", properties: { title } })
     .then(render)
     .catch((error: unknown) => {
-      // A refusal arrives with its class name intact, so a real application
-      // would branch on it. Here it goes on screen.
-      status.textContent = `refused: ${String(error)}`;
+      // `error.name` is not the thing to read: `contextBridge` rebuilds the
+      // rejection in this realm and a name assigned on an instance does not
+      // make the trip. The class travels in the message, and `refusalNameOf`
+      // is what reads it back — which is how an application decides between
+      // "this window cannot write" and "that item is gone".
+      status.textContent =
+        refusalNameOf(error) === "ReadOnlyStoreError"
+          ? "Another window holds this store, so nothing typed here can be saved."
+          : `Refused: ${error instanceof Error ? error.message : String(error)}`;
     });
 });
 

@@ -1,4 +1,8 @@
-import { LOCAL_EVENT_CHANNEL, LOCAL_INVOKE_CHANNEL } from "../protocol.js";
+import {
+  LOCAL_EVENT_CHANNEL,
+  LOCAL_INVOKE_CHANNEL,
+  PLAIN_REFUSAL,
+} from "../protocol.js";
 import type {
   BridgeEngineEvent,
   InvokeResult,
@@ -25,11 +29,30 @@ export interface IpcRendererLike {
   ): void;
 }
 
-/** Put the name back on a refusal that crossed the boundary as data. */
+/**
+ * Put the name back on a refusal that crossed the boundary as data.
+ *
+ * Into the **message**, because that is the only field that reaches the
+ * renderer. `contextBridge` does not hand the page the preload's Error: it
+ * rebuilds one in the page's realm from what it can serialize, and a `name`
+ * assigned on an instance is a custom own property that is not part of that.
+ * A subclass does no better, since the prototype does not cross either. So
+ * the class is written into the message and read back with
+ * {@link refusalNameOf}.
+ *
+ * `.name` is still set, for the case where nothing is lost: an unsandboxed
+ * preload, or an application calling {@link createLocalBridge} directly. It
+ * is a convenience there and is never the thing to rely on.
+ */
 function rethrow(result: InvokeResult): never {
   if (result.ok) throw new Error("not a refusal");
-  const error = new Error(result.error.message);
-  error.name = result.error.name;
+  const { name, message } = result.error;
+  // An ordinary failure is not dressed up. Prefixing every message with
+  // `Error: ` would put a word in front of each one that says nothing.
+  const error = new Error(
+    name === PLAIN_REFUSAL ? message : `${name}: ${message}`,
+  );
+  error.name = name;
   throw error;
 }
 

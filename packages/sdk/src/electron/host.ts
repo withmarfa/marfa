@@ -88,9 +88,13 @@ export interface ElectronLocalHost {
    * guarantee.
    */
   readonly writer: boolean;
-  /** Answer a renderer's calls and push it events. Returns the function that
-   *  stops both. */
+  /**
+   * Answer a renderer's calls and push it events. Returns the function that
+   * stops both, which {@link close} also calls — an application that only
+   * ever tears the host down does not have to hold it.
+   */
   serve(options: ServeOptions): () => void;
+  /** Stop serving, stop the engine and close the store. Idempotent. */
   close(): void;
 }
 
@@ -141,6 +145,14 @@ function badArgument(method: string, position: number, wanted: string): Error {
   return error;
 }
 
+function badField(method: string, field: string, wanted: string): Error {
+  const error = new Error(
+    `@withmarfa/sdk/electron: '${method}' wants ${wanted} for '${field}'.`,
+  );
+  error.name = "BadArgumentError";
+  return error;
+}
+
 /**
  * Arguments arrive from the renderer, so they are checked rather than
  * trusted.
@@ -169,6 +181,33 @@ function asRecord(
     throw badArgument(method, position, "an object");
   }
   return value as Record<string, unknown>;
+}
+
+/**
+ * The string fields inside a create, checked the way an id argument is.
+ *
+ * The outer object was checked and its contents were not, which left exactly
+ * the case this boundary's own reasoning names: `{ type, properties, id: 42 }`
+ * reached `outbox.enqueue({ targetId: 42 })`. The required names must be
+ * present and strings; the optional ones must be strings when they are there
+ * at all.
+ */
+function checkStringFields(
+  method: string,
+  input: Record<string, unknown>,
+  required: readonly string[],
+  optional: readonly string[],
+): void {
+  for (const field of required) {
+    if (typeof input[field] !== "string" || input[field] === "") {
+      throw badField(method, field, "a non-empty string");
+    }
+  }
+  for (const field of optional) {
+    if (input[field] !== undefined && typeof input[field] !== "string") {
+      throw badField(method, field, "a string when it is given");
+    }
+  }
 }
 
 type Handler = (host: ElectronLocalHost, args: unknown[]) => Promise<unknown>;
@@ -207,12 +246,25 @@ const HANDLERS: Record<LocalMethod, Handler> = {
   getMetadata: async (host, args) =>
     host.store.visible.getMetadata(asString("getMetadata", args, 0)),
 
-  createItem: async (host, args) =>
-    host.store.mutations.createItem(
-      asRecord("createItem", args, 0) as unknown as Parameters<
-        LocalStore["mutations"]["createItem"]
-      >[0],
-    ),
+  createItem: async (host, args) => {
+    const input = asRecord("createItem", args, 0);
+    checkStringFields(
+      "createItem",
+      input,
+      ["type"],
+      ["id", "timestamp", "source_id", "tier"],
+    );
+    if (
+      typeof input.properties !== "object" ||
+      input.properties === null ||
+      Array.isArray(input.properties)
+    ) {
+      throw badField("createItem", "properties", "an object");
+    }
+    return host.store.mutations.createItem(
+      input as unknown as Parameters<LocalStore["mutations"]["createItem"]>[0],
+    );
+  },
   updateItem: async (host, args) =>
     host.store.mutations.updateItem(
       asString("updateItem", args, 0),
@@ -220,12 +272,18 @@ const HANDLERS: Record<LocalMethod, Handler> = {
     ),
   deleteItem: async (host, args) =>
     host.store.mutations.deleteItem(asString("deleteItem", args, 0)),
-  createEdge: async (host, args) =>
-    host.store.mutations.createEdge(
-      asRecord("createEdge", args, 0) as unknown as Parameters<
-        LocalStore["mutations"]["createEdge"]
-      >[0],
-    ),
+  createEdge: async (host, args) => {
+    const input = asRecord("createEdge", args, 0);
+    checkStringFields(
+      "createEdge",
+      input,
+      ["source_id", "target_id", "edge_type"],
+      ["id"],
+    );
+    return host.store.mutations.createEdge(
+      input as unknown as Parameters<LocalStore["mutations"]["createEdge"]>[0],
+    );
+  },
   updateEdge: async (host, args) =>
     host.store.mutations.updateEdge(
       asString("updateEdge", args, 0),
@@ -259,12 +317,12 @@ export async function openElectronLocalStore(
   const { userData, identity, client } = options;
   const path = localStorePath({ userData, identity });
 
-  // Made before the store is opened, not left to it. A first launch is the
-  // one time this directory is absent, and it is also the one time the
-  // outcome is worst: the store's writer lock is taken before its database
-  // is, so a lock that cannot be written lands as a read-only handle rather
-  // than as an error. The app then starts, shows an empty store, refuses
-  // every write, and works perfectly on the next launch.
+  // Made before the store is opened, not left to it. The layout under
+  // `userData` is this host's, so making it is this host's job — and it
+  // means the store is opened against a path that exists whatever any
+  // dependency does about a missing parent. A first launch is the one time
+  // it is absent, which is also the one time nobody is watching, so the
+  // property is pinned by a test rather than left to this comment.
   mkdirSync(localStoreDirectory({ userData, identity }), { recursive: true });
 
   const store = await openLocalStore({
@@ -288,6 +346,18 @@ export async function openElectronLocalStore(
       ? {}
       : { connectTimeoutMs: options.connectTimeoutMs }),
   });
+
+  /**
+   * How to stop serving, held so `close` can do it.
+   *
+   * Electron refuses a second `handle` on one channel, so a host that leaves
+   * its handler behind makes the next host over that `ipcMain` — signing in
+   * as a second account, or a teardown and rebuild — throw where nothing is
+   * looking. Returned from `serve` as well, for a caller that wants to stop
+   * serving without closing the store.
+   */
+  let stopServing: (() => void) | undefined;
+  let closed = false;
 
   const host: ElectronLocalHost = {
     engine,
@@ -324,14 +394,17 @@ export async function openElectronLocalStore(
         ): Promise<InvokeResult> => {
           const { method, args } = (request ?? {}) as Partial<InvokeRequest>;
           try {
+            // One coercion, and the lookup indexes the same string the guard
+            // checked. Two of them is a hole waiting for a `method` whose
+            // `toString` does not agree with itself.
+            const named = String(method);
             const handler = Object.prototype.hasOwnProperty.call(
               HANDLERS,
-              String(method),
+              named,
             )
-              ? HANDLERS[method as LocalMethod]
+              ? HANDLERS[named as LocalMethod]
               : undefined;
-            if (handler === undefined)
-              throw new UnknownMethodError(String(method));
+            if (handler === undefined) throw new UnknownMethodError(named);
             return { ok: true, value: await handler(host, args ?? []) };
           } catch (error) {
             return { ok: false, error: describe(error) };
@@ -339,13 +412,23 @@ export async function openElectronLocalStore(
         },
       );
 
-      return () => {
+      const stop = (): void => {
+        if (stopServing !== stop) return;
+        stopServing = undefined;
         stopListening();
         ipcMain.removeHandler(LOCAL_INVOKE_CHANNEL);
       };
+      stopServing = stop;
+      return stop;
     },
 
     close: () => {
+      // Idempotent, because two ordinary paths reach it: `window-all-closed`
+      // and whatever the application does on its own way out. An application
+      // should not have to remember which one ran.
+      if (closed) return;
+      closed = true;
+      stopServing?.();
       engine.stop();
       store.close();
     },

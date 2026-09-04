@@ -42,5 +42,7 @@ export {
   LOCAL_BRIDGE_KEY,
   LOCAL_EVENT_CHANNEL,
   LOCAL_INVOKE_CHANNEL,
+  PLAIN_REFUSAL,
+  refusalNameOf,
 } from "../protocol.js";
 export type { BridgeEngineEvent, MarfaLocalBridge } from "../protocol.js";

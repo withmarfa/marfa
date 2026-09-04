@@ -89,6 +89,34 @@ describe("where an Electron app keeps a store", () => {
     );
   });
 
+  it("refuses an identity carrying the separator itself", () => {
+    // The separator is what stops one field's tail reading as the next
+    // field's head, and a field that contains it defeats exactly that:
+    // `space="b\0c" account="d"` and `space="b" account="c\0d"` hash to one
+    // digest and share one store. Nothing upstream forbids a NUL and this is
+    // exported public API, so the comment claiming a NUL cannot appear was
+    // an assumption rather than a guarantee. Refused rather than escaped: an
+    // identity with a NUL in it is a bug wherever it came from, and a path
+    // that quietly accepted it would be the second store nobody can find.
+    const withNul = (overrides: Partial<StoreIdentity>): StoreIdentity =>
+      identity(overrides);
+    expect(() =>
+      localStorePath({ userData, identity: withNul({ spaceId: "b\u0000c" }) }),
+    ).toThrow(/spaceId/);
+    expect(() =>
+      localStorePath({
+        userData,
+        identity: withNul({ accountId: "c\u0000d" }),
+      }),
+    ).toThrow(/accountId/);
+    expect(() =>
+      localStoreDirectory({
+        userData,
+        identity: withNul({ origin: "https://a\u0000b.example" }),
+      }),
+    ).toThrow(/origin/);
+  });
+
   it("names a store for the server it belongs to", () => {
     // Readability only. Someone opening the application-support folder to
     // clear a store has to be able to tell which one is which, and a

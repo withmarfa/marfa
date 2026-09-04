@@ -16,7 +16,7 @@ import {
   assertNativeTargets,
   verifyNativeTargets,
 } from "./native-targets.js";
-import type { LibsqlTarget } from "./native-targets.js";
+import type { LibsqlTarget, NativeTargetReport } from "./native-targets.js";
 
 const roots: string[] = [];
 
@@ -61,6 +61,52 @@ function pe(machine: number): Buffer {
   return header;
 }
 
+/**
+ * A universal binary: a header naming its slices and nothing else.
+ *
+ * The layout is `magic`, `nfat_arch`, then one 20-byte `fat_arch` per slice
+ * beginning with `cputype` — all big-endian. Only the cputypes matter here,
+ * so the offset, size and align fields are left zero.
+ */
+function fatMachO(cputypes: number[]): Buffer {
+  const header = Buffer.alloc(8 + 20 * cputypes.length);
+  header.writeUInt32BE(0xcafebabe, 0);
+  header.writeUInt32BE(cputypes.length, 4);
+  cputypes.forEach((cputype, index) => {
+    header.writeUInt32BE(cputype >>> 0, 8 + index * 20);
+  });
+  return header;
+}
+
+/** A Java class file, which begins with the same four bytes a universal
+ *  binary does. `cafebabe`, minor version, major version. */
+function javaClass(major: number): Buffer {
+  const header = Buffer.alloc(64);
+  header.writeUInt32BE(0xcafebabe, 0);
+  header.writeUInt16BE(0, 4);
+  header.writeUInt16BE(major, 6);
+  return header;
+}
+
+/** An `MZ` file with whatever `e_lfanew` and PE signature the caller wants. */
+function dosStub(options: {
+  lfanew?: number;
+  signature?: number;
+  machine?: number;
+  size?: number;
+}): Buffer {
+  const header = Buffer.alloc(options.size ?? 512);
+  header.write("MZ", 0, "binary");
+  if (options.lfanew !== undefined) header.writeUInt32LE(options.lfanew, 0x3c);
+  if (options.signature !== undefined && options.lfanew !== undefined) {
+    header.writeUInt32BE(options.signature, options.lfanew);
+    if (options.machine !== undefined) {
+      header.writeUInt16LE(options.machine, options.lfanew + 4);
+    }
+  }
+  return header;
+}
+
 const MACH_ARM64 = 0x0100000c;
 const MACH_X64 = 0x01000007;
 const ELF_X64 = 0x3e;
@@ -84,7 +130,10 @@ const CORRECT: Record<string, Buffer> = {
  * dependencies of `libsql`, so a resolver skips the ones the build host
  * cannot run.
  */
-function tree(contents: Partial<Record<LibsqlTarget, Buffer>>): string {
+function tree(
+  contents: Partial<Record<LibsqlTarget, Buffer>>,
+  options: { sealExports?: boolean } = {},
+): string {
   const root = mkdtempSync(join(tmpdir(), "marfa-native-targets-"));
   roots.push(root);
 
@@ -97,6 +146,13 @@ function tree(contents: Partial<Record<LibsqlTarget, Buffer>>): string {
         name: `@libsql/${target}`,
         version: "0.0.0-test",
         main: "index.node",
+        // An `exports` map publishing the binding and nothing else, which is
+        // what `libsql` itself already does and what napi and neon packages
+        // increasingly do. It changes nothing on disk and makes the manifest
+        // unnameable through the resolver.
+        ...(options.sealExports === true
+          ? { exports: { ".": "./index.node" } }
+          : {}),
       }),
     );
     writeFileSync(join(dir, "index.node"), binary);
@@ -268,7 +324,6 @@ describe("verifying an artifact ships a binary for every platform it targets", (
       resolveFrom: from,
       targets: ["darwin-arm64"],
     });
-    console.log(JSON.stringify(report.findings, null, 2));
     expect(report.ok).toBe(true);
   });
 
@@ -307,11 +362,6 @@ describe("verifying an artifact ships a binary for every platform it targets", (
   });
 
   it("does not find a package the application has not declared", () => {
-    // The case the check exists for, and the one it used to pass. Resolution
-    // through `createRequire` answers from a broader search under `tsx` and
-    // under Vitest, so a platform package that is merely present somewhere in
-    // the store resolved as though the application depended on it — and a
-    // build with one platform uninstalled reported five sound platforms.
     const from = tree({ "darwin-arm64": CORRECT["darwin-arm64"] });
     const report = verifyNativeTargets({
       resolveFrom: from,
@@ -319,5 +369,173 @@ describe("verifying an artifact ships a binary for every platform it targets", (
     });
     expect(report.ok).toBe(false);
     expect(report.missing[0]?.problem).toMatch(/not installed/);
+  });
+
+  it("finds a package whose manifest the resolver refuses to name", () => {
+    // The case that separates the walk from `require.resolve`, and the only
+    // one of the two differences a test in this suite can reach. A package
+    // with an `exports` map that does not publish `./package.json` is on
+    // disk and unnameable: the walk reads the file, while
+    // `createRequire(...).resolve(pkg + "/package.json")` — which is what
+    // this check used to do — throws `ERR_PACKAGE_PATH_NOT_EXPORTED` and
+    // reports the package uninstalled. `libsql` is already shaped this way.
+    //
+    // The first assertion is part of the comparison rather than a note
+    // beside it: it establishes, here, that the strategy this replaced does
+    // fail on this tree. Swap `resolvePackageDirectory` back and this test
+    // reddens; the rest of the file does not.
+    const from = tree(
+      { "win32-x64-msvc": CORRECT["win32-x64-msvc"] },
+      { sealExports: true },
+    );
+    expect(() =>
+      createRequire(from).resolve("@libsql/win32-x64-msvc/package.json"),
+    ).toThrow(/ERR_PACKAGE_PATH_NOT_EXPORTED|not defined by "exports"/);
+
+    const report = verifyNativeTargets({
+      resolveFrom: from,
+      targets: ["win32-x64-msvc"],
+    });
+    expect(report.ok).toBe(true);
+  });
+});
+
+/**
+ * What the reader has to refuse.
+ *
+ * Every case here is a file that is present, is the right size, and cannot
+ * be loaded by the platform whose package it is sitting in. A check that
+ * asks whether a file exists passes all of them, and so did this one: each
+ * was built as a fake tree and run through the real `verifyNativeTargets`.
+ */
+describe("binaries that are present and cannot be loaded", () => {
+  function problemFor(target: LibsqlTarget, binary: Buffer): string {
+    const contents: Partial<Record<LibsqlTarget, Buffer>> = {
+      [target]: binary,
+    };
+    const report = verifyNativeTargets({
+      resolveFrom: tree(contents),
+      targets: [target],
+    });
+    expect(report.ok).toBe(false);
+    const problem = report.missing[0]?.problem;
+    expect(problem).toBeDefined();
+    return problem ?? "";
+  }
+
+  it("refuses an MZ file whose PE offset is zero", () => {
+    // A DOS stub with nothing after it. `e_lfanew` reads 0, the signature
+    // check lands back on the `MZ`, and the old reader called that Windows
+    // with an architecture it declined to name — which the architecture
+    // test then skipped.
+    expect(problemFor("win32-x64-msvc", dosStub({ lfanew: 0 }))).toMatch(
+      /PE signature/i,
+    );
+  });
+
+  it("refuses an MZ file whose PE offset points nowhere", () => {
+    expect(
+      problemFor("win32-x64-msvc", dosStub({ lfanew: 0x7fffffff })),
+    ).toMatch(/PE header|past the/i);
+  });
+
+  it("refuses an MZ file that is just text", () => {
+    const text = Buffer.from("MZ this is not a binary at all, it is prose.\n");
+    expect(problemFor("win32-x64-msvc", text)).toMatch(/PE|short/i);
+  });
+
+  it("refuses a universal binary that carries only the other architecture", () => {
+    // The ordinary shape of a lipo-thinned artifact, and precisely the
+    // failure this check exists for: a real Mach-O, in the right package,
+    // that an arm64 machine cannot load a byte of.
+    expect(problemFor("darwin-arm64", fatMachO([MACH_X64]))).toMatch(/x64/);
+  });
+
+  it("accepts a universal binary that carries the architecture it needs", () => {
+    const report = verifyNativeTargets({
+      resolveFrom: tree({ "darwin-arm64": fatMachO([MACH_X64, MACH_ARM64]) }),
+      targets: ["darwin-arm64"],
+    });
+    expect(report.ok).toBe(true);
+  });
+
+  it("refuses a Java class file, which begins with the same four bytes", () => {
+    // `0xcafebabe` is the universal-binary magic and the Java class-file
+    // magic. Reading the slice count is what tells them apart: a class file
+    // declares a version number where a Mach-O declares a handful of
+    // architectures.
+    expect(problemFor("darwin-arm64", javaClass(52))).toMatch(
+      /universal|architectures|class/i,
+    );
+  });
+
+  it("refuses a universal binary declaring an absurd number of slices", () => {
+    const header = Buffer.alloc(64);
+    header.writeUInt32BE(0xcafebabe, 0);
+    header.writeUInt32BE(100_000, 4);
+    expect(problemFor("darwin-arm64", header)).toMatch(/architectures|slices/i);
+  });
+
+  it("refuses a Mach-O built for an architecture it does not know", () => {
+    expect(problemFor("darwin-arm64", machO(0x0000_0012))).toMatch(
+      /cputype|architecture/i,
+    );
+  });
+
+  it("refuses an ELF built for the wrong machine", () => {
+    expect(problemFor("linux-x64-gnu", elf(ELF_ARM64))).toMatch(/arm64/);
+  });
+});
+
+/**
+ * Files too short to hold the field the reader is about to read.
+ *
+ * `verifyNativeTargets` is the half of this API documented not to throw, and
+ * every one of these used to come out of it as a `RangeError` from inside a
+ * `.map` — naming no target, no path, and never reaching the message the
+ * failure was written for.
+ */
+describe("binaries too short to read", () => {
+  const truncated: [string, Buffer][] = [
+    ["nothing at all", Buffer.alloc(0)],
+    ["one byte", Buffer.from([0x4d])],
+    ["a Mach-O magic and no more", Buffer.from([0xcf, 0xfa, 0xed, 0xfe])],
+    ["an ELF magic and no more", Buffer.from([0x7f, 0x45, 0x4c, 0x46])],
+    [
+      "an ELF header cut before e_machine",
+      Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]),
+    ],
+    ["an MZ stub with no e_lfanew", Buffer.from("MZ\x90\x00\x03\x00\x00\x00")],
+    [
+      "a universal header with no slice table",
+      Buffer.from([0xca, 0xfe, 0xba, 0xbe, 0, 0, 0, 2]),
+    ],
+  ];
+
+  for (const [what, binary] of truncated) {
+    it(`refuses ${what} without throwing`, () => {
+      const from = tree({ "darwin-arm64": binary });
+      let report: NativeTargetReport | undefined;
+      expect(() => {
+        report = verifyNativeTargets({
+          resolveFrom: from,
+          targets: ["darwin-arm64"],
+        });
+      }).not.toThrow();
+      expect(report?.ok).toBe(false);
+      // The point of not throwing: the failure arrives as the message that
+      // names the platform and says what to do about it.
+      expect(report?.missing[0]?.target).toBe("darwin-arm64");
+      expect(report?.missing[0]?.problem).toBeDefined();
+    });
+  }
+
+  it("reaches the error the whole check is written for", () => {
+    expect(() => {
+      assertNativeTargets({
+        resolveFrom: tree({ "darwin-arm64": Buffer.alloc(2) }),
+        targets: ["darwin-arm64"],
+      });
+    }).toThrow(MissingNativeBinaryError);
   });
 });
