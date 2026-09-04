@@ -300,14 +300,15 @@ describe("conflict resolution", () => {
       { expectedVersion: 1 },
     );
 
-    // Stale version on the same field — real conflict. Auto: server's value
-    // wins on conflicting fields, non-conflicting changes are preserved.
+    // Stale version on the same field — a real conflict, resolved by the
+    // server. `title` is last-writer-wins and this is the later writer, so
+    // it takes this value; the non-conflicting change applies as usual.
     const result = await client.items.update(
       item.id,
       { title: "Client title", body: "Client body" },
       { expectedVersion: 1, conflict: "auto" },
     );
-    expect(result.properties.title).toBe("Server title");
+    expect(result.properties.title).toBe("Client title");
     expect(result.properties.body).toBe("Client body");
   });
 
@@ -378,7 +379,6 @@ describe("conflict resolution — policy-aware auto strategy", () => {
       {
         expectedVersion: 1,
         conflict: "auto",
-        type: "core.note",
         onAutoMerge: (e) => {
           if (e.conflictedCopyId) events.push(e.conflictedCopyId);
         },
@@ -410,14 +410,17 @@ describe("conflict resolution — policy-aware auto strategy", () => {
       {
         expectedVersion: 1,
         conflict: "auto",
-        type: "core.note",
         onAutoMerge: (e) => {
           spawned = e.conflictedCopyId;
         },
       },
     );
 
-    expect(result.properties.title).toBe("Server title");
+    // Last-writer-wins takes the later writer, which is this one. It used
+    // to keep the server's value here — first-writer-wins under a name
+    // saying the opposite — because the kit resolved it rather than the
+    // server.
+    expect(result.properties.title).toBe("Client title");
     expect(spawned).toBeUndefined();
   });
 
@@ -436,14 +439,13 @@ describe("conflict resolution — policy-aware auto strategy", () => {
       {
         expectedVersion: 1,
         conflict: "auto",
-        type: "core.note",
         onAutoMerge: (e) => {
           event = e;
         },
       },
     );
 
-    expect(result.properties.title).toBe("Server title");
+    expect(result.properties.title).toBe("Client title");
     expect(result.properties.body).toBe("Server body");
     expect(event?.conflictedCopyId).toBeDefined();
     expect(event?.fields.sort()).toEqual(["body", "title"]);
@@ -473,14 +475,13 @@ describe("conflict resolution — policy-aware auto strategy", () => {
       {
         expectedVersion: 1,
         conflict: "auto",
-        type: "core.entity.person",
         onAutoMerge: (e) => {
           spawned = e.conflictedCopyId;
         },
       },
     );
 
-    expect(result.properties.given_name).toBe("Server Alice");
+    expect(result.properties.given_name).toBe("Client Alice");
     expect(spawned).toBeUndefined();
   });
 });
@@ -557,7 +558,7 @@ describe("items.update expectedVersion", () => {
     ).rejects.toBeInstanceOf(ConflictError);
   });
 
-  it("lazy-fetches type only when keep_both_copies conflict needs it", async () => {
+  it("resolves a keep-both conflict in one request", async () => {
     const item = await createNote({ body: "Base" });
     await client.items.update(
       item.id,
@@ -574,7 +575,6 @@ describe("items.update expectedVersion", () => {
       {
         expectedVersion: 1,
         conflict: "auto",
-        // type deliberately omitted — must be lazy-fetched on conflict.
         onAutoMerge: (e) => {
           spawned = e.conflictedCopyId;
         },
@@ -582,15 +582,14 @@ describe("items.update expectedVersion", () => {
     );
 
     expect(result.properties.body).toBe("Server body");
+    // The sibling is still named, but by the server's report rather than by
+    // a create the kit performed.
     expect(spawned).toBeDefined();
 
-    // A GET on the item id must have happened (the lazy fetch), but only
-    // after the PATCH — not as an upfront pre-fetch.
-    const itemCalls = calls.filter((c) => c.path === `/items/${item.id}`);
-    const firstPatchIdx = itemCalls.findIndex((c) => c.method === "PATCH");
-    const firstGetIdx = itemCalls.findIndex((c) => c.method === "GET");
-    expect(firstPatchIdx).toBe(0);
-    expect(firstGetIdx).toBeGreaterThan(firstPatchIdx);
+    // One PATCH and nothing else. The kit used to fetch the type, create the
+    // sibling and re-send the update — three more round trips, and no
+    // arrangement of them that is atomic.
+    expect(calls).toEqual([{ method: "PATCH", path: `/items/${item.id}` }]);
   });
 
   it("skips the GET when expectedVersion is provided", async () => {
@@ -600,7 +599,7 @@ describe("items.update expectedVersion", () => {
     const updated = await c.items.update(
       item.id,
       { title: "Patched" },
-      { expectedVersion: item.version, type: "core.note" },
+      { expectedVersion: item.version },
     );
 
     expect(updated.version).toBe(item.version + 1);

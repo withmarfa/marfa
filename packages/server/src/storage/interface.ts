@@ -16,6 +16,8 @@ import type {
   MarfaRole,
   PaginatedResult,
   SearchResult,
+  AncestorUnavailableResponse,
+  ConflictResolutionReport,
   ConflictResponse,
   ItemState,
   User,
@@ -32,6 +34,7 @@ import type {
   TypeSchema,
 } from "@withmarfa/shared";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
+import type { ConflictMode } from "./conflict.js";
 import type { SourceFilterSettings } from "./filter-sql.js";
 
 // ---------------------------------------------------------------------------
@@ -460,8 +463,80 @@ export interface ItemWriterInput {
   written_by_connection_id?: string | null;
 }
 
-export type StoredCreateItemInput = CreateItemInput & ItemWriterInput;
-export type StoredUpdateItemInput = UpdateItemInput & ItemWriterInput;
+/**
+ * How this write wants a collision handled, carried down to the store because
+ * the resolution happens inside the update's transaction.
+ *
+ * **Server-internal, like `ItemWriterInput`.** `conflict_mode` comes from the
+ * request's own query parameter rather than from the caller's body, and
+ * `idempotency_key` is read off the header the replay cache already owns —
+ * neither is a field a client sets on an update payload.
+ */
+/**
+ * An item, plus what the server did if this write resolved a collision.
+ *
+ * The report rides on the returned object rather than widening the store's
+ * return into a tuple: every caller of `update` reads an `Item`, and an
+ * optional extra property leaves all of them working unchanged while the one
+ * caller that reports it can pick it up. It is never persisted — the row has
+ * no such column — and the route strips it off the item before answering.
+ */
+export type ResolvedItem = Item & {
+  conflict_resolution?: ConflictResolutionReport;
+  /**
+   * The sibling row this write created, for the route to announce.
+   *
+   * **Server-internal, and stripped before the response.** It is here because
+   * `publish` lives at the route and the row is written in the store's
+   * transaction, so the two need a way to meet. A write that reaches no
+   * `event_log` row is one a client can never learn about — see
+   * `routes/bulk-reaches-the-log.test.ts` — and the whole point of a
+   * conflicted copy is that the losing edit stays findable.
+   *
+   * Absent when the sibling already existed, which is the idempotent retry:
+   * the run that actually wrote it announced it, and announcing again would
+   * report a create that did not happen.
+   */
+  conflict_sibling?: Item;
+};
+
+export interface ConflictResolutionInput {
+  /** Absent means `manual`: the envelope, which is what every existing
+   *  caller was written against. */
+  conflict_mode?: ConflictMode;
+  /**
+   * The caller's `Idempotency-Key`, when it sent one. Only used to derive the
+   * id of a keep-both sibling, so that a write which runs twice writes one.
+   * Absent, the sibling gets a fresh id and a genuine re-execution duplicates
+   * it — which is the honest outcome, since without a key the server has no
+   * way to tell a retry from a second edit.
+   */
+  idempotency_key?: string;
+}
+
+/**
+ * The version a row is being recreated at, for a restore.
+ *
+ * **Server-internal, and set on exactly one path.** A create otherwise starts
+ * at 1; only a restore has a prior version to honour, and it is honoured
+ * because the row keeps its id. A row that came back at 1 under an id that had
+ * reached 12 lets a client's stale precondition pass, later, against content
+ * it never read — the one thing a version exists to prevent. Never
+ * caller-supplied: a client that could choose its own version could forge
+ * exactly that state.
+ */
+export interface RestoredRowInput {
+  version?: number;
+}
+
+export type StoredCreateItemInput = CreateItemInput &
+  ItemWriterInput &
+  RestoredRowInput;
+
+export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
+export type StoredUpdateItemInput = UpdateItemInput &
+  ItemWriterInput &
+  ConflictResolutionInput;
 
 export interface ItemStore {
   create(input: StoredCreateItemInput, spaceId?: string): Promise<Item>;
@@ -549,7 +624,7 @@ export interface ItemStore {
     id: string,
     input: StoredUpdateItemInput,
     spaceId?: string,
-  ): Promise<Item | ConflictResponse>;
+  ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse>;
   delete(id: string, spaceId?: string): Promise<void>;
   purge(id: string, spaceId?: string): Promise<void>;
   /**
@@ -2432,7 +2507,7 @@ export interface EdgeListFilters {
 
 export interface EdgeStore {
   /** Create an edge. Constraint enforcement (cardinality / cycles / type) sits outside. */
-  createRaw(input: CreateEdgeInput, spaceId?: string): Promise<Edge>;
+  createRaw(input: StoredCreateEdgeInput, spaceId?: string): Promise<Edge>;
   get(id: string): Promise<Edge | null>;
   /** Outbound edges — this item is the source. */
   listFromSource(

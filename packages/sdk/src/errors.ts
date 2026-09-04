@@ -117,6 +117,33 @@ export class ConflictError extends MarfaError {
 }
 
 /**
+ * A write was based on a version whose snapshot the server no longer holds,
+ * so there was no common ancestor to merge against.
+ *
+ * Deliberately not `ConflictError`. That one carries an ancestor and a list of
+ * fields that collided, and here there is neither: nothing can be shown *not*
+ * to have collided, so a caller treating this as an ordinary conflict resolves
+ * every field it sent and, under a keep-both policy, spawns siblings holding
+ * text the person never typed. The only correct response is to re-read and
+ * re-apply, which is why `current` travels with it.
+ */
+export class AncestorUnavailableError extends MarfaError {
+  readonly current: ConflictSnapshot;
+  readonly requestedVersion: number;
+
+  constructor(
+    current: ConflictSnapshot,
+    requestedVersion: number,
+    message: string,
+  ) {
+    super("ancestor_unavailable", message, 409);
+    this.name = "AncestorUnavailableError";
+    this.current = current;
+    this.requestedVersion = requestedVersion;
+  }
+}
+
+/**
  * A `PATCH /edges/{id}` carrying a `version` was refused because the edge
  * had moved on. Carries the edge as the server now holds it.
  *

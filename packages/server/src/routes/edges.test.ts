@@ -1401,3 +1401,86 @@ describe("Single-edge mutate/delete — cross-space fence", () => {
     expect(gone).toBeNull();
   });
 });
+
+describe("an edge conflict names its code in the header", () => {
+  it("stamps X-Error-Code on the refusal", async () => {
+    const a = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "edge header a" } },
+    });
+    const b = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "edge header b" } },
+    });
+    const aId = ((await a.json()) as { item: { id: string } }).item.id;
+    const bId = ((await b.json()) as { item: { id: string } }).item.id;
+
+    const created = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: aId, target_id: bId, edge_type: "references" },
+    });
+    expect(created.status).toBe(201);
+    const edge = (
+      (await created.json()) as {
+        edge: { id: string; version: number };
+      }
+    ).edge;
+
+    // Move it on, so the version below is stale.
+    await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { weight: 1 }, version: edge.version },
+    });
+
+    const stale = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { weight: 2 }, version: edge.version },
+    });
+    expect(stale.status).toBe(409);
+    // Returned rather than thrown, so nothing else sets this. Same rule as
+    // the item door.
+    expect(stale.headers.get("X-Error-Code")).toBe("version_conflict");
+  });
+});
+
+describe("the edge conflict envelope describes itself", () => {
+  it("carries a message, as the item door does", async () => {
+    const a = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "edge msg a" } },
+    });
+    const b = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "edge msg b" } },
+    });
+    const aId = ((await a.json()) as { item: { id: string } }).item.id;
+    const bId = ((await b.json()) as { item: { id: string } }).item.id;
+
+    const created = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: aId, target_id: bId, edge_type: "references" },
+    });
+    const edge = (
+      (await created.json()) as { edge: { id: string; version: number } }
+    ).edge;
+
+    await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { weight: 1 }, version: edge.version },
+    });
+    const stale = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { weight: 2 }, version: edge.version },
+    });
+    expect(stale.status).toBe(409);
+
+    const body = (await stale.json()) as {
+      error: { code: string; status: number; message: string };
+    };
+    // An envelope that describes itself on one door and not its sibling is
+    // the disagreement a client discovers the hard way.
+    expect(body.error.code).toBe("version_conflict");
+    expect(body.error.status).toBe(409);
+    expect(body.error.message).toContain(String(edge.version));
+  });
+});

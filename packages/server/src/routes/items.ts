@@ -19,7 +19,9 @@ import {
   getSourceAllowlist,
 } from "@withmarfa/shared";
 import type {
+  AncestorUnavailableResponse,
   ApiKey,
+  ConflictResponse,
   Edge,
   Item,
   ItemState,
@@ -49,7 +51,11 @@ import {
 } from "../middleware/auth.js";
 import { compareProperties } from "./mirror-reconcile.js";
 import { reserveQuota } from "../middleware/quota.js";
-import type { Storage, ItemSortField } from "../storage/interface.js";
+import type {
+  Storage,
+  ItemSortField,
+  ResolvedItem,
+} from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
@@ -120,11 +126,59 @@ const ConflictResponseSchema = z.object({
   error: z.object({
     code: z.literal("version_conflict"),
     status: z.literal(409),
+    /** Prose for a person. Branch on `code`, never on this. */
+    message: z.string(),
   }),
   current: ConflictSnapshotSchema,
   ancestor: ConflictSnapshotSchema,
   conflicting_fields: z.array(z.string()),
   merge_policy: MergePolicySchema,
+});
+
+/**
+ * The refusal for a write based on a version whose snapshot has been thinned
+ * away. Distinct from `version_conflict` because it cannot be resolved: there
+ * is no ancestor, so no field can be shown not to have collided, and a client
+ * merging against an empty one spawns siblings holding text nobody typed.
+ */
+const AncestorUnavailableSchema = z.object({
+  error: z.object({
+    code: z.literal("ancestor_unavailable"),
+    status: z.literal(409),
+    message: z.string(),
+  }),
+  current: ConflictSnapshotSchema,
+  requested_version: z.number(),
+});
+
+/**
+ * Who resolves a collision on this write.
+ *
+ * A closed enum rather than a free string, so a caller asking for a mode this
+ * server does not implement is refused. Dropping it instead would answer 409
+ * to a request that asked for a resolution, which reads as "no conflict was
+ * resolvable" rather than "nobody read your parameter".
+ */
+const ConflictModeSchema = z.enum(["auto", "manual", "callback"]);
+
+/**
+ * The 200 for an update, widened by what the server did if it resolved a
+ * collision. Absent on every write that did not, which is nearly all of them.
+ */
+const UpdatedItemSchema = ItemWithMetadataSchema.extend({
+  conflict_resolution: z
+    .object({
+      fields: z.array(z.string()),
+      strategy: z.record(z.string(), MergeStrategySchema),
+      conflicted_copy_id: z.string().optional(),
+    })
+    .optional()
+    .describe(
+      "What the server did, present only when this write resolved a " +
+        "conflict. `conflicted_copy_id` names the sibling carrying the " +
+        "losing values — the only place it is reported, since no route " +
+        "says what a write created.",
+    ),
 });
 
 const IdParam = z.object({
@@ -591,6 +645,17 @@ const updateItemRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
+    query: z.object({
+      conflict: ConflictModeSchema.optional().describe(
+        "Who resolves a version conflict. `auto` resolves it here, in this " +
+          "write's transaction, by the type's merge policy: a " +
+          "`last_writer_wins` field takes this write's value, a " +
+          "`keep_both_copies` field leaves the server's value on the item " +
+          "and the losing value lands on a sibling tagged `conflicted-copy`. " +
+          "`manual` and `callback` return the 409 envelope for the caller to " +
+          "resolve. Omitted means `manual`.",
+      ),
+    }),
     body: {
       content: {
         "application/json": {
@@ -662,7 +727,7 @@ const updateItemRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: ItemWithMetadataSchema },
+        "application/json": { schema: UpdatedItemSchema },
       },
       description: "Item updated",
     },
@@ -705,6 +770,7 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.union([
             ConflictResponseSchema,
+            AncestorUnavailableSchema,
             makeErrorResponseSchema([
               "source_id_conflict",
               "type_mismatch",
@@ -714,7 +780,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "Version conflict (optimistic-concurrency mismatch on `properties`), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "Version conflict (optimistic-concurrency mismatch on `properties`), `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -2412,6 +2478,11 @@ export function itemRoutes(storage: Storage) {
     }
 
     const body = c.req.valid("json");
+    const { conflict: conflictMode } = c.req.valid("query");
+    // The same header the replay cache in front of this route claims. Read
+    // here so a keep-both sibling can be given an id derived from it, which
+    // is what makes a re-executed write produce one sibling rather than two.
+    const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
     const hasEdges =
@@ -2662,7 +2733,11 @@ export function itemRoutes(storage: Storage) {
     // after it commits. `undefined` when the request carried no edges.
     let patchedEdgeChanges: InlineEdgeChanges | undefined;
     const txResult = await storage.runInTransaction(async () => {
-      const updated =
+      // Annotated rather than inferred: the `: item` arm is a plain `Item`,
+      // and left to inference the union collapses to it — losing the
+      // resolution report the store attaches on the other arm.
+      const updated:
+        ResolvedItem | ConflictResponse | AncestorUnavailableResponse =
         hasProperties || hasTier || hasTimestamp || hasSourceId
           ? await storage.items.update(
               id,
@@ -2673,6 +2748,16 @@ export function itemRoutes(storage: Storage) {
                 }),
                 ...(retypeTo !== undefined && { type: retypeTo }),
                 version: body.version,
+                // Who resolves a collision, and the key that makes a retry
+                // recognisable as one. Both are request-level facts rather
+                // than fields of the item, which is why they ride here
+                // rather than in the body.
+                ...(conflictMode !== undefined && {
+                  conflict_mode: conflictMode,
+                }),
+                ...(idempotencyKey !== null && {
+                  idempotency_key: idempotencyKey,
+                }),
                 force_snapshot: body.force_snapshot === true ? true : undefined,
                 tier: hasTier ? body.tier : undefined,
                 timestamp: hasTimestamp ? body.timestamp : undefined,
@@ -2725,13 +2810,42 @@ export function itemRoutes(storage: Storage) {
     });
 
     if ("error" in txResult) {
+      // Stamped here because this refusal is returned rather than thrown, so
+      // the error handler that normally sets it never runs. Without it the
+      // fresh answer and its idempotent replay describe one conflict
+      // differently: the replay reads the code out of the recorded body and
+      // sets the header, so a client that branches on it sees the header
+      // appear only on the retry.
+      c.header("X-Error-Code", txResult.error.code);
       return c.json(txResult, 409);
     }
 
+    // Off the item before anything reads it. It describes what this write
+    // did, not what the row is, and the row has no such column — leaving it
+    // on would put a field in the published event, and in the response's
+    // `item`, that no read of the item ever returns.
+    const {
+      conflict_resolution: resolution,
+      conflict_sibling: sibling,
+      ...resolvedItem
+    } = txResult;
+
     const metadata = await storage.metadata.get(id);
+    // The sibling first, then the row that gave its value up. A subscriber
+    // then never observes a window in which the losing edit has left the
+    // original and does not yet exist anywhere — which is the state this
+    // whole feature exists to prevent.
+    if (sibling) {
+      await publish({
+        type: "created",
+        item: sibling,
+        metadata: await storage.metadata.get(sibling.id),
+        spaceId: tid,
+      });
+    }
     await publish({
       type: "updated",
-      item: txResult,
+      item: resolvedItem,
       metadata,
       spaceId: tid,
     });
@@ -2753,16 +2867,21 @@ export function itemRoutes(storage: Storage) {
       {
         item: {
           ...withOrphanState(
-            txResult,
+            resolvedItem,
             await resolveOrphanScopeForOwnWrite(
               storage,
-              [txResult],
+              [resolvedItem],
               c.get("apiKey"),
             ),
           ),
           edges: hydrated,
         },
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+        // Present only where the server actually resolved a collision. It is
+        // the only thing that names the sibling: no route reports what a
+        // write created, so without this the row exists and nothing can
+        // reach it.
+        ...(resolution !== undefined && { conflict_resolution: resolution }),
       },
       200,
     );

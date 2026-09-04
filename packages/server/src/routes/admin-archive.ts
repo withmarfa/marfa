@@ -12,8 +12,9 @@
  * existing row untouched. Tags and extensions restore alongside their
  * items. Edges restore in a second pass, only where both endpoints
  * resolve in the restore space — a hand-edited archive cannot plant a
- * reference to an item it does not carry. Version history, created_at
- * and updated_at are re-stamped, not carried.
+ * reference to an item it does not carry. A row comes back at the version
+ * it was archived at; version history, created_at and updated_at are
+ * re-stamped, not carried.
  *
  * Paired with GET /export?format=archive.
  */
@@ -95,7 +96,7 @@ const restoreArchiveRoute = createRoute({
   tags: ["Admin"],
   summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. The archive's custom type and edge-type registrations are validated and registered first, so a restore into an empty space can write the items that use them; a registration the target space already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve in the restore space. Version history and row timestamps are re-stamped, not carried.",
+    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. The archive's custom type and edge-type registrations are validated and registered first, so a restore into an empty space can write the items that use them; a registration the target space already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve in the restore space. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -554,6 +555,13 @@ export function adminArchiveRoutes(
             const created = await storage.items.create(
               {
                 ...(archiveId !== undefined && { id: archiveId }),
+                // The row comes back under its archived id, so it comes
+                // back at its archived version too. Re-minting at 1 lets a
+                // client's stale precondition pass, later, against content
+                // it never read from.
+                ...(typeof item.version === "number" && {
+                  version: item.version,
+                }),
                 type: item.type as string,
                 properties: (item.properties ?? {}) as Record<string, unknown>,
                 state: item.state as ItemState | undefined,
@@ -661,6 +669,11 @@ export function adminArchiveRoutes(
           const restored = await storage.edges.createRaw(
             {
               ...(edgeId !== undefined && { id: edgeId }),
+              // Same rule as the item path above. Both doors move together
+              // or the hole stays reachable through the other one.
+              ...(typeof edge.version === "number" && {
+                version: edge.version,
+              }),
               source_id: sourceId,
               target_id: targetId,
               edge_type: edgeType,

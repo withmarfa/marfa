@@ -183,8 +183,9 @@ describe("export → restore round trip", () => {
     expect(result.edges_skipped).toBe(0);
 
     // Items come back under their original ids, with the content-bearing
-    // fields intact. created_at / updated_at / version are re-stamped by
-    // design and deliberately not compared.
+    // fields intact. created_at / updated_at are re-stamped by design and
+    // deliberately not compared; `version` is carried, and is covered by
+    // archive-restore-version.test.ts rather than here.
     for (const original of [note1, note2, note3]) {
       const restored = await destination.storage.items.get(original.id, space);
       expect(restored, `item ${original.source_id ?? original.id}`).not.toBe(

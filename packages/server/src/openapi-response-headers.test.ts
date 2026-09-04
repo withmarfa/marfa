@@ -120,12 +120,16 @@ describe("the published spec declares the headers the server sets", () => {
   });
 
   it("declares X-Error-Code on error responses and not on success", () => {
-    // One error response is answered without passing through the error
-    // handler, so nothing stamps the header on it. It is excluded in
-    // `openapi-finalize.ts` with the reason; asserting it here as an
-    // exception rather than silently tolerating a mismatch is what keeps
-    // the exclusion visible when the route is fixed.
-    const KNOWN_UNSTAMPED = new Set(["PATCH /items/{id} 409"]);
+    // No exceptions: every error response declares the header and every
+    // success response does not.
+    //
+    // This held `PATCH /items/{id} 409` while that response was the one
+    // error the handler never saw. It still returns rather than throws, but
+    // it now stamps the header itself — as does the edge conflict, the other
+    // 4xx that returns. The empty set is the seam: a future response that
+    // answers 4xx without throwing is declared here honestly rather than
+    // quietly claiming a header it does not send.
+    const KNOWN_UNSTAMPED = new Set<string>([]);
     const wrong: string[] = [];
     for (const [key, responses] of operations) {
       if (UNSERVED.has(key)) continue;

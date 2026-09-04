@@ -47,6 +47,7 @@ export {
   MarfaError,
   NotFoundError,
   ValidationError,
+  AncestorUnavailableError,
   ConflictError,
   EdgeConflictError,
   UnauthorizedError,

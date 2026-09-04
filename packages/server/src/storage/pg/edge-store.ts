@@ -19,8 +19,12 @@ import {
   count,
 } from "drizzle-orm";
 import { ErrorCode, MarfaError, generateId } from "@withmarfa/shared";
-import type { Edge, CreateEdgeInput, PaginatedResult } from "@withmarfa/shared";
-import type { EdgeStore, EdgeListFilters } from "../interface.js";
+import type { Edge, PaginatedResult } from "@withmarfa/shared";
+import type {
+  EdgeStore,
+  EdgeListFilters,
+  StoredCreateEdgeInput,
+} from "../interface.js";
 import {
   encodeCursor,
   decodeCursor,
@@ -54,7 +58,10 @@ function typeFilter(value: string | string[] | undefined) {
 export class PgEdgeStore implements EdgeStore {
   constructor(private db: PgDb) {}
 
-  async createRaw(input: CreateEdgeInput, spaceId?: string): Promise<Edge> {
+  async createRaw(
+    input: StoredCreateEdgeInput,
+    spaceId?: string,
+  ): Promise<Edge> {
     const now = new Date().toISOString();
     const id = input.id ?? generateId();
     const properties = input.properties ?? {};
@@ -70,7 +77,10 @@ export class PgEdgeStore implements EdgeStore {
       // Named rather than left to the column default: this row is also
       // what the method returns, so a create that let the database fill
       // the version in would report one it had not read back.
-      version: 1,
+      //
+      // A restore recreates an edge under its archived id and carries the
+      // version that id had reached; every other create starts at 1.
+      version: input.version ?? 1,
     };
     // A client may mint this id, so a collision is a caller error rather
     // than a server fault. Without the trap it surfaced as a 500, which

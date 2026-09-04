@@ -19,6 +19,20 @@ export enum ErrorCode {
   UNKNOWN_TYPE = "unknown_type",
   INVALID_ID = "invalid_id",
   VERSION_CONFLICT = "version_conflict",
+  /**
+   * The write was based on a version whose snapshot has been thinned away,
+   * so there is no common ancestor to merge against.
+   *
+   * Its own code rather than a `version_conflict` with an empty ancestor.
+   * Both refuse the write, but only one of them can be resolved: a client
+   * reading the conflict envelope sees every submitted field named as
+   * colliding — because nothing is known to have not collided — and under a
+   * keep-both policy that resolves into a sibling holding text the person
+   * never typed. Naming the state instead lets a caller park the write for
+   * review rather than resolve it wrongly, and is why this is never
+   * auto-merged whatever the request asked for.
+   */
+  ANCESTOR_UNAVAILABLE = "ancestor_unavailable",
   UNAUTHORIZED = "unauthorized",
   FORBIDDEN = "forbidden",
   /**
@@ -436,6 +450,7 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.UNKNOWN_TYPE]: 400,
   [ErrorCode.INVALID_ID]: 400,
   [ErrorCode.VERSION_CONFLICT]: 409,
+  [ErrorCode.ANCESTOR_UNAVAILABLE]: 409,
   [ErrorCode.UNAUTHORIZED]: 401,
   [ErrorCode.FORBIDDEN]: 403,
   [ErrorCode.INTEGRATION_OWNED]: 403,
