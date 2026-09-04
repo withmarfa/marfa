@@ -50,6 +50,7 @@ import type {
 import { instantColumnValues } from "../instant-columns.js";
 import type {
   Item,
+  AncestorUnavailableResponse,
   ConflictResponse,
   ItemState,
   PaginatedResult,
@@ -68,7 +69,15 @@ import {
   parseSortField,
 } from "../interface.js";
 import { buildPropertySortExpr, propertySortValue } from "../property-sort.js";
-import { detectConflict } from "../conflict.js";
+import {
+  ancestorUnavailable,
+  conflictedSiblingIdFor,
+  conflictedSiblingProperties,
+  CONFLICTED_COPY_TAG,
+  detectConflict,
+  planAutoMerge,
+  versionConflict,
+} from "../conflict.js";
 import { edges, items, metadata, versions } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -151,6 +160,66 @@ function allowedTypesCondition(
     },
   );
   return or(...clauses);
+}
+
+
+type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
+
+/**
+ * Writes the keep-both sibling in the caller's transaction.
+ *
+ * `onConflictDoNothing` rather than a plain insert: the id is derived from the
+ * write's idempotency key, so a genuine re-execution of the same write arrives
+ * here with the id it used last time. Doing nothing is then correct — the
+ * sibling this write is responsible for already exists — where an error would
+ * turn a safe retry into a failure and a fresh id would duplicate a
+ * "conflicted copy" the person created once.
+ *
+ * The sibling inherits the original's `source` so it lists beside it, and
+ * deliberately does not inherit `source_id`: that tuple is unique per space,
+ * and a copy claiming the original's natural key is a second row asserting it
+ * is the same upstream record.
+ */
+async function insertConflictedSibling(
+  tx: SqliteTx,
+  args: {
+    siblingId: string;
+    row: { type: string; source: string | null; tier: string };
+    spaceId: string | undefined;
+    now: string;
+    properties: Record<string, unknown>;
+  },
+): Promise<void> {
+  const { siblingId, row, spaceId, now, properties } = args;
+  const inserted = await tx
+    .insert(items)
+    .values({
+      id: siblingId,
+      space_id: spaceId ?? null,
+      type: row.type,
+      state: "active",
+      tier: row.tier as "library" | "feed",
+      properties: sql`jsonb(${JSON.stringify(properties)})`,
+      created_at: now,
+      updated_at: now,
+      timestamp: now,
+      source: row.source,
+      version: 1,
+      schema_version: getTypeSchema(row.type, spaceId)?.version ?? 1,
+      ...instantColumnValues(properties),
+    })
+    .onConflictDoNothing()
+    .returning({ id: items.id });
+  if (inserted.length === 0) return;
+
+  await tx
+    .insert(metadata)
+    .values({
+      item_id: siblingId,
+      tags: JSON.stringify([CONFLICTED_COPY_TAG]),
+    })
+    .onConflictDoNothing()
+    .run();
 }
 
 export class SqliteItemStore implements ItemStore {
@@ -718,7 +787,7 @@ export class SqliteItemStore implements ItemStore {
     id: string,
     input: StoredUpdateItemInput,
     spaceId?: string,
-  ): Promise<Item | ConflictResponse> {
+  ): Promise<Item | ConflictResponse | AncestorUnavailableResponse> {
     const whereClause = this.spaceWhere(id, spaceId);
 
     return await this.db.transaction(async (tx) => {
@@ -862,15 +931,11 @@ export class SqliteItemStore implements ItemStore {
       );
 
       if (!ancestor) {
-        return {
-          error: { code: "version_conflict" as const, status: 409 as const },
-          current: { version: row.version, properties: currentProps },
-          ancestor: { version: input.version, properties: {} },
-          conflicting_fields: Object.keys(incomingProps ?? {}),
-          merge_policy: resolveMergePolicy(row.type, (id) =>
-            getTypeSchema(id, spaceId),
-          ),
-        } satisfies ConflictResponse;
+        // Its own answer rather than a conflict naming every field. See
+        // `ErrorCode.ANCESTOR_UNAVAILABLE`: there is nothing to merge
+        // against, and a resolution invented here loses an edit quietly.
+        // Never auto-resolved, whatever the request asked for.
+        return ancestorUnavailable(row.version, currentProps, input.version);
       }
 
       const result = detectConflict({
@@ -879,16 +944,56 @@ export class SqliteItemStore implements ItemStore {
         ancestorProperties: ancestor.properties,
       });
 
+      const policy = resolveMergePolicy(row.type, (id) =>
+        getTypeSchema(id, spaceId),
+      );
+
+      // What the row ends up holding: the detector's merge when nothing
+      // collided, the policy's resolution when something did and the caller
+      // asked the server to resolve it.
+      let resolvedProperties: Record<string, unknown>;
+
       if (result.type === "conflict") {
-        return {
-          error: { code: "version_conflict" as const, status: 409 as const },
-          current: { version: row.version, properties: currentProps },
-          ancestor: { version: input.version, properties: ancestor.properties },
-          conflicting_fields: result.conflicting_fields,
-          merge_policy: resolveMergePolicy(row.type, (id) =>
-            getTypeSchema(id, spaceId),
-          ),
-        } satisfies ConflictResponse;
+        if (input.conflict_mode !== "auto") {
+          return versionConflict(
+            row.version,
+            currentProps,
+            input.version,
+            ancestor.properties,
+            result.conflicting_fields,
+            policy,
+          );
+        }
+
+        const plan = planAutoMerge({
+          clientProperties: incomingProps ?? {},
+          currentProperties: currentProps,
+          ancestorProperties: ancestor.properties,
+          conflictingFields: result.conflicting_fields,
+          policy,
+        });
+
+        // The sibling is written here, inside the transaction that moves the
+        // original on. A client doing this in two writes has no arrangement
+        // that is atomic: dying between them leaves the losing edit nowhere
+        // and the original already past it.
+        if (plan.keepBothFields.length > 0) {
+          await insertConflictedSibling(tx, {
+            siblingId: conflictedSiblingIdFor(id, input.version, input),
+            row,
+            spaceId,
+            now,
+            properties: conflictedSiblingProperties({
+              clientProperties: incomingProps ?? {},
+              currentProperties: currentProps,
+              keepBothFields: plan.keepBothFields,
+            }),
+          });
+        }
+
+        resolvedProperties = plan.merged;
+      } else {
+        resolvedProperties = result.merged;
       }
 
       // Same invariant as the fast path above: the version being left behind
@@ -898,8 +1003,8 @@ export class SqliteItemStore implements ItemStore {
       const newTier = input.tier ?? row.tier;
 
       const mergeSet: Record<string, unknown> = {
-        properties: sql`jsonb(${JSON.stringify(result.merged)})`,
-        ...instantColumnValues(result.merged),
+        properties: sql`jsonb(${JSON.stringify(resolvedProperties)})`,
+        ...instantColumnValues(resolvedProperties),
         version: newVersion,
         updated_at: now,
         ...(input.tier !== undefined && { tier: input.tier }),
@@ -930,11 +1035,11 @@ export class SqliteItemStore implements ItemStore {
       }
 
       await this.searchStore.remove(id);
-      await this.searchStore.index(id, result.merged, row.type, spaceId);
+      await this.searchStore.index(id, resolvedProperties, row.type, spaceId);
 
       return rowToItem({
         ...row,
-        properties: JSON.stringify(result.merged),
+        properties: JSON.stringify(resolvedProperties),
         version: newVersion,
         updated_at: now,
         tier: newTier,

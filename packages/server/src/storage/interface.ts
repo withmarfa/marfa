@@ -16,6 +16,7 @@ import type {
   MarfaRole,
   PaginatedResult,
   SearchResult,
+  AncestorUnavailableResponse,
   ConflictResponse,
   ItemState,
   User,
@@ -32,6 +33,7 @@ import type {
   TypeSchema,
 } from "@withmarfa/shared";
 import { MarfaError, ErrorCode, isValidTimestamp } from "@withmarfa/shared";
+import type { ConflictMode } from "./conflict.js";
 import type { SourceFilterSettings } from "./filter-sql.js";
 
 // ---------------------------------------------------------------------------
@@ -460,8 +462,33 @@ export interface ItemWriterInput {
   written_by_connection_id?: string | null;
 }
 
+/**
+ * How this write wants a collision handled, carried down to the store because
+ * the resolution happens inside the update's transaction.
+ *
+ * **Server-internal, like `ItemWriterInput`.** `conflict_mode` comes from the
+ * request's own query parameter rather than from the caller's body, and
+ * `idempotency_key` is read off the header the replay cache already owns —
+ * neither is a field a client sets on an update payload.
+ */
+export interface ConflictResolutionInput {
+  /** Absent means `manual`: the envelope, which is what every existing
+   *  caller was written against. */
+  conflict_mode?: ConflictMode;
+  /**
+   * The caller's `Idempotency-Key`, when it sent one. Only used to derive the
+   * id of a keep-both sibling, so that a write which runs twice writes one.
+   * Absent, the sibling gets a fresh id and a genuine re-execution duplicates
+   * it — which is the honest outcome, since without a key the server has no
+   * way to tell a retry from a second edit.
+   */
+  idempotency_key?: string;
+}
+
 export type StoredCreateItemInput = CreateItemInput & ItemWriterInput;
-export type StoredUpdateItemInput = UpdateItemInput & ItemWriterInput;
+export type StoredUpdateItemInput = UpdateItemInput &
+  ItemWriterInput &
+  ConflictResolutionInput;
 
 export interface ItemStore {
   create(input: StoredCreateItemInput, spaceId?: string): Promise<Item>;
@@ -549,7 +576,7 @@ export interface ItemStore {
     id: string,
     input: StoredUpdateItemInput,
     spaceId?: string,
-  ): Promise<Item | ConflictResponse>;
+  ): Promise<Item | ConflictResponse | AncestorUnavailableResponse>;
   delete(id: string, spaceId?: string): Promise<void>;
   purge(id: string, spaceId?: string): Promise<void>;
   /**

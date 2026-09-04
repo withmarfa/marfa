@@ -120,12 +120,40 @@ const ConflictResponseSchema = z.object({
   error: z.object({
     code: z.literal("version_conflict"),
     status: z.literal(409),
+    /** Prose for a person. Branch on `code`, never on this. */
+    message: z.string(),
   }),
   current: ConflictSnapshotSchema,
   ancestor: ConflictSnapshotSchema,
   conflicting_fields: z.array(z.string()),
   merge_policy: MergePolicySchema,
 });
+
+/**
+ * The refusal for a write based on a version whose snapshot has been thinned
+ * away. Distinct from `version_conflict` because it cannot be resolved: there
+ * is no ancestor, so no field can be shown not to have collided, and a client
+ * merging against an empty one spawns siblings holding text nobody typed.
+ */
+const AncestorUnavailableSchema = z.object({
+  error: z.object({
+    code: z.literal("ancestor_unavailable"),
+    status: z.literal(409),
+    message: z.string(),
+  }),
+  current: ConflictSnapshotSchema,
+  requested_version: z.number(),
+});
+
+/**
+ * Who resolves a collision on this write.
+ *
+ * A closed enum rather than a free string, so a caller asking for a mode this
+ * server does not implement is refused. Dropping it instead would answer 409
+ * to a request that asked for a resolution, which reads as "no conflict was
+ * resolvable" rather than "nobody read your parameter".
+ */
+const ConflictModeSchema = z.enum(["auto", "manual", "callback"]);
 
 const IdParam = z.object({
   id: z.string().describe("Item id"),
@@ -591,6 +619,17 @@ const updateItemRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
+    query: z.object({
+      conflict: ConflictModeSchema.optional().describe(
+        "Who resolves a version conflict. `auto` resolves it here, in this " +
+          "write's transaction, by the type's merge policy: a " +
+          "`last_writer_wins` field takes this write's value, a " +
+          "`keep_both_copies` field leaves the server's value on the item " +
+          "and the losing value lands on a sibling tagged `conflicted-copy`. " +
+          "`manual` and `callback` return the 409 envelope for the caller to " +
+          "resolve. Omitted means `manual`.",
+      ),
+    }),
     body: {
       content: {
         "application/json": {
@@ -705,6 +744,7 @@ const updateItemRoute = createRoute({
         "application/json": {
           schema: z.union([
             ConflictResponseSchema,
+            AncestorUnavailableSchema,
             makeErrorResponseSchema([
               "source_id_conflict",
               "type_mismatch",
@@ -714,7 +754,7 @@ const updateItemRoute = createRoute({
         },
       },
       description:
-        "Version conflict (optimistic-concurrency mismatch on `properties`), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
+        "Version conflict (optimistic-concurrency mismatch on `properties`), `ancestor_unavailable` (the base version's snapshot has been thinned, so the write cannot be merged and is never auto-resolved), `source_id_conflict` (target natural key already in use by another item under the item's `source`), or `type_mismatch` (the request declared a `type` that is not this item's).",
     },
   },
 });
@@ -2412,6 +2452,11 @@ export function itemRoutes(storage: Storage) {
     }
 
     const body = c.req.valid("json");
+    const { conflict: conflictMode } = c.req.valid("query");
+    // The same header the replay cache in front of this route claims. Read
+    // here so a keep-both sibling can be given an id derived from it, which
+    // is what makes a re-executed write produce one sibling rather than two.
+    const idempotencyKey = c.req.header("Idempotency-Key") ?? null;
     const hasProperties =
       body.properties !== undefined && typeof body.properties === "object";
     const hasEdges =
@@ -2673,6 +2718,16 @@ export function itemRoutes(storage: Storage) {
                 }),
                 ...(retypeTo !== undefined && { type: retypeTo }),
                 version: body.version,
+                // Who resolves a collision, and the key that makes a retry
+                // recognisable as one. Both are request-level facts rather
+                // than fields of the item, which is why they ride here
+                // rather than in the body.
+                ...(conflictMode !== undefined && {
+                  conflict_mode: conflictMode,
+                }),
+                ...(idempotencyKey !== null && {
+                  idempotency_key: idempotencyKey,
+                }),
                 force_snapshot: body.force_snapshot === true ? true : undefined,
                 tier: hasTier ? body.tier : undefined,
                 timestamp: hasTimestamp ? body.timestamp : undefined,

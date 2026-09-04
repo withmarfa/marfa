@@ -604,7 +604,17 @@ export interface ConflictSnapshot {
 
 /** Enriched 409 conflict response — the server produces this, the SDK consumes it. */
 export interface ConflictResponse {
-  error: { code: "version_conflict"; status: 409 };
+  /**
+   * `message` is prose for a person, and the only part of this envelope that
+   * is. Everything else here is for the resolver, and a caller with no
+   * resolution to offer — a `manual` strategy surfacing the refusal, a log
+   * line, a support transcript — otherwise has to assemble a sentence out of
+   * two version numbers and a field list before it can say anything at all.
+   * Most do not, and show the raw code.
+   *
+   * Its content is not a contract: branch on `code`, never on this text.
+   */
+  error: { code: "version_conflict"; status: 409; message: string };
   current: ConflictSnapshot;
   ancestor: ConflictSnapshot;
   conflicting_fields: string[];
@@ -616,6 +626,23 @@ export interface ConflictResponse {
    * to `default`, which itself defaults to `last_writer_wins` when absent.
    */
   merge_policy: MergePolicy;
+}
+
+/**
+ * The refusal for a write whose base version can no longer be reconstructed.
+ *
+ * Carries the server's current state, because that is what a client needs to
+ * re-read and re-apply its edit against, and carries no ancestor or field list
+ * because there is genuinely none to give. A resolution is not offered: see
+ * `ErrorCode.ANCESTOR_UNAVAILABLE` for why merging here is worse than
+ * refusing.
+ */
+export interface AncestorUnavailableResponse {
+  error: { code: "ancestor_unavailable"; status: 409; message: string };
+  /** The server's state now, to re-apply the edit against. */
+  current: ConflictSnapshot;
+  /** The version the write was based on, whose snapshot is gone. */
+  requested_version: number;
 }
 
 // ---------------------------------------------------------------------------
