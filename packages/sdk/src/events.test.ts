@@ -284,6 +284,93 @@ describe("subscribe", () => {
   });
 });
 
+/**
+ * The announced cursor: what a client that has none can resume from, and
+ * what a client that has one must not be talked out of.
+ */
+describe("the announced cursor", () => {
+  function cursorFrame(cursor: string): string {
+    return `event: stream_cursor\ndata: ${JSON.stringify({
+      type: "stream_cursor",
+      cursor,
+    })}\n\n`;
+  }
+
+  it("surfaces it, keeps it out of onEvent, and adopts it when there is none", async () => {
+    const { transport, calls } = transportOver([
+      [cursorFrame("42")],
+      [itemFrame("43", "a")],
+    ]);
+    const announced: string[] = [];
+    const seen: MarfaEvent[] = [];
+    const sub = (await import("./events.js")).subscribeToEvents(transport, {
+      initialRetryMs: 1,
+      onCursor: (cursor) => {
+        announced.push(cursor);
+      },
+      onEvent: (event) => {
+        seen.push(event);
+        sub.close();
+      },
+    });
+    await sub.closed;
+
+    expect(announced).toEqual(["42"]);
+    expect(
+      seen.map((e) => e.type),
+      "the announcement is not a change, so it must not reach onEvent",
+    ).toEqual(["item.created"]);
+    expect(
+      calls[1]?.headers.get("Last-Event-ID"),
+      "a subscription that started with no cursor resumes from the one it was handed",
+    ).toBe("42");
+  });
+
+  it("leaves a resume cursor where it was, so a reconnect keeps its backlog", async () => {
+    // The announcement names the head of the log, which on a resuming
+    // connection sits past the backlog that connection is about to
+    // replay. Adopting it there and then dropping mid-replay would leave
+    // the cursor over events the caller never saw and never asks for
+    // again — the exact loss this frame exists to prevent.
+    const { transport, calls } = transportOver([
+      [cursorFrame("99")],
+      [itemFrame("100", "a")],
+    ]);
+    const sub = (await import("./events.js")).subscribeToEvents(transport, {
+      lastEventId: "3",
+      initialRetryMs: 1,
+      onEvent: () => {
+        sub.close();
+      },
+    });
+    await sub.closed;
+
+    expect(calls[0]?.headers.get("Last-Event-ID")).toBe("3");
+    expect(
+      calls[1]?.headers.get("Last-Event-ID"),
+      "an announcement must not move a cursor that already had a backlog behind it",
+    ).toBe("3");
+  });
+
+  it("sends the type and edge filters it was given", async () => {
+    // The server refuses an edges value it cannot honor, which is only
+    // worth anything if the value reaches it: a client option dropped in
+    // the transport is the silent filter this whole parameter removes.
+    const { transport, calls } = transportOver([[itemFrame("1", "a")]]);
+    const sub = (await import("./events.js")).subscribeToEvents(transport, {
+      type: "core.note,core.media",
+      edges: "none",
+      onEvent: () => undefined,
+      reconnect: false,
+    });
+    await sub.closed;
+
+    const url = new URL(calls[0]?.url ?? "https://example.test");
+    expect(url.searchParams.get("type")).toBe("core.note,core.media");
+    expect(url.searchParams.get("edges")).toBe("none");
+  });
+});
+
 describe("the cursor advances on acknowledgement", () => {
   it("replays the event whose handler rejected", async () => {
     // The property the whole policy is for. The handler fails on id 7, so the

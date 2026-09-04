@@ -162,7 +162,9 @@ const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Events"],
       summary: "Stream change events",
       description:
-        "Opens a Server-Sent Events stream of item and edge changes for the caller's space. Send `Last-Event-ID` to replay events missed across a reconnect.",
+        "Opens a Server-Sent Events stream of item and edge changes for the caller's space. Send `Last-Event-ID` to replay events missed across a reconnect.\n\n" +
+        'The first frame is always `stream_cursor`, carrying `{ "type": "stream_cursor", "cursor": "<event id>" }` — the log position the stream opened at. It arrives whether or not anything has happened, so a client that subscribes and then reads a snapshot holds a resume point from the first moment rather than waiting for an event to tell it where it is. The frame deliberately carries no SSE `id:` field: on a reconnect it precedes the backlog, and a client adopting it as its cursor there would discard exactly the events it reconnected for.\n\n' +
+        "The cursor is a position in one ascending sequence, and `type` and `edges` select a subset of that sequence rather than reordering it, so a cursor taken under one filter can be replayed under another without skipping or repeating a row.",
       security: [{ bearerAuth: [] }],
       parameters: [
         {
@@ -171,7 +173,15 @@ const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
           required: false,
           schema: { type: "string" },
           description:
-            "Type pattern to filter the stream, such as `core.note` or `core.*`.",
+            "Comma-separated item types, up to 10 entries. A named type covers its subtree, so `core.media` delivers `core.media.song`. Omit to receive every type the credential can read. Edge events are unaffected: they carry no item type, so this parameter says nothing about them.",
+        },
+        {
+          name: "edges",
+          in: "query",
+          required: false,
+          schema: { type: "string", enum: ["all", "none"], default: "all" },
+          description:
+            "Whether edge lifecycle events reach this stream. Defaults to `all`, including under a `type` filter. Any other value is rejected rather than ignored.",
         },
         {
           name: "Last-Event-ID",
@@ -186,6 +196,10 @@ const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         "200": {
           description: "A `text/event-stream` of item and edge change events.",
           content: { "text/event-stream": { schema: { type: "string" } } },
+        },
+        "400": {
+          description:
+            "The filter cannot be honored: more than 10 types, or an `edges` value outside the enum.",
         },
         "401": { description: "Unauthorized" },
       },

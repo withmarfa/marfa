@@ -14,7 +14,8 @@ import {
 } from "../pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
-import type { PgClient } from "../storage/pg/connection.js";
+import type { PgClient, PgDb } from "../storage/pg/connection.js";
+import { withRlsSpaceTransaction } from "../middleware/rls-space-context.js";
 import type { ApiKey, Metadata } from "@withmarfa/shared";
 import { filterMetadataForCaller } from "./util.js";
 import { StreamPoolExhaustedError } from "../storage/pg/streaming-rls.js";
@@ -25,6 +26,45 @@ import {
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
+
+/**
+ * The wire name of the frame announcing where the stream is.
+ *
+ * Not an event that happened, which is why it carries no `id:` field: SSE
+ * clients treat `id:` as the cursor to resume from, so an announcement
+ * carrying one would move a reconnecting client's cursor to the head of
+ * the log before a single replayed event had been applied, discarding
+ * exactly the backlog the reconnect existed to fetch.
+ */
+const STREAM_CURSOR_EVENT = "stream_cursor";
+
+/**
+ * Most types one `?type=` may name.
+ *
+ * Ten, the same as the edge-type filter on `GET /edges`, and the same
+ * number deliberately: a client filtering a stream and a client filtering
+ * a listing are the same client, and a limit it has to look up twice is
+ * one it will get wrong once.
+ */
+const MAX_TYPE_FILTER_ENTRIES = 10;
+
+/**
+ * What `?edges=` may say, and what it means when it says nothing.
+ *
+ * `all` is the default because an edge is the half of a change a
+ * reconciling client cannot reconstruct from items alone: it has no row
+ * of its own to re-read and no tombstone when it goes. A type filter used
+ * to silence every edge event, so a client watching two types never
+ * learned about the edges joining them.
+ *
+ * A value outside this set is refused rather than ignored. An unknown
+ * query parameter is dropped silently everywhere else here, which for
+ * this one would open a stream carrying everything while the caller
+ * believed it had opted out — the client cannot see the difference, and
+ * that is precisely the failure this parameter exists to remove.
+ */
+const EDGE_MODES = ["all", "none"] as const;
+type EdgeMode = (typeof EDGE_MODES)[number];
 /**
  * How many replayed ids one catch-up remembers, so a live event already
  * on its way to this client is not also sent by the replay.
@@ -62,9 +102,21 @@ const REPLAY_DEDUPE_WINDOW = REPLAY_BATCH_SIZE;
  * SQLite, for space-less callers (platform admin / single-space
  * self-host), and when RLS enforcement is disabled instance-wide.
  */
+/** A live frame published while the stream was still holding delivery. */
+type HeldFrame =
+  | { kind: "item"; event: ItemEventWithId }
+  | { kind: "edge"; event: EdgeEventWithId };
+
 export interface EventRoutesOptions {
   rlsEnforce: boolean;
   pgClient: PgClient | null;
+  /**
+   * The request-context Drizzle instance, for the one bounded read this
+   * route makes outside the replay: the event-log head it announces on
+   * connect. Absent means that read runs unfenced on the owner
+   * connection, which is the SQLite and space-less shape anyway.
+   */
+  pgDb?: PgDb | null;
   /** Override for the replay-slot reservation window; tests drive the
    *  exhaustion path with a short one. Default lives in streaming-rls. */
   streamReserveTimeoutMs?: number;
@@ -122,6 +174,43 @@ function filterReplayPayload(
   });
 }
 
+/**
+ * Read `?type=` as one type or several.
+ *
+ * Returned as an array in both cases so the two delivery paths cannot
+ * take different shapes from the same parameter. `undefined` means no
+ * filter; a value that trims to nothing is that rather than a filter
+ * admitting nothing, so `?type=` and `?type=,` open an unfiltered stream
+ * instead of a silent, permanent one.
+ */
+function parseTypeFilter(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const parts = raw
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  if (parts.length === 0) return undefined;
+  if (parts.length > MAX_TYPE_FILTER_ENTRIES) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Too many types in filter (max ${String(MAX_TYPE_FILTER_ENTRIES)})`,
+    );
+  }
+  return parts;
+}
+
+function parseEdgeMode(raw: string | undefined): EdgeMode {
+  if (raw === undefined) return "all";
+  const found = EDGE_MODES.find((mode) => mode === raw);
+  if (found === undefined) {
+    throw new MarfaError(
+      ErrorCode.VALIDATION_ERROR,
+      `Unknown edges value ${JSON.stringify(raw)} (expected ${EDGE_MODES.join(" or ")})`,
+    );
+  }
+  return found;
+}
+
 export function eventRoutes(
   storage: Storage,
   options: EventRoutesOptions = { rlsEnforce: false, pgClient: null },
@@ -133,7 +222,8 @@ export function eventRoutes(
   router.get("/", (c) => {
     const apiKey = requireAuth(c);
     const spaceId = apiKey.space_id;
-    const typeParam = c.req.query("type") ?? undefined;
+    const typeParam = parseTypeFilter(c.req.query("type"));
+    const edgeMode = parseEdgeMode(c.req.query("edges"));
     const lastEventId = c.req.header("Last-Event-ID");
     // The SSE stream is the one type filter with no query to hang a
     // predicate on, so it asks `matchesTypeFilter` — written over the same
@@ -289,8 +379,36 @@ export function eventRoutes(
           // keep-alive ping. SSE comments are ignored by EventSource parsers.
           send(": connected\n\n");
 
-          const liveBuffer: ItemEventWithId[] = [];
-          let replaying = afterId !== null;
+          /**
+           * One buffer for both kinds, in the order they were published.
+           *
+           * Two buffers drained one after the other reorder the stream:
+           * every held edge arrives after every held item, whatever the
+           * writer did, so a client reconciling a graph learns about an
+           * edge before or after the items it joins depending on nothing
+           * it can observe. One buffer also removes the second site the
+           * suppression rule below would have to be written at.
+           */
+          const heldFrames: HeldFrame[] = [];
+          /**
+           * Live delivery is held until the prologue has announced the
+           * cursor and, when the client sent one, finished replaying from
+           * it.
+           *
+           * Held from the first moment rather than only for a replay: the
+           * announcement has to be the stream's first frame, and reading
+           * the log head is a round trip an event published meanwhile
+           * would otherwise overtake.
+           */
+          let holding = true;
+          /**
+           * Ids this connection's replay actually sent, so a live event
+           * already on its way to this client is not delivered twice.
+           *
+           * Empty when there is no replay, which suppresses nothing —
+           * exactly right, since nothing has been sent to duplicate.
+           */
+          const replayedIds = new Set<bigint>();
 
           // Subscribe BEFORE replay starts to avoid gaps.
           const events = subscribe({
@@ -336,14 +454,18 @@ export function eventRoutes(
             );
           };
 
-          // Edge events don't carry an item type; the type filter (/events?type=)
-          // applies to item events only. Edge events flow through unconditionally
-          // for subscribers in the same space.
+          // Edge events don't carry an item type, so `?type=` says nothing
+          // about them: it names the item types this subscriber wants, and
+          // an edge is not an item. Silencing them under a type filter was
+          // the wrong reading of that — it left a filtered client watching
+          // two types and never learning about the edges joining them,
+          // which is the half nothing else can reconstruct. `?edges=none`
+          // is the opt-out, and it is independent of the type filter.
           const sendEdgeEvent = (
             eventId: bigint | undefined,
             event: EdgeEventWithId,
           ) => {
-            if (typeParam) return;
+            if (edgeMode === "none") return;
             const wireType = wireEventName(event.type);
             const sseData = { type: wireType, edge: event.edge };
             const idField =
@@ -353,7 +475,6 @@ export function eventRoutes(
             );
           };
 
-          const liveEdgeBuffer: EdgeEventWithId[] = [];
           const pump = () => {
             reader
               .next()
@@ -375,8 +496,8 @@ export function eventRoutes(
                   return;
                 }
 
-                if (replaying) {
-                  liveBuffer.push(event);
+                if (holding) {
+                  heldFrames.push({ kind: "item", event });
                 } else {
                   sendEvent(event.eventId, event);
                 }
@@ -406,8 +527,8 @@ export function eventRoutes(
               .next()
               .then(({ value: event, done }) => {
                 if (done || state.closed) return;
-                if (replaying) {
-                  liveEdgeBuffer.push(event);
+                if (holding) {
+                  heldFrames.push({ kind: "edge", event });
                 } else {
                   sendEdgeEvent(event.eventId, event);
                 }
@@ -419,253 +540,339 @@ export function eventRoutes(
           };
           pumpEdges();
 
-          if (lastEventId) {
-            if (afterId !== null) {
-              const afterIdResolved = afterId;
-              const replay = async () => {
-                try {
-                  // Detect stale cursors — clients whose `Last-Event-ID`
-                  // predates the retention window can't be faithfully caught
-                  // up from the event log. Emit a terminal `catchup_too_old`
-                  // control event and close the stream; the client is
-                  // expected to re-sync state and reconnect without a
-                  // Last-Event-ID. Scoped by space so a fresh space with
-                  // no events never trips the check.
-                  {
-                    const minRetained = await storage.eventLog.getMinRetainedId(
-                      spaceId ?? undefined,
-                    );
-                    if (minRetained !== null && afterIdResolved < minRetained) {
-                      const payload = JSON.stringify({
-                        type: "catchup_too_old",
-                        min_retained_id: String(minRetained),
-                        requested: String(afterIdResolved),
-                      });
-                      // id is the min retained id so clients don't store a cursor older than the log can serve.
-                      send(
-                        `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
-                      );
-                      cleanup();
-                      void reader.return(undefined);
-                      void edgeIter.return(undefined);
-                      try {
-                        controller.close();
-                      } catch {
-                        /* already closed */
-                      }
-                      return;
-                    }
-                  }
+          /**
+           * End the stream from a terminal decision rather than from a
+           * client disconnect: release the viewer slot, detach the
+           * emitter listeners, and close the response body.
+           */
+          const endStream = (): void => {
+            const wasOpen = !state.closed;
+            cleanup();
+            void reader.return(undefined);
+            void edgeIter.return(undefined);
+            if (wasOpen) {
+              try {
+                controller.close();
+              } catch {
+                /* already closed */
+              }
+            }
+          };
 
-                  let lastReplayedId: bigint = afterIdResolved;
-                  // The cursor above paginates `getAfter` and advances
-                  // past every row this loop walks, rows a filter
-                  // withheld included. That makes it the wrong thing to
-                  // dedupe the live buffer against. Postgres assigns
-                  // `event_log.id` from an identity column before
-                  // commit, so a transaction holding a lower id can
-                  // commit after one holding a higher id; comparing a
-                  // buffered live event against a high-water mark then
-                  // discards an event this client has never seen, with
-                  // its cursor already past it, so it never asks again.
-                  // What is safe to discard is an id this replay
-                  // actually sent, so that is what is recorded.
-                  const replayedIds = new Set<bigint>();
-                  // Insertion order, for eviction. Replayed ids arrive
-                  // ascending, so the front is always the oldest.
-                  const replayedOrder: bigint[] = [];
-                  const rememberReplayed = (id: bigint): void => {
-                    replayedIds.add(id);
-                    replayedOrder.push(id);
-                    if (replayedOrder.length > REPLAY_DEDUPE_WINDOW) {
-                      const evicted = replayedOrder.shift();
-                      if (evicted !== undefined) replayedIds.delete(evicted);
-                    }
-                  };
-                  while (!state.closed) {
-                    const batch = await storage.eventLog.getAfter(
-                      lastReplayedId,
-                      REPLAY_BATCH_SIZE,
-                      spaceId ?? undefined,
-                    );
+          const replay = async (afterIdResolved: bigint): Promise<void> => {
+            try {
+              // Detect stale cursors — clients whose `Last-Event-ID`
+              // predates the retention window can't be faithfully caught
+              // up from the event log. Emit a terminal `catchup_too_old`
+              // control event and close the stream; the client is
+              // expected to re-sync state and reconnect without a
+              // Last-Event-ID. Scoped by space so a fresh space with
+              // no events never trips the check.
+              {
+                const minRetained = await storage.eventLog.getMinRetainedId(
+                  spaceId ?? undefined,
+                );
+                if (minRetained !== null && afterIdResolved < minRetained) {
+                  const payload = JSON.stringify({
+                    type: "catchup_too_old",
+                    min_retained_id: String(minRetained),
+                    requested: String(afterIdResolved),
+                  });
+                  // id is the min retained id so clients don't store a cursor older than the log can serve.
+                  send(
+                    `id: ${String(minRetained)}\nevent: catchup_too_old\ndata: ${payload}\n\n`,
+                  );
+                  endStream();
+                  return;
+                }
+              }
 
-                    if (batch.length === 0) break;
-
-                    for (const event of batch) {
-                      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
-                      if (state.closed) return;
-                      const isEdge = event.edge_id !== null;
-                      if (isEdge && typeParam) {
-                        lastReplayedId = event.id;
-                        continue;
-                      }
-                      // Decoded once for the whole row, shared by the type
-                      // checks and the narrowing below. An edge frame
-                      // carries no item type and no metadata, and
-                      // `typeFilter.allowed` is undefined for exactly the
-                      // credentials that bypass the permission maps, so
-                      // neither needs the row decoded at all. Typed as
-                      // unknown-valued rather than as an event: this is a
-                      // stored string, so its declared shape is a claim
-                      // about it rather than a fact, and the checks that
-                      // keep a mis-shaped row from throwing would read as
-                      // unnecessary against a declared type.
-                      let parsed: Record<string, unknown> | null = null;
-                      if (
-                        !isEdge &&
-                        (typeParam || typeFilter.allowed !== undefined)
-                      ) {
-                        try {
-                          parsed = JSON.parse(event.payload) as Record<
-                            string,
-                            unknown
-                          >;
-                        } catch {
-                          // Fail closed on a stored payload that is not
-                          // JSON. It cannot be narrowed to what this
-                          // subscriber may read, so sending it would hand
-                          // over whatever it holds regardless of the
-                          // permissions this whole path exists to apply;
-                          // and it would not decode on the client either,
-                          // so withholding it costs nothing usable. One
-                          // line names the row, because a payload that is
-                          // not JSON is a defect somebody has to find, and
-                          // a silent skip leaves no trace of it anywhere.
-                          console.warn(
-                            `[events] replay skipped event ${String(event.id)}: stored payload is not valid JSON`,
-                          );
-                          lastReplayedId = event.id;
-                          continue;
-                        }
-                      }
-                      const parsedItem: unknown = parsed?.item;
-                      const itemType =
-                        typeof parsedItem === "object" && parsedItem !== null
-                          ? (parsedItem as { type?: string }).type
-                          : undefined;
-                      // The same function the live path filters on, and
-                      // called here rather than reimplemented: `?type=`
-                      // names a subtree, so a string comparison drops a
-                      // subtype the live stream delivers, and the client
-                      // has no way to see that its view narrowed on
-                      // reconnect. Passed the arguments live passes, so
-                      // the two cannot resolve the same filter
-                      // differently. A row whose payload carries no item
-                      // type is withheld, as it was before.
-                      if (
-                        typeParam &&
-                        (itemType === undefined ||
-                          !eventMatchesTypeFilter(itemType, typeParam))
-                      ) {
-                        lastReplayedId = event.id;
-                        continue;
-                      }
-                      if (
-                        typeFilter.allowed !== undefined &&
-                        itemType &&
-                        !matchesTypeFilter(itemType, typeFilter)
-                      ) {
-                        lastReplayedId = event.id;
-                        continue;
-                      }
-
-                      const replayWireType = wireEventName(
-                        event.event_type as
-                          ItemEventWithId["type"] | EdgeEventWithId["type"],
-                      );
-                      // The stored payload is re-sent as a string, so the
-                      // live path's filter never touched it: this is a
-                      // second, independent copy of the same disclosure
-                      // and needs its own narrowing. It applies to every
-                      // stored frame carrying metadata, which is four
-                      // event types besides `metadata.changed`. Only a
-                      // payload that actually carries a metadata block is
-                      // re-serialized, so replaying an edge event, or any
-                      // event for a credential that bypasses the maps,
-                      // pays nothing.
-                      send(
-                        `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
-                      );
-                      // Only here. A row the loop skipped above was not
-                      // sent, so its live copy is not a duplicate.
-                      rememberReplayed(event.id);
-                      lastReplayedId = event.id;
-                    }
-
-                    if (batch.length < REPLAY_BATCH_SIZE) break;
-                  }
-
-                  replaying = false;
-                  // Both buffers drain through one function, item and
-                  // edge alike. The rule below is a property of the
-                  // stream rather than of either buffer, and written at
-                  // two sites it is one site that gets updated: a revert
-                  // of the edge copy alone would restore this defect for
-                  // edges while every item-side test stayed green. There
-                  // is no second site to diverge.
-                  //
-                  // Withheld against the ids this replay sent, not
-                  // against the cursor. Two consequences worth naming.
-                  //
-                  // A row the replay skipped is no longer suppressed
-                  // here, and that discloses nothing: delivery goes
-                  // through `sendEvent`, whose first act is the same
-                  // permission narrowing the replay applied, so the
-                  // buffered copy meets that filter whatever this
-                  // decides.
-                  //
-                  // An id evicted from the window is sent a second time
-                  // carrying the same `id:`, which a client applying a
-                  // payload by id already absorbs. The comparison this
-                  // replaces failed the other way, by dropping an event
-                  // the client had no way to learn it was missing.
-                  //
-                  // Returns false when the stream closed mid-drain, so
-                  // the caller stops rather than draining the next
-                  // buffer into a controller that is gone.
-                  const drainBuffered = <T extends { eventId?: bigint }>(
-                    buffer: T[],
-                    deliver: (eventId: bigint | undefined, event: T) => void,
-                  ): boolean => {
-                    for (const event of buffer) {
-                      if (state.closed) return false;
-                      if (
-                        event.eventId !== undefined &&
-                        replayedIds.has(event.eventId)
-                      )
-                        continue;
-                      deliver(event.eventId, event);
-                    }
-                    buffer.length = 0;
-                    return true;
-                  };
-                  if (!drainBuffered(liveBuffer, sendEvent)) return;
-                  if (!drainBuffered(liveEdgeBuffer, sendEdgeEvent)) return;
-                } catch {
-                  replaying = false;
-                  liveBuffer.length = 0;
-                  liveEdgeBuffer.length = 0;
+              let lastReplayedId: bigint = afterIdResolved;
+              // The cursor above paginates `getAfter` and advances
+              // past every row this loop walks, rows a filter
+              // withheld included. That makes it the wrong thing to
+              // dedupe the live buffer against. Postgres assigns
+              // `event_log.id` from an identity column before
+              // commit, so a transaction holding a lower id can
+              // commit after one holding a higher id; comparing a
+              // buffered live event against a high-water mark then
+              // discards an event this client has never seen, with
+              // its cursor already past it, so it never asks again.
+              // What is safe to discard is an id this replay
+              // actually sent, so that is what is recorded — into a set
+              // that belongs to the stream rather than to this function,
+              // because the drain it feeds runs whether or not there was
+              // a replay to feed it.
+              //
+              // Insertion order, for eviction. Replayed ids arrive
+              // ascending, so the front is always the oldest.
+              const replayedOrder: bigint[] = [];
+              const rememberReplayed = (id: bigint): void => {
+                replayedIds.add(id);
+                replayedOrder.push(id);
+                if (replayedOrder.length > REPLAY_DEDUPE_WINDOW) {
+                  const evicted = replayedOrder.shift();
+                  if (evicted !== undefined) replayedIds.delete(evicted);
                 }
               };
-              void (async () => {
-                try {
-                  if (rlsCtx) {
-                    await rlsCtx.withInstalledContext(replay);
-                  } else {
-                    await replay();
+              while (!state.closed) {
+                const batch = await storage.eventLog.getAfter(
+                  lastReplayedId,
+                  REPLAY_BATCH_SIZE,
+                  spaceId ?? undefined,
+                );
+
+                if (batch.length === 0) break;
+
+                for (const event of batch) {
+                  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- state.closed is mutated by the cleanup() callback invoked from outside this loop; TS narrows it to `false` from the enclosing while-check but at runtime it can flip to true.
+                  if (state.closed) return;
+                  const isEdge = event.edge_id !== null;
+                  // The same rule the live path applies, and the
+                  // reason it is written as one: an edge carries no
+                  // item type, so `?type=` has nothing to say about
+                  // it, and only `?edges=none` withholds it.
+                  if (isEdge && edgeMode === "none") {
+                    lastReplayedId = event.id;
+                    continue;
                   }
-                } finally {
-                  // The reservation exists for the replay alone; the
-                  // live phase runs entirely off the emitter. Idempotent
-                  // with cleanup()'s call, which stays as the safety net
-                  // for a client that disconnects mid-replay.
-                  releaseRls();
+                  // Decoded once for the whole row, shared by the type
+                  // checks and the narrowing below. An edge frame
+                  // carries no item type and no metadata, and
+                  // `typeFilter.allowed` is undefined for exactly the
+                  // credentials that bypass the permission maps, so
+                  // neither needs the row decoded at all. Typed as
+                  // unknown-valued rather than as an event: this is a
+                  // stored string, so its declared shape is a claim
+                  // about it rather than a fact, and the checks that
+                  // keep a mis-shaped row from throwing would read as
+                  // unnecessary against a declared type.
+                  let parsed: Record<string, unknown> | null = null;
+                  if (
+                    !isEdge &&
+                    (typeParam !== undefined ||
+                      typeFilter.allowed !== undefined)
+                  ) {
+                    try {
+                      parsed = JSON.parse(event.payload) as Record<
+                        string,
+                        unknown
+                      >;
+                    } catch {
+                      // Fail closed on a stored payload that is not
+                      // JSON. It cannot be narrowed to what this
+                      // subscriber may read, so sending it would hand
+                      // over whatever it holds regardless of the
+                      // permissions this whole path exists to apply;
+                      // and it would not decode on the client either,
+                      // so withholding it costs nothing usable. One
+                      // line names the row, because a payload that is
+                      // not JSON is a defect somebody has to find, and
+                      // a silent skip leaves no trace of it anywhere.
+                      console.warn(
+                        `[events] replay skipped event ${String(event.id)}: stored payload is not valid JSON`,
+                      );
+                      lastReplayedId = event.id;
+                      continue;
+                    }
+                  }
+                  const parsedItem: unknown = parsed?.item;
+                  const itemType =
+                    typeof parsedItem === "object" && parsedItem !== null
+                      ? (parsedItem as { type?: string }).type
+                      : undefined;
+                  // The same function the live path filters on, and
+                  // called here rather than reimplemented: `?type=`
+                  // names a subtree, so a string comparison drops a
+                  // subtype the live stream delivers, and the client
+                  // has no way to see that its view narrowed on
+                  // reconnect. Passed the arguments live passes, so
+                  // the two cannot resolve the same filter
+                  // differently. An item row whose payload carries no
+                  // item type is withheld, as it was before.
+                  //
+                  // `!isEdge` is load-bearing rather than a shortcut.
+                  // An edge row carries no item type at all, so without
+                  // it every edge falls into the withheld-for-no-type
+                  // arm and a type filter goes on silencing edges on
+                  // this path alone — the live/replay disagreement this
+                  // file exists to prevent, reintroduced by the guard
+                  // above that used to make the question unreachable.
+                  if (
+                    !isEdge &&
+                    typeParam !== undefined &&
+                    (itemType === undefined ||
+                      !eventMatchesTypeFilter(itemType, typeParam))
+                  ) {
+                    lastReplayedId = event.id;
+                    continue;
+                  }
+                  if (
+                    typeFilter.allowed !== undefined &&
+                    itemType &&
+                    !matchesTypeFilter(itemType, typeFilter)
+                  ) {
+                    lastReplayedId = event.id;
+                    continue;
+                  }
+
+                  const replayWireType = wireEventName(
+                    event.event_type as
+                      ItemEventWithId["type"] | EdgeEventWithId["type"],
+                  );
+                  // The stored payload is re-sent as a string, so the
+                  // live path's filter never touched it: this is a
+                  // second, independent copy of the same disclosure
+                  // and needs its own narrowing. It applies to every
+                  // stored frame carrying metadata, which is four
+                  // event types besides `metadata.changed`. Only a
+                  // payload that actually carries a metadata block is
+                  // re-serialized, so replaying an edge event, or any
+                  // event for a credential that bypasses the maps,
+                  // pays nothing.
+                  send(
+                    `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,
+                  );
+                  // Only here. A row the loop skipped above was not
+                  // sent, so its live copy is not a duplicate.
+                  rememberReplayed(event.id);
+                  lastReplayedId = event.id;
                 }
-              })();
-            } else {
-              replaying = false;
+
+                if (batch.length < REPLAY_BATCH_SIZE) break;
+              }
+            } catch {
+              // A catch-up that failed leaves the client short of
+              // events it will never ask for again, and the held frames
+              // sit after that gap — sending them would present an
+              // incomplete stream as a complete one.
+              heldFrames.length = 0;
             }
-          }
+          };
+
+          /**
+           * Live delivery resumes, oldest held frame first.
+           *
+           * Withheld against the ids the replay sent, not against the
+           * cursor. Two consequences worth naming.
+           *
+           * A row the replay skipped is not suppressed here, and that
+           * discloses nothing: delivery goes through `sendEvent`, whose
+           * first act is the same permission narrowing the replay
+           * applied, so the held copy meets that filter whatever this
+           * decides.
+           *
+           * An id evicted from the window is sent a second time carrying
+           * the same `id:`, which a client applying a payload by id
+           * already absorbs. The comparison this replaces failed the
+           * other way, by dropping an event the client had no way to
+           * learn it was missing.
+           *
+           * Stops rather than continuing when the stream closed
+           * mid-drain, so nothing is written into a controller that is
+           * gone.
+           */
+          const releaseHold = (): void => {
+            holding = false;
+            for (const frame of heldFrames) {
+              if (state.closed) break;
+              const eventId = frame.event.eventId;
+              if (eventId !== undefined && replayedIds.has(eventId)) continue;
+              if (frame.kind === "item") sendEvent(eventId, frame.event);
+              else sendEdgeEvent(eventId, frame.event);
+            }
+            heldFrames.length = 0;
+          };
+
+          /**
+           * Read the log head this stream announces.
+           *
+           * Fenced the way an ordinary space-scoped read is fenced, and
+           * deliberately not through the streaming reservation: this is
+           * one scalar read at setup, not a walk over rows held open for
+           * the length of a response. Reserving here would put every
+           * fresh viewer in the same five-slot queue as every replaying
+           * one, and answer 503 to the client with nothing to catch up
+           * on.
+           */
+          const readHeadEventId = async (): Promise<bigint | null> => {
+            const read = (): Promise<bigint | null> =>
+              storage.eventLog.getMaxId(spaceId ?? undefined);
+            const pgDb = options.pgDb ?? null;
+            if (options.rlsEnforce && pgDb !== null && spaceId) {
+              return withRlsSpaceTransaction(pgDb, spaceId, read);
+            }
+            return read();
+          };
+
+          /**
+           * Say where the stream is, before it says anything else.
+           *
+           * The cursor is a position in `event_log.id`, the log's single
+           * ascending sequence, and that is what makes it safe to replay
+           * under a filter it was not taken under: `?type=` and `?edges=`
+           * choose a subset of that sequence and never a different order
+           * of it, so a cursor carried across a filter change selects
+           * fewer rows or more, and never skips or repeats one. That is
+           * the opposite of the listing cursors, where `updated_after`
+           * changes the ordering itself and a cursor from one ordering
+           * cannot be continued under the other.
+           *
+           * Answers false when it could not be read, having already
+           * closed the stream.
+           */
+          const announceCursor = async (): Promise<boolean> => {
+            let head: bigint | null;
+            try {
+              head = await readHeadEventId();
+            } catch (err) {
+              // A stream that cannot say where it is cannot be resumed
+              // from, and a client that reads its snapshot behind one
+              // has no way to discover that until it has already lost
+              // the events in the gap. Closing hands it back to its own
+              // reconnect path, which is the only place it can recover.
+              console.warn(
+                `[events] closing the stream: the event-log head could not be read (${String(err)})`,
+              );
+              endStream();
+              return false;
+            }
+            // An empty log announces 0, which is a cursor the replay
+            // accepts and the retention check passes: `getMinRetainedId`
+            // answers null on an empty log, so nothing reads 0 as stale.
+            const payload = JSON.stringify({
+              type: STREAM_CURSOR_EVENT,
+              cursor: String(head ?? 0n),
+            });
+            send(`event: ${STREAM_CURSOR_EVENT}\ndata: ${payload}\n\n`);
+            return true;
+          };
+
+          // The prologue, in the order a client has to receive it:
+          // where the stream is, then what it missed, then what happens
+          // next. Ordered rather than concurrent because a client
+          // applying frames as they arrive cannot otherwise tell which
+          // of the first two it is holding.
+          void (async () => {
+            if (!(await announceCursor())) return;
+            try {
+              if (afterId !== null) {
+                const runReplay = (): Promise<void> => replay(afterId);
+                if (rlsCtx) {
+                  await rlsCtx.withInstalledContext(runReplay);
+                } else {
+                  await runReplay();
+                }
+              }
+            } finally {
+              // The reservation exists for the replay alone; the live
+              // phase runs entirely off the emitter. Idempotent with
+              // cleanup()'s call, which stays as the safety net for a
+              // client that disconnects mid-replay.
+              releaseRls();
+            }
+            releaseHold();
+          })();
 
           c.req.raw.signal.addEventListener("abort", () => {
             cleanup();

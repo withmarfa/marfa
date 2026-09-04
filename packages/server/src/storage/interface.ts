@@ -2229,6 +2229,13 @@ export interface EventLogStore {
    *  window so it can emit a terminal `catchup_too_old` event
    *  instead of silently resuming mid-stream. */
   getMinRetainedId(spaceId?: string): Promise<bigint | null>;
+
+  /** Largest event id, scoped to a space when provided. Returns null
+   *  when no events match. The SSE route announces this on connect so a
+   *  client that reads its snapshot afterwards holds a resume point
+   *  from the first moment, rather than waiting for an event to arrive
+   *  to learn where it is. */
+  getMaxId(spaceId?: string): Promise<bigint | null>;
 }
 
 // ---------------------------------------------------------------------------
