@@ -1,7 +1,7 @@
 {
   "@withmarfa/runtime-sdk": {
-    "version": "3.0.0",
-    "hash": "a8d917967f1316f23bb0991bb3fd92cead797aed353eab248f417990b72ac77f",
+    "version": "4.0.0",
+    "hash": "512db622009b904b02dfdfd162a993dd7499b307ae7df14a1c78257846a2c535",
     "exports": 83
   },
   "@withmarfa/runtime-test": {
