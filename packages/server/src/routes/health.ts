@@ -351,12 +351,13 @@ async function readDatabaseConnections(
     // that happens to stamp the same name, and counting it would report
     // another role's traffic as this pool filling up.
     //
-    // The cost of dropping it is one sub-millisecond window: a backend of
-    // this pool's between the moment it publishes its name and its first
-    // state report reads as `unknown` too, and is undercounted until the next
-    // reading fifteen seconds later. Undercounting a connection that is still
-    // being opened is the cheaper of the two errors, and it is the one that
-    // corrects itself.
+    // What this gives up, if a connection of this pool's can reach the view
+    // between publishing its name and reporting its first state: that one is
+    // undercounted until the next reading. Not measured either way, unlike
+    // the masking above, so it is stated as the cost it would be rather than
+    // as a window anybody has seen. Undercounting a connection that is still
+    // being opened is the cheaper of the two errors, and it corrects itself a
+    // cache length later; counting another role's traffic does not.
     if (state === UNKNOWN_STATE) continue;
     const held = count - (selfRows[state] ?? 0);
     inUse += held;
