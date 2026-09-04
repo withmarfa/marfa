@@ -507,9 +507,16 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
 
 /**
  * Publish an edge lifecycle event. Persists via event_log with
- * item_id = null and edge_id = edge.id. Subscribers filter by edge_id
- * (or accept all edge events); the `?type=` SSE filter applies to
- * item events only since edges carry no content type.
+ * item_id = null and edge_id = edge.id.
+ *
+ * A type filter on the SSE stream narrows item events and leaves these
+ * alone: an edge carries no item type, so `?type=` has nothing to say
+ * about one, and a client watching two types needs to hear about the
+ * edges joining them. `?edges=none` is the opt-out, and it is
+ * independent of the type filter. Silencing every edge whenever a type
+ * filter was set is the behavior this replaced, and it left a filtered
+ * client with no way to reconstruct its graph — an edge has no row to
+ * re-read and leaves no tombstone when it goes.
  */
 export async function publishEdge(
   event: EdgeEvent,
