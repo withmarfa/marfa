@@ -4,11 +4,14 @@
 
 import type {
   AncestorUnavailableResponse,
+  ConflictResolutionReport,
   ConflictResponse,
+  Item,
   MergePolicy,
   MergeStrategy,
 } from "@withmarfa/shared";
 import { generateId } from "@withmarfa/shared";
+import type { ResolvedItem } from "./interface.js";
 import { sha256Hex } from "../utils/crypto.js";
 
 export interface ConflictInput {
@@ -341,3 +344,18 @@ export function conflictedSiblingIdFor(
 
 /** The tag a keep-both sibling carries, so an app can list them. */
 export const CONFLICTED_COPY_TAG = "conflicted-copy";
+
+/**
+ * Puts the resolution report on the item the store is about to return.
+ *
+ * A plain spread rather than a mutation, and absent entirely when nothing was
+ * resolved: a key present with `undefined` serializes to a field a client can
+ * see and cannot use, which is the shape of defect this envelope work exists
+ * to remove.
+ */
+export function attachResolution(
+  item: Item,
+  resolution: ConflictResolutionReport | undefined,
+): ResolvedItem {
+  return resolution === undefined ? item : { ...item, conflict_resolution: resolution };
+}

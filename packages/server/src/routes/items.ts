@@ -19,7 +19,9 @@ import {
   getSourceAllowlist,
 } from "@withmarfa/shared";
 import type {
+  AncestorUnavailableResponse,
   ApiKey,
+  ConflictResponse,
   Edge,
   Item,
   ItemState,
@@ -49,7 +51,11 @@ import {
 } from "../middleware/auth.js";
 import { compareProperties } from "./mirror-reconcile.js";
 import { reserveQuota } from "../middleware/quota.js";
-import type { Storage, ItemSortField } from "../storage/interface.js";
+import type {
+  Storage,
+  ItemSortField,
+  ResolvedItem,
+} from "../storage/interface.js";
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
@@ -154,6 +160,26 @@ const AncestorUnavailableSchema = z.object({
  * resolvable" rather than "nobody read your parameter".
  */
 const ConflictModeSchema = z.enum(["auto", "manual", "callback"]);
+
+/**
+ * The 200 for an update, widened by what the server did if it resolved a
+ * collision. Absent on every write that did not, which is nearly all of them.
+ */
+const UpdatedItemSchema = ItemWithMetadataSchema.extend({
+  conflict_resolution: z
+    .object({
+      fields: z.array(z.string()),
+      strategy: z.record(z.string(), MergeStrategySchema),
+      conflicted_copy_id: z.string().optional(),
+    })
+    .optional()
+    .describe(
+      "What the server did, present only when this write resolved a " +
+        "conflict. `conflicted_copy_id` names the sibling carrying the " +
+        "losing values — the only place it is reported, since no route " +
+        "says what a write created.",
+    ),
+});
 
 const IdParam = z.object({
   id: z.string().describe("Item id"),
@@ -701,7 +727,7 @@ const updateItemRoute = createRoute({
   responses: {
     200: {
       content: {
-        "application/json": { schema: ItemWithMetadataSchema },
+        "application/json": { schema: UpdatedItemSchema },
       },
       description: "Item updated",
     },
@@ -2707,7 +2733,13 @@ export function itemRoutes(storage: Storage) {
     // after it commits. `undefined` when the request carried no edges.
     let patchedEdgeChanges: InlineEdgeChanges | undefined;
     const txResult = await storage.runInTransaction(async () => {
-      const updated =
+      // Annotated rather than inferred: the `: item` arm is a plain `Item`,
+      // and left to inference the union collapses to it — losing the
+      // resolution report the store attaches on the other arm.
+      const updated:
+        | ResolvedItem
+        | ConflictResponse
+        | AncestorUnavailableResponse =
         hasProperties || hasTier || hasTimestamp || hasSourceId
           ? await storage.items.update(
               id,
@@ -2804,20 +2836,29 @@ export function itemRoutes(storage: Storage) {
       resource_id: id,
     });
     const hydrated = await hydrateEdgesForItem(storage, id);
+    // Off the item and onto the envelope. It describes what this write did,
+    // not what the row is, and the row has no such column — leaving it inside
+    // `item` would put a field there that no read of the item ever returns.
+    const { conflict_resolution: resolution, ...resolvedItem } = txResult;
     return c.json(
       {
         item: {
           ...withOrphanState(
-            txResult,
+            resolvedItem,
             await resolveOrphanScopeForOwnWrite(
               storage,
-              [txResult],
+              [resolvedItem],
               c.get("apiKey"),
             ),
           ),
           edges: hydrated,
         },
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
+        // Present only where the server actually resolved a collision. It is
+        // the only thing that names the sibling: no route reports what a
+        // write created, so without this the row exists and nothing can
+        // reach it.
+        ...(resolution !== undefined && { conflict_resolution: resolution }),
       },
       200,
     );

@@ -301,3 +301,74 @@ describe("the conflict envelope", () => {
     expect(conflict.error.message.length).toBeGreaterThan(0);
   });
 });
+
+describe("the resolution report", () => {
+  it("names the sibling, which nothing else does", async () => {
+    const { id, base } = await collidingNote();
+
+    const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
+      key: ctx.adminKey,
+      body: { properties: { body: "reported loser" }, version: base },
+    });
+    expect(res.status).toBe(200);
+    const answered = (await res.json()) as {
+      conflict_resolution?: {
+        fields: string[];
+        strategy: Record<string, string>;
+        conflicted_copy_id?: string;
+      };
+    };
+
+    expect(answered.conflict_resolution).toBeDefined();
+    expect(answered.conflict_resolution?.fields).toContain("body");
+    expect(answered.conflict_resolution?.strategy.body).toBe(
+      "keep_both_copies",
+    );
+
+    // No route reports what a write created, so without this the sibling
+    // exists and a caller has no way to reach the row it just caused.
+    const siblingId = answered.conflict_resolution?.conflicted_copy_id;
+    expect(siblingId).toBeDefined();
+    const sibling = await request(ctx.app, "GET", `/items/${siblingId}`, {
+      key: ctx.adminKey,
+    });
+    expect(sibling.status).toBe(200);
+    const { item } = (await sibling.json()) as {
+      item: { properties: Record<string, unknown> };
+    };
+    expect(item.properties.body).toBe("reported loser");
+  });
+
+  it("is absent from a write that resolved nothing", async () => {
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "uncontested" } },
+    });
+    const { item } = (await created.json()) as CreatedItem;
+
+    const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { body: "still uncontested" } },
+    });
+    expect(res.status).toBe(200);
+    const answered = (await res.json()) as Record<string, unknown>;
+    // A key present and empty is a field a client can see and cannot use,
+    // which is the shape of defect this envelope work exists to remove.
+    expect("conflict_resolution" in answered).toBe(false);
+  });
+
+  it("does not put the report on the item itself", async () => {
+    const { id, base } = await collidingNote();
+
+    const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
+      key: ctx.adminKey,
+      body: { properties: { body: "not on the row" }, version: base },
+    });
+    const answered = (await res.json()) as {
+      item: Record<string, unknown>;
+    };
+    // The row has no such column, so a field there would be one that no
+    // read of the item ever returns.
+    expect("conflict_resolution" in answered.item).toBe(false);
+  });
+});

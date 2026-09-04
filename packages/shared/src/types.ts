@@ -1,6 +1,6 @@
 // Marfa wire types — the format shared between server and clients over the API.
 
-import type { ItemState, MergePolicy } from "@withmarfa/types";
+import type { ItemState, MergePolicy, MergeStrategy } from "@withmarfa/types";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [
@@ -626,6 +626,25 @@ export interface ConflictResponse {
    * to `default`, which itself defaults to `last_writer_wins` when absent.
    */
   merge_policy: MergePolicy;
+}
+
+/**
+ * What the server did when it resolved a collision, reported on the 200.
+ *
+ * Present only on a write that actually resolved one. Without it the write
+ * that spawned a sibling is indistinguishable from one that merged cleanly,
+ * and no route reports what a write created — so the sibling exists with
+ * nothing naming it, and an app cannot tell the person their edit was kept
+ * somewhere else. It is also the only way a caller can reach the row it just
+ * caused to exist.
+ */
+export interface ConflictResolutionReport {
+  /** The fields that collided, sorted. */
+  fields: string[];
+  /** The strategy applied to each, keyed by field name. */
+  strategy: Record<string, MergeStrategy>;
+  /** The sibling carrying the losing values, when any field kept both. */
+  conflicted_copy_id?: string;
 }
 
 /**

@@ -129,14 +129,6 @@ export interface UpdateOptions {
    */
   source_id?: string;
   /**
-   * Item type. Required by the `auto` strategy when a `keep_both_copies`
-   * conflict spawns a sibling item. Omit to let the SDK pre-fetch it —
-   * when `expectedVersion` is also omitted the pre-fetch happens upfront;
-   * when `expectedVersion` is provided the fetch is deferred until a
-   * `keep_both_copies` conflict actually needs it.
-   */
-  type?: string;
-  /**
    * Listener invoked after the auto-merge path completes successfully.
    * Overrides the client's default `onConflictAutoMerge` for this call.
    */
@@ -1097,13 +1089,10 @@ export class MarfaClient {
     ): Promise<Item> => {
       const expected = options?.expectedVersion;
       let version: number;
-      let type: string | undefined = options?.type;
       if (expected !== undefined) {
         version = expected;
       } else {
-        const item = await this.items.get(id);
-        version = item.version;
-        type ??= item.type;
+        version = (await this.items.get(id)).version;
       }
 
       const strategy = options?.conflict ?? this.defaultConflictStrategy;
@@ -1113,7 +1102,6 @@ export class MarfaClient {
       return handleConflictUpdate(
         this.transport,
         id,
-        type,
         properties,
         version,
         strategy,

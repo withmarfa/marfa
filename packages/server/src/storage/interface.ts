@@ -17,6 +17,7 @@ import type {
   PaginatedResult,
   SearchResult,
   AncestorUnavailableResponse,
+  ConflictResolutionReport,
   ConflictResponse,
   ItemState,
   User,
@@ -471,6 +472,19 @@ export interface ItemWriterInput {
  * `idempotency_key` is read off the header the replay cache already owns —
  * neither is a field a client sets on an update payload.
  */
+/**
+ * An item, plus what the server did if this write resolved a collision.
+ *
+ * The report rides on the returned object rather than widening the store's
+ * return into a tuple: every caller of `update` reads an `Item`, and an
+ * optional extra property leaves all of them working unchanged while the one
+ * caller that reports it can pick it up. It is never persisted — the row has
+ * no such column — and the route strips it off the item before answering.
+ */
+export type ResolvedItem = Item & {
+  conflict_resolution?: ConflictResolutionReport;
+};
+
 export interface ConflictResolutionInput {
   /** Absent means `manual`: the envelope, which is what every existing
    *  caller was written against. */
@@ -595,7 +609,7 @@ export interface ItemStore {
     id: string,
     input: StoredUpdateItemInput,
     spaceId?: string,
-  ): Promise<Item | ConflictResponse | AncestorUnavailableResponse>;
+  ): Promise<ResolvedItem | ConflictResponse | AncestorUnavailableResponse>;
   delete(id: string, spaceId?: string): Promise<void>;
   purge(id: string, spaceId?: string): Promise<void>;
   /**

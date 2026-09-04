@@ -49,6 +49,7 @@ import { instantColumnValues } from "../instant-columns.js";
 import type {
   Item,
   AncestorUnavailableResponse,
+  ConflictResolutionReport,
   ConflictResponse,
   ItemState,
   PaginatedResult,
@@ -98,6 +99,7 @@ function isSourceDedupViolation(err: unknown): boolean {
 import { isPrimaryKeyViolation } from "./pk-violation.js";
 import {
   ancestorUnavailable,
+  attachResolution,
   conflictedSiblingIdFor,
   conflictedSiblingProperties,
   CONFLICTED_COPY_TAG,
@@ -944,6 +946,7 @@ export class PgItemStore implements ItemStore {
         // collided, the policy's resolution when something did and the
         // caller asked the server to resolve it.
         let resolvedProperties: Record<string, unknown>;
+        let resolution: ConflictResolutionReport | undefined;
 
         if (result.type === "conflict") {
           if (input.conflict_mode !== "auto") {
@@ -969,9 +972,11 @@ export class PgItemStore implements ItemStore {
           // the original on. A client doing this in two writes has no
           // arrangement that is atomic: dying between them leaves the losing
           // edit nowhere and the original already past it.
+          let siblingId: string | undefined;
           if (plan.keepBothFields.length > 0) {
+            siblingId = conflictedSiblingIdFor(id, input.version, input);
             await insertConflictedSibling(tx, {
-              siblingId: conflictedSiblingIdFor(id, input.version, input),
+              siblingId,
               row,
               spaceId,
               now,
@@ -984,6 +989,16 @@ export class PgItemStore implements ItemStore {
           }
 
           resolvedProperties = plan.merged;
+          resolution = {
+            fields: result.conflicting_fields,
+            strategy: plan.strategyByField,
+            ...(siblingId !== undefined && { conflicted_copy_id: siblingId }),
+          };
+        resolution = {
+          fields: result.conflicting_fields,
+          strategy: plan.strategyByField,
+          ...(siblingId !== undefined && { conflicted_copy_id: siblingId }),
+        };
         } else {
           resolvedProperties = result.merged;
         }
@@ -1043,17 +1058,22 @@ export class PgItemStore implements ItemStore {
           spaceId,
         );
 
-        return rowToItem({
-          ...row,
-          properties: resolvedProperties,
-          version: newVersion,
-          updated_at: now,
-          tier: newTier,
-          ...(input.timestamp !== undefined && { timestamp: input.timestamp }),
-          ...(input.source_id !== undefined && {
-            source_id: input.source_id,
+        return attachResolution(
+          rowToItem({
+            ...row,
+            properties: resolvedProperties,
+            version: newVersion,
+            updated_at: now,
+            tier: newTier,
+            ...(input.timestamp !== undefined && {
+              timestamp: input.timestamp,
+            }),
+            ...(input.source_id !== undefined && {
+              source_id: input.source_id,
+            }),
           }),
-        });
+          resolution,
+        );
       });
     });
   }
