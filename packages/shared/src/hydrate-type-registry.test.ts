@@ -347,6 +347,84 @@ describe("hydrateTypeRegistry", () => {
     }
   });
 
+  it("names a shipped platform type the listing does not carry", () => {
+    // The permissive direction, and the one convergence cannot repair: the
+    // platform map is global, so a space-scoped listing may not evict from
+    // it and `removed` never reaches these. A client on a newer kit than the
+    // server resolves such a type through that map, validates the write
+    // against it locally, and the server refuses the create as an unknown
+    // type — a refusal that reads as permanent rather than retryable.
+    const shipped = [...TYPE_REGISTRY.values()];
+    const own: TypeSchema = { id: "acme.own", version: 1, fields: {} };
+
+    // A listing carrying the whole shipped vocabulary reports nothing, which
+    // is what makes the entry below a finding rather than a constant.
+    expect(hydrate([...shipped, own]).unlistedPlatform).toEqual([]);
+
+    const behind = hydrate([
+      ...shipped.filter((schema) => schema.id !== "core.note"),
+      own,
+    ]);
+    expect(behind.unlistedPlatform).toEqual(["core.note"]);
+    // Reported and nothing more: the shipped map is untouched in both
+    // directions, so the type goes on resolving locally.
+    expect(behind.removed).toEqual([]);
+    expect(getTypeSchema("core.note")).toBeDefined();
+  });
+
+  it("reports each id once when the listing carries it twice", () => {
+    // `GET /types` concatenates the platform map with the space's overlay and
+    // deduplicates neither, so an id really does arrive twice — this file
+    // already says so where `skippedPlatform` is documented. The report
+    // arrays pushed per payload entry while the working map is keyed by id,
+    // so a repeat listed an id twice in `skippedPlatform` or
+    // `unshippedPlatform` and once in `registered`, and the claim that every
+    // `unshippedPlatform` id is also in `registered` held as sets and not as
+    // multisets.
+    const twice: TypeSchema = {
+      id: "system.unshipped_twice",
+      version: 1,
+      fields: {},
+    };
+    const result = hydrate([
+      { id: "core.note", version: 1, fields: {} },
+      { id: "core.note", version: 1, fields: {} },
+      twice,
+      twice,
+    ]);
+
+    expect(result.skippedPlatform).toEqual(["core.note"]);
+    expect(result.unshippedPlatform).toEqual(["system.unshipped_twice"]);
+    expect(result.registered).toEqual(["system.unshipped_twice"]);
+  });
+
+  it("refuses a payload entry whose id is not a string, by name", () => {
+    // A payload is JSON somebody else produced, so a non-string id is a
+    // shape this helper meets rather than one it can assume away. Reading
+    // the namespace off one raised a bare `TypeError`, which names no type
+    // and carries no code — the same failure the depth guard above exists to
+    // replace. Not `expect(...).toThrow()`: a bare throw check passes on the
+    // `TypeError` this refusal is here to stop.
+    hydrate([{ id: "acme.standing_id", version: 1, fields: {} }]);
+
+    let caught: unknown;
+    try {
+      hydrateTypeRegistry(
+        [{ id: 7, version: 1, fields: {} }] as unknown as TypeSchema[],
+        { spaceId: SPACE },
+      );
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(MarfaError);
+    expect((caught as MarfaError).code).toBe(ErrorCode.INVALID_TYPE);
+    expect((caught as MarfaError).details?.type_id).toBe(7);
+    // Raised in the collection loop, ahead of every registration and every
+    // removal, so the space is left exactly as it was found.
+    expect(getTypeSchema("acme.standing_id", SPACE)).toBeDefined();
+  });
+
   it("removes nothing when the payload is refused", () => {
     hydrate([{ id: "acme.standing", version: 1, fields: {} }]);
 
