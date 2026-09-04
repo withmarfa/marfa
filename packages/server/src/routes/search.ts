@@ -123,6 +123,17 @@ const searchRoute = createRoute({
       },
       description: "Search results",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "An invalid type pattern, a time bound that is not a timestamp, " +
+        "an unrecognized query parameter, or one of the two retired " +
+        "time-filter names.",
+    },
     401: {
       content: {
         "application/json": {

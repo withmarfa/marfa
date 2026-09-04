@@ -690,6 +690,17 @@ const listFromSourceRoute = createRoute({
       content: { "application/json": { schema: EdgeListSchema } },
       description: "Outbound edges",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "An unrecognized query parameter. Declared because this door " +
+        "answers it: a refusal a caller cannot find in the reference is " +
+        "the same silence in a different place.",
+    },
     401: {
       content: {
         "application/json": {
@@ -741,6 +752,17 @@ const listBackrefsRoute = createRoute({
     200: {
       content: { "application/json": { schema: EdgeListSchema } },
       description: "Inbound edges",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "An unrecognized query parameter. Declared because this door " +
+        "answers it: a refusal a caller cannot find in the reference is " +
+        "the same silence in a different place.",
     },
     401: {
       content: {
