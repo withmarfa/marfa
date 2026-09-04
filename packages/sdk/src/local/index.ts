@@ -38,6 +38,15 @@ export type {
 export { createOutboxDrain, DEFAULT_RETRY_CEILING } from "./drain.js";
 export type { DrainOptions, DrainResult, OutboxDrain } from "./drain.js";
 
+export { createLocalSync } from "./sync.js";
+export type { LocalSync, LocalSyncOptions } from "./sync.js";
+
+export { applyEvent } from "./apply.js";
+export type { ApplyOutcome } from "./apply.js";
+
+export { importAll, PendingWritesError } from "./import.js";
+export type { ImportOptions, ImportResult } from "./import.js";
+
 export { classifyFailure } from "./classify.js";
 export type { Verdict } from "./classify.js";
 

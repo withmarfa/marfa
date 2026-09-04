@@ -154,6 +154,38 @@ export type LocalEngineEvent =
       /** Mutations still queued: pending, blocked, or waiting on one of
        *  those. */
       remaining: number;
+    }
+  /** A fresh store has read the server's state for the first time. */
+  | { type: "hydration.finished"; items: number; edges: number }
+  /**
+   * A reconnection has read whatever changed while the client was away.
+   *
+   * Reported rather than done quietly because it is the only account of
+   * where a row that appeared without an event came from — and because a
+   * catch-up that stops running looks, from every other signal, exactly
+   * like a quiet period.
+   */
+  | {
+      type: "catchup.finished";
+      /** The `updated_after` bound the read was made with. */
+      since: string;
+      items: number;
+      edges: number;
+    }
+  /**
+   * The cursor had aged out of the event log, so the store re-read
+   * everything instead of reconnecting.
+   *
+   * Worth telling the app rather than doing quietly: the pruned counts are
+   * rows that were on screen a moment ago and are not any more, and the
+   * only account of why is this.
+   */
+  | {
+      type: "reimport.finished";
+      items: number;
+      edges: number;
+      prunedItems: number;
+      prunedEdges: number;
     };
 
 export type LocalEngineEventListener = (event: LocalEngineEvent) => void;

@@ -2,12 +2,12 @@
  * The offline seam, defined once.
  *
  * Every scenario that exercises the engine away from a working server goes
- * through this and names which mode it uses. Five modes cover the ways a
+ * through this and names which mode it uses. Six modes cover the ways a
  * server stops being available to a client: the request never arrives, the
  * answer never comes back, the credential is refused, the server errors,
- * and — for the stream, which this part does not carry — the connection
- * closes. A scenario that does not name its seam is not reproducible, so
- * the seam is a parameter rather than something each test improvises.
+ * and the stream connection closes. A scenario that does not name its seam
+ * is not reproducible, so the seam is a parameter rather than something
+ * each test improvises.
  *
  * Test support. It lives beside the engine rather than in a test file
  * because more than one suite uses it, and it is not a tsup entry, so it
@@ -34,12 +34,35 @@ export type SeamMode =
   | "unauthorized"
   /** The server answers 503. Something to wait out rather than a verdict on
    *  the write. */
-  | "server_error";
+  | "server_error"
+  /**
+   * A subscription connects, carries its opening frame, and the connection
+   * then ends. Every other request passes through.
+   *
+   * Only the stream, because only the stream is long-lived: an ordinary
+   * request that ended this way is the `lost_response` above. A clean
+   * close is what an intermediary timing out an idle connection looks
+   * like, so the subscription reconnects rather than reporting anything —
+   * which is what makes it worth testing, since a reconnect that silently
+   * skipped the gap would look exactly the same from outside.
+   */
+  | "stream_close";
 
 /** One request the engine issued, whether or not the seam let it through. */
 export interface SeamRequest {
   method: string;
   path: string;
+  /**
+   * The query string, parsed.
+   *
+   * Recorded because a read's filter is not something to take on trust: an
+   * unrecognized parameter is dropped rather than refused, so a read that
+   * asked for a slice and got the whole corpus looks from the inside
+   * exactly like one that asked for the whole corpus. A scenario relying
+   * on a filter asserts that it went out, and proves separately that it
+   * narrowed.
+   */
+  query: Record<string, string>;
   /** The JSON body, parsed. Undefined for a request that carried none. */
   body: unknown;
   /**
@@ -70,6 +93,72 @@ export interface OfflineSeam {
   readonly calls: string[];
   /** Forget what has been recorded so far. */
   reset(): void;
+}
+
+/** Whether the text carries a complete frame with a payload in it. */
+function carriedAFrame(text: string): boolean {
+  const complete = text.split("\n\n").slice(0, -1);
+  return complete.some((frame) =>
+    frame.split("\n").some((line) => line.startsWith("data:")),
+  );
+}
+
+/**
+ * Forward a stream up to and including its first frame with a payload,
+ * then end it cleanly.
+ *
+ * Cut at a frame boundary rather than at an arbitrary byte: a body
+ * truncated mid-frame would exercise the parser's chunk handling instead
+ * of the reconnect, which is a different test.
+ *
+ * "With a payload" is the part that is easy to get wrong. A stream opens
+ * with a comment — the keep-alive — which is a complete frame by the
+ * blank-line rule and carries nothing, so cutting after the first
+ * boundary ends the connection before it has said anything at all. That
+ * reproduces a connection that never worked rather than one that worked
+ * and was cut, and the difference is total: a client that was never told
+ * where the log stood has nothing to catch up from.
+ */
+function truncateAfterFirstFrame(response: Response): Response {
+  const source = response.body;
+  if (source === null) return response;
+
+  // Typed rather than inferred: `Response.body` widens to a stream of
+  // `any` here, and the chunk has to be a `Uint8Array` for the decoder and
+  // for the stream this hands back.
+  const reader: ReadableStreamDefaultReader<Uint8Array> = (
+    source as ReadableStream<Uint8Array>
+  ).getReader();
+  const decoder = new TextDecoder("utf-8");
+  let carried = "";
+
+  const truncated = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        controller.close();
+        await reader.cancel().catch(() => undefined);
+        return;
+      }
+      controller.enqueue(value);
+      carried += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+      if (carriedAFrame(carried)) {
+        controller.close();
+        // Released rather than left dangling: the response this wraps is a
+        // live server handler, and abandoning its reader leaves it writing
+        // into something nobody will read.
+        await reader.cancel().catch(() => undefined);
+      }
+    },
+    async cancel() {
+      await reader.cancel().catch(() => undefined);
+    },
+  });
+
+  return new Response(truncated, {
+    status: response.status,
+    headers: response.headers,
+  });
 }
 
 function refusal(status: number, code: string, message: string): Response {
@@ -118,9 +207,11 @@ export function createOfflineSeam(
             ? input.href
             : input.url;
       const method = init?.method ?? "GET";
+      const url = new URL(href);
       requests.push({
         method,
-        path: new URL(href).pathname,
+        path: url.pathname,
+        query: Object.fromEntries(url.searchParams.entries()),
         body:
           typeof init?.body === "string"
             ? (JSON.parse(init.body) as unknown)
@@ -158,6 +249,16 @@ export function createOfflineSeam(
           return refusal(401, "unauthorized", "Access token has expired");
         case "server_error":
           return refusal(503, "internal_error", "Server is having a moment");
+        case "stream_close": {
+          if (url.pathname !== "/events") return passthrough(input, init);
+          // The connection is real and then ends. It has to carry its
+          // first frame before it goes: a stream that closed before
+          // announcing anything would be a connection that never worked,
+          // and what this reproduces is one that worked and was then cut
+          // — by an idle timeout at an intermediary, which is the common
+          // case and the one a client cannot distinguish from silence.
+          return truncateAfterFirstFrame(await passthrough(input, init));
+        }
       }
     },
   };

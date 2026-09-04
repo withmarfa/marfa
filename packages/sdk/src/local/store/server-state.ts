@@ -1,4 +1,4 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { Executor } from "./executor.js";
 import { serverEdges, serverItems, serverMetadata } from "./schema.js";
@@ -20,9 +20,25 @@ export function stripDerived(item: Item): Item {
   return stored;
 }
 
+/**
+ * The newest `updated_at` held, or undefined when nothing is.
+ *
+ * This is the high-water mark a catch-up read hands back as
+ * `updated_after`, and it is computed rather than stored precisely so it
+ * cannot drift from what the store actually holds: a column would have to
+ * be maintained by every write path, and one that forgot would leave a
+ * catch-up silently asking for less than it needed.
+ */
+type MaxUpdatedAt = () => Promise<string | undefined>;
+
 export interface ServerItemLayer {
   get(id: string): Promise<Item | undefined>;
   list(filters?: { type?: string }): Promise<Item[]>;
+  /** Every id held, without parsing a payload. What the prune compares
+   *  against, where loading the corpus to answer would be the whole point
+   *  of the read. */
+  listIds(): Promise<string[]>;
+  maxUpdatedAt: MaxUpdatedAt;
   put(item: Item): Promise<void>;
   remove(id: string): Promise<void>;
 }
@@ -30,6 +46,8 @@ export interface ServerItemLayer {
 export interface ServerEdgeLayer {
   get(id: string): Promise<Edge | undefined>;
   list(): Promise<Edge[]>;
+  listIds(): Promise<string[]>;
+  maxUpdatedAt: MaxUpdatedAt;
   put(edge: Edge): Promise<void>;
   remove(id: string): Promise<void>;
 }
@@ -70,6 +88,18 @@ export function createServerStateLayer(exec: Executor): ServerStateLayer {
           ? query
           : query.where(eq(serverItems.type, filters.type)));
         return rows.map((row) => JSON.parse(row.payload) as Item);
+      },
+      listIds: async () => {
+        const rows = await exec
+          .select({ id: serverItems.id })
+          .from(serverItems);
+        return rows.map((row) => row.id);
+      },
+      maxUpdatedAt: async () => {
+        const rows = await exec
+          .select({ newest: sql<string | null>`max(${serverItems.updatedAt})` })
+          .from(serverItems);
+        return rows[0]?.newest ?? undefined;
       },
       put: async (item) => {
         const stored = stripDerived(item);
@@ -118,6 +148,18 @@ export function createServerStateLayer(exec: Executor): ServerStateLayer {
           .select({ payload: serverEdges.payload })
           .from(serverEdges);
         return rows.map((row) => JSON.parse(row.payload) as Edge);
+      },
+      listIds: async () => {
+        const rows = await exec
+          .select({ id: serverEdges.id })
+          .from(serverEdges);
+        return rows.map((row) => row.id);
+      },
+      maxUpdatedAt: async () => {
+        const rows = await exec
+          .select({ newest: sql<string | null>`max(${serverEdges.updatedAt})` })
+          .from(serverEdges);
+        return rows[0]?.newest ?? undefined;
       },
       put: async (edge) => {
         const values = {
