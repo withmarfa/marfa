@@ -59,6 +59,7 @@ import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { generateId } from "@withmarfa/shared";
+import { conflictedSiblingId } from "../storage/conflict.js";
 import {
   createTestContext,
   request,
@@ -335,6 +336,33 @@ async function makeEdge(source: string, target: string): Promise<string> {
   return ((await res.json()) as { edge: { id: string } }).edge.id;
 }
 
+/** The losing text the conflicted-copy door writes. */
+const CONFLICTED_LOSER = "door-conflicted-loser";
+
+/**
+ * The idempotency key that door sends, and the sibling id it therefore
+ * produces.
+ *
+ * Derived from the item rather than fixed, for two reasons that both bite.
+ * The key must differ per run or the second run replays the first's recorded
+ * response and never executes the door at all. And the id must be knowable
+ * without a response body, because the broken run has none to read — while
+ * searching for the losing text instead would find the *unbroken* run's
+ * sibling, which is still in the database, and report a write that came apart
+ * as having landed.
+ */
+function conflictKeyFor(item: string): string {
+  return `door-conflict-${item}`;
+}
+
+function conflictSiblingFor(item: string): string {
+  return conflictedSiblingId({
+    itemId: item,
+    baseVersion: 1,
+    idempotencyKey: conflictKeyFor(item),
+  });
+}
+
 async function itemBody(id: string): Promise<string | undefined> {
   const row = await ctx.storage.items.getIncludingTrashed(id);
   return row?.properties.body as string | undefined;
@@ -465,6 +493,48 @@ const doors: Door[] = [
       ...edgeEventsTouching(h, [s.item]),
     ],
     landed: async (s) => (await itemBody(s.item)) === "after",
+    survivesBreakage: false,
+  },
+  {
+    // Two rows from one door: the original moves on and the losing edit
+    // lands on a sibling. Both are written in the same transaction, so a
+    // failure part-way must leave neither — and the sibling has to be
+    // announced, or the only client that ever learns of it is the writer.
+    name: "PATCH /items/{id}?conflict=auto spawns the conflicted copy",
+    family: "item",
+    transactions: 1,
+    setup: async () => {
+      const item = await makeNote("shared body");
+      // Move it on, so the write below collides on `body` — a keep-both
+      // field on `core.note`.
+      const res = await request(ctx.app, "PATCH", `/items/${item}`, {
+        key: ctx.adminKey,
+        body: { properties: { body: "winner body" }, version: 1 },
+      });
+      expect(res.status).toBe(200);
+      return { item };
+    },
+    act: async (s) => {
+      const res = await request(
+        ctx.app,
+        "PATCH",
+        `/items/${s.item}?conflict=auto`,
+        {
+          key: ctx.adminKey,
+          headers: { "Idempotency-Key": conflictKeyFor(s.item) },
+          body: { properties: { body: CONFLICTED_LOSER }, version: 1 },
+        },
+      );
+      return res.status === 200;
+    },
+    attributable: (h, s) => [
+      ...itemEventsFor(h, s.item),
+      ...itemEventsFor(h, conflictSiblingFor(s.item)),
+    ],
+    landed: async (s) =>
+      (await ctx.storage.items.getIncludingTrashed(
+        conflictSiblingFor(s.item),
+      )) !== null,
     survivesBreakage: false,
   },
   {
@@ -1139,8 +1209,8 @@ interface PublishingFile {
 /** Files whose publishes are driven by a door in the table above. */
 const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   "routes/items.ts": {
-    sites: 14,
-    why: "create, upsert, patch, delete, promote, the two the purge door emits, and the four tag and metadata doors",
+    sites: 15,
+    why: "create, upsert, patch, the conflicted copy a resolving patch spawns, delete, promote, the two the purge door emits, and the four tag and metadata doors",
   },
   "routes/items-lifecycle.ts": { sites: 2, why: "transition and restore" },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
