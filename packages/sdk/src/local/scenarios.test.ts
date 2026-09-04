@@ -317,3 +317,132 @@ describe("a token expired mid-drain (seam: online for one write, then unauthoriz
     });
   });
 });
+
+describe("the key a mutation was written with (seam: offline, then online)", () => {
+  it("goes out on every door that takes one", async () => {
+    seam.mode = "offline";
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "one" },
+    });
+    const other = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "two" },
+    });
+    const edge = await store.mutations.createEdge({
+      source_id: note.id,
+      target_id: other.id,
+      edge_type: "references",
+    });
+    await store.mutations.deleteEdge(edge.id);
+    await store.mutations.deleteItem(note.id);
+
+    const queued = await store.outbox.list();
+    seam.reset();
+    seam.mode = "online";
+    const pass = await drain.drain();
+    expect(pass).toMatchObject({ sent: 5, remaining: 0 });
+
+    // One request per queued mutation, in the order they were written, so
+    // the key on each request belongs to the row beside it. Asserting the
+    // header is merely present would pass on a transport that minted its
+    // own per call, which answers nothing: a repeat has to carry the key
+    // the first attempt carried, and only the stored one is that.
+    expect(seam.calls).toEqual([
+      "POST /items",
+      "POST /items",
+      "POST /edges",
+      `DELETE /edges/${edge.id}`,
+      `DELETE /items/${note.id}`,
+    ]);
+    expect(
+      seam.requests.map((request) => request.headers["idempotency-key"]),
+    ).toEqual(queued.map((entry) => entry.idempotencyKey));
+  });
+});
+
+describe("a delete whose answer was lost (seam: lost_response, then online)", () => {
+  it("repeats as a no-op instead of failing against the row it removed", async () => {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "goes" },
+    });
+    const other = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "stays" },
+    });
+    const edge = await store.mutations.createEdge({
+      source_id: note.id,
+      target_id: other.id,
+      edge_type: "references",
+    });
+    await drain.drain();
+
+    await store.mutations.deleteEdge(edge.id);
+    await store.mutations.deleteItem(note.id);
+
+    // Both deletes land; the client is told neither did. That is not a
+    // refusal, so the pass stops with the queue intact and no attempt
+    // spent against either row.
+    seam.mode = "lost_response";
+    const lost = await drain.drain();
+    expect(lost).toMatchObject({ sent: 0, offline: true, remaining: 2 });
+
+    seam.mode = "online";
+    const retry = await drain.drain();
+    expect(retry).toMatchObject({ sent: 2, remaining: 0 });
+
+    // A delete is where the key earns its place. A create repeats safely
+    // on the id the client minted, which the server recognizes as one it
+    // has already performed; a delete has no such handle, so the second
+    // attempt finds nothing to remove and is refused 404. That refusal is
+    // permanent, so without the key both rows land in the dead-letter log
+    // and the person is told a delete failed that the server carried out.
+    expect(await store.deadLetters.list()).toEqual([]);
+    expect(await store.visible.getItem(note.id)).toBeUndefined();
+    expect(await store.visible.listEdges()).toHaveLength(0);
+  });
+});
+
+describe("an update the server will not settle (seam: online)", () => {
+  it("parks for review rather than resolving it here", async () => {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "as written" },
+    });
+    await drain.drain();
+
+    // An edit made against version 1, and another device moving the row on
+    // before it is sent. `body` is `keep_both_copies` on `core.note`, so
+    // this is the field whose client-side resolution spawns a sibling.
+    await store.mutations.updateItem(note.id, { body: "mine" });
+    await client.items.update(note.id, { body: "theirs" });
+
+    seam.reset();
+    const pass = await drain.drain();
+    expect(pass).toMatchObject({ sent: 0, remaining: 1 });
+
+    // One PATCH and nothing else. A client-side resolution would show up
+    // here as the sibling's `POST /items` and a second PATCH carrying a
+    // merged body — a rule this engine is not allowed to have.
+    expect(seam.calls).toEqual([`PATCH /items/${note.id}`]);
+
+    const parked = (await store.outbox.list())[0];
+    expect(parked).toMatchObject({
+      kind: "item.update",
+      state: "blocked",
+      blockedReason: "needs_review",
+    });
+    // Parked, not refused: the edit is still wanted and still on screen.
+    expect(await store.deadLetters.list()).toHaveLength(0);
+    expect(await store.visible.getItem(note.id)).toMatchObject({
+      properties: { body: "mine" },
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "mutation.blocked",
+        reason: "needs_review",
+      }),
+    );
+  });
+});

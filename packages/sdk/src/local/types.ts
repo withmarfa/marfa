@@ -41,9 +41,21 @@ export type TargetKind = "item" | "edge";
  * Closed, and each member names something an app can put in front of a
  * person. `auth` parks the whole queue; the rest park one mutation and
  * whatever waits behind it.
+ *
+ * They divide on what clears them. `auth`, `space_suspended`,
+ * `quota_exceeded` and `retry_ceiling` all clear on their own or on an
+ * operator's action, so retrying later is the right move. `needs_review`
+ * does not: the write was made against a version of the row that no
+ * longer exists, and no amount of waiting brings it back. Only the app
+ * re-applying the edit over what the server now holds, or dropping it,
+ * gets that mutation moving.
  */
 export type BlockedReason =
-  "auth" | "retry_ceiling" | "space_suspended" | "quota_exceeded";
+  | "auth"
+  | "retry_ceiling"
+  | "space_suspended"
+  | "quota_exceeded"
+  | "needs_review";
 
 export type OutboxRowState = "pending" | "blocked";
 
@@ -59,11 +71,15 @@ export interface OutboxEntry {
   payload: Record<string, unknown>;
   baseVersion: number | null;
   /**
-   * Minted per mutation and stored so a retry can name the attempt it is
-   * repeating. It is not on the wire: neither item nor edge write accepts
-   * one yet, and the contract's retry-safety for a create today is the
-   * client-minted id, which every create here carries. When the routes take
-   * a key, the drain sends this column rather than minting a fresh one.
+   * Minted per mutation and stored so a retry names the attempt it is
+   * repeating rather than opening a new one.
+   *
+   * Stored rather than generated at send time, because a key generated per
+   * attempt makes every attempt its own write, which is the failure the
+   * key exists to prevent arriving under cover of appearing to work. The
+   * drain sends this on every door that accepts one; the two update doors
+   * do not yet, because a strategy that re-sends a merged body would be
+   * replaying the key with a different request, which the server refuses.
    */
   idempotencyKey: string;
   state: OutboxRowState;

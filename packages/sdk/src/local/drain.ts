@@ -76,6 +76,20 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
   };
 
   const send = async (entry: OutboxEntry): Promise<SendResult> => {
+    /**
+     * The key the mutation was written with, sent on every door that takes
+     * one.
+     *
+     * From the row rather than minted here, which is the whole mechanism: a
+     * fresh key per attempt makes every attempt a separate write, and the
+     * server then has nothing to recognize a repeat by. A create survives a
+     * lost response either way, on the id the client minted, but a delete
+     * has no such handle — the second attempt finds the row already gone
+     * and is refused, so the engine would dead-letter a write the server
+     * carried out.
+     */
+    const keyed = { idempotencyKey: entry.idempotencyKey };
+
     try {
       switch (entry.kind) {
         case "item.create": {
@@ -87,7 +101,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
             timestamp?: string;
             source_id?: string;
           };
-          return { ok: true, item: await client.items.create(payload) };
+          return { ok: true, item: await client.items.create(payload, keyed) };
         }
         case "item.update": {
           const payload = entry.payload as {
@@ -111,12 +125,23 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
                   ? {}
                   : { type: known.type }
                 : { type: payload.type }),
+              // Stated rather than inherited. The client's default merges a
+              // conflict here, in this process, and spawns the sibling that
+              // resolution can call for as a plain second create — which is
+              // this engine keeping a resolution rule of its own, and a
+              // second device running the same edit through a different
+              // kit would settle it differently. Conflicts belong to the
+              // server, which settles them inside the write's transaction,
+              // once, for every client. This becomes "auto" when that
+              // resolution is what a conflicting update meets on the wire;
+              // until then "manual" is how the engine declines to guess.
+              conflict: "manual",
             },
           );
           return { ok: true, item };
         }
         case "item.delete": {
-          await client.items.delete(entry.targetId);
+          await client.items.delete(entry.targetId, keyed);
           return { ok: true, removed: "item" };
         }
         case "edge.create": {
@@ -127,7 +152,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
             target_id: string;
             properties: Record<string, unknown>;
           };
-          return { ok: true, edge: await client.edges.create(payload) };
+          return { ok: true, edge: await client.edges.create(payload, keyed) };
         }
         case "edge.update": {
           const payload = entry.payload as {
@@ -143,7 +168,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
           return { ok: true, edge };
         }
         case "edge.delete": {
-          await client.edges.delete(entry.targetId);
+          await client.edges.delete(entry.targetId, keyed);
           return { ok: true, removed: "edge" };
         }
       }
@@ -309,7 +334,7 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
           continue;
         }
 
-        const verdict = classifyFailure(result.error);
+        const verdict = classifyFailure(result.error, entry.kind);
         switch (verdict.class) {
           case "offline":
             // Nothing was refused and nothing else in the queue will reach
@@ -335,6 +360,26 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
               seq: entry.seq,
               id: entry.id,
               reason: verdict.reason,
+              message: verdict.message,
+            });
+            for (const id of ids) waiting.add(id);
+            break;
+          }
+
+          case "conflict": {
+            // Parked with the edit intact, and with no attempt to settle
+            // it here. Retrying would send the same stale base version and
+            // meet the same refusal, and merging would be this engine
+            // deciding an outcome that is the server's to decide, so the
+            // one honest move is to hand it to the app: the row is still
+            // queued, still on screen, and waiting to be re-applied over
+            // what the server now holds or dropped.
+            await store.outbox.block(entry.seq, "needs_review", now());
+            emit({
+              type: "mutation.blocked",
+              seq: entry.seq,
+              id: entry.id,
+              reason: "needs_review",
               message: verdict.message,
             });
             for (const id of ids) waiting.add(id);

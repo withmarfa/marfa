@@ -2,12 +2,12 @@
  * The offline seam, defined once.
  *
  * Every scenario that exercises the engine away from a working server goes
- * through this and names which mode it uses. Four modes cover the ways a
+ * through this and names which mode it uses. Five modes cover the ways a
  * server stops being available to a client: the request never arrives, the
- * credential is refused, the server errors, and — for the stream, which
- * this part does not carry — the connection closes. A scenario that does
- * not name its seam is not reproducible, so the seam is a parameter rather
- * than something each test improvises.
+ * answer never comes back, the credential is refused, the server errors,
+ * and — for the stream, which this part does not carry — the connection
+ * closes. A scenario that does not name its seam is not reproducible, so
+ * the seam is a parameter rather than something each test improvises.
  *
  * Test support. It lives beside the engine rather than in a test file
  * because more than one suite uses it, and it is not a tsup entry, so it
@@ -20,6 +20,15 @@ export type SeamMode =
   /** The request never arrives. The transport raises a network error with
    *  no HTTP status, which is not a refusal and not an attempt. */
   | "offline"
+  /**
+   * The request arrives and is served; the answer never comes back.
+   *
+   * Indistinguishable from `offline` at the client, and the opposite of it
+   * at the server, which is the whole reason a write carries a key: the
+   * client has to be able to repeat a request that may already have
+   * landed without that repeat becoming a second write.
+   */
+  | "lost_response"
   /** The server answers 401. For a key-bearing client there is no refresh
    *  to spend, so this is the shape of a credential that has run out. */
   | "unauthorized"
@@ -33,6 +42,13 @@ export interface SeamRequest {
   path: string;
   /** The JSON body, parsed. Undefined for a request that carried none. */
   body: unknown;
+  /**
+   * The request headers, keyed in lower case because that is how a header
+   * name compares: `Idempotency-Key` and `idempotency-key` are one header,
+   * and a scenario asserting on the wrong spelling would read as a missing
+   * header rather than as its own mistake.
+   */
+  headers: Record<string, string>;
 }
 
 export interface OfflineSeam {
@@ -109,6 +125,10 @@ export function createOfflineSeam(
           typeof init?.body === "string"
             ? (JSON.parse(init.body) as unknown)
             : undefined,
+        // Through `Headers` rather than by reading the init object, so
+        // every shape `fetch` accepts is recorded the same way and the
+        // keys are lower-cased for us.
+        headers: Object.fromEntries(new Headers(init?.headers).entries()),
       });
 
       if (passesLeft !== null && passesLeft > 0) {
@@ -127,6 +147,12 @@ export function createOfflineSeam(
         case "offline":
           // What `fetch` raises when the host cannot be reached. The
           // transport turns it into a network error carrying no status.
+          throw new TypeError("fetch failed");
+        case "lost_response":
+          // Awaited before the throw, deliberately: the server has to have
+          // finished writing by the time the client is told nothing came
+          // back, or this is just a slower `offline`.
+          await passthrough(input, init);
           throw new TypeError("fetch failed");
         case "unauthorized":
           return refusal(401, "unauthorized", "Access token has expired");
