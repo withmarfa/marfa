@@ -803,16 +803,25 @@ describe("POST /admin/restore-archive — the items it writes", () => {
   });
 
   /**
-   * Every namespace of an item in one write.
+   * Every namespace of an item in one write, held by what the write
+   * leaves behind rather than by how many times a function was called.
    *
    * The extensions of an item are a single JSON column, so writing them one
    * namespace at a time rewrote that column once per namespace and bumped
    * the item's modification time beside each announcing one. On a restore
    * that multiplied by every item in the archive, on the one path whose
-   * whole purpose is moving a lot of rows at once. What is stored is
-   * identical either way, which is why nothing failed while it happened.
+   * whole purpose is moving a lot of rows at once.
+   *
+   * The bump is the observable half, and the frame is where it shows: the
+   * item is captured from `create`, before the extensions are written, so
+   * a restore that bumps the row afterwards and announces the captured
+   * frame publishes an `updated_at` the row does not have. A client
+   * watermarking on the value re-fetches on its next catch-up, and one
+   * comparing it against a later read sees a change nothing told it about.
+   * Asserted on the log as well as the emitter, because the log is what a
+   * client that was away reads.
    */
-  it("writes an item's extensions once however many namespaces it carries", async () => {
+  it("announces the modification time its own extensions write left", async () => {
     const source = `archive-ext-${Math.random().toString(36).slice(2, 8)}`;
     const itemId = "019537a0-7b80-7000-8000-000000000121";
     const extensions = {
@@ -845,39 +854,38 @@ describe("POST /admin/restore-archive — the items it writes", () => {
       [],
     );
 
-    const meta = ctx.storage.metadata;
-    const realSetExtension = meta.setExtension.bind(meta);
-    const realSetExtensions = meta.setExtensions.bind(meta);
-    let perNamespaceCalls = 0;
-    let batchedCalls = 0;
-    meta.setExtension = async (itemArg, namespace, data) => {
-      perNamespaceCalls += 1;
-      return realSetExtension(itemArg, namespace, data);
-    };
-    meta.setExtensions = async (itemArg, entries) => {
-      batchedCalls += 1;
-      return realSetExtensions(itemArg, entries);
-    };
-    try {
-      const res = await ctx.app.request("/admin/restore-archive", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.adminKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: new Uint8Array(archive),
-      });
-      expect(res.status).toBe(200);
-    } finally {
-      meta.setExtension = realSetExtension;
-      meta.setExtensions = realSetExtensions;
-    }
+    const cursor = await logCursor();
+    const controller = new AbortController();
+    const { events, done } = collectItemEvents(controller.signal);
+    await settle();
 
-    // One door call for the item, whatever it carries. The write count
-    // follows: the batched door writes the sidecar once and bumps the item
-    // at most once, where the per-namespace door did both per namespace.
-    expect(perNamespaceCalls).toBe(0);
-    expect(batchedCalls).toBe(1);
+    const res = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: new Uint8Array(archive),
+    });
+    expect(res.status).toBe(200);
+    await settle();
+    controller.abort();
+    await done;
+
+    const stored = await ctx.storage.items.get(itemId);
+    expect(stored).not.toBeNull();
+
+    const announced = events.find((e) => e.item.id === itemId);
+    expect(announced).toBeDefined();
+    expect(announced!.item.updated_at).toBe(stored!.updated_at);
+
+    const rows = await logSince(cursor);
+    const row = rows.find((r) => r.item_id === itemId);
+    expect(row).toBeDefined();
+    const payload = JSON.parse(row!.payload) as {
+      item: { updated_at: string };
+    };
+    expect(payload.item.updated_at).toBe(stored!.updated_at);
 
     // And the same thing is stored either way, which is the half that must
     // not change.
