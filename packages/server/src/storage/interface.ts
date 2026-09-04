@@ -218,6 +218,14 @@ export interface SearchFilters {
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;
+  /** Lower bound on the item's own time — `timestamp`, falling back to
+   *  `created_at` — inclusive, exactly as `ItemFilters` reads it. Search
+   *  advertises parity with `GET /items` in its own description and took
+   *  neither bound, so a date-narrowed search was not expressible and a
+   *  caller who sent one got a successful response over the whole corpus. */
+  timestamp_after?: string;
+  /** Upper bound on the same expression, inclusive. */
+  timestamp_before?: string;
   allowed_types?: string[];
   /** Mirrors `ItemFilters.excluded_types`. */
   excluded_types?: string[];

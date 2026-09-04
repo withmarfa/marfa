@@ -22,6 +22,7 @@ import {
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
+import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 
 // Search responses use loose() so the FTS5 ranker's extra columns
 // (e.g. relevance internals) don't trip strict validation. The
@@ -43,7 +44,7 @@ const searchRoute = createRoute({
   tags: ["Search"],
   summary: "Search items",
   description:
-    "Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` and uses `limit` / `offset` paging; absolute scores aren't stable across index rebuilds.",
+    "Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` — including its two time bounds, which read the item's own time — and uses `limit` / `offset` paging rather than a cursor; absolute scores aren't stable across index rebuilds.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -92,6 +93,20 @@ const searchRoute = createRoute({
         .string()
         .describe("Structured filter expression, as on `GET /items`.")
         .optional(),
+      timestamp_after: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time.",
+        ),
+      timestamp_before: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
+        ),
     }),
   },
   responses: {
@@ -122,8 +137,30 @@ export function searchRoutes(storage: Storage) {
   router.openapi(searchRoute, async (c) => {
     requireAuth(c);
 
-    const { q, type, state, tier, tags, limit, offset, filter, include } =
-      c.req.valid("query");
+    // Before anything reads the validated query, which has already had an
+    // unknown key stripped from it. This door never carried the retired
+    // names, but the published rename tells a caller they belong on every
+    // filtered read — and an absence discovered at 200 over the whole
+    // corpus is the silence the rename was refused for.
+    //
+    // No modification-time filter is named: this door has none, and
+    // sending a caller to a parameter it would strip is that same failure
+    // reached through the refusal.
+    refuseRenamedTimeQueryParams(c.req.raw.url, { catchUpFilter: "none" });
+
+    const {
+      q,
+      type,
+      state,
+      tier,
+      tags,
+      limit,
+      offset,
+      filter,
+      include,
+      timestamp_after: timestampAfter,
+      timestamp_before: timestampBefore,
+    } = c.req.valid("query");
 
     // Same grammar as `GET /items?type=`, because the parameter means the
     // same thing on both: the named type and everything under it. Validating
@@ -188,6 +225,8 @@ export function searchRoutes(storage: Storage) {
       exclude_system_types: excludeSystemTypes,
       tags: tagsFilter,
       filter,
+      timestamp_after: timestampAfter,
+      timestamp_before: timestampBefore,
       allowed_types,
       excluded_types,
       limit,

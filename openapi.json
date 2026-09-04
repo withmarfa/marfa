@@ -16833,7 +16833,7 @@
           "Search"
         ],
         "summary": "Search items",
-        "description": "Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` and uses `limit` / `offset` paging; absolute scores aren't stable across index rebuilds.",
+        "description": "Full-text search across the space's items, indexing textual properties and tags, ranked by relevance with a configurable recency boost. Accepts the same filters as `GET /items` — including its two time bounds, which read the item's own time — and uses `limit` / `offset` paging rather than a cursor; absolute scores aren't stable across index rebuilds.",
         "security": [
           {
             "bearerAuth": []
@@ -16947,6 +16947,28 @@
             "required": false,
             "description": "Structured filter expression, as on `GET /items`.",
             "name": "filter",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time."
+            },
+            "required": false,
+            "description": "Lower bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive). An RFC 3339 timestamp in any valid spelling; it is normalized before the comparison. Not the modification time.",
+            "name": "timestamp_after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive)."
+            },
+            "required": false,
+            "description": "Upper bound on the item's own time — `timestamp`, falling back to `created_at` (inclusive).",
+            "name": "timestamp_before",
             "in": "query"
           }
         ],
