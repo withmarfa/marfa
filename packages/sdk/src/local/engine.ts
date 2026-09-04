@@ -1,7 +1,9 @@
 import type { MarfaClient } from "../client.js";
+import type { LocalBlobs } from "./blobs.js";
 import { createOutboxDrain, type OutboxDrain } from "./drain.js";
 import { createLocalSync, type LocalSync } from "./sync.js";
 import type { LocalStore } from "./store/index.js";
+import type { LocalTypeGraph } from "./type-graph.js";
 import { ReadOnlyStoreError } from "./store/index.js";
 import type {
   ConnectionState,
@@ -62,6 +64,12 @@ export interface LocalEngineStatus {
 export interface LocalEngineOptions {
   store: LocalStore;
   client: MarfaClient;
+  /** The local type graph, so a schema refusal buys one refresh before it
+   *  is treated as permanent. */
+  types?: LocalTypeGraph;
+  /** The blob queue, so an upload goes in front of the write that names
+   *  it. */
+  blobs?: LocalBlobs;
   /** Transient attempts a mutation gets before it parks. */
   retryCeiling?: number;
   /** First reconnect backoff in ms. */
@@ -169,6 +177,8 @@ export function createLocalEngine(options: LocalEngineOptions): LocalEngine {
   const drain: OutboxDrain = createOutboxDrain({
     store,
     client,
+    ...(options.types === undefined ? {} : { types: options.types }),
+    ...(options.blobs === undefined ? {} : { blobs: options.blobs }),
     ...(options.retryCeiling === undefined
       ? {}
       : { retryCeiling: options.retryCeiling }),

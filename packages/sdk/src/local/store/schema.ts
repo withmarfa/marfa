@@ -203,6 +203,65 @@ export const cachedTypes = sqliteTable("cached_types", {
   cachedAt: text("cached_at").notNull(),
 });
 
+/**
+ * Blobs this client has staged and not yet uploaded.
+ *
+ * The row is the queue; the bytes are on disk beside the store. Rule 14
+ * puts the upload in front of the write that names it, so a row here is
+ * what a queued mutation waits behind, and it survives a restart for the
+ * same reason the outbox does.
+ *
+ * A row that has failed for good keeps its bytes. That is the whole point
+ * of the rule: an upload the server refused is a photograph a person took,
+ * and dropping it because a request failed is the outcome the rule exists
+ * to prevent. It leaves only when the app says so.
+ */
+export const pendingBlobs = sqliteTable(
+  "pending_blobs",
+  {
+    /** `sha256:<hex>`, computed over the bytes, which is the same
+     *  content-addressed name the server gives them. */
+    hash: text("hash").primaryKey().notNull(),
+    mimeType: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    /** `pending` until it lands, then the row leaves; `failed` when the
+     *  server refused it for good and the bytes are being kept. */
+    state: text("state").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    code: text("code"),
+    lastError: text("last_error"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("pending_blobs_state_idx").on(table.state, table.createdAt),
+  ],
+);
+
+/**
+ * Blobs downloaded for offline reading, with their bytes on disk beside
+ * the store.
+ *
+ * Separate from {@link pendingBlobs} because the two answer different
+ * questions and have opposite lifetimes. A pending blob's bytes are the
+ * only copy anywhere and must not be evicted; a cached blob's bytes are a
+ * copy of something the server holds and can always be fetched again.
+ * Folding them into one table would put a person's unsent attachment one
+ * eviction away from being gone.
+ */
+export const blobCache = sqliteTable(
+  "blob_cache",
+  {
+    hash: text("hash").primaryKey().notNull(),
+    mimeType: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    /** What the eviction rule orders by. */
+    lastReadAt: text("last_read_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("blob_cache_last_read_idx").on(table.lastReadAt)],
+);
+
 export const localSchema = {
   serverItems,
   serverEdges,
@@ -211,4 +270,6 @@ export const localSchema = {
   deadLetters,
   syncState,
   cachedTypes,
+  pendingBlobs,
+  blobCache,
 };

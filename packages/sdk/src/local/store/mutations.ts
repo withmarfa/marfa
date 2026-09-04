@@ -1,5 +1,7 @@
 import { generateId } from "@withmarfa/shared";
 import type { Edge, Item } from "@withmarfa/shared";
+import { collectBlobHashes } from "../blobs.js";
+import type { BlobLayer } from "./blobs.js";
 import type { OutboxLayer } from "./outbox.js";
 import type { ServerStateLayer } from "./server-state.js";
 import type { VisibleLayer } from "./visible.js";
@@ -55,6 +57,7 @@ export interface MutationDeps {
    * reaching around the mutation layer entirely.
    */
   refuse: (type: string, properties: Record<string, unknown>) => void;
+  blobs: BlobLayer;
 }
 
 function missing(kind: string, id: string): Error {
@@ -64,7 +67,30 @@ function missing(kind: string, id: string): Error {
 }
 
 export function createMutationLayer(deps: MutationDeps): MutationLayer {
-  const { server, outbox, visible, now, refuse } = deps;
+  const { server, outbox, visible, now, refuse, blobs } = deps;
+
+  /**
+   * The blob hashes in this write that the store is still holding bytes
+   * for, recorded so the write waits behind their upload (rule 4).
+   *
+   * Narrowed to hashes this store staged, and that is the whole of the
+   * question: a hash with no row here names bytes the client never held,
+   * which is either already on the server or a reference to something
+   * that was never this client's to upload. Holding a write behind one of
+   * those would park it for ever behind an upload nothing is going to
+   * make.
+   */
+  const stagedRefs = async (
+    properties: Record<string, unknown>,
+  ): Promise<string[]> => {
+    const found = new Set<string>();
+    collectBlobHashes(properties, found);
+    const held: string[] = [];
+    for (const hash of found) {
+      if ((await blobs.get(hash)) !== undefined) held.push(hash);
+    }
+    return held;
+  };
 
   return {
     createItem: async (input) => {
@@ -91,6 +117,7 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         kind: "item.create",
         targetKind: "item",
         targetId: id,
+        dependsOn: await stagedRefs(input.properties),
         payload,
         baseVersion: null,
         idempotencyKey: generateId(),
@@ -126,6 +153,7 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         kind: "item.update",
         targetKind: "item",
         targetId: id,
+        dependsOn: await stagedRefs(properties),
         // Only what changed. An update carrying the whole property bag
         // turns every field into a candidate for conflict.
         payload: { properties, ...(known ? { type: known.type } : {}) },
@@ -162,8 +190,13 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         targetId: id,
         // Both endpoints, so the edge waits behind either one's unsent
         // create. An edge sent against a row the server does not have is
-        // refused, and the person loses a relationship they made.
-        dependsOn: [input.source_id, input.target_id],
+        // refused, and the person loses a relationship they made. Any blob
+        // its properties name joins them, on the same rule.
+        dependsOn: [
+          input.source_id,
+          input.target_id,
+          ...(await stagedRefs(input.properties ?? {})),
+        ],
         payload: {
           id,
           edge_type: input.edge_type,
@@ -189,7 +222,11 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         kind: "edge.update",
         targetKind: "edge",
         targetId: id,
-        dependsOn: [held.source_id, held.target_id],
+        dependsOn: [
+          held.source_id,
+          held.target_id,
+          ...(await stagedRefs(properties)),
+        ],
         payload: { properties },
         baseVersion: known?.version ?? null,
         idempotencyKey: generateId(),

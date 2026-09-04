@@ -35,6 +35,9 @@ export type {
   OutboxLayer,
   DeadLetterLayer,
   ServerStateLayer,
+  BlobLayer,
+  CachedBlob,
+  PendingBlob,
   SyncStateLayer,
   TypeCacheLayer,
   VisibleLayer,
@@ -74,6 +77,20 @@ export type { ImportOptions, ImportResult } from "./import.js";
 
 export { classifyFailure } from "./classify.js";
 export type { Verdict } from "./classify.js";
+
+export {
+  collectBlobHashes,
+  createBlobStore,
+  defaultBlobDir,
+  hashBlob,
+  DEFAULT_BLOB_CACHE_BYTES,
+} from "./blobs.js";
+export type {
+  BlobFlushResult,
+  BlobRefusal,
+  BlobStoreOptions,
+  LocalBlobs,
+} from "./blobs.js";
 
 export { createTypeGraph } from "./type-graph.js";
 export type { LocalTypeGraph, TypeGraphOptions } from "./type-graph.js";

@@ -6,7 +6,7 @@
  * mode it uses in its own title, because a scenario that does not is not
  * reproducible.
  */
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +16,7 @@ import {
   createKeysModeFixture,
   type KeysModeFixture,
 } from "../test-harness.js";
+import { createBlobStore, type LocalBlobs } from "./blobs.js";
 import { createOutboxDrain, type OutboxDrain } from "./drain.js";
 import { createOfflineSeam, type OfflineSeam } from "./offline-seam.js";
 import { openLocalStore, type LocalStore } from "./store/index.js";
@@ -1074,5 +1075,215 @@ describe("a schema refusal from the server (seam: online)", () => {
 
     expect(seam.calls).toEqual(["POST /items"]);
     expect(await scoped.deadLetters.list()).toHaveLength(1);
+  });
+});
+
+/**
+ * An attachment made offline: the bytes are held locally, the upload goes
+ * in front of the write that names them, and a replay tells a lost upload
+ * from one that landed.
+ *
+ * Its own fixture, with a blob ceiling small enough that the server refuses
+ * an oversized upload for real. Fabricating that refusal at the seam would
+ * test this file's idea of what a refusal looks like; the ceiling is the
+ * server's own and the code it answers with is the server's own too.
+ */
+describe("an attachment made offline (seam: offline, lost_response, then online)", () => {
+  const BLOB_CEILING = 64;
+  let blobFixture: KeysModeFixture;
+  let blobSeam: OfflineSeam;
+  let blobClient: MarfaClient;
+  let blobStore: LocalStore;
+  let blobs: LocalBlobs;
+  let blobDrain: OutboxDrain;
+  let blobDir: string;
+
+  const photo = (fill: number, size = 16): Uint8Array =>
+    new Uint8Array(size).fill(fill);
+
+  const attach = async (
+    hash: string,
+  ): Promise<{ id: string; properties: Record<string, unknown> }> =>
+    blobStore.mutations.createItem({
+      type: "core.file.image",
+      properties: {
+        blob_ref: hash,
+        mime_type: "image/png",
+        title: "a photograph",
+        width: 4,
+        height: 4,
+      },
+    });
+
+  beforeEach(async () => {
+    blobFixture = await createKeysModeFixture({ maxBlobSize: BLOB_CEILING });
+    blobSeam = createOfflineSeam(blobFixture.fetch);
+    blobClient = new MarfaClient({
+      url: "http://localhost",
+      apiKey: blobFixture.adminKey,
+      fetch: blobSeam.fetch,
+    });
+    blobDir = mkdtempSync(join(tmpdir(), "marfa-local-blobs-"));
+    blobStore = await openLocalStore({
+      path: join(blobDir, "store.db"),
+      identity: {
+        origin: "http://localhost",
+        spaceId: SINGLE_SPACE,
+        accountId: SINGLE_ACCOUNT,
+      },
+    });
+    blobs = createBlobStore({ store: blobStore, client: blobClient });
+    blobDrain = createOutboxDrain({
+      store: blobStore,
+      client: blobClient,
+      blobs,
+      onEvent: (event) => events.push(event),
+    });
+  });
+
+  afterEach(() => {
+    blobStore.close();
+    blobFixture.cleanup();
+    rmSync(blobDir, { recursive: true, force: true });
+  });
+
+  it("uploads the bytes before the write that references them", async () => {
+    blobSeam.mode = "offline";
+    const bytes = photo(7);
+    const { hash } = await blobs.stage(bytes, "image/png");
+
+    // The reference is written immediately, against bytes no server has
+    // seen. That is the point of hashing locally: a person attaches a
+    // photograph and the item carries it at once.
+    const file = await attach(hash);
+    expect(await blobStore.visible.getItem(file.id)).toMatchObject({
+      properties: { blob_ref: hash },
+    });
+
+    const offlinePass = await blobDrain.drain();
+    expect(offlinePass).toMatchObject({ sent: 0, offline: true, remaining: 1 });
+    // The upload was what the pass reached for first, and it is the only
+    // thing it reached for: the write behind it is not sent to a server
+    // that does not have the bytes.
+    expect(blobSeam.calls).toEqual(["POST /blobs"]);
+
+    blobSeam.reset();
+    blobSeam.mode = "online";
+    const pass = await blobDrain.drain();
+    expect(pass).toMatchObject({ sent: 1, remaining: 0 });
+
+    // The order, which nothing on the server would object to if it were
+    // wrong: `POST /items` does not check that a `blob_ref` resolves, so an
+    // item sent first is accepted and carries a reference to nothing. The
+    // failure is silent, which is why it is asserted here rather than left
+    // to a round trip.
+    expect(blobSeam.calls).toEqual([
+      "HEAD /blobs/" + hash,
+      "POST /blobs",
+      "POST /items",
+    ]);
+
+    expect(await blobClient.blobs.exists(hash)).toBe(true);
+    expect(new Uint8Array(await blobClient.blobs.download(hash))).toEqual(
+      bytes,
+    );
+    expect((await blobClient.items.get(file.id)).properties.blob_ref).toBe(
+      hash,
+    );
+    // The queue row is gone and the bytes are an ordinary cached copy now,
+    // rather than the only copy anywhere.
+    expect(await blobStore.blobs.get(hash)).toBeUndefined();
+    expect(blobs.held(hash)).toBe(true);
+  });
+
+  it("tells an upload that landed from one that was lost", async () => {
+    // Landed: the server stored the bytes and the answer never came back.
+    const landed = photo(3);
+    const landedHash = (await blobs.stage(landed, "image/png")).hash;
+    const landedItem = await attach(landedHash);
+
+    blobSeam.mode = "lost_response";
+    expect(await blobDrain.drain()).toMatchObject({ sent: 0, offline: true });
+
+    blobSeam.reset();
+    blobSeam.mode = "online";
+    expect(await blobDrain.drain()).toMatchObject({ sent: 1, remaining: 0 });
+    // One probe, and no second upload. Re-sending would cost the bytes
+    // again for a server that already has them, and on a photograph over a
+    // phone connection that is the difference the probe is for.
+    expect(blobSeam.calls).toEqual([
+      "HEAD /blobs/" + landedHash,
+      "POST /items",
+    ]);
+    expect(
+      (await blobClient.items.get(landedItem.id)).properties.blob_ref,
+    ).toBe(landedHash);
+
+    // Lost: the request never arrived, so the bytes are still owed.
+    const lost = photo(9);
+    const lostHash = (await blobs.stage(lost, "image/png")).hash;
+    const lostItem = await attach(lostHash);
+
+    blobSeam.mode = "offline";
+    expect(await blobDrain.drain()).toMatchObject({ sent: 0, offline: true });
+
+    blobSeam.reset();
+    blobSeam.mode = "online";
+    expect(await blobDrain.drain()).toMatchObject({ sent: 1, remaining: 0 });
+    // The same probe, the other answer, and the upload it makes necessary.
+    // A client that skipped the probe would be right here and wrong above;
+    // one that never re-uploaded would be right above and leave a dangling
+    // reference here.
+    expect(blobSeam.calls).toEqual([
+      "HEAD /blobs/" + lostHash,
+      "POST /blobs",
+      "POST /items",
+    ]);
+    expect(await blobClient.blobs.exists(lostHash)).toBe(true);
+    expect((await blobClient.items.get(lostItem.id)).properties.blob_ref).toBe(
+      lostHash,
+    );
+  });
+
+  it("dead-letters the write when the upload is refused, and keeps the bytes", async () => {
+    const oversized = photo(1, BLOB_CEILING * 4);
+    const { hash } = await blobs.stage(oversized, "image/png");
+    const file = await attach(hash);
+    // A second write naming the same bytes, to show the refusal reaches
+    // everything that waits on it rather than only the first row.
+    await blobStore.mutations.updateItem(file.id, { title: "renamed" });
+
+    blobSeam.reset();
+    const pass = await blobDrain.drain();
+    expect(pass).toMatchObject({ sent: 0, remaining: 0 });
+    expect(blobSeam.calls).toEqual(["POST /blobs"]);
+
+    const refused = await blobStore.deadLetters.list();
+    expect(refused.map((entry) => [entry.kind, entry.reason])).toEqual([
+      ["item.create", "cascaded"],
+      ["item.update", "cascaded"],
+    ]);
+    expect(refused[0]).toMatchObject({
+      code: "blob_too_large",
+      httpStatus: 413,
+    });
+    expect(refused[0]?.message).toContain("The bytes are kept.");
+
+    // The half of the rule that matters to a person. An upload the server
+    // refused is still a photograph they took, and the engine's answer is
+    // to tell them rather than to delete it.
+    expect(blobs.held(hash)).toBe(true);
+    expect(new Uint8Array(readFileSync(blobs.pathFor(hash)))).toEqual(
+      oversized,
+    );
+    expect(await blobStore.blobs.get(hash)).toMatchObject({
+      state: "failed",
+      code: "blob_too_large",
+    });
+
+    // And they leave only when the app says so, which is the one door out.
+    expect(await blobs.discard(hash)).toBe(true);
+    expect(blobs.held(hash)).toBe(false);
+    expect(await blobStore.blobs.get(hash)).toBeUndefined();
   });
 });

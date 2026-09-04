@@ -15,6 +15,7 @@ import {
   createServerStateLayer,
   type ServerStateLayer,
 } from "./server-state.js";
+import { createBlobLayer, type BlobLayer } from "./blobs.js";
 import { createSyncStateLayer, type SyncStateLayer } from "./sync-state.js";
 import { createTypeCacheLayer, type TypeCacheLayer } from "./types-cache.js";
 import { createVisibleLayer, type VisibleLayer } from "./visible.js";
@@ -35,6 +36,9 @@ export interface LocalStoreScope {
   /** The custom types this store has seen the server hold, as rows. The
    *  registry they hydrate into is `type-graph.ts`'s business. */
   cachedTypes: TypeCacheLayer;
+  /** Blobs staged for upload and blobs cached for offline reading, as
+   *  rows. Their bytes are on disk and belong to `blobs.ts`. */
+  blobs: BlobLayer;
   /** Server state with this client's queued mutations replayed over it. */
   visible: VisibleLayer;
   /** The writes an app makes. */
@@ -44,6 +48,9 @@ export interface LocalStoreScope {
 export interface LocalStore extends LocalStoreScope {
   /** Which server, space and account this store belongs to. */
   readonly identity: StoreIdentity;
+  /** Where the store was opened from. Blob bytes live beside it, so
+   *  anything that writes them needs to be able to ask. */
+  readonly path: string;
   /**
    * Whether this handle may write.
    *
@@ -154,6 +161,7 @@ function buildScope(
   const deadLetters = createDeadLetterLayer(exec);
   const syncState = createSyncStateLayer(exec);
   const cachedTypes = createTypeCacheLayer(exec);
+  const blobs = createBlobLayer(exec);
   const visible = createVisibleLayer(server, outbox);
   const mutations = createMutationLayer({
     server,
@@ -167,6 +175,7 @@ function buildScope(
     refuse: (type, properties) => {
       refuseIfTypeForbids(type, properties, spaceId);
     },
+    blobs,
   });
   return {
     server,
@@ -174,6 +183,7 @@ function buildScope(
     deadLetters,
     syncState,
     cachedTypes,
+    blobs,
     visible,
     mutations,
   };
@@ -268,6 +278,7 @@ export async function openLocalStore(
     return {
       ...scope,
       identity: options.identity,
+      path: options.path,
       writer: lock.writer,
       db,
       raw,
@@ -296,6 +307,7 @@ export type { EnqueueInput, OutboxLayer } from "./outbox.js";
 export type { DeadLetterLayer } from "./dead-letters.js";
 export type { ServerStateLayer } from "./server-state.js";
 export type { SyncStateLayer } from "./sync-state.js";
+export type { BlobLayer, PendingBlob, CachedBlob } from "./blobs.js";
 export type { TypeCacheLayer } from "./types-cache.js";
 export type { VisibleLayer } from "./visible.js";
 export { acquireStoreLock } from "./lock.js";
