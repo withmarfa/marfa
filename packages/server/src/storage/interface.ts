@@ -596,6 +596,14 @@ export interface ItemStore {
    * items are not returned by `get`/`list`, and do not leak to this
    * method via `restore` either; use the normal `restore()` to
    * un-trash.
+   *
+   * **`trashed` is the whole of the difference, in both dialects.** `get`
+   * rejects on `state === "trashed"` and tests nothing else, so archived
+   * and revoked rows come back from it already; this method drops that one
+   * test and adds no other state. The pairing of names suggests a wider
+   * gap than exists — that `get` means "active" and this means "any
+   * state" — and a caller swapping to it is widening its input by exactly
+   * one state rather than by four.
    */
   getIncludingTrashed(id: string, spaceId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;

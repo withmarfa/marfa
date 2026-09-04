@@ -780,6 +780,13 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // item's edges; not-found tells it the item never existed, which is a
     // different thing and leads it to the wrong repair. A genuinely
     // absent item still answers not-found.
+    //
+    // **The swap admits exactly one more state, not every non-active
+    // one.** `get` filters `trashed` and nothing else, so an archived or
+    // a revoked anchor was already served through this door and still
+    // is; only a trashed one is new. Worth stating because the two method
+    // names invite reading `get` as "active only", and a reader who
+    // believes that will look for a widening here that is not present.
     const item = await storage.items.getIncludingTrashed(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
@@ -790,6 +797,14 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // is stated here rather than left to the space fence because the
     // fence and the type map answer different questions: a credential can
     // be inside the space and still hold no grant on this type.
+    //
+    // After the read rather than before it, because the check needs the
+    // row's `type` and only the row carries it. The cost is that a
+    // caller inside the space without the grant can tell 403 from 404 and
+    // so learns the row exists. Accepted rather than overlooked: the item
+    // read door resolves in the same order for the same reason, and
+    // trading that away means answering 404 for a row the caller may not
+    // read — a change to every typed read door at once, not to these two.
     requireTypeAccess(c, item.type, "read");
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
@@ -816,6 +831,13 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // item's edges; not-found tells it the item never existed, which is a
     // different thing and leads it to the wrong repair. A genuinely
     // absent item still answers not-found.
+    //
+    // **The swap admits exactly one more state, not every non-active
+    // one.** `get` filters `trashed` and nothing else, so an archived or
+    // a revoked anchor was already served through this door and still
+    // is; only a trashed one is new. Worth stating because the two method
+    // names invite reading `get` as "active only", and a reader who
+    // believes that will look for a widening here that is not present.
     const item = await storage.items.getIncludingTrashed(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
@@ -826,6 +848,14 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // is stated here rather than left to the space fence because the
     // fence and the type map answer different questions: a credential can
     // be inside the space and still hold no grant on this type.
+    //
+    // After the read rather than before it, because the check needs the
+    // row's `type` and only the row carries it. The cost is that a
+    // caller inside the space without the grant can tell 403 from 404 and
+    // so learns the row exists. Accepted rather than overlooked: the item
+    // read door resolves in the same order for the same reason, and
+    // trading that away means answering 404 for a row the caller may not
+    // read — a change to every typed read door at once, not to these two.
     requireTypeAccess(c, item.type, "read");
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {
