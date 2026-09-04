@@ -23,8 +23,15 @@ export class StreamPoolExhaustedError extends Error {
 
 /** How long a stream request waits for a slot before 503ing. Long enough
  *  to ride out a burst of stream turnover, short enough that a client is
- *  told to retry rather than left hanging. */
-const STREAM_RESERVE_TIMEOUT_MS = 5_000;
+ *  told to retry rather than left hanging.
+ *
+ *  Exported because `/events` waits on the database a second time at the
+ *  same point in a connection's life — the head it announces — and that
+ *  wait is derived from this one rather than restated beside it. The
+ *  question both answer is how long stream setup tolerates a database
+ *  that is not responding; two numbers for it drift, and the second one
+ *  is the one nobody would think to move. */
+export const STREAM_RESERVE_TIMEOUT_MS = 5_000;
 
 /**
  * Session-level RLS for streaming routes (`/events`, `/export`).

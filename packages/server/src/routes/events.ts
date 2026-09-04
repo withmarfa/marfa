@@ -21,11 +21,50 @@ import { filterMetadataForCaller } from "./util.js";
 import { StreamPoolExhaustedError } from "../storage/pg/streaming-rls.js";
 import {
   acquireStreamRls,
+  STREAM_RESERVE_TIMEOUT_MS,
   type StreamRlsContext,
 } from "../storage/pg/streaming-rls.js";
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
+
+/**
+ * How long the announcement waits for the log head before giving up on it.
+ *
+ * **Taken from the reservation window rather than chosen.** This route
+ * already waits on the database once at stream setup — the replay slot —
+ * and that wait is `STREAM_RESERVE_TIMEOUT_MS`, sized to ride out a burst
+ * of stream turnover without leaving a client hanging. The head read asks
+ * the same question at the same moment in a connection's life: how long
+ * setup tolerates a database that is not answering. Importing the number
+ * rather than restating it is what stops the two drifting, and the head
+ * read is the half nobody would think to re-tune.
+ *
+ * A bound is needed at all because the hold is new. Every connection now
+ * withholds live delivery from its first moment so the announcement can
+ * be the first frame, and the frames it withholds accumulate with no
+ * ceiling. On `main` a connection held only while replaying, and that
+ * wait was already bounded — so an unbounded read here is the one way a
+ * saturated app pool could leave a viewer counted, subscribed, and
+ * buffering forever.
+ *
+ * **What it degrades to is the point.** Announcing nothing and releasing
+ * the hold leaves the client exactly where every client stood before the
+ * announcement existed: connected, live, holding no cursor of its own.
+ * That is a documented state its reconnect path already handles. A client
+ * whose frames are held indefinitely is in no state at all.
+ */
+const HEAD_READ_TIMEOUT_MS = STREAM_RESERVE_TIMEOUT_MS;
+
+/**
+ * What a head read that outran its budget resolves to.
+ *
+ * A distinct sentinel rather than `null`, which the read uses for an empty
+ * log and the announcement reports as cursor `0` — a real answer that a
+ * replay accepts. Collapsing the two would announce the start of the log
+ * to a client whose read merely timed out.
+ */
+const HEAD_READ_TIMED_OUT = Symbol("head-read-timed-out");
 
 /**
  * The wire name of the frame announcing where the stream is.
@@ -120,6 +159,10 @@ export interface EventRoutesOptions {
   /** Override for the replay-slot reservation window; tests drive the
    *  exhaustion path with a short one. Default lives in streaming-rls. */
   streamReserveTimeoutMs?: number;
+  /** Override for the head-read budget; tests drive the degraded path —
+   *  no announcement, hold released — with a short one. Default is
+   *  `HEAD_READ_TIMEOUT_MS`. */
+  headReadTimeoutMs?: number;
   /**
    * Ceiling on concurrent viewers per route instance — one per server
    * process in production, where the app is built once. `0` = uncapped (the
@@ -806,6 +849,37 @@ export function eventRoutes(
           };
 
           /**
+           * The head read, bounded.
+           *
+           * The read itself cannot be cancelled — a query already queued
+           * behind a saturated pool runs when its turn comes whatever this
+           * connection has decided — so the budget governs how long the
+           * stream waits for it, not how long it takes. That is why the
+           * settled read gets a terminal handler of its own here: once the
+           * race is over nothing else is waiting on that promise, and a
+           * rejection arriving late with no handler attached takes the
+           * process down rather than this one connection.
+           */
+          const readHeadWithinBudget = (): Promise<
+            bigint | null | typeof HEAD_READ_TIMED_OUT
+          > => {
+            const budgetMs = options.headReadTimeoutMs ?? HEAD_READ_TIMEOUT_MS;
+            const read = readHeadEventId();
+            read.catch(() => undefined);
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            const budget = new Promise<typeof HEAD_READ_TIMED_OUT>(
+              (resolve) => {
+                timer = setTimeout(() => {
+                  resolve(HEAD_READ_TIMED_OUT);
+                }, budgetMs);
+              },
+            );
+            return Promise.race([read, budget]).finally(() => {
+              if (timer !== undefined) clearTimeout(timer);
+            });
+          };
+
+          /**
            * Say where the stream is, before it says anything else.
            *
            * The cursor is a position in `event_log.id`, the log's single
@@ -819,12 +893,13 @@ export function eventRoutes(
            * cannot be continued under the other.
            *
            * Answers false when it could not be read, having already
-           * closed the stream.
+           * closed the stream. A read that merely outran its budget
+           * answers true and announces nothing: see below.
            */
           const announceCursor = async (): Promise<boolean> => {
-            let head: bigint | null;
+            let head: bigint | null | typeof HEAD_READ_TIMED_OUT;
             try {
-              head = await readHeadEventId();
+              head = await readHeadWithinBudget();
             } catch (err) {
               // A stream that cannot say where it is cannot be resumed
               // from, and a client that reads its snapshot behind one
@@ -836,6 +911,23 @@ export function eventRoutes(
               );
               endStream();
               return false;
+            }
+            if (head === HEAD_READ_TIMED_OUT) {
+              // The opposite decision from the failure above, and for a
+              // reason worth stating: a read that has not come back says
+              // nothing about whether the log is readable, only that the
+              // pool is busy. Closing here would turn a saturated pool
+              // into a disconnect for every connecting client at once,
+              // and each would reconnect into the same pool. So the
+              // stream stays open with no announcement, which is the
+              // state every client was in before this frame existed, and
+              // the caller releases the hold on its way past.
+              console.warn(
+                `[events] announcing no cursor: the event-log head did not arrive within ${String(
+                  options.headReadTimeoutMs ?? HEAD_READ_TIMEOUT_MS,
+                )}ms`,
+              );
+              return true;
             }
             // An empty log announces 0, which is a cursor the replay
             // accepts and the retention check passes: `getMinRetainedId`
