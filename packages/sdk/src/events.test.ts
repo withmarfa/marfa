@@ -371,6 +371,86 @@ describe("the announced cursor", () => {
   });
 });
 
+/**
+ * The frame that says the server stopped delivering.
+ *
+ * It arrives on a healthy connection, carries no `id:`, and is followed
+ * by a close — and the cursor the subscription holds is still the right
+ * one, because nothing after the gap was sent. So the correct behavior is
+ * the ordinary reconnect from that cursor, which is the opposite of
+ * `catchup_too_old`.
+ *
+ * The reason it needs an arm of its own rather than falling through: the
+ * router parses any frame it does not recognize and hands it to
+ * `onEvent`, where it would arrive as a `MarfaEvent` it is not a member
+ * of. A caller switching on `type` ignores it and a replica drops it for
+ * want of an `item`, but neither is a contract — and a control frame
+ * reaching an event handler is a lie about the type either way.
+ */
+describe("a stream that stopped delivering", () => {
+  function incompleteFrame(reason: string, cursor: string | null): string {
+    return `event: stream_incomplete\ndata: ${JSON.stringify({
+      type: "stream_incomplete",
+      reason,
+      cursor,
+    })}\n\n`;
+  }
+
+  it("surfaces it, keeps it out of onEvent, and reconnects from the cursor it held", async () => {
+    const { transport, calls } = transportOver([
+      [itemFrame("7", "a"), incompleteFrame("replay_failed", "7")],
+      [itemFrame("8", "b")],
+    ]);
+    const reported: { reason: string; cursor: string | null }[] = [];
+    const seen: MarfaEvent[] = [];
+    const sub = (await import("./events.js")).subscribeToEvents(transport, {
+      initialRetryMs: 1,
+      onStreamIncomplete: (info) => {
+        reported.push({ reason: info.reason, cursor: info.cursor });
+      },
+      onEvent: (event) => {
+        seen.push(event);
+        if (seen.length === 2) sub.close();
+      },
+    });
+    await sub.closed;
+
+    expect(reported).toEqual([{ reason: "replay_failed", cursor: "7" }]);
+    expect(
+      seen.map((e) => e.type),
+      "a control frame is not a change, so it must not reach onEvent",
+    ).toEqual(["item.created", "item.created"]);
+    expect(
+      calls[1]?.headers.get("Last-Event-ID"),
+      "the cursor is still good, so the reconnect resumes at the gap",
+    ).toBe("7");
+  });
+
+  it("does not throw when no handler was supplied", async () => {
+    // Unlike `catchup_too_old`, nothing is required of the caller: the
+    // subscription recovers on its own, so an absent handler costs the
+    // reason and nothing else. Escalating would turn a self-healing
+    // reconnect into an error the caller has to suppress.
+    const { transport } = transportOver([
+      [incompleteFrame("edge_delivery_failed", null)],
+      [itemFrame("1", "a")],
+    ]);
+    const errors: unknown[] = [];
+    const sub = (await import("./events.js")).subscribeToEvents(transport, {
+      initialRetryMs: 1,
+      onError: (err) => {
+        errors.push(err);
+      },
+      onEvent: () => {
+        sub.close();
+      },
+    });
+    await sub.closed;
+
+    expect(errors).toEqual([]);
+  });
+});
+
 describe("the cursor advances on acknowledgement", () => {
   it("replays the event whose handler rejected", async () => {
     // The property the whole policy is for. The handler fails on id 7, so the
