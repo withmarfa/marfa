@@ -581,7 +581,13 @@ const doors: Door[] = [
       });
       return res.status === 200;
     },
-    attributable: (h, s) => edgeEventsTouching(h, [s.item, s.other]),
+    // The item event as well as the cascade. The door announces both, so
+    // guarding one would leave the other free to move above the write —
+    // and the item event's write is the one being broken here.
+    attributable: (h, s) => [
+      ...itemEventsFor(h, s.item),
+      ...edgeEventsTouching(h, [s.item, s.other]),
+    ],
     landed: async (s) => (await ctx.storage.edges.get(s.edge)) === null,
     // The cascade deletes the edges before it purges the item, with nothing
     // holding the two together, so a failure at the purge leaves the edges
@@ -912,7 +918,11 @@ const doors: Door[] = [
       );
       return result?.succeeded === 1;
     },
-    attributable: (h, s) => edgeEventsTouching(h, [s.item, s.other]),
+    // Both, for the same reason as the single-item door above.
+    attributable: (h, s) => [
+      ...itemEventsFor(h, s.item),
+      ...edgeEventsTouching(h, [s.item, s.other]),
+    ],
     landed: async (s) => (await ctx.storage.edges.get(s.edge)) === null,
     survivesBreakage: false,
   },
@@ -1129,8 +1139,8 @@ interface PublishingFile {
 /** Files whose publishes are driven by a door in the table above. */
 const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   "routes/items.ts": {
-    sites: 13,
-    why: "create, upsert, patch, delete, promote, purge, and the four tag and metadata doors",
+    sites: 14,
+    why: "create, upsert, patch, delete, promote, the two the purge door emits, and the four tag and metadata doors",
   },
   "routes/items-lifecycle.ts": { sites: 2, why: "transition and restore" },
   "routes/edges.ts": { sites: 3, why: "edge create, update and delete" },
@@ -1141,8 +1151,8 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
   },
   "routes/edges-bulk.ts": { sites: 2, why: "the atomic edge batch" },
   "bulk-actions/runner.ts": {
-    sites: 4,
-    why: "six arms through four sites: transition, purge and update_tags publish for themselves, and the three property-shaped arms share one local helper",
+    sites: 5,
+    why: "six arms through five sites: transition and update_tags publish for themselves, purge announces its cascade and its rows through two, and the three property-shaped arms share one local helper",
   },
   "routes/_edges-inline.ts": {
     sites: 2,
@@ -1174,8 +1184,8 @@ const PUBLISHES_OUT_OF_SCOPE: Record<string, PublishingFile> = {
     why: "sign-up seeding, outside a request",
   },
   "connections/upstream-credential.ts": {
-    sites: 1,
-    why: "credential teardown",
+    sites: 2,
+    why: "credential teardown, announcing its edge cascade and the row itself",
   },
   "enrichment/sweeper.ts": {
     sites: 1,

@@ -40,6 +40,7 @@ export const WEBHOOK_EVENTS = [
   "item.updated",
   "item.deleted",
   "item.restored",
+  "item.purged",
   "item.state_changed",
   "metadata.changed",
   "edge.created",

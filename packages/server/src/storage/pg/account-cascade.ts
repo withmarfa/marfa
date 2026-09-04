@@ -63,6 +63,12 @@
  * Cross-table raw SQL is used only where bulk efficiency matters and no
  * store method exists (edges, blobs, api_keys, webhooks, space_quotas,
  * auth_verification).
+ *
+ * **The whole cascade announces nothing**, and that is the same decision
+ * the retention sweeps take for the same reason and one more of its own:
+ * the account whose rows these are is going, so there is no client left to
+ * tell and no credential left to read the stream with. `TrashPurger`
+ * carries the general argument.
  */
 import { eq, sql } from "drizzle-orm";
 import type { Storage } from "../interface.js";

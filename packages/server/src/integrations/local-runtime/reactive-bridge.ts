@@ -315,6 +315,17 @@ export function createLocalReactiveBridge(
   };
 }
 
+/**
+ * Which published item events become integration dispatches.
+ *
+ * Not every member of the pubsub union: `metadata_changed` has never fanned
+ * out, and `purged` deliberately does not either. A purge follows a trash
+ * the integration was already told about, and its `tombstone_mapping`
+ * delete-upstream path ran then — firing it again would ask the far end to
+ * delete a record it has already deleted. `PreviewEventItemEventType` in
+ * `@withmarfa/shared` is the same subset, so the debugging surface cannot
+ * report a dispatch this would never make.
+ */
 function isItemEvent(event: {
   type: string;
   item?: { id?: string };

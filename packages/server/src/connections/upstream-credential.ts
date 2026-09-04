@@ -20,7 +20,7 @@
  */
 import type { Item } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
-import { publishEdge } from "../pubsub.js";
+import { publish, publishEdge } from "../pubsub.js";
 
 /** Page size for the dependent scan. The scan is a full walk, so this is
  *  a round-trip/memory trade-off rather than a ceiling on the answer. */
@@ -83,8 +83,9 @@ export async function purgeCredential(
   credential: Item,
   spaceId?: string,
 ): Promise<void> {
+  let purged = credential;
   if (credential.state !== "revoked") {
-    await storage.items.transition(credential.id, "revoked", spaceId);
+    purged = await storage.items.transition(credential.id, "revoked", spaceId);
   }
   // An uninstall removes real relationships, and the items on the other
   // end of them are ordinary rows a client is holding. Silence here left
@@ -97,6 +98,15 @@ export async function purgeCredential(
   for (const edge of cascaded) {
     await publishEdge({ type: "edge_deleted", edge, spaceId });
   }
+  // The row, on the same rule the item doors keep: a purge announces the
+  // removal it performed. This one is easy to argue out of, because the
+  // teardown revokes first and a revocation is announced by the caller
+  // that asked for it — but `revoked` is a state a client keeps, so
+  // stopping there leaves the same permanent ghost the item doors left.
+  //
+  // Post-transition, so the payload describes the row as it stood when it
+  // went rather than as the caller found it.
+  await publish({ type: "purged", item: purged, spaceId });
 }
 
 /** What an uninstall did about the connection's upstream credential.

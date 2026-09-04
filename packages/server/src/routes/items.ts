@@ -3076,7 +3076,15 @@ export function itemRoutes(storage: Storage) {
     const spaceId = c.get("apiKey")?.space_id;
     // Read before removing. This door used to purge without ever looking at
     // the row, so it could not have known a connection from a note.
-    const purgeTarget = await storage.items.get(id, spaceId);
+    //
+    // **Including trashed, and that is the whole of what this door normally
+    // sees.** A plain `get` answers `null` for a `trashed` row, so on the
+    // ordinary path — trash, then purge — the read came back empty and the
+    // announcement below never fired. The two refusals above still worked,
+    // because both only have anything to say about a row that is NOT
+    // soft-deleted, which is exactly the shape a plain `get` does return.
+    // This is the same read `items.purge` runs for its own gate.
+    const purgeTarget = await storage.items.getIncludingTrashed(id, spaceId);
     refuseUnlessUninstalled(purgeTarget);
 
     // Two doors refuse one operation, and reading only the second one sends
@@ -3123,6 +3131,23 @@ export function itemRoutes(storage: Storage) {
     await storage.items.purge(id, spaceId);
     for (const edge of cascaded) {
       await publishEdge({ type: "edge_deleted", edge, spaceId });
+    }
+    // The item itself, and the cascade above is what made its absence look
+    // covered. A trashed row announced `item.deleted`, which says
+    // recoverable; nothing then said the row had gone, and no later event
+    // can, because the row is absent rather than changed. A client holding
+    // it kept it until a full re-import, and one that was offline across
+    // the purge never learned it happened at all. An item with no edges
+    // cascaded nothing and so was silent outright.
+    //
+    // Last, mirroring the ordering a create states in reverse: an edge
+    // arrives behind the item it belongs to, so a removal puts the edges
+    // first and the row they hang off after them.
+    //
+    // The snapshot read before the purge, because there is nothing left to
+    // read afterwards.
+    if (purgeTarget) {
+      await publish({ type: "purged", item: purgeTarget, spaceId });
     }
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

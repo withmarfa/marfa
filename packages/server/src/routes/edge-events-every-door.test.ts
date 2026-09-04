@@ -188,17 +188,16 @@ describe("edge events on every door", () => {
     await inboundHeard;
   });
 
-  it("a bulk purge announces its cascade, and emits edges only", async () => {
+  it("a bulk purge announces its cascade, and the rows it removed", async () => {
     // The cascade is announced whether or not the caller asked for
     // fan-out: publishing is what appends the event log row, so a silent
     // cascade left a client that was offline unable to learn the edge was
     // gone. `enable_fanout` decides what happens downstream of that row.
     //
-    // **No item event, deliberately.** There is no purge event in the
-    // contract, the trash transition that precedes a purge already
-    // announced the item, and the single-item purge door emits none —
-    // so publishing one here would make a bulk purge noisier than the
-    // door it mirrors.
+    // The item is announced on the same terms. What this case holds is the
+    // pairing — an edge event and an item event out of one door, both
+    // independent of the flag; `purge-reaches-the-stream.test.ts` holds
+    // what the item event has to say.
     async function purgeOne(enableFanout: boolean): Promise<{
       items: string[];
       edges: string[];
@@ -258,15 +257,14 @@ describe("edge events on every door", () => {
 
     const loud = await purgeOne(true);
     expect(loud.edges).toHaveLength(1);
-    // The item is not announced on either door.
-    expect(loud.items).toHaveLength(0);
+    expect(loud.items).toEqual(["purged"]);
 
     const quiet = await purgeOne(false);
-    // Same events either way: an edge nobody can see disappear is one a
-    // durable client keeps forever. The flag governs the outbound work
-    // downstream of these events, which the bus cannot observe.
+    // Same events either way: a removal nobody can see is one a durable
+    // client keeps forever. The flag governs the outbound work downstream
+    // of these events, which the bus cannot observe.
     expect(quiet.edges).toHaveLength(1);
-    expect(quiet.items).toHaveLength(0);
+    expect(quiet.items).toEqual(["purged"]);
   });
 
   it("a bulk transition announces the state it moved items to", async () => {

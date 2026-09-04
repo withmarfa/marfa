@@ -207,6 +207,24 @@ describe("eventFromRow", () => {
     expect(event?.eventId).toBe(7n);
   });
 
+  it("rebuilds a purge, which one process announces and another serves", () => {
+    // The member most likely to be left out, and the only one whose
+    // absence is silent: an unrecognized type is logged and dropped, so a
+    // sibling process would carry on serving a stream missing exactly the
+    // event a client cannot recover from. It is also the member most
+    // likely to cross a process boundary — the bulk purge runs on the
+    // worker role and the stream is served by the web role, so in a split
+    // deployment every bulk purge takes this path and no other.
+    const item = makeItem("01976f00-0000-7000-8000-00000000eeee");
+    const event = eventFromRow({
+      ...base,
+      event_type: "purged",
+      payload: JSON.stringify({ type: "item.purged", item }),
+    });
+    expect(event?.type).toBe("purged");
+    expect(event && "item" in event && event.item.id).toBe(item.id);
+  });
+
   it("rebuilds an edge event", () => {
     const edge = { id: "edge-1", type: "references" } as never;
     const event = eventFromRow({

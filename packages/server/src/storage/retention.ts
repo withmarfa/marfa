@@ -62,6 +62,21 @@ export interface SpaceFanout {
  * `trash_retention_days` overrides from `SpaceConfig`. When `fanout` is
  * omitted the job runs a single unscoped sweep using the instance default.
  * Single-space self-hosts that never wire `spaces` get the simpler path.
+ *
+ * **This sweep announces nothing, and neither do its two siblings below.**
+ * Every other path that removes a row publishes `item.purged`, and every
+ * path that removes an edge publishes `edge.deleted`, so that a client
+ * which was away can learn the row is gone by replaying the event log. A
+ * sweep cannot serve that: its cutoff is sixty days and the event log is
+ * kept for hours, so a row it removes fell out of the replay window long
+ * before it was touched, and there is no cursor left that could carry the
+ * event. Writing one per row would append thousands of rows inside a
+ * single transaction to a log nobody can still be reading from.
+ *
+ * Removing those rows is the client's own reconciliation: a cursor too old
+ * to resume is answered with `catchup_too_old`, and the client re-reads
+ * and prunes what the server no longer has. An absence recorded here is a
+ * decision; an absence discovered later would be a defect.
  */
 export class TrashPurger {
   private interval: ReturnType<typeof setInterval> | null = null;
