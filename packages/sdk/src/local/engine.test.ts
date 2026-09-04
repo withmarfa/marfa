@@ -244,7 +244,7 @@ describe("the projection (seam: online, then offline for the unsent write)", () 
     });
 
     // The row as it now stands, with one property gone. What is pinned
-    // here is the behaviour rather than the setting that would otherwise
+    // here is the behavior rather than the setting that would otherwise
     // deliver it: the refresh replaces the collection wholesale, so a
     // dropped property is reflected whatever the row-update mode says.
     // A refresh that diffed instead would need that mode, and this is the

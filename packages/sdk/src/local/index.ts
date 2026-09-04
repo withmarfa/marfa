@@ -4,7 +4,7 @@
  * A write lands on disk first and reaches the server afterwards, so an app
  * built on this keeps working with no network and opens with what it had
  * last time. What the engine keeps is the published sync contract, which is
- * behaviour rather than code: any engine holding to it is correct, whatever
+ * behavior rather than code: any engine holding to it is correct, whatever
  * language it is written in.
  *
  * Three layers, not one. Server state is what the server last said; the
