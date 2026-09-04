@@ -44,7 +44,7 @@ describe("which store paths name a file on this machine", () => {
     // The expectation is written out rather than recomputed from the same
     // expression the implementation uses. Sharing the regex would make this
     // agree with itself: both sides wrong the same way still passes.
-    const expected: ReadonlyArray<readonly [string, boolean]> = [
+    const expected: readonly (readonly [string, boolean])[] = [
       ["/var/data/store.db", false],
       ["./data/store.db", false],
       ["file:/a/b/store.db", false],

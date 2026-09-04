@@ -496,47 +496,6 @@ describe("an edge edit (seam: offline, then online)", () => {
   });
 });
 
-describe("an update whose answer was lost (seam: lost_response, then online)", () => {
-  it("parks for review, because an update carries no key", async () => {
-    const note = await store.mutations.createItem({
-      type: "core.note",
-      properties: { body: "first" },
-    });
-    await drain.drain();
-    await store.mutations.updateItem(note.id, { title: "mine" });
-
-    // The write lands and the client is told nothing came back.
-    seam.mode = "lost_response";
-    expect(await drain.drain()).toMatchObject({ sent: 0, offline: true });
-
-    seam.mode = "online";
-    await drain.drain();
-
-    // A create repeats safely on the id the client minted and a delete on
-    // the key it carries. An update has neither: it re-sends the version
-    // it was computed against, the server has already moved past it, and
-    // the refusal is a conflict the engine may not settle. So the write
-    // that did land is followed by an edit parked for a person to redo.
-    //
-    // The contract's answer is that the key covers this too. What stands
-    // in the way is not the engine — it never merges, because the drain
-    // sends `manual` — but that the client's update options carry no key
-    // field at all, where the create and delete options do.
-    const parked = (await store.outbox.list())[0];
-    expect(parked).toMatchObject({
-      kind: "item.update",
-      state: "blocked",
-      blockedReason: "needs_review",
-    });
-    expect(await store.deadLetters.list()).toEqual([]);
-    // The edit did reach the server the first time, which is what makes
-    // this a lost answer rather than a lost write.
-    expect(await client.items.get(note.id)).toMatchObject({
-      properties: { title: "mine" },
-    });
-  });
-});
-
 describe("a queue that empties cleanly (seam: offline, then online)", () => {
   it("records when it last did", async () => {
     seam.mode = "offline";
@@ -562,8 +521,8 @@ describe("a queue that empties cleanly (seam: offline, then online)", () => {
   });
 });
 
-describe("an update the server will not settle (seam: online)", () => {
-  it("parks for review rather than resolving it here", async () => {
+describe("two clients editing one field (seam: online)", () => {
+  it("takes what the server settled on, and never settles it here", async () => {
     const note = await store.mutations.createItem({
       type: "core.note",
       properties: { body: "as written" },
@@ -571,36 +530,77 @@ describe("an update the server will not settle (seam: online)", () => {
     await drain.drain();
 
     // An edit made against version 1, and another device moving the row on
-    // before it is sent. `body` is `keep_both_copies` on `core.note`, so
-    // this is the field whose client-side resolution spawns a sibling.
+    // before it is sent. `body` is `keep_both_copies` on `core.note`, so a
+    // resolution here has to produce a sibling — and which side of the
+    // wire produces it is the whole question.
     await store.mutations.updateItem(note.id, { body: "mine" });
     await client.items.update(note.id, { body: "theirs" });
 
     seam.reset();
     const pass = await drain.drain();
-    expect(pass).toMatchObject({ sent: 0, remaining: 1 });
+    expect(pass).toMatchObject({ sent: 1, remaining: 0 });
 
-    // One PATCH and nothing else. A client-side resolution would show up
-    // here as the sibling's `POST /items` and a second PATCH carrying a
-    // merged body — a rule this engine is not allowed to have.
+    // One PATCH and nothing else. This is the assertion that distinguishes
+    // a server-side resolution from a client-side one: an engine merging
+    // here would show up as a second call, the sibling's `POST /items`,
+    // and a second device on a different kit would spawn a different one.
     expect(seam.calls).toEqual([`PATCH /items/${note.id}`]);
 
-    const parked = (await store.outbox.list())[0];
-    expect(parked).toMatchObject({
-      kind: "item.update",
-      state: "blocked",
-      blockedReason: "needs_review",
-    });
-    // Parked, not refused: the edit is still wanted and still on screen.
+    // The sibling exists and the server made it, inside the write's own
+    // transaction. Asserting only on the count would pass against an
+    // engine that created it, which is the rule being tested.
+    const onServer = await client.items.list({ limit: 50 });
+    const bodies = onServer.data.map((item) => item.properties.body).sort();
+    expect(bodies).toEqual(["mine", "theirs"]);
+
+    // Nothing parked and nothing lost: the edit is on the server, under
+    // whichever id the policy gave it.
+    expect(await store.outbox.list()).toEqual([]);
     expect(await store.deadLetters.list()).toHaveLength(0);
-    expect(await store.visible.getItem(note.id)).toMatchObject({
-      properties: { body: "mine" },
+  });
+});
+
+describe("an update whose answer was lost (seam: lost_response, then online)", () => {
+  it("replays into the merge rather than parking, and spawns nothing", async () => {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "first" },
     });
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: "mutation.blocked",
-        reason: "needs_review",
-      }),
-    );
+    await drain.drain();
+    await store.mutations.updateItem(note.id, { title: "mine" });
+
+    // The write lands and the client is told nothing came back.
+    seam.mode = "lost_response";
+    expect(await drain.drain()).toMatchObject({ sent: 0, offline: true });
+
+    seam.mode = "online";
+    await drain.drain();
+
+    // A create repeats safely on the id the client minted, and a delete on
+    // the key it carries. An update has neither, so the replay re-sends
+    // the version it was computed against and the server has moved past
+    // it. What it meets now is the merge rather than a refusal, so the
+    // edit settles instead of parking for a person to redo.
+    expect(await store.outbox.list()).toEqual([]);
+    expect(await store.deadLetters.list()).toEqual([]);
+
+    // And it settles once. A replay that spawned a second row would be the
+    // failure this scenario is really watching for, because `title` here
+    // does not collide and a colliding field would reach the sibling path
+    // twice.
+    const onServer = await client.items.list({ limit: 50 });
+    expect(onServer.data).toHaveLength(1);
+    expect(onServer.data[0]).toMatchObject({
+      id: note.id,
+      properties: { title: "mine" },
+    });
+
+    // The gap that remains, stated rather than asserted away: the row was
+    // written twice, so the version moved twice for one edit. The contract
+    // closes that with the idempotency key covering updates as it already
+    // covers creates and deletes, which needs a key field the client's
+    // update options do not yet carry. Merging makes the outcome right; it
+    // does not make the write a no-op.
+    expect(onServer.data[0]?.version).toBeGreaterThan(2);
   });
 });

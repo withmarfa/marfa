@@ -126,17 +126,18 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
                   ? {}
                   : { type: known.type }
                 : { type: payload.type }),
-              // Stated rather than inherited. The client's default merges a
-              // conflict here, in this process, and spawns the sibling that
-              // resolution can call for as a plain second create — which is
-              // this engine keeping a resolution rule of its own, and a
-              // second device running the same edit through a different
-              // kit would settle it differently. Conflicts belong to the
-              // server, which settles them inside the write's transaction,
-              // once, for every client. This becomes "auto" when that
-              // resolution is what a conflicting update meets on the wire;
-              // until then "manual" is how the engine declines to guess.
-              conflict: "manual",
+              // Stated rather than inherited, because what it means changed
+              // and the default reading it would inherit did too. The kit
+              // once merged a conflict in this process and spawned the
+              // sibling resolution can call for as a plain second create —
+              // an engine keeping a resolution rule of its own, which a
+              // second device on a different kit would settle differently.
+              // The server now merges inside the write's transaction, once,
+              // by the type's policy, for every client. So "auto" is the
+              // engine declining to guess rather than asking to be told:
+              // what comes back is the row the server settled on, and the
+              // only 409 left is one it could not merge at all.
+              conflict: "auto",
             },
           );
           return { ok: true, item };
