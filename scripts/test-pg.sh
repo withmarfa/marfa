@@ -408,4 +408,11 @@ if [ "${TEST_STATUS}" -ne 0 ]; then
   exit "${TEST_STATUS}"
 fi
 
-echo "✓ test:pg passed"
+# Qualified, because the success line is the part that gets pasted into a
+# pull request. An unqualified "passed" after a narrowed run reads as the
+# whole suite to everybody downstream of it.
+if [ "$#" -gt 0 ]; then
+  echo "✓ test:pg passed — NARROWED to: $*"
+else
+  echo "✓ test:pg passed"
+fi

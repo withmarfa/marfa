@@ -62,6 +62,13 @@ import type { PgDb } from "../storage/pg/connection.js";
 //      caller holding an app connection while waiting for the lock closes
 //      that into a cycle. Taking the lock first and fencing inside it is
 //      what keeps the wait one-directional.
+//
+// Rule 1 has a test; rule 2 does not, and cannot have the obvious one. A
+// fence opened inside an enclosing fence resolves its transaction off the
+// request context and issues a SAVEPOINT on the connection already held,
+// so it asks the app pool for nothing and the pool-of-one test stays
+// green through the violation. Reversing the order is caught by review or
+// not at all.
 // ---------------------------------------------------------------------------
 
 /**
@@ -386,9 +393,14 @@ async function refreshAccessToken(
   /**
    * Two database phases with a token exchange between them, so the fence
    * is applied to each rather than to the function. The read carries no
-   * space argument of its own — it never has — which makes the fence the
-   * only thing standing between this connection id and another space's
-   * token row.
+   * space argument of its own — it never has — so the statement itself
+   * has no space predicate and the fence is what supplies one.
+   *
+   * That is defense in depth rather than the only protection: nothing
+   * reaches here until `requireConnectionProxyAccess` has resolved the
+   * connection through `items.get(id, spaceId)`, so a caller asking for
+   * another space's connection has already been answered 404. The fence
+   * is what holds if that gate is ever moved or widened.
    */
   fence: RlsFence,
 ): Promise<RefreshAttemptResult | RefreshAttemptFailed> {

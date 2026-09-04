@@ -24,16 +24,24 @@
  * its phases would leave every read running as the connection owner with
  * no `marfa.space_id` set — faster, and reading every space.
  *
- * Holding that line takes a test aimed at the read the fence is the whole
- * of the protection for, and a cross-space 404 through the door is not
- * it. `requireConnectionProxyAccess` resolves the connection through
+ * Holding that line takes a test aimed at the read the fence supplies the
+ * space predicate for, and a cross-space 404 through the door is not it.
+ * `requireConnectionProxyAccess` resolves the connection through
  * `items.get(id, spaceId)`, which narrows on the caller's space in the
  * application layer; that 404 arrives with the fence deleted. The read
- * with nothing else in front of it is `connectionOauthTokens.get(id)` on
- * the refresh path, which carries no space argument and never has — so
- * the fence tests below drive that one, and one of them drives it through
- * the door under a lock, which is the arrangement that could deadlock
- * rather than merely leak.
+ * with no predicate of its own is `connectionOauthTokens.get(id)` on the
+ * refresh path, which carries no space argument and never has.
+ *
+ * **What the fence tests below reach, and what they do not.** They call
+ * `createRlsFence` themselves and hit the store directly, so they prove
+ * the primitive narrows. They do not prove this route applies it: delete
+ * the `fence(...)` wrappers inside `refreshAccessToken` and they stay
+ * green. That is a boundary rather than an omission, because the route
+ * path to that read is gated upstream by `requireConnectionProxyAccess`
+ * — a request for another space's connection is already a 404, so the
+ * leak the fence would prevent is not reachable through the door, and no
+ * test can drive it there. What is reachable through the door is the
+ * deadlock, and the refresh test below drives that one end to end.
  *
  * Postgres only. SQLite has no pool to exhaust (`@libsql/client`, one
  * client) and no RLS, and the middleware returns early for it.
@@ -314,7 +322,16 @@ describe.skipIf(!isPg)("a proxied call and the connection pool", () => {
    * Postgres asking for that id in any space. What stops it returning
    * another space's row is the policy on `connection_oauth_tokens`, and
    * what makes the policy apply is the `SET LOCAL` the fence issues.
-   * Delete `createRlsFence` and both assertions below flip.
+   *
+   * Only the second assertion is a guard. The first reads the row from
+   * the space that owns it and passes with the fence replaced by a
+   * pass-through, which is what makes it useful: it fails when the read
+   * is broken outright, so a green negative test cannot be a read that
+   * returns nothing for its own reasons.
+   *
+   * Both call `createRlsFence` directly. They pin that the primitive
+   * narrows, not that this route applies it — see the file docstring for
+   * why the route half is not reachable from here.
    */
   describe("the fence on the token read", () => {
     let ctx: TestContext;
