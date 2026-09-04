@@ -37,6 +37,7 @@ import { mkdtempSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { waitForHealth, attemptTimeoutMs } from "./wait-for-health.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SERVER_ROOT = resolve(HERE, "..");
@@ -188,25 +189,35 @@ async function bootRole(role: (typeof ROLES)[number]): Promise<void> {
 
   // Health must answer 200 — and for the worker role this is the same
   // endpoint the container image's HEALTHCHECK polls.
-  let healthy = false;
-  while (!healthy && Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      fail(
-        `role=${role} exited ${String(child.exitCode)} after its listen line`,
-        output,
-      );
-    }
-    try {
-      const res = await fetch(`http://127.0.0.1:${String(port)}/health`, {
-        signal: AbortSignal.timeout(3_000),
-      });
-      if (res.ok) healthy = true;
-      else await sleep(250);
-    } catch {
-      await sleep(250);
-    }
+  const health = await waitForHealth({
+    url: `http://127.0.0.1:${String(port)}/health`,
+    budgetMs: Math.max(0, deadline - Date.now()),
+    // From the whole readiness budget, not from what the listen-line wait
+    // left of it. The two share one deadline, so a slow boot shrinks the
+    // remainder — and deriving the per-attempt ceiling from that remainder
+    // narrows it exactly when the machine is loaded enough for a healthy
+    // endpoint to be slow. A boot that spent eighty of ninety seconds
+    // reaching its listen line would give each health attempt a third of a
+    // second to answer in.
+    attemptTimeoutMs: attemptTimeoutMs(READY_BUDGET_MS),
+    shouldStop: () =>
+      child.exitCode === null
+        ? null
+        : `the process exited ${String(child.exitCode)} after its listen line`,
+  });
+  if (health.stoppedEarly) {
+    // A process that died is a different failure from an endpoint that
+    // never answered, and reporting it as the latter is what sent a
+    // previous diagnosis to the wrong place.
+    fail(`role=${role} ${health.lastOutcome}`, output);
   }
-  if (!healthy) fail(`role=${role} /health never answered 200`, output);
+  if (!health.ok) {
+    fail(
+      `role=${role} /health never answered 200 ` +
+        `(${String(health.attempts)} attempts; last: ${health.lastOutcome})`,
+      output,
+    );
+  }
 
   if (!output.includes(ROLE_MARKER[role])) {
     fail(
