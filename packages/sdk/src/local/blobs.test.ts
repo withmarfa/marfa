@@ -29,6 +29,21 @@ let client: MarfaClient;
 let store: LocalStore;
 let blobs: LocalBlobs;
 let dir: string;
+let tick: number;
+
+/**
+ * A clock that moves on every read.
+ *
+ * The eviction order is by last read, and the wall clock this store
+ * stamps with has millisecond resolution — four cache writes in one
+ * millisecond is the ordinary case, not the unlucky one, and the order
+ * then falls to the tie-break rather than to the rule. That makes the
+ * assertion below pass or fail on how fast the machine is, which is the
+ * shape of a test that reports on the runner. Stepping the clock puts the
+ * rule back in charge of the answer.
+ */
+const steppingClock = (): string =>
+  new Date(Date.UTC(2026, 8, 4) + (tick += 1000)).toISOString();
 
 const filled = (value: number): Uint8Array =>
   new Uint8Array(BLOB_BYTES).fill(value);
@@ -45,7 +60,13 @@ beforeEach(async () => {
       accountId: SINGLE_ACCOUNT,
     },
   });
-  blobs = createBlobStore({ store, client, maxCacheBytes: CEILING });
+  tick = 0;
+  blobs = createBlobStore({
+    store,
+    client,
+    maxCacheBytes: CEILING,
+    now: steppingClock,
+  });
 });
 
 afterEach(() => {

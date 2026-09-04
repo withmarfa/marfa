@@ -1287,3 +1287,198 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     expect(await blobStore.blobs.get(hash)).toBeUndefined();
   });
 });
+
+/**
+ * Offline search over the fields server search indexes.
+ *
+ * The claim rule 15 makes is a comparison, so these run the same term
+ * through both surfaces and compare the sets. Asserting only that offline
+ * search finds something would pass against an index over any fields at
+ * all; asserting the same items as the server is the property, and it is
+ * why the server half is queried live rather than predicted here.
+ */
+describe("a term found online (seam: online, then offline)", () => {
+  let searchStore: LocalStore;
+  let searchDir: string;
+
+  /** Everything the type declares as a display hint, and one field only
+   *  the long tail covers, so a mistake in either half shows. */
+  const CORPUS = [
+    {
+      type: "core.note",
+      properties: {
+        title: "Quarterly bassoon review",
+        body: "the reeds arrived late",
+      },
+    },
+    {
+      type: "core.note",
+      properties: { title: "Grocery list", body: "a bassoon is not food" },
+    },
+    {
+      type: "core.note",
+      properties: { title: "Unrelated", body: "nothing of the sort" },
+    },
+    {
+      type: "core.file",
+      properties: {
+        blob_ref: `sha256:${"a".repeat(64)}`,
+        mime_type: "text/plain",
+        title: "Receipt",
+        // Not a core FTS column and not a display hint: a plain string
+        // field the type declares, which the server folds into the index's
+        // long tail. It is here because an index built only over the hint
+        // fields would find everything above and miss this.
+        notes: "paid for the bassoon in cash",
+      },
+    },
+  ] as const;
+
+  beforeEach(async () => {
+    searchDir = mkdtempSync(join(tmpdir(), "marfa-local-search-"));
+    searchStore = await openLocalStore({
+      path: join(searchDir, "store.db"),
+      identity: {
+        origin: "http://localhost",
+        spaceId: SINGLE_SPACE,
+        accountId: SINGLE_ACCOUNT,
+      },
+    });
+  });
+
+  afterEach(() => {
+    searchStore.close();
+    rmSync(searchDir, { recursive: true, force: true });
+  });
+
+  it("finds the same items offline", async () => {
+    for (const seed of CORPUS) {
+      await searchStore.mutations.createItem({
+        type: seed.type,
+        properties: { ...seed.properties },
+      });
+    }
+    const drained = createOutboxDrain({ store: searchStore, client });
+    expect(await drained.drain()).toMatchObject({ sent: 4, remaining: 0 });
+
+    const online = await client.search("bassoon");
+    // Three of the four, and the fourth is what says the comparison has
+    // teeth: a search that matched everything would satisfy "the same set"
+    // trivially.
+    expect(online).toHaveLength(3);
+
+    // Reset before the offline half, so the assertion below is about what
+    // the offline search issued rather than about the online one that just
+    // ran through the same seam.
+    seam.reset();
+    seam.mode = "offline";
+    const offline = await searchStore.search.find("bassoon");
+
+    const ids = (rows: { item: { id: string } }[]): string[] =>
+      rows.map((row) => row.item.id).sort();
+    expect(ids(offline)).toEqual(ids(online));
+    expect(seam.calls.filter((call) => call.startsWith("GET /search"))).toEqual(
+      [],
+    );
+
+    // The long-tail field specifically, because it is the one an index
+    // built over display hints alone would miss.
+    const receipt = online.find((row) => row.item.type === "core.file");
+    expect(receipt).toBeDefined();
+    expect(ids(offline)).toContain(receipt?.item.id);
+
+    // A term in none of the indexed fields finds nothing on either side,
+    // which is the control that the index is not simply matching
+    // everything.
+    seam.mode = "online";
+    expect(await client.search("harpsichord")).toHaveLength(0);
+    expect(await searchStore.search.find("harpsichord")).toHaveLength(0);
+  });
+
+  it("narrows by type the way the server does, subtypes included", async () => {
+    await searchStore.mutations.createItem({
+      type: "core.file",
+      properties: {
+        blob_ref: `sha256:${"b".repeat(64)}`,
+        mime_type: "text/plain",
+        title: "a plain bassoon file",
+      },
+    });
+    await searchStore.mutations.createItem({
+      type: "core.file.image",
+      properties: {
+        blob_ref: `sha256:${"c".repeat(64)}`,
+        mime_type: "image/png",
+        title: "a bassoon photograph",
+        width: 2,
+        height: 2,
+      },
+    });
+    await searchStore.mutations.createItem({
+      type: "core.note",
+      properties: { title: "a bassoon note", body: "not a file" },
+    });
+    await createOutboxDrain({ store: searchStore, client }).drain();
+
+    const online = await client.search("bassoon", { type: "core.file" });
+    seam.mode = "offline";
+    const offline = await searchStore.search.find("bassoon", {
+      type: "core.file",
+    });
+
+    // Two, not one and not three: `core.file.image` is under `core.file`
+    // by declared parent, and the note is not. A filter that matched the
+    // identifier exactly would return one, and one that ignored the filter
+    // would return three.
+    expect(online).toHaveLength(2);
+    expect(offline.map((row) => row.item.type).sort()).toEqual([
+      "core.file",
+      "core.file.image",
+    ]);
+    expect(offline.map((row) => row.item.id).sort()).toEqual(
+      online.map((row) => row.item.id).sort(),
+    );
+  });
+
+  it("finds a write that has never been sent, and stops finding a deleted one", async () => {
+    const sent = await searchStore.mutations.createItem({
+      type: "core.note",
+      properties: { title: "sent", body: "a bassoon that reached the server" },
+    });
+    await createOutboxDrain({ store: searchStore, client }).drain();
+
+    seam.mode = "offline";
+    const unsent = await searchStore.mutations.createItem({
+      type: "core.note",
+      properties: { title: "unsent", body: "a bassoon written on a plane" },
+    });
+
+    // The index is over visible state, so a write this client has made and
+    // not sent is findable. An index built from server state alone would
+    // go quiet on exactly the writes a local store exists to keep.
+    expect(
+      (await searchStore.search.find("bassoon"))
+        .map((row) => row.item.id)
+        .sort(),
+    ).toEqual([sent.id, unsent.id].sort());
+
+    // And an edit is reflected rather than appended: the old text stops
+    // matching. FTS5 has no upsert, so an index that only inserted would
+    // hold both versions and go on finding the item by a word the person
+    // removed.
+    await searchStore.mutations.updateItem(unsent.id, {
+      body: "a clarinet written on a plane",
+    });
+    expect(
+      (await searchStore.search.find("bassoon")).map((row) => row.item.id),
+    ).toEqual([sent.id]);
+    expect(
+      (await searchStore.search.find("clarinet")).map((row) => row.item.id),
+    ).toEqual([unsent.id]);
+
+    // A queued delete takes it out of the answers, because the answers are
+    // resolved through visible state rather than served from the index.
+    await searchStore.mutations.deleteItem(unsent.id);
+    expect(await searchStore.search.find("clarinet")).toEqual([]);
+  });
+});
