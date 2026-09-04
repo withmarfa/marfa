@@ -29,6 +29,17 @@
  * What neither catches is a partial overlap -- a shape that shares most of
  * a centralized one but not all of it. That is a judgement about whether
  * two things are the same shape, and a test cannot make it.
+ *
+ * **And neither compares one route file against another**, which is the
+ * larger gap and worth stating plainly because it is counter-intuitive:
+ * `QuotaSchema`, one of the three defects this file was written for, lived
+ * in `admin.ts` and `spaces.ts` and in neither case in `_schemas.ts`. This
+ * guard would have been silent on it. It became detectable only once
+ * somebody had already centralized it, so what is held here is the
+ * *staying* centralized, not the *becoming* it. Four names are declared in
+ * more than one route file today; closing that is a change to those files
+ * rather than to this one, and it carries a decision about a public
+ * response shape, so it is deliberately not folded in here.
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -138,12 +149,23 @@ describe("each wire shape is declared once", () => {
   );
   const routes = routeSources();
 
-  it("finds the centralized schemas and the route files to check", () => {
+  it("finds the centralized schemas and the declarations to check", () => {
     // The control. A scan that reads neither side passes every check below
     // while proving nothing, which reads exactly like a clean route layer.
+    //
+    // **Counted in declarations, not in files.** A parser that opens all 86
+    // route files and returns nothing from each of them satisfies a count of
+    // files completely, and every check below then holds over an empty list.
+    // The unit tests above would catch a parser that broke on any input; they
+    // would not catch one that works on the synthetic strings they pass it
+    // and fails on the real files -- a Prettier configuration change, or a
+    // route adopting a declaration form the regex does not know. The
+    // declarations are what the checks below iterate, so they are what has to
+    // be non-empty.
     expect(shared.map((d) => d.name)).toContain("EdgeSchema");
-    expect(routes.length).toBeGreaterThan(10);
     expect(routes.some((r) => r.file === "edges.ts")).toBe(true);
+    const declarations = routes.flatMap((r) => r.declarations);
+    expect(declarations.length).toBeGreaterThan(50);
   });
 
   it("no route file redeclares a centralized schema by name", () => {
