@@ -255,6 +255,62 @@ describe("GET /search and GET /export — the other filtered reads", () => {
   });
 });
 
+describe("the reserved `_` prefix, on every door that refuses", () => {
+  // The module claims the hatch holds everywhere, and it was asserted on
+  // one door. A claim tested in one place is a claim about that place.
+  const id = (): string => excluded[0]!;
+
+  it("is ignored on every refusing query door", async () => {
+    const doors = (): string[] => [
+      "/items?limit=5&_trace=1",
+      "/edges?limit=5&_trace=1",
+      `/items/${id()}/edges?_trace=1`,
+      `/items/${id()}/backrefs?_trace=1`,
+      "/search?q=probe&_trace=1",
+      "/export?_trace=1",
+      "/export?format=archive&_trace=1",
+    ];
+    for (const path of doors()) {
+      const res = await request(ctx.app, "GET", path, { key: ctx.adminKey });
+      expect(res.status, `${path} refused a reserved-prefix parameter`).toBe(
+        200,
+      );
+      // Drain the streamed doors so the response is not left open.
+      await res.arrayBuffer();
+    }
+  });
+
+  it("is ignored beside a parameter the door does implement", async () => {
+    // The hatch and a real filter in one request, which is how a client
+    // that appended a cache-buster actually sends it.
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?limit=50&timestamp_after=${FUTURE}&_cache_bust=9`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { id: string }[] };
+    // Still filtered: an ignored key must not widen the page.
+    for (const seeded of excluded) {
+      expect(body.data.map((r) => r.id)).not.toContain(seeded);
+    }
+  });
+
+  it("does not rescue a misspelling that merely contains an underscore", async () => {
+    // The hatch is a prefix, not a substring. A misspelled real parameter
+    // never starts with `_`, which is what keeps the hatch from weakening
+    // the catch it pays for.
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/items?limit=50&timestamp_aftr=${FUTURE}`,
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(400);
+  });
+});
+
 describe("POST /items/bulk-actions — the door where a dropped key costs rows", () => {
   /** The match set a dry run reports. */
   async function matched(

@@ -456,8 +456,15 @@ function assertCursorKey(cursor: string, expected: CursorSortKey): void {
     typeof parsed === "object" && parsed !== null && "k" in parsed
       ? parsed.k
       : UNKEYED_CURSOR_ORDERING;
+  // `hasOwnProperty` rather than `in`, which walks the prototype chain: a
+  // cursor tagged `"toString"` would otherwise be looked up and answered
+  // with a function. Harmless today, because the result is compared for
+  // equality against a string and a function is not one, but the safety
+  // is in the comparison rather than in the lookup, which is the wrong
+  // place for it to live.
   const key =
-    typeof carried === "string" && carried in LEGACY_CURSOR_KEYS
+    typeof carried === "string" &&
+    Object.prototype.hasOwnProperty.call(LEGACY_CURSOR_KEYS, carried)
       ? LEGACY_CURSOR_KEYS[carried]
       : carried;
   if (key !== expected) {

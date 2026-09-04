@@ -250,6 +250,21 @@ describe("a cursor minted before the key named the direction", () => {
     );
   });
 
+  it("refuses a cursor tagged with a name off Object.prototype", async () => {
+    // The legacy map is an object literal, so a lookup by `in` reaches
+    // `toString` and answers with a function. Nothing is honored either
+    // way — a function is not the string the comparison expects — but the
+    // refusal has to come from the lookup rather than from the comparison
+    // happening to disagree.
+    const { page } = await listItems(`${TYPE}&limit=1`);
+    const last = page!.data[0]!;
+    expectOrderingRefusal(
+      await listItems(
+        `${TYPE}&cursor=${legacyCursor(last.created_at, last.id, "toString")}`,
+      ),
+    );
+  });
+
   it("refuses a legacy spelling that named no ordering this server has", async () => {
     // The safe direction, and the reason the map is a map rather than a
     // "strip the direction and compare" rule: `timestamp` was never a
