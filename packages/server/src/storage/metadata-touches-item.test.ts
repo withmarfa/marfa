@@ -196,3 +196,103 @@ describe("a write no client can learn about leaves it alone", () => {
     expect(await readUpdatedAt(itemId)).toBe(PAST);
   });
 });
+
+/**
+ * `setExtensions` is `setExtension` applied to a set, and the only caller
+ * it has writes to a freshly created item — so the existing extensions map
+ * is always empty there and the merge half of the contract is exercised by
+ * nothing. A rewrite from merge to replace would contradict the door's own
+ * documentation and pass every other test in the repository.
+ *
+ * The announce predicate is asked once for the whole set rather than once
+ * per namespace, which is a second rule the per-namespace door does not
+ * have. Both arms are held below, and the mixed set is the one that
+ * separates "any member announces" from "every member announces".
+ */
+describe("setExtensions writes a whole set at once", () => {
+  const OTHER = "otherapp.data";
+
+  it("merges into the existing map rather than replacing it", async () => {
+    // `pinnedItem` leaves `testapp.state` already set, which is the
+    // fixture the archive restore never produces.
+    const itemId = await pinnedItem();
+
+    const { extensions } = await ctx.storage.metadata.setExtensions(itemId, {
+      [OTHER]: { b: 1 },
+    });
+
+    // Answered and stored have to agree, and both have to carry the
+    // namespace the write never mentioned.
+    expect(extensions).toEqual({
+      "testapp.state": { n: 0 },
+      [OTHER]: { b: 1 },
+    });
+    expect(await ctx.storage.metadata.getExtensions(itemId)).toEqual({
+      "testapp.state": { n: 0 },
+      [OTHER]: { b: 1 },
+    });
+  });
+
+  it("replaces a namespace it does name, whole", async () => {
+    const itemId = await pinnedItem();
+    await ctx.storage.metadata.setExtensions(itemId, {
+      "testapp.state": { replaced: true },
+    });
+    // `setExtension`'s rule, not `mutateExtension`'s: the previous `n` is
+    // gone rather than merged with.
+    expect(await ctx.storage.metadata.getExtensions(itemId)).toEqual({
+      "testapp.state": { replaced: true },
+    });
+  });
+
+  it("moves the modification time, and answers the value it wrote", async () => {
+    const itemId = await pinnedItem();
+    const { updated_at } = await ctx.storage.metadata.setExtensions(itemId, {
+      "testapp.one": { a: 1 },
+      "testapp.two": { b: 2 },
+    });
+    const stored = await readUpdatedAt(itemId);
+    expect(stored).not.toBe(PAST);
+    // The answer is what the caller announces the item with, so it has to
+    // be the row's value rather than merely a plausible timestamp.
+    expect(updated_at).toBe(stored);
+  });
+
+  it("a set of only reserved namespaces leaves it alone", async () => {
+    const itemId = await pinnedItem();
+    const { updated_at } = await ctx.storage.metadata.setExtensions(itemId, {
+      [RUNTIME_NAMESPACE]: { cursor: "abc" },
+      "connection.sibling": { seen: 1 },
+    });
+    expect(await readUpdatedAt(itemId)).toBe(PAST);
+    // Null rather than the row's current value: "nothing moved" is a
+    // different answer from "it is still at PAST", and the caller
+    // announcing the item has to tell them apart.
+    expect(updated_at).toBeNull();
+    // Silent, but still written.
+    expect(await ctx.storage.metadata.getExtensions(itemId)).toMatchObject({
+      [RUNTIME_NAMESPACE]: { cursor: "abc" },
+    });
+  });
+
+  it("a mixed set announces, because one member does", async () => {
+    const itemId = await pinnedItem();
+    const { updated_at } = await ctx.storage.metadata.setExtensions(itemId, {
+      [RUNTIME_NAMESPACE]: { cursor: "abc" },
+      "testapp.loud": { n: 1 },
+    });
+    expect(await readUpdatedAt(itemId)).not.toBe(PAST);
+    expect(updated_at).toBe(await readUpdatedAt(itemId));
+  });
+
+  it("an empty set writes nothing at all", async () => {
+    const itemId = await pinnedItem();
+    const { extensions, updated_at } = await ctx.storage.metadata.setExtensions(
+      itemId,
+      {},
+    );
+    expect(await readUpdatedAt(itemId)).toBe(PAST);
+    expect(updated_at).toBeNull();
+    expect(extensions).toEqual({ "testapp.state": { n: 0 } });
+  });
+});
