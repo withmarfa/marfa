@@ -12,15 +12,20 @@
  *
  * **Sharing a name with another route file is not by itself a reason to move
  * a shape here.** Three names are declared in more than one route file and
- * belong where they are. The two id parameters are `{ id: string }` in every
- * copy and differ only in their description, each written for its own route —
- * "Id of the connection the lease belongs to", "Item id whose version history
- * to return". That prose is the published reference doing its job, and one
- * shared declaration would replace seven accurate sentences with a generic
- * one: a tidier tree bought with a worse specification. The two space shapes
- * genuinely differ, the administrative one carrying a status the user-facing
- * one does not, so folding them is a surface change in one direction or a
- * regression in the other rather than a consolidation.
+ * are left where they are, for two different reasons.
+ *
+ * The two id parameters differ in more than their names suggest. Most copies
+ * are a bare string with a description written for their own route; one adds
+ * `.min(1)`, which reaches the published specification as a `minLength` on
+ * three operations and on no others. So consolidating them is not a move but
+ * a choice — one validation and one description for every route that shares
+ * the name — and that choice would silently add a constraint to some routes
+ * or drop it from others. Worth doing deliberately; not worth doing as
+ * tidying.
+ *
+ * The two space shapes differ outright, the administrative one carrying a
+ * status the user-facing one does not, so folding them is a surface change in
+ * one direction or a regression in the other.
  *
  * What belongs here is a shape two doors are trying to describe identically
  * and failing to.

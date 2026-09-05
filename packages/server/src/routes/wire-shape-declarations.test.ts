@@ -36,10 +36,10 @@
  * in `admin.ts` and `spaces.ts` and in neither case in `_schemas.ts`. This
  * guard would have been silent on it. It became detectable only once
  * somebody had already centralized it, so what is held here is the
- * *staying* centralized, not the *becoming* it. Four names are declared in
- * more than one route file today; closing that is a change to those files
- * rather than to this one, and it carries a decision about a public
- * response shape, so it is deliberately not folded in here.
+ * *staying* centralized, not the *becoming* it. Three names are declared in
+ * more than one route file today, and `_schemas.ts` records why each is left
+ * where it is. Closing any of them is a change to those files rather than to
+ * this one.
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
