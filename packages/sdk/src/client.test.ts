@@ -1635,33 +1635,50 @@ describe("items.bulkAction", () => {
     void [rejectedState, rejectedTier, acceptedState, acceptedTier];
   });
 
-  it("the server refuses filter.state: revoked and filter.tier: all with validation_error", async () => {
+  it("the server refuses tier: all, and quietly matches nothing for state: revoked", async () => {
     const tag = `ba-narrow-${Math.random().toString(36).slice(2, 8)}`;
     await seedTagged(1, tag);
+    const base = {
+      action: "transition" as const,
+      state: "archived" as const,
+      dry_run: true,
+    };
 
+    // The control, so the two below are read against a filter that does
+    // match. Without it a zero could mean the tag never landed.
+    await expect(
+      client.items.bulkAction({ ...base, filter: { tags: [tag] } }),
+    ).resolves.toMatchObject({ matched: 1 });
+
+    // `tier` is still refused, which is the straightforward half: the
+    // route has no `"all"` catch-all, and says so.
     await expect(
       client.items.bulkAction({
-        action: "transition",
-        state: "archived",
+        ...base,
+        filter: { tags: [tag], tier: "all" } as unknown as BulkActionFilter,
+      }),
+    ).rejects.toMatchObject({ code: "validation_error" });
+
+    // `state` is the half that changed, and it changed in the direction
+    // that makes the narrowing above matter more rather than less. The
+    // route used to refuse an unrecognized lifecycle value; it now takes
+    // it, applies it, and matches nothing. So a caller who types a state
+    // the bulk door does not have gets a clean answer saying zero rows
+    // were affected, which is indistinguishable from a filter that is
+    // correct and simply selects nothing.
+    //
+    // Nothing is destroyed by that — the actions are transition, tag and
+    // delete, and all three are no-ops over an empty match — but the
+    // typo survives, and the type is now the only thing that catches it.
+    await expect(
+      client.items.bulkAction({
+        ...base,
         filter: {
           tags: [tag],
           state: "revoked",
         } as unknown as BulkActionFilter,
-        dry_run: true,
       }),
-    ).rejects.toMatchObject({ code: "validation_error" });
-
-    await expect(
-      client.items.bulkAction({
-        action: "transition",
-        state: "archived",
-        filter: {
-          tags: [tag],
-          tier: "all",
-        } as unknown as BulkActionFilter,
-        dry_run: true,
-      }),
-    ).rejects.toMatchObject({ code: "validation_error" });
+    ).resolves.toMatchObject({ matched: 0, succeeded: 0, errored: 0 });
   });
 });
 
