@@ -31165,10 +31165,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Id of the connection to uninstall."
+              "description": "Id of the connection to pause."
             },
             "required": true,
-            "description": "Id of the connection to uninstall.",
+            "description": "Id of the connection to pause.",
             "name": "id",
             "in": "path"
           }
@@ -31530,10 +31530,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Id of the connection to uninstall."
+              "description": "Id of the paused connection to resume."
             },
             "required": true,
-            "description": "Id of the connection to uninstall.",
+            "description": "Id of the paused connection to resume.",
             "name": "id",
             "in": "path"
           }
@@ -32360,10 +32360,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Id of the connection to uninstall."
+              "description": "Id of the connection to run now."
             },
             "required": true,
-            "description": "Id of the connection to uninstall.",
+            "description": "Id of the connection to run now.",
             "name": "id",
             "in": "path"
           }
@@ -32780,10 +32780,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Id of the connection to uninstall."
+              "description": "Id of the connection whose upgrade is being previewed."
             },
             "required": true,
-            "description": "Id of the connection to uninstall.",
+            "description": "Id of the connection whose upgrade is being previewed.",
             "name": "id",
             "in": "path"
           }
@@ -33328,10 +33328,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Id of the connection to uninstall."
+              "description": "Id of the connection to move to a newer version."
             },
             "required": true,
-            "description": "Id of the connection to uninstall.",
+            "description": "Id of the connection to move to a newer version.",
             "name": "id",
             "in": "path"
           }
@@ -34044,10 +34044,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Id of the connection to uninstall."
+              "description": "Id of the connection whose upgrade is being approved."
             },
             "required": true,
-            "description": "Id of the connection to uninstall.",
+            "description": "Id of the connection whose upgrade is being approved.",
             "name": "id",
             "in": "path"
           }
