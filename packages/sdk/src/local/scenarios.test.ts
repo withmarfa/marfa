@@ -580,6 +580,58 @@ describe("two clients editing one field (seam: online)", () => {
   });
 });
 
+describe("two clients editing different fields (seam: online)", () => {
+  it("keeps both, because neither collided", async () => {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "as written" },
+    });
+    await drain.drain();
+
+    // The other half of rule 10, and the half that carries the ordinary
+    // case: fields that do not collide merge. The scenario beside this one
+    // covers the same field edited twice; this one is two people working
+    // on one row without getting in each other's way.
+    //
+    // **What this does not discriminate, stated so nobody reads it as
+    // more than it is.** It does not depend on the conflict strategy:
+    // fields that do not collide never reach one, so it passes under
+    // `manual` too — both were tried. Nor does it break when the update
+    // sends the whole row instead of the patch, because a field equal to
+    // the ancestor reads as unchanged and the server keeps its own value.
+    //
+    // What it does catch is an engine that resolves here — a sibling, a
+    // second call, or a merged event where nothing was merged — and a
+    // server that starts taking a side instead of keeping both.
+    await store.mutations.updateItem(note.id, { title: "mine" });
+    await client.items.update(note.id, { body: "theirs" });
+
+    seam.reset();
+    expect(await drain.drain()).toMatchObject({ sent: 1, remaining: 0 });
+
+    // Both present on the one row. A merge that took a side would leave
+    // one of them missing, and a merge made here rather than at the server
+    // would spawn a sibling — so the row count is asserted too.
+    const onServer = await client.items.list({ limit: 50 });
+    expect(onServer.data).toHaveLength(1);
+    expect(onServer.data[0]).toMatchObject({
+      id: note.id,
+      properties: { title: "mine", body: "theirs" },
+    });
+
+    // Nothing collided, so nothing was resolved by policy and there is
+    // nothing to report. Asserting the silence matters: `mutation.merged`
+    // firing here would tell an app a person's text had been moved when
+    // it had not.
+    expect(events.filter((event) => event.type === "mutation.merged")).toEqual(
+      [],
+    );
+
+    expect(await store.outbox.list()).toEqual([]);
+    expect(await store.deadLetters.list()).toHaveLength(0);
+  });
+});
+
 describe("an update whose answer was lost (seam: lost_response, then online)", () => {
   it("replays into the merge rather than parking, and spawns nothing", async () => {
     const note = await store.mutations.createItem({
