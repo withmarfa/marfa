@@ -68,9 +68,22 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 // Non-admin credentials are rejected with 403.
 // ---------------------------------------------------------------------------
 
-const ConnectionIdParam = z.object({
-  id: z.string().describe("Id of the connection to uninstall."),
-});
+/**
+ * The connection id in the path, described per operation.
+ *
+ * One shared declaration used to carry one sentence onto all seven operations
+ * in this file — "Id of the connection to uninstall" — so six of them published
+ * a description true of a different route. The reference is generated, so
+ * nobody reads that sentence beside the operation it lands on, and no shape
+ * guard can judge prose: a description is the one part of a route definition
+ * that is wrong silently.
+ *
+ * A function rather than seven hand-written objects, so the shape stays in one
+ * place and only the sentence varies.
+ */
+function connectionIdParam(description: string) {
+  return z.object({ id: z.string().describe(description) });
+}
 
 const InstallRequestSchema = z.object({
   /** id of the system.integration item (a manifest registered via
@@ -237,7 +250,7 @@ const pauseRoute = createRoute({
   description:
     "Stops a connection without tearing it down: sets `runtime_status` to `paused` — the scheduler skips it, reactive fan-out drops it, and new inbound webhook deliveries are refused with a retryable 503 so the sender redelivers after resume. Queued schedule and item-event work is discarded without running; a queued webhook dispatch retries and dead-letters if the pause outlasts it. Credentials and the upstream OAuth grant are left intact, so `resume` restores everything without a fresh consent round trip. Pausing an already-paused connection returns 400.",
   security: [{ bearerAuth: [] }],
-  request: { params: ConnectionIdParam },
+  request: { params: connectionIdParam("Id of the connection to pause.") },
   responses: pauseResponses,
 });
 
@@ -250,7 +263,9 @@ const resumeRoute = createRoute({
   description:
     "Reverses `pause`: sets `runtime_status` back to `healthy`, and the scheduler, reactive fan-out, and inbound webhook receipt all pick the connection up again with nothing to re-arm. Resuming a connection that is not paused returns 400, and a revoked connection cannot be resumed — that is what reinstalling is for.",
   security: [{ bearerAuth: [] }],
-  request: { params: ConnectionIdParam },
+  request: {
+    params: connectionIdParam("Id of the paused connection to resume."),
+  },
   responses: pauseResponses,
 });
 
@@ -299,7 +314,11 @@ const upgradePreviewRoute = createRoute({
   description:
     "A connection resolves the manifest it was installed against, frozen on its catalog row, so a newer version of the same integration does not reach it until somebody moves it. This reports whether a newer version is registered and exactly what it would newly be allowed to do, computed as a permission diff rather than a version comparison. `consent_lines` is empty when the move takes no more than the connection already has.",
   security: [{ bearerAuth: [] }],
-  request: { params: ConnectionIdParam },
+  request: {
+    params: connectionIdParam(
+      "Id of the connection whose upgrade is being previewed.",
+    ),
+  },
   responses: {
     200: {
       content: { "application/json": { schema: UpgradePreviewSchema } },
@@ -404,7 +423,9 @@ const approveUpgradeRoute = createRoute({
     "The decision `POST /connections/{id}/upgrade` refuses to make on its own. `to_version` names the version the caller was shown, and the move is refused with 409 if that is no longer the candidate, so an approval cannot carry over to a widening nobody read. Everything else about the move is identical to the ordinary upgrade, including keeping the cursor state and revoking runtime credentials.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: ConnectionIdParam,
+    params: connectionIdParam(
+      "Id of the connection whose upgrade is being approved.",
+    ),
     body: {
       content: { "application/json": { schema: ApproveUpgradeSchema } },
     },
@@ -484,7 +505,11 @@ const upgradeRoute = createRoute({
   description:
     "Re-binds the connection to a newer registered version of the same integration, keeping its cursor state, and revokes its runtime credentials so the next mint projects permissions from the manifest it now resolves. Refuses with 403 when the newer manifest would grant more than the connection was installed with, naming exactly what is new: that move needs a space admin's approval through the install consent screen. Returns 400 when the connection already resolves the newest registered version, or when its stored settings do not satisfy the new manifest.",
   security: [{ bearerAuth: [] }],
-  request: { params: ConnectionIdParam },
+  request: {
+    params: connectionIdParam(
+      "Id of the connection to move to a newer version.",
+    ),
+  },
   responses: {
     200: {
       content: {
@@ -561,7 +586,7 @@ const runRoute = createRoute({
   description:
     "Dispatches the connection's sweep immediately instead of waiting for its next scheduled tick. Only connections whose manifest declares the `manual` trigger may be run this way, and only where this deployment can actually dispatch the integration: an integration whose code runs somewhere else is refused rather than silently accepted. A paused connection is refused. The run is queued the same way a cron tick is, so it takes the same per-connection lock and cannot overlap a run already in flight.",
   security: [{ bearerAuth: [] }],
-  request: { params: ConnectionIdParam },
+  request: { params: connectionIdParam("Id of the connection to run now.") },
   responses: {
     202: {
       content: {
@@ -627,7 +652,7 @@ const uninstallRoute = createRoute({
     "Tears down a connection in one pass: revokes its runtime credentials and leased tokens, drops the proxy's cached upstream OAuth tokens, disables inbound webhooks, transitions it to `revoked`, and removes the upstream credential it was installed with unless another live connection still shares it. `upstream_credential` in the response says which of those happened. Idempotent per artifact, but rejects with 400 when the connection itself is already revoked.",
   security: [{ bearerAuth: [] }],
   request: {
-    params: ConnectionIdParam,
+    params: connectionIdParam("Id of the connection to uninstall."),
   },
   responses: {
     200: {
