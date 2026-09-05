@@ -3005,6 +3005,17 @@ export function itemRoutes(storage: Storage) {
    *
    * An already-revoked connection deletes freely: uninstall has run, the
    * credentials are gone, and the row is ordinary history at that point.
+   *
+   * **An `app` connection is an OAuth grant, and the same rule holds with a
+   * different door to send the caller to.** A grant is two records, this
+   * projection and the plugin's consent row, with the app's tokens hanging
+   * off the pair. Removing the projection here leaves the tokens live and
+   * the consent row standing, so the app keeps working and the next
+   * authorize is answered silently, while the security page has nothing
+   * left to show a Disconnect button for. `DELETE /auth/grants/{id}` and its
+   * form-friendly twin run the cascade that drops all of it first, so a
+   * grant live on both lifecycle axes is refused and sent there. One
+   * revoked on either axis is a tombstone and deletes freely.
    */
   function refuseUnlessUninstalled(
     item: Awaited<ReturnType<typeof storage.items.get>>,
@@ -3012,11 +3023,18 @@ export function itemRoutes(storage: Storage) {
     if (item?.type !== "system.connection") return;
     const props = item.properties as
       { status?: unknown; kind?: unknown } | undefined;
+    if (props?.kind === "app") {
+      if (item.state !== "active" || props.status !== "active") return;
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `Grant ${item.id} is still live. Revoke it first with ` +
+          `DELETE /auth/grants/${item.id} or POST /auth/grants/${item.id}/revoke, ` +
+          `which drop the app's tokens and its stored consent. Removing the row ` +
+          `here would leave both behind with nothing listing them.`,
+      );
+    }
     // **`kind`, not just the type.** `system.connection` covers both kinds
-    // and only `integration` has a runtime credential minted for it. An
-    // `app` connection is an OAuth grant: it holds no runtime credential,
-    // there is no uninstall pipeline to send its owner to, and deleting one
-    // is exactly how a grant is withdrawn. Refusing those breaks that.
+    // and only `integration` has a runtime credential minted for it.
     if (props?.kind !== "integration") return;
     if (props.status === "revoked") return;
     throw new MarfaError(

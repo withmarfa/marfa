@@ -1008,12 +1008,18 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
       cookie,
       "core.note:read core.task:write",
     );
-    const grantId = (await standingGrant(ctx)).id;
+    const original = await standingGrant(ctx);
+    const grantId = original.id;
 
-    const deleted = await request(ctx.app, "DELETE", `/items/${grantId}`, {
-      key: ctx.adminKey,
-    });
-    expect(deleted.status).toBe(200);
+    // Straight to the state axis. A bare item delete of a live grant is
+    // refused now (it would strand the plugin's records), so the shape this
+    // case needs, revoked on the state axis and still active on the status
+    // axis, is written the way a misbehaving operator path would leave it.
+    await ctx.storage.items.transition(
+      grantId,
+      "revoked",
+      original.space_id ?? undefined,
+    );
     // The fixture only means something if it is admitted by the predicate the
     // clause was added to. `status` still reads "active", so the merge would
     // take these scopes as standing were the `state` clause removed.

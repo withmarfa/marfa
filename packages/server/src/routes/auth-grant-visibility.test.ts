@@ -132,6 +132,14 @@ async function approveDeviceFlow(
   expect(consent.status).toBe(200);
 }
 
+/** Move a grant to `state: revoked` without touching its properties, the
+ *  shape an operator soft-delete produced before the door refused it. */
+async function softDeleteGrantRow(c: TestContext, id: string): Promise<void> {
+  const row = await c.storage.items.get(id);
+  if (!row) throw new Error(`softDeleteGrantRow: no item ${id}`);
+  await c.storage.items.transition(id, "revoked", row.space_id ?? undefined);
+}
+
 /** Every projected grant row, whatever either axis says. */
 async function allGrantRows(c: TestContext) {
   const listed = await c.storage.items.list({ type: "system.connection" });
@@ -189,13 +197,12 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     const originalId = before[0]!.id;
     expect(before[0]!.client_id).toBe(clientId);
 
-    // The route that produces the disagreement. A platform credential is
-    // required for a `system.*` write, and is checked ahead of the role
-    // bypass, so no user or space admin can reach this.
-    const deleted = await request(c.app, "DELETE", `/items/${originalId}`, {
-      key: c.adminKey,
-    });
-    expect(deleted.status).toBe(200);
+    // The shape that produces the disagreement: revoked on the state axis
+    // and active on the status axis. `DELETE /items/{id}` used to produce it
+    // with a platform credential; that door now refuses a live grant (pinned
+    // below), so the row is put into the shape directly, as any earlier
+    // deployment's data or a future door could.
+    await softDeleteGrantRow(c, originalId);
 
     // The fixture only means anything if it is the shape the predicate was
     // added to exclude: revoked on the state axis, still active on the
@@ -246,10 +253,11 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
       grant.id,
     );
 
-    const deleted = await request(c.app, "DELETE", `/items/${grant.id}`, {
-      key: c.adminKey,
-    });
-    expect(deleted.status).toBe(200);
+    // The door that produced this shape now refuses a live grant; shape the
+
+    // row through the store instead.
+
+    await softDeleteGrantRow(c, grant.id);
     expect((await c.storage.items.get(grant.id))?.state).toBe("revoked");
 
     expect(
@@ -307,5 +315,79 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
     expect(row?.state).toBe("active");
     expect(row?.properties.revoked_at).toBeUndefined();
     expect((await allGrantRows(c)).length).toBe(1);
+  });
+});
+
+describe("an operator cannot strand a live grant through the item doors", () => {
+  it("DELETE /items/{id} refuses a grant live on both axes and names the grant routes", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "grant-visibility-refuse@example.com");
+    await approveDeviceFlow(c, clientId, cookie, "core.note:read");
+    const [grant] = await listedGrants(c);
+    expect(grant).toBeDefined();
+
+    const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
+      key: c.adminKey,
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toContain(`/auth/grants/${grant!.id}/revoke`);
+
+    // Nothing moved: still listed, still live on both axes.
+    expect((await listedGrants(c)).map((g) => g.id)).toEqual([grant!.id]);
+    const row = await c.storage.items.get(grant!.id);
+    expect(row?.state).toBe("active");
+    expect(row?.properties.status).toBe("active");
+  });
+
+  it("DELETE /items/{id}/purge refuses the same grant before the trash gate can answer", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "grant-visibility-purge@example.com");
+    await approveDeviceFlow(c, clientId, cookie, "core.note:read");
+    const [grant] = await listedGrants(c);
+
+    const res = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
+      key: c.adminKey,
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    // The refusal is the grant one, not the ordering one about trashing
+    // first, which would send the caller to a step that is itself refused.
+    expect(body.error.message).toContain("still live");
+    expect((await listedGrants(c)).map((g) => g.id)).toEqual([grant!.id]);
+  });
+
+  it("a grant revoked through the grants surface deletes freely", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(
+      c,
+      "grant-visibility-tombstone@example.com",
+    );
+    await approveDeviceFlow(c, clientId, cookie, "core.note:read");
+    const [grant] = await listedGrants(c);
+
+    const revoke = await request(
+      c.app,
+      "POST",
+      `/auth/grants/${grant!.id}/revoke`,
+      { headers: { origin: ORIGIN, cookie } },
+    );
+    expect(revoke.status).toBe(302);
+    expect(revoke.headers.get("location")).toContain("notice=grant_revoked");
+
+    const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
+      key: c.adminKey,
+    });
+    expect(res.status).toBe(200);
+    expect(await listedGrants(c)).toEqual([]);
   });
 });
