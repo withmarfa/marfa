@@ -114,6 +114,11 @@ export async function importAll(options: ImportOptions): Promise<ImportResult> {
   const itemPages = paginate((cursor) =>
     client.items.listWithMetadata({
       state: "any",
+      // And every type. The route omits `system.*` unless asked, the
+      // stream carries no type filter, so the store holds them — and the
+      // prune below removes whatever this walk did not return. Without
+      // this a re-import deletes every reserved row the client has.
+      includeSystemTypes: true,
       limit: PAGE_SIZE,
       ...(updatedAfter === undefined ? {} : { updated_after: updatedAfter }),
       ...(cursor === undefined ? {} : { cursor }),
