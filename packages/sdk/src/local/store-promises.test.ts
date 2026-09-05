@@ -191,6 +191,84 @@ describe("one writer per store", () => {
     expect(store.writer).toBe(true);
   });
 
+  it("clears a takeover right nothing is holding", async () => {
+    // Clearing a stale lock and claiming in its place is one critical
+    // section, and the right to be inside it is itself a file. Handed back
+    // in a `finally`, so an ordinary exit never leaves it — but nothing
+    // runs when a process is killed, and a right left behind that way
+    // would stop every later opener from clearing any stale lock. One
+    // crash at the wrong instant, and the store never opens for writing
+    // again: the failure the takeover exists to prevent, reached one level
+    // down.
+    // One reading, taken before anything is written to the lock path.
+    // `recordedBootedAt` opens a real store to read the value back, so
+    // calling it a second time takes over the stale lock this test just
+    // laid down and deletes it on close — leaving an opener that finds no
+    // lock at all and never reaches the takeover this is about.
+    const booted = await recordedBootedAt();
+
+    writeFileSync(
+      `${path}.lock`,
+      JSON.stringify({
+        pid: 999_999_999,
+        token: "gone",
+        since: AT,
+        bootedAt: booted,
+      }),
+    );
+    writeFileSync(
+      `${path}.lock.takeover`,
+      JSON.stringify({
+        pid: 999_999_998,
+        token: "died-holding-the-right",
+        since: AT,
+        bootedAt: booted,
+      }),
+    );
+
+    const store = await openAt();
+    expect(store.writer).toBe(true);
+    expect(existsSync(`${path}.lock.takeover`)).toBe(false);
+  });
+
+  it("leaves a takeover right alone while its holder is running", async () => {
+    // The other half, and the reason the reclaim above reads the right
+    // rather than simply removing it. A right held by a live process means
+    // somebody is between clearing a dead lock and claiming in its place;
+    // taking it from them puts two openers inside the one section, which
+    // is the whole thing it is there to prevent. Refusing this launch is
+    // the correct outcome: the holder is about to become the writer.
+    // One reading, taken before anything is written to the lock path.
+    // `recordedBootedAt` opens a real store to read the value back, so
+    // calling it a second time takes over the stale lock this test just
+    // laid down and deletes it on close — leaving an opener that finds no
+    // lock at all and never reaches the takeover this is about.
+    const booted = await recordedBootedAt();
+
+    writeFileSync(
+      `${path}.lock`,
+      JSON.stringify({
+        pid: 999_999_999,
+        token: "gone",
+        since: AT,
+        bootedAt: booted,
+      }),
+    );
+    writeFileSync(
+      `${path}.lock.takeover`,
+      JSON.stringify({
+        pid: process.pid,
+        token: "inside-the-section",
+        since: AT,
+        bootedAt: booted,
+      }),
+    );
+
+    const store = await openAt();
+    expect(store.writer).toBe(false);
+    expect(existsSync(`${path}.lock.takeover`)).toBe(true);
+  });
+
   it("records when the machine started, not when this process did", async () => {
     // Checked against an independent reading of the same fact rather than
     // against a copy of the code's own arithmetic. `process.uptime()` is

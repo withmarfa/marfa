@@ -286,20 +286,55 @@ export function acquireStoreLock(storePath: string): StoreLock {
     // after one crash, which is a worse failure than the race.
     const takeover = `${path}.takeover`;
     const marker = `${takeover}.${String(process.pid)}.${token}`;
-    let heldRight = false;
     let won = false;
-    try {
-      writeFileSync(marker, token);
-      linkSync(marker, takeover);
-      heldRight = true;
-    } catch {
-      // Somebody else is inside. Fall through and refuse rather than
-      // racing them for a file neither of us should be touching.
-    } finally {
+    const take = (): boolean => {
       try {
-        unlinkSync(marker);
+        // The right carries a holder for the same reason the lock does:
+        // so a later opener can tell one that is held from one that was
+        // abandoned.
+        writeFileSync(
+          marker,
+          JSON.stringify({
+            pid: process.pid,
+            token,
+            since: new Date().toISOString(),
+            bootedAt: machineBootedAt(),
+          }),
+        );
+        linkSync(marker, takeover);
+        return true;
       } catch {
-        // Never created, or already gone.
+        return false;
+      } finally {
+        try {
+          unlinkSync(marker);
+        } catch {
+          // Never created, or already gone.
+        }
+      }
+    };
+
+    let heldRight = take();
+    if (!heldRight) {
+      // A right that no live process holds. `finally` hands it back on
+      // every ordinary exit, but nothing runs when a process is killed,
+      // and a right left behind that way would stop every future opener
+      // from ever clearing a stale lock — the store unopenable after one
+      // crash, reached from outside rather than through a missing branch.
+      //
+      // Two openers can both judge it abandoned and both remove it, and
+      // that is tolerated rather than prevented: the re-read below is what
+      // stops a live lock being cleared, so the worst this race produces
+      // is two callers inside a section where only one can claim. The
+      // right narrows the window; the re-read is what makes it safe.
+      const rightHolder = readHolder(takeover);
+      if (rightHolder === undefined || !stillHolding(rightHolder)) {
+        try {
+          unlinkSync(takeover);
+        } catch {
+          // Somebody reclaimed it first.
+        }
+        heldRight = take();
       }
     }
 
