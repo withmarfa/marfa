@@ -625,33 +625,26 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     scopes: readonly string[];
   }): Promise<void> {
     const now = new Date();
-    const existing = await this.db
-      .select({ id: auth_oauth_consent.id })
-      .from(auth_oauth_consent)
-      .where(
-        and(
-          eq(auth_oauth_consent.clientId, input.clientId),
-          eq(auth_oauth_consent.userId, input.authUserId),
-        ),
-      )
-      .orderBy(desc(auth_oauth_consent.updatedAt))
-      .limit(1);
-    const row = existing[0];
-    if (row) {
-      await this.db
-        .update(auth_oauth_consent)
-        .set({ scopes: JSON.stringify([...input.scopes]), updatedAt: now })
-        .where(eq(auth_oauth_consent.id, row.id));
-      return;
-    }
-    await this.db.insert(auth_oauth_consent).values({
-      id: generateId(),
-      clientId: input.clientId,
-      userId: input.authUserId,
-      referenceId: input.referenceId,
-      scopes: JSON.stringify([...input.scopes]),
-      createdAt: now,
-      updatedAt: now,
-    });
+    // One statement, arbitrated by `uq_auth_oauth_consent_client_user`; see
+    // the Postgres twin for why the update half re-stamps `referenceId`.
+    await this.db
+      .insert(auth_oauth_consent)
+      .values({
+        id: generateId(),
+        clientId: input.clientId,
+        userId: input.authUserId,
+        referenceId: input.referenceId,
+        scopes: JSON.stringify([...input.scopes]),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [auth_oauth_consent.clientId, auth_oauth_consent.userId],
+        set: {
+          scopes: JSON.stringify([...input.scopes]),
+          referenceId: input.referenceId,
+          updatedAt: now,
+        },
+      });
   }
 }

@@ -2107,23 +2107,29 @@ export interface OauthProviderStore {
     expectedScopes: readonly string[],
   ): Promise<boolean>;
   /**
-   * Write the `auth_oauth_consent` row a grant carries, creating it or
-   * replacing its scopes, keyed on `(clientId, authUserId)` exactly as the
-   * plugin's own consent endpoint resolves a prior grant.
+   * Write the plugin's consent row for `(clientId, authUserId)`: create it,
+   * or replace its scopes and re-stamp its space binding if one exists.
+   * One statement, arbitrated by the unique index both dialects carry on
+   * the pair, so two writers cannot leave two rows or a constraint error.
    *
-   * Exists for the device-flow approval. That surface writes the
-   * `system.connection` projection itself and issues tokens from Marfa's own
-   * table, so it never passed through the plugin's consent endpoint and
-   * never left a consent row behind. A grant is two records, and every
-   * reader of the plugin's half — the consent skip, `getPriorConsent`, the
-   * plugin's own authorize — treated a device grant as no grant at all: the
-   * next code-flow authorize for the same app rendered a consent screen as
-   * if the person had never approved it, and the revoke cascade had one
-   * record to drop where the code flow had two. `scopes` is the merged set
-   * the approval wrote to the projection, so the two halves agree.
+   * The row is what both consent checks read: the plugin's own, inside its
+   * authorize endpoint, which skips its screen when the row holds every
+   * requested scope literally, and Marfa's, on `GET /auth/authorize`, which
+   * skips when the row covers the request by pattern. A device approval
+   * never passes through the plugin's consent endpoint, so without this
+   * write a device grant had a projection and no row, and every later
+   * browser authorize for the same app rendered consent afresh.
    *
-   * Replace rather than merge, because the caller has already merged: the
-   * projection is the standing grant and this row mirrors it.
+   * `scopes` is the projection's merged set, not this approval alone, and
+   * it replaces what the row held: the projection is the grant and the row
+   * mirrors it. The two can differ when a row stands with no projection
+   * beside it (the code flow logs a failed projection write and issues its
+   * code anyway); a later device approval then narrows the row to what the
+   * person just approved, deliberately, since that is less access rather
+   * than more and the browser asks again for the rest. `referenceId` is the
+   * user's space id, the value `consentReferenceId` hands the plugin, and
+   * it is written on update as well because the plugin's lookup filters on
+   * it.
    */
   upsertConsent(input: {
     clientId: string;

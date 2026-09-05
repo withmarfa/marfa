@@ -2734,6 +2734,7 @@ export function authRoutes(
       row.client_id,
       sessionResult.session.user.id,
       async () => {
+        const provider = storage.oauthProvider;
         const created = await createUserAppGrant(
           storage,
           sessionResult.session.user,
@@ -2741,23 +2742,31 @@ export function authRoutes(
           row.scopes,
           "marfa/oauth/device",
         );
+        const bound = await storage.oauth.approveDeviceCode(row.id, created.id);
         // The plugin's half of the grant. This surface never passes through
         // the plugin's consent endpoint, so without this write a device
-        // grant had a projection and no consent row, and every reader of
-        // the plugin's tables treated it as no grant at all: the next
-        // code-flow authorize for the same app rendered consent afresh, and
-        // the revoke cascade had one record to drop where the code flow has
-        // two. Written with the merged set so the two halves agree, and
-        // inside the lock so a revoke cannot land between them.
-        if (typeof storage.oauthProvider?.upsertConsent === "function") {
-          await storage.oauthProvider.upsertConsent({
+        // grant had a projection and no consent row, and neither consent
+        // check (the plugin's exact-membership skip, Marfa's coverage check
+        // behind it) could see it: every later browser authorize for the
+        // same app rendered consent afresh. Written with the projection's
+        // merged set, because the projection is the grant and the row
+        // mirrors it: a row standing alone after a failed projection write
+        // is narrowed here to what the person just approved, which is less
+        // access rather than more, and the browser asks again for the rest.
+        // Inside the lock so a revoke cannot land between the two halves,
+        // and only once the code is bound: an approval that
+        // lost to a deny in another tab is told it did not take effect, and
+        // must not leave a row that answers the next browser authorize with
+        // a code and no screen. A projection without a row is the state
+        // this change repairs, and the next approval repairs it again.
+        if (bound && provider && typeof provider.upsertConsent === "function") {
+          await provider.upsertConsent({
             clientId: row.client_id,
             authUserId: sessionResult.session.user.id,
             referenceId: created.spaceId ?? null,
             scopes: created.scopes,
           });
         }
-        const bound = await storage.oauth.approveDeviceCode(row.id, created.id);
         return { grant: created, ok: bound };
       },
     );

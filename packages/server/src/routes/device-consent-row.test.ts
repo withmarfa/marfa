@@ -149,6 +149,34 @@ async function approveOnDevice(
   expect(approve.status).toBe(200);
 }
 
+/** Point the pair's row at a space it does not belong to, the shape a
+ *  binding that drifted (or a row written before the binding existed)
+ *  leaves behind. */
+async function driftReferenceId(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+): Promise<void> {
+  const schema = await betterAuthSchema(c);
+  const { and, eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    update: (table: unknown) => {
+      set: (values: Record<string, unknown>) => {
+        where: (cond: unknown) => Promise<unknown>;
+      };
+    };
+  };
+  await db
+    .update(schema.auth_oauth_consent)
+    .set({ referenceId: "space_drifted" })
+    .where(
+      and(
+        eq(schema.auth_oauth_consent.clientId, clientId),
+        eq(schema.auth_oauth_consent.userId, authUserId),
+      ),
+    );
+}
+
 /** The consent rows for the pair, scopes normalized across the array column
  *  and the JSON-string column. */
 async function consentRows(
@@ -299,6 +327,112 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
       [...(grant.properties.scopes as string[])].sort(),
     );
     expect(rows[0]!.scopes).toEqual(["core.note:read", "core.task:read"]);
+  });
+
+  it("in hosted mode the row is bound to the grant's space, and a re-approval re-stamps a drifted binding", async () => {
+    // The plugin's own lookup filters on `reference_id` whenever the value
+    // it computes is truthy, and in hosted mode that is the space id. A row
+    // bound to nothing, or to the wrong space, is one the plugin's skip
+    // never matches; only Marfa's coverage check would still fire, and the
+    // repair the update half does is what keeps the two in step.
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "hosted@example.com");
+    const authUserId = await authUserIdFor(ctx, "hosted@example.com");
+
+    await approveOnDevice(ctx, clientId, cookie, "core.note:read");
+    const grant = await onlyGrant(ctx);
+    expect(grant.space_id).toBeTruthy();
+    expect(await consentRows(ctx, clientId, authUserId)).toEqual([
+      { scopes: ["core.note:read"], referenceId: grant.space_id },
+    ]);
+
+    await driftReferenceId(ctx, clientId, authUserId);
+    await approveOnDevice(ctx, clientId, cookie, "core.task:read");
+    const rows = await consentRows(ctx, clientId, authUserId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.referenceId).toBe(grant.space_id);
+    expect(rows[0]!.scopes).toEqual(
+      expect.arrayContaining(["core.note:read", "core.task:read"]),
+    );
+  });
+
+  it("a consent row standing with no projection is narrowed to the approval, deliberately", async () => {
+    // The code flow logs a failed projection write and issues its code
+    // anyway, so a row can stand alone holding what the browser granted.
+    // The projection is the grant and the row mirrors it: the next device
+    // approval rebuilds the projection from its own request and the row
+    // follows, which withdraws consent rather than widening it, and the
+    // browser asks again for the rest. This pins that the shrink is chosen,
+    // not an accident of replace-versus-merge.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "standalone@example.com");
+    const authUserId = await authUserIdFor(ctx, "standalone@example.com");
+    await ctx.storage.oauthProvider!.upsertConsent({
+      clientId,
+      authUserId,
+      referenceId: null,
+      scopes: ["core.note:read", "core.task:write"],
+    });
+
+    await approveOnDevice(ctx, clientId, cookie, "core.note:read");
+
+    const grant = await onlyGrant(ctx);
+    expect(grant.properties.scopes).toEqual(["core.note:read"]);
+    const rows = await consentRows(ctx, clientId, authUserId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.scopes).toEqual(["core.note:read"]);
+  });
+
+  it("the row mirrors the merged set where merging is not a union", async () => {
+    // Read then write on one type: the merge keeps one entry per key, so
+    // the row must equal what the projection holds rather than the two
+    // requests concatenated. Disjoint keys cannot tell those apart.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "merge@example.com");
+    const authUserId = await authUserIdFor(ctx, "merge@example.com");
+
+    await approveOnDevice(ctx, clientId, cookie, "core.note:read");
+    await approveOnDevice(ctx, clientId, cookie, "core.note:write");
+
+    const grant = await onlyGrant(ctx);
+    const rows = await consentRows(ctx, clientId, authUserId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.scopes).toEqual(grant.properties.scopes);
+    expect(rows[0]!.scopes).toContain("core.note:write");
+  });
+
+  it("an approval that does not bind the code leaves no row behind", async () => {
+    // Two tabs on one user code: the loser is told its approval did not
+    // take effect, and a consent row written regardless would answer the
+    // next browser authorize with a code and no screen. The bind is the
+    // gate, so the row is written only behind it.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "loser@example.com");
+    const authUserId = await authUserIdFor(ctx, "loser@example.com");
+    vi.spyOn(ctx.storage.oauth, "approveDeviceCode").mockResolvedValueOnce(
+      false,
+    );
+
+    const init = await request(ctx.app, "POST", "/auth/device", {
+      body: { client_id: clientId, scope: "core.note:read" },
+      headers: { origin: ORIGIN },
+    });
+    expect(init.status).toBe(200);
+    const { user_code } = (await init.json()) as { user_code: string };
+    const approve = await request(ctx.app, "POST", "/auth/device/consent", {
+      form: { user_code, decision: "approve" },
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(approve.status).toBe(302);
+    expect(approve.headers.get("location")).toContain("already_resolved");
+    expect(await consentRows(ctx, clientId, authUserId)).toEqual([]);
   });
 
   it("revoking the grant removes the row with the rest", async () => {

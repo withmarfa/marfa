@@ -213,37 +213,29 @@ async function authorizationCodeGrant(
   );
   expect(authorizeRes.status).toBe(302);
   const location = authorizeRes.headers.get("location") ?? "";
-  let code: string | null;
-  if (location.startsWith(CALLBACK)) {
-    // The plugin answered without asking: a standing consent row already
-    // covers the request. The device approval a case makes first now writes
-    // that row, so the browser flow that follows it is a silent skip rather
-    // than a consent screen, and the code is on the callback already.
-    code = new URL(location).searchParams.get("code");
-  } else {
-    if (!location.includes("/auth/authorize?")) {
-      throw new Error(`authorize did not reach consent: ${location}`);
-    }
-    const signedQuery = location.slice(location.indexOf("?") + 1);
-    const decisionRes = await request(
-      c.app,
-      "POST",
-      "/auth/authorize/decision",
-      {
-        form: {
-          accept: "true",
-          oauth_query: signedQuery,
-          scopes: scope.split(" ").filter(Boolean),
-        },
-        headers: { cookie, origin: ORIGIN },
-      },
-    );
-    expect(decisionRes.status).toBe(302);
-    code = new URL(
-      decisionRes.headers.get("location") ?? "",
-      ORIGIN,
-    ).searchParams.get("code");
+  // The interactive path, and only that: a device approval now writes the
+  // consent row the browser flow skips on, so each case gives the code leg
+  // its own client, and this helper refuses a silent answer rather than
+  // accepting whichever branch the plugin took. The property under test is
+  // that the decision handler and the device route agree, which needs the
+  // decision handler to run.
+  if (!location.includes("/auth/authorize?")) {
+    throw new Error(`authorize did not reach consent: ${location}`);
   }
+  const signedQuery = location.slice(location.indexOf("?") + 1);
+  const decisionRes = await request(c.app, "POST", "/auth/authorize/decision", {
+    form: {
+      accept: "true",
+      oauth_query: signedQuery,
+      scopes: scope.split(" ").filter(Boolean),
+    },
+    headers: { cookie, origin: ORIGIN },
+  });
+  expect(decisionRes.status).toBe(302);
+  const code = new URL(
+    decisionRes.headers.get("location") ?? "",
+    ORIGIN,
+  ).searchParams.get("code");
   if (!code) throw new Error("no code on callback redirect");
 
   const tokenRes = await request(c.app, "POST", "/auth/oauth2/token", {
@@ -318,7 +310,15 @@ describe("refresh-token issuance is gated on offline_access", () => {
     expect(viaDevice.status).toBe(200);
     expect(viaDevice.body.access_token).toMatch(/^marfa_at_/);
 
-    const viaCode = await authorizationCodeGrant(ctx, clientId, cookie, scope);
+    // Its own client: the device approval above wrote a consent row for
+    // `clientId`, and the browser flow for that client would now skip.
+    const codeClientId = await seedClient(ctx);
+    const viaCode = await authorizationCodeGrant(
+      ctx,
+      codeClientId,
+      cookie,
+      scope,
+    );
     expect(viaCode.status).toBe(200);
     expect(viaCode.body.access_token).toBeTruthy();
 
@@ -349,7 +349,15 @@ describe("refresh-token issuance is gated on offline_access", () => {
     expect(viaDevice.status).toBe(200);
     expect(viaDevice.body.refresh_token).toMatch(/^marfa_rt_/);
 
-    const viaCode = await authorizationCodeGrant(ctx, clientId, cookie, scope);
+    // Its own client: the device approval above wrote a consent row for
+    // `clientId`, and the browser flow for that client would now skip.
+    const codeClientId = await seedClient(ctx);
+    const viaCode = await authorizationCodeGrant(
+      ctx,
+      codeClientId,
+      cookie,
+      scope,
+    );
     expect(viaCode.status).toBe(200);
     expect(viaCode.body.refresh_token).toBeTruthy();
   });
