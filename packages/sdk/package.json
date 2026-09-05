@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/sdk",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "license": "Apache-2.0",
   "type": "module",
   "publishConfig": {
@@ -23,11 +23,16 @@
     "./replica": {
       "types": "./dist/replica/index.d.ts",
       "import": "./dist/replica/index.js"
+    },
+    "./local": {
+      "types": "./dist/local/index.d.ts",
+      "import": "./dist/local/index.js"
     }
   },
   "files": [
     "dist",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "drizzle"
   ],
   "scripts": {
     "build": "tsup",
@@ -44,13 +49,23 @@
     "@withmarfa/server": "workspace:*",
     "tsup": "^8.5.1",
     "typescript": "^6.0.3",
-    "@tanstack/db": "^0.8.0"
+    "@tanstack/db": "^0.8.0",
+    "@libsql/client": "^0.17.4",
+    "drizzle-orm": "^0.45.2"
   },
   "peerDependencies": {
-    "@tanstack/db": ">=0.6.17 <0.9.0"
+    "@tanstack/db": ">=0.6.17 <0.9.0",
+    "@libsql/client": "^0.17.4",
+    "drizzle-orm": "^0.45.2"
   },
   "peerDependenciesMeta": {
     "@tanstack/db": {
+      "optional": true
+    },
+    "@libsql/client": {
+      "optional": true
+    },
+    "drizzle-orm": {
       "optional": true
     }
   }
