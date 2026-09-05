@@ -332,14 +332,18 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
    * compute the same hash to find the row. Returns null if the token
    * doesn't exist (e.g. cleaned up by a prior pass).
    */
-  async findRefreshTokenGrantKey(
-    tokenHash: string,
-  ): Promise<{ clientId: string; userId: string; revoked: boolean } | null> {
+  async findRefreshTokenGrantKey(tokenHash: string): Promise<{
+    clientId: string;
+    userId: string;
+    revoked: boolean;
+    referenceId: string | null;
+  } | null> {
     const rows = await this.db
       .select({
         clientId: auth_oauth_refresh_token.clientId,
         userId: auth_oauth_refresh_token.userId,
         revoked: auth_oauth_refresh_token.revoked,
+        referenceId: auth_oauth_refresh_token.referenceId,
       })
       .from(auth_oauth_refresh_token)
       .where(eq(auth_oauth_refresh_token.token, tokenHash))
@@ -350,6 +354,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       clientId: row.clientId,
       userId: row.userId,
       revoked: Boolean(row.revoked),
+      referenceId: row.referenceId ?? null,
     };
   }
 
