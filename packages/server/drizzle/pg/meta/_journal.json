@@ -701,6 +701,13 @@
       "when": 1788512000000,
       "tag": "0099_idempotency_records",
       "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1788598400000,
+      "tag": "0100_items_trashed_at",
+      "breakpoints": true
     }
   ]
 }

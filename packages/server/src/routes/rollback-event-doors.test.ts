@@ -1246,8 +1246,8 @@ const PUBLISHES_OUT_OF_SCOPE: Record<string, PublishingFile> = {
   "routes/auth-consent.ts": { sites: 1, why: "grant projection at consent" },
   "routes/integrations.ts": { sites: 1, why: "the install pipeline" },
   "routes/admin-archive.ts": {
-    sites: 1,
-    why: "archive restore, an admin surface",
+    sites: 2,
+    why: "archive restore, an admin surface: the items it wrote and the edges between them, in that order",
   },
   "auth/starter-content.ts": {
     sites: 1,

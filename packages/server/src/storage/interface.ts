@@ -665,6 +665,14 @@ export interface ItemStore {
    * items are not returned by `get`/`list`, and do not leak to this
    * method via `restore` either; use the normal `restore()` to
    * un-trash.
+   *
+   * **`trashed` is the whole of the difference, in both dialects.** `get`
+   * rejects on `state === "trashed"` and tests nothing else, so archived
+   * and revoked rows come back from it already; this method drops that one
+   * test and adds no other state. The pairing of names suggests a wider
+   * gap than exists — that `get` means "active" and this means "any
+   * state" — and a caller swapping to it is widening its input by exactly
+   * one state rather than by four.
    */
   getIncludingTrashed(id: string, spaceId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
@@ -746,9 +754,18 @@ export interface ItemStore {
     by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**
-   * Hard-delete every trashed item whose `updated_at` is strictly older
-   * than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
-   * for each row. Returns the number of rows deleted.
+   * Hard-delete every trashed item that entered the bin strictly before
+   * `beforeDate` (an ISO 8601 timestamp). Cleans the search index for
+   * each row. Returns the number of rows deleted.
+   *
+   * The window is measured from `trashed_at`, the time of the transition
+   * into the soft-deleted state, falling back to `updated_at` for a row
+   * carrying no stamp. `updated_at` alone used to decide it, and it is
+   * the modification time rather than the removal time: any write to a
+   * trashed row moved it, so editing something already in the bin
+   * restarted its retention clock. The fallback covers only rows soft-
+   * deleted by a build predating the column, where reproducing the old
+   * behavior beats a row nothing can purge.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
@@ -823,6 +840,23 @@ export interface ItemStore {
   ): Promise<number>;
 }
 
+/**
+ * What `setExtensions` answers: the item's whole extensions map after the
+ * write, and the modification time the write left on the item row.
+ *
+ * `updated_at` is null when nothing in the set announces, because then the
+ * item row was never touched and there is no new value to report. A caller
+ * publishing the item beside the write needs this half: the frame it holds
+ * was read before the write, so announcing that one describes an
+ * `updated_at` the row does not have. A client watermarking on the value
+ * re-fetches on its next catch-up, and a client comparing it against a
+ * later read sees a change nothing told it about.
+ */
+export interface SetExtensionsResult {
+  extensions: Record<string, Record<string, unknown>>;
+  updated_at: string | null;
+}
+
 export interface MetadataStore {
   get(itemId: string): Promise<Metadata>;
   getMany(itemIds: string[]): Promise<Metadata[]>;
@@ -862,6 +896,36 @@ export interface MetadataStore {
     namespace: string,
     data: Record<string, unknown>,
   ): Promise<Record<string, Record<string, unknown>>>;
+  /**
+   * `setExtension` for several namespaces of one item at once, replacing
+   * each named namespace and leaving the rest of the map alone.
+   *
+   * The extensions of an item are one JSON column, so writing them one
+   * namespace at a time rewrites that column once per namespace and — for
+   * every namespace that announces — bumps the item's modification time
+   * again beside it. On the archive restore, which is the caller this
+   * exists for, that multiplied by every item in the archive on the one
+   * path whose whole purpose is moving a lot of rows at once. Passing the
+   * set the caller already holds collapses it to one write of each row.
+   *
+   * The bump is decided once for the whole set: if any namespace in it
+   * announces, the item is bumped once, which is what a caller writing
+   * them together means by "the item changed". An empty set writes
+   * nothing at all rather than touching the row to store what it already
+   * holds.
+   *
+   * Unconditional replace, with `setExtension`'s hazard and not
+   * `mutateExtension`'s guarantee: a value derived from a previous read
+   * still belongs in `mutateExtension`.
+   *
+   * Answers the post-write modification time alongside the map, because
+   * the caller this exists for publishes the item it just wrote and would
+   * otherwise announce the value the row carried before the bump.
+   */
+  setExtensions(
+    itemId: string,
+    entries: Record<string, Record<string, unknown>>,
+  ): Promise<SetExtensionsResult>;
   /**
    * Atomic namespace-scoped read / mutate / write. `mutate` is handed the
    * namespace's current contents (an empty record when unset) exactly

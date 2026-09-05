@@ -434,7 +434,7 @@ CREATE TABLE IF NOT EXISTS "items" (
 	\`capture_latitude\` real,
 	\`capture_longitude\` real,
 	\`tier\` text DEFAULT 'library' NOT NULL
-, "starts_at_utc" text, "ends_at_utc" text, \`written_by_connection_id\` text);
+, "starts_at_utc" text, "ends_at_utc" text, \`written_by_connection_id\` text, \`trashed_at\` text);
 
 CREATE TABLE IF NOT EXISTS "idempotency_records" (
   "id" text PRIMARY KEY NOT NULL,

@@ -85,6 +85,22 @@ export const items = pgTable(
     type: text("type").notNull(),
     state: text("state").notNull().default("active"),
     tier: text("tier").notNull().default("library"),
+    // When the item entered its soft-deleted state, and the honest key for
+    // the retention sweep. `updated_at` used to stand in for it and is a
+    // proxy for something else: any write to a trashed row moves it, so
+    // editing something already in the bin restarted its retention clock
+    // with nobody intending to. Tag and extension writes move it too, which
+    // widens that to writes nobody thinks of as edits.
+    //
+    // Stamped when a row moves into the state `softDeleteState` resolves
+    // for its type, cleared when it moves back out, so a restore followed
+    // by a second delete starts a fresh window rather than inheriting the
+    // first one. Nullable because an active row has no such time. The sweep
+    // reads it only for rows it has already filtered to the soft-deleted
+    // state, and the migration backfills those that predate the column from
+    // `updated_at` — the value the sweep was reading anyway, so no row's
+    // window moves on the day this lands.
+    trashed_at: text("trashed_at"),
     properties: jsonb("properties").$type<Record<string, unknown>>().notNull(),
     created_at: text("created_at").notNull(),
     updated_at: text("updated_at").notNull(),

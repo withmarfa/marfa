@@ -17,6 +17,7 @@ import {
   spaceCondition,
   spaceOrPlatformCondition,
 } from "../space-condition.js";
+import { softDeleteClock } from "../soft-delete-clock.js";
 import {
   generateId,
   isValidId,
@@ -352,6 +353,13 @@ export class PgItemStore implements ItemStore {
             space_id: spaceId,
             type: input.type,
             state,
+            // A create can name its own state, and an archive restore names
+            // `trashed` for a row that was in the bin when the archive was
+            // taken. Stamping here rather than leaving it null means such a
+            // row's retention window starts where every other trashed row's
+            // does, instead of falling back to a modification time a later
+            // edit would move.
+            ...softDeleteClock(input.type, SYSTEM_DEFAULT_STATE, state, now),
             tier: input.tier ?? "library",
             properties,
             created_at: now,
@@ -1123,9 +1131,17 @@ export class PgItemStore implements ItemStore {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, error);
     }
 
+    const now = new Date().toISOString();
     await this.db
       .update(items)
-      .set({ state: target, updated_at: new Date().toISOString() })
+      .set({
+        state: target,
+        updated_at: now,
+        // The sweep's clock starts here rather than at the modification
+        // time, which a later write to the trashed row would move.
+        // `softDeleteClock` carries why.
+        ...softDeleteClock(row.type, row.state, target, now),
+      })
       .where(this.spaceWhere(id, spaceId));
 
     await this.searchStore.remove(id);
@@ -1182,7 +1198,18 @@ export class PgItemStore implements ItemStore {
   ): Promise<number> {
     const baseConditions = [
       eq(items.state, "trashed"),
-      lt(items.updated_at, beforeDate),
+      // The window runs from when the row entered the bin, not from when it
+      // was last written. `updated_at` was standing in for that, and it moves
+      // on any write to a trashed row — a tag or an extension write included
+      // — so editing something already in the bin restarted its clock.
+      //
+      // `updated_at` survives as the fallback for a row carrying no stamp,
+      // which after the backfill can only be one soft-deleted by a build
+      // predating the column: a replica still rolling, or a soft delete that
+      // landed while the migration was in flight. Falling back reproduces
+      // exactly the behavior those rows have today, which is worse than the
+      // stamp and far better than a row nothing can ever purge.
+      lt(sql`COALESCE(${items.trashed_at}, ${items.updated_at})`, beforeDate),
       // Three states, not two: a named space, the space-less bucket
       // (`null`), or every space at once (`undefined`).
       spaceCondition(items.space_id, spaceId),
@@ -1217,10 +1244,11 @@ export class PgItemStore implements ItemStore {
   ): Promise<number> {
     // Deliberately not routed through `purgeTrashedOlderThan`: activity
     // rows are `active` and never trashed, so the predicate differs at
-    // both ends — type instead of state, `created_at` instead of
-    // `updated_at`. An activity row is written once and never revised,
-    // so the two timestamps agree; `created_at` is the one that says
-    // what the window means.
+    // both ends — type instead of state, and `created_at` instead of the
+    // stamp that sweep reads. An activity row never enters the bin, so it
+    // carries no removal time to key off, and it is written once and
+    // never revised, so `created_at` is both available and the one that
+    // says what the window means.
     const baseConditions = [
       eq(items.type, "system.activity"),
       lt(items.created_at, beforeDate),
@@ -1308,7 +1336,11 @@ export class PgItemStore implements ItemStore {
     const now = new Date().toISOString();
     await this.db
       .update(items)
-      .set({ state: "active", updated_at: now })
+      .set({
+        state: "active",
+        updated_at: now,
+        ...softDeleteClock(row.type, row.state, "active", now),
+      })
       .where(this.spaceWhere(id, spaceId));
 
     await this.searchStore.index(id, row.properties, row.type, spaceId);
@@ -1342,7 +1374,11 @@ export class PgItemStore implements ItemStore {
     const now = new Date().toISOString();
     await this.db
       .update(items)
-      .set({ state, updated_at: now })
+      .set({
+        state,
+        updated_at: now,
+        ...softDeleteClock(row.type, row.state, state, now),
+      })
       .where(this.spaceWhere(id, spaceId));
 
     if (state === "trashed") {

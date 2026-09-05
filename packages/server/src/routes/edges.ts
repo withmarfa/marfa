@@ -716,7 +716,7 @@ const listFromSourceRoute = createRoute({
   operationId: "listItemEdges",
   tags: ["Edges"],
   summary: "List outbound edges from an item",
-  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -762,6 +762,14 @@ const listFromSourceRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description: "No read access to the anchor item's type",
+    },
     404: {
       content: {
         "application/json": {
@@ -779,7 +787,7 @@ const listBackrefsRoute = createRoute({
   operationId: "listItemBackrefs",
   tags: ["Edges"],
   summary: "List inbound edges to an item",
-  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -825,6 +833,14 @@ const listBackrefsRoute = createRoute({
       },
       description: "Unauthorized",
     },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["type_not_permitted"]),
+        },
+      },
+      description: "No read access to the anchor item's type",
+    },
     404: {
       content: {
         "application/json": {
@@ -851,10 +867,41 @@ export function itemEdgeListingRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     const spaceId = c.get("apiKey")?.space_id;
-    const item = await storage.items.get(id, spaceId);
+    // The trashed-inclusive read, matching the write doors above. Edges
+    // carry no lifecycle of their own, and the collection-level listing
+    // returns one whether or not an endpoint is in the bin — so the plain
+    // read made the same edge reachable through one door and absent
+    // through another, decided by the state of a row the edge does not
+    // belong to. A client reconciling its copy has to see a trashed
+    // item's edges; not-found tells it the item never existed, which is a
+    // different thing and leads it to the wrong repair. A genuinely
+    // absent item still answers not-found.
+    //
+    // **The swap admits exactly one more state, not every non-active
+    // one.** `get` filters `trashed` and nothing else, so an archived or
+    // a revoked anchor was already served through this door and still
+    // is; only a trashed one is new. Worth stating because the two method
+    // names invite reading `get` as "active only", and a reader who
+    // believes that will look for a widening here that is not present.
+    const item = await storage.items.getIncludingTrashed(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
+    // The anchor decides what this call returns, so reading it is a read
+    // of the anchor — the same check every write door in this file makes
+    // against its source item, and the one the item read doors make. It
+    // is stated here rather than left to the space fence because the
+    // fence and the type map answer different questions: a credential can
+    // be inside the space and still hold no grant on this type.
+    //
+    // After the read rather than before it, because the check needs the
+    // row's `type` and only the row carries it. The cost is that a
+    // caller inside the space without the grant can tell 403 from 404 and
+    // so learns the row exists. Accepted rather than overlooked: the item
+    // read door resolves in the same order for the same reason, and
+    // trading that away means answering 404 for a row the caller may not
+    // read — a change to every typed read door at once, not to these two.
+    requireTypeAccess(c, item.type, "read");
     const q = c.req.valid("query");
     const result = await storage.edges.listFromSource(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
@@ -876,10 +923,41 @@ export function itemEdgeListingRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
     const spaceId = c.get("apiKey")?.space_id;
-    const item = await storage.items.get(id, spaceId);
+    // The trashed-inclusive read, matching the write doors above. Edges
+    // carry no lifecycle of their own, and the collection-level listing
+    // returns one whether or not an endpoint is in the bin — so the plain
+    // read made the same edge reachable through one door and absent
+    // through another, decided by the state of a row the edge does not
+    // belong to. A client reconciling its copy has to see a trashed
+    // item's edges; not-found tells it the item never existed, which is a
+    // different thing and leads it to the wrong repair. A genuinely
+    // absent item still answers not-found.
+    //
+    // **The swap admits exactly one more state, not every non-active
+    // one.** `get` filters `trashed` and nothing else, so an archived or
+    // a revoked anchor was already served through this door and still
+    // is; only a trashed one is new. Worth stating because the two method
+    // names invite reading `get` as "active only", and a reader who
+    // believes that will look for a widening here that is not present.
+    const item = await storage.items.getIncludingTrashed(id, spaceId);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
+    // The anchor decides what this call returns, so reading it is a read
+    // of the anchor — the same check every write door in this file makes
+    // against its source item, and the one the item read doors make. It
+    // is stated here rather than left to the space fence because the
+    // fence and the type map answer different questions: a credential can
+    // be inside the space and still hold no grant on this type.
+    //
+    // After the read rather than before it, because the check needs the
+    // row's `type` and only the row carries it. The cost is that a
+    // caller inside the space without the grant can tell 403 from 404 and
+    // so learns the row exists. Accepted rather than overlooked: the item
+    // read door resolves in the same order for the same reason, and
+    // trading that away means answering 404 for a row the caller may not
+    // read — a change to every typed read door at once, not to these two.
+    requireTypeAccess(c, item.type, "read");
     const q = c.req.valid("query");
     const result = await storage.edges.listToTarget(id, {
       edge_type: parseEdgeTypeFilter(q.edge_type),
