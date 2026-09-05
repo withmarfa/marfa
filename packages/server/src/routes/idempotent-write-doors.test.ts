@@ -127,6 +127,8 @@ const WRITERS: Record<string, string> = {
   "routes/auth-consent.ts":
     "projects an OAuth grant onto a system.connection; the consent decision is already serialized by withConsentLock and is a browser form rather than a retried API write",
   "routes/auth-pages.ts": "the device-flow and grant surfaces, as above",
+  "routes/admin.ts":
+    "the operator's client removal: it runs the grant cascade per projection and deletes the client's rows, and a second call finds nothing left to do, so a retry converges without a key; reached from an operator's shell rather than a retried API write",
   "auth/grant-lifecycle.ts":
     "the revoke cascade's projection flip, moved out of auth-pages so the grant routes and the client-revoke hook share one writer; a convergent write (status revoked, revoked_at restamped) reached from a browser form, an admin route or the plugin's revoke endpoint rather than from a retried API write, and taken under the consent lock whenever both ids are known",
   "routes/credentials.ts":

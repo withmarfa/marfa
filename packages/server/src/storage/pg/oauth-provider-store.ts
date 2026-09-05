@@ -362,6 +362,72 @@ export class PgOauthProviderStore implements OauthProviderStore {
     return rows.length > 0;
   }
 
+  async listGrantItemsForClient(clientId: string): Promise<
+    {
+      id: string;
+      spaceId: string | null;
+      authUserId: string | null;
+      state: string;
+      status: string | null;
+    }[]
+  > {
+    const rows = await this.db
+      .select({
+        id: items.id,
+        spaceId: items.space_id,
+        state: items.state,
+        authUserId: sql`${items.properties}->>'user_id'`,
+        status: sql`${items.properties}->>'status'`,
+      })
+      .from(items)
+      .where(
+        and(
+          eq(items.type, "system.connection"),
+          sql`${items.properties}->>'kind' = 'app'`,
+          sql`${items.properties}->>'client_id' = ${clientId}`,
+        ),
+      );
+    return rows.map((row) => ({
+      id: row.id,
+      spaceId: row.spaceId ?? null,
+      authUserId: typeof row.authUserId === "string" ? row.authUserId : null,
+      state: row.state,
+      status: typeof row.status === "string" ? row.status : null,
+    }));
+  }
+
+  async deleteClientRecords(clientId: string): Promise<{
+    accessTokens: number;
+    refreshTokens: number;
+    consents: number;
+  }> {
+    const access = await this.db
+      .delete(auth_oauth_access_token)
+      .where(eq(auth_oauth_access_token.clientId, clientId))
+      .returning({ id: auth_oauth_access_token.id });
+    const refresh = await this.db
+      .delete(auth_oauth_refresh_token)
+      .where(eq(auth_oauth_refresh_token.clientId, clientId))
+      .returning({ id: auth_oauth_refresh_token.id });
+    const consents = await this.db
+      .delete(auth_oauth_consent)
+      .where(eq(auth_oauth_consent.clientId, clientId))
+      .returning({ id: auth_oauth_consent.id });
+    return {
+      accessTokens: access.length,
+      refreshTokens: refresh.length,
+      consents: consents.length,
+    };
+  }
+
+  async deleteClient(clientId: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(auth_oauth_client)
+      .where(eq(auth_oauth_client.clientId, clientId))
+      .returning({ id: auth_oauth_client.id });
+    return deleted.length > 0;
+  }
+
   async createClient(input: CreateClientInput): Promise<CreateClientResult> {
     // PK on auth_oauth_client.id (separate from the business key
     // `client_id`). The plugin's own DCR generates a random 32-char

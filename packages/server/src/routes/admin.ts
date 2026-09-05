@@ -46,6 +46,8 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { evictSpaceStatus } from "../middleware/space-suspension.js";
 import { PendingDeletePurger } from "../storage/retention.js";
+import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
+import { log } from "../middleware/logger.js";
 import { RoleRequestSchema } from "./role-schema.js";
 import { KeyResponseSchema, QuotaSchema } from "./_schemas.js";
 
@@ -748,6 +750,87 @@ const deleteAccountRoute = createRoute({
   },
 });
 
+const deleteOAuthClientRoute = createRoute({
+  operationId: "adminDeleteOAuthClient",
+  method: "post",
+  path: "/oauth-clients/{client_id}/delete",
+  tags: ["Admin"],
+  summary: "Remove an OAuth client and every grant made to it",
+  description:
+    "Operator-initiated removal of a dynamically registered OAuth client. Runs the grant cascade for every user who ever authorized it (access and refresh tokens, stored consent, outstanding codes), removes each grant's record from the space it belongs to, then deletes the client row. Idempotent: a client whose row is already gone still has its grants swept, which is how a client deleted by hand is repaired. The body's `confirm` must be the client id, spelled exactly; the mismatch refusal is the fat-finger gate on an action with no undo.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    params: z.object({
+      client_id: z.string().describe("The client's `client_id`."),
+    }),
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            confirm: z
+              .string()
+              .min(1)
+              .describe("The client id, exactly. Refused otherwise."),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            deleted: z.literal(true),
+            client_row_deleted: z
+              .boolean()
+              .describe(
+                "False when no `auth_oauth_client` row existed, which is the orphan-repair case.",
+              ),
+            grants_removed: z
+              .number()
+              .int()
+              .describe(
+                "Grant records removed, across every space, each with its tokens, consent and codes.",
+              ),
+            stray_records_deleted: z
+              .number()
+              .int()
+              .describe(
+                "Tokens, consent rows and device codes for the client that no grant record named: what a client deleted by hand leaves behind.",
+              ),
+          }),
+        },
+      },
+      description: "The client and everything it held are gone.",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "`confirm` does not name this client id.",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Forbidden",
+    },
+  },
+});
+
 export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -1195,6 +1278,106 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       resource_id: id,
     });
     return c.json({ deleted: true as const }, 200);
+  });
+
+  router.openapi(deleteOAuthClientRoute, async (c) => {
+    requireAdmin(c);
+    const { client_id: clientId } = c.req.valid("param");
+    const { confirm } = c.req.valid("json");
+    if (confirm !== clientId) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "confirm must be the client id, exactly",
+      );
+    }
+    const provider = storage.oauthProvider;
+    if (!provider) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "This deployment has no OAuth clients to delete",
+      );
+    }
+
+    // A grant is two records and the tokens hang off the pair, so each
+    // projection goes through the same cascade the person's own Disconnect
+    // runs, and only then is the record itself removed. The listing sees
+    // every projection carrying the client id whatever either lifecycle
+    // axis says, because a tombstone left by a hand-deleted client row is
+    // exactly what this route repairs.
+    const projections = await provider.listGrantItemsForClient(clientId);
+    let grantsRemoved = 0;
+    for (const projection of projections) {
+      const spaceId = projection.spaceId ?? undefined;
+      const item = await storage.items.getIncludingTrashed(
+        projection.id,
+        spaceId,
+      );
+      if (!item) continue;
+      await revokeProjectedGrant(storage, {
+        itemId: item.id,
+        properties: item.properties,
+        spaceId,
+        clientId,
+        authUserId: projection.authUserId ?? undefined,
+      });
+      // Purge is the hard delete behind a soft one, and the soft-deleted
+      // state for a `system.*` row is `revoked`, so a live projection is
+      // moved there first. Purging is what takes the edges, metadata,
+      // versions and search entry with the row.
+      if (item.state !== "revoked") {
+        await storage.items.transition(item.id, "revoked", spaceId);
+      }
+      await storage.items.purge(item.id, spaceId);
+      grantsRemoved += 1;
+    }
+
+    // Whatever the per-grant cascade did not reach: tokens and consents for
+    // this client belonging to users whose projection was already gone, and
+    // every device code for the client, pending ones included.
+    const records = await provider.deleteClientRecords(clientId);
+    const deviceCodes =
+      await storage.oauth.deleteDeviceCodesForClient(clientId);
+    // Counted as strays because the cascades above have already taken
+    // everything a grant record named: a client removed while its grants
+    // were live leaves none, a client deleted by hand leaves all of them.
+    const strayRecords =
+      records.accessTokens +
+      records.refreshTokens +
+      records.consents +
+      deviceCodes;
+    const clientRowDeleted = await provider.deleteClient(clientId);
+
+    void storage.audit.log({
+      space_id: null,
+      action: "auth.client.deleted",
+      resource_type: "oauth_client",
+      resource_id: clientId,
+      client_ip: c.var.clientIp ?? null,
+      details: {
+        client_id: clientId,
+        client_row_deleted: clientRowDeleted,
+        grants_removed: grantsRemoved,
+        stray_access_tokens_deleted: records.accessTokens,
+        stray_refresh_tokens_deleted: records.refreshTokens,
+        stray_consents_deleted: records.consents,
+        stray_device_codes_deleted: deviceCodes,
+      },
+    });
+    log("info", "oauth client deleted", {
+      client_id: clientId,
+      client_row_deleted: clientRowDeleted,
+      grants_removed: grantsRemoved,
+    });
+
+    return c.json(
+      {
+        deleted: true as const,
+        client_row_deleted: clientRowDeleted,
+        grants_removed: grantsRemoved,
+        stray_records_deleted: strayRecords,
+      },
+      200,
+    );
   });
 
   return router;

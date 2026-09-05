@@ -138,6 +138,14 @@ export class SqliteOAuthStore implements OAuthStore {
       .run();
   }
 
+  async deleteDeviceCodesForClient(clientId: string): Promise<number> {
+    const result = await this.db
+      .delete(oauthDeviceCodes)
+      .where(eq(oauthDeviceCodes.client_id, clientId))
+      .run();
+    return result.rowsAffected;
+  }
+
   /**
    * DB-side debounce for OAuth-grant `last_used_at`. See the pg
    * `updateLastUsedAt` docstring — the conditional WHERE makes
