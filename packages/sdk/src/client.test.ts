@@ -1535,6 +1535,248 @@ describe("items.bulkAction", () => {
     expect(fetched.state).toBe("archived");
   });
 
+  /**
+   * A client whose status polls misbehave on the way in, while the job
+   * itself runs normally on the server.
+   *
+   * This is the distinction the bug turned on: the job being long and the
+   * question about it being slow are different things, and only the second
+   * one used to be reported as a failure. Faking a slow job would prove
+   * nothing about it.
+   */
+  function clientWithFailingStatusPolls(failures: number): {
+    client: MarfaClient;
+    polls: () => number;
+  } {
+    let seen = 0;
+    const made = new MarfaClient({
+      url: "http://localhost",
+      apiKey: adminKey,
+      fetch: (input, init) => {
+        const url = String(
+          typeof input === "string" || input instanceof URL ? input : input.url,
+        );
+        if (url.includes("/items/bulk-actions/jobs/")) {
+          seen += 1;
+          if (seen <= failures) {
+            // What a timed-out request looks like at this seam: the
+            // transport turns an abort into MarfaError('timeout').
+            return Promise.reject(
+              new DOMException("The operation was aborted.", "AbortError"),
+            );
+          }
+        }
+        return testFetchFn(input, init);
+      },
+    });
+    return { client: made, polls: () => seen };
+  }
+
+  /** A client whose status polls answer with a given HTTP response for the
+   *  first `count` attempts, then behave normally. Returns the client and a
+   *  counter, so a test can assert how many polls a failure shape cost. */
+  function clientWithStatusResponse(
+    count: number,
+    make: () => Response,
+  ): { client: MarfaClient; polls: () => number } {
+    let seen = 0;
+    const made = new MarfaClient({
+      url: "http://localhost",
+      apiKey: adminKey,
+      fetch: (input, init) => {
+        const url = String(
+          typeof input === "string" || input instanceof URL ? input : input.url,
+        );
+        if (url.includes("/items/bulk-actions/jobs/")) {
+          seen += 1;
+          if (seen <= count) return Promise.resolve(make());
+        }
+        return testFetchFn(input, init);
+      },
+    });
+    return { client: made, polls: () => seen };
+  }
+
+  it("waits out a gateway 5xx whose body is not the server's JSON envelope", async () => {
+    // The shape a 502 or 503 actually takes in front of a loaded instance: an
+    // HTML error page from something that is not the app. The transport parses
+    // the body before it checks `ok`, so this arrives as `parse_error` with
+    // `status: 0` and the real code only in `details.httpStatus` — and a
+    // retry rule reading `status` alone misses the most likely 5xx there is.
+    const tag = `ba-gateway-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = await seedTagged(1, tag);
+
+    const { client: flaky } = clientWithStatusResponse(
+      2,
+      () =>
+        new Response("<html>502 Bad Gateway</html>", {
+          status: 502,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const result = await flaky.items.bulkAction(
+      { action: "transition", state: "archived", filter: { tags: [tag] } },
+      { pollIntervalMs: 10, maxPollIntervalMs: 20 },
+    );
+
+    expect(result.succeeded).toBe(1);
+    expect((await client.items.get(ids[0]!)).state).toBe("archived");
+  });
+
+  it("waits out a 429 rather than reporting the job failed", async () => {
+    const tag = `ba-429-${Math.random().toString(36).slice(2, 8)}`;
+    await seedTagged(1, tag);
+
+    const { client: throttled } = clientWithStatusResponse(
+      2,
+      () =>
+        new Response(JSON.stringify({ error: { code: "rate_limited" } }), {
+          status: 429,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    const result = await throttled.items.bulkAction(
+      { action: "transition", state: "archived", filter: { tags: [tag] } },
+      { pollIntervalMs: 10, maxPollIntervalMs: 20 },
+    );
+    expect(result.succeeded).toBe(1);
+  });
+
+  it("ends at once on a status poll that 404s, rather than spending the budget", async () => {
+    // A 404 means the job is gone. Retrying it until the wall-clock budget
+    // expires would report the wrong cause thirty minutes late, so the count
+    // is the assertion: one attempt, not many.
+    const tag = `ba-404-${Math.random().toString(36).slice(2, 8)}`;
+    await seedTagged(1, tag);
+
+    const { client: gone, polls } = clientWithStatusResponse(
+      Number.MAX_SAFE_INTEGER,
+      () =>
+        new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    await expect(
+      gone.items.bulkAction(
+        { action: "transition", state: "archived", filter: { tags: [tag] } },
+        { pollIntervalMs: 5, maxPollIntervalMs: 5, maxWaitMs: 500 },
+      ),
+    ).rejects.toMatchObject({ status: 404 });
+    expect(polls()).toBe(1);
+  });
+
+  it("a status poll that times out delays the answer rather than inventing a failure", async () => {
+    const tag = `ba-slowpoll-${Math.random().toString(36).slice(2, 8)}`;
+    const ids = await seedTagged(2, tag);
+
+    const { client: flaky } = clientWithFailingStatusPolls(2);
+    const result = await flaky.items.bulkAction(
+      { action: "transition", state: "archived", filter: { tags: [tag] } },
+      { pollIntervalMs: 10, maxPollIntervalMs: 20 },
+    );
+
+    expect(result.succeeded).toBe(2);
+    expect(result.errored).toBe(0);
+    // The write is the thing being asserted on, not the promise resolving:
+    // the old failure reported an error for a job that had done this.
+    const fetched = await client.items.get(ids[0]!);
+    expect(fetched.state).toBe("archived");
+  });
+
+  it("gives up on a status poll that keeps timing out, and says why", async () => {
+    const tag = `ba-neverpoll-${Math.random().toString(36).slice(2, 8)}`;
+    await seedTagged(1, tag);
+
+    const { client: broken, polls } = clientWithFailingStatusPolls(
+      Number.MAX_SAFE_INTEGER,
+    );
+    await expect(
+      broken.items.bulkAction(
+        { action: "transition", state: "archived", filter: { tags: [tag] } },
+        { pollIntervalMs: 5, maxPollIntervalMs: 5, maxWaitMs: 60 },
+      ),
+    ).rejects.toMatchObject({ code: "timeout" });
+    // The count is what makes this about the budget rather than the first
+    // throw: giving up immediately rejects with the same error.
+    expect(polls()).toBeGreaterThan(1);
+  });
+
+  /** A client whose status responses are slow by a known amount, so the
+   *  caller's own timeout is the only thing that decides the outcome.
+   *
+   *  The delay honors `init.signal`, which is not a detail: the transport
+   *  implements its timeout by aborting that signal, so a stub that ignores
+   *  it makes every timeout in the test unreachable and the assertion
+   *  meaningless. Real `fetch` honors it. */
+  function clientWithSlowStatusPolls(delayMs: number): MarfaClient {
+    return new MarfaClient({
+      url: "http://localhost",
+      apiKey: adminKey,
+      fetch: async (input, init) => {
+        const url = String(
+          typeof input === "string" || input instanceof URL ? input : input.url,
+        );
+        if (url.includes("/items/bulk-actions/jobs/")) {
+          const signal = init?.signal ?? null;
+          await new Promise<void>((resolve, reject) => {
+            const done = setTimeout(resolve, delayMs);
+            signal?.addEventListener("abort", () => {
+              clearTimeout(done);
+              reject(
+                new DOMException("The operation was aborted.", "AbortError"),
+              );
+            });
+            if (signal?.aborted) {
+              clearTimeout(done);
+              reject(
+                new DOMException("The operation was aborted.", "AbortError"),
+              );
+            }
+          });
+        }
+        return testFetchFn(input, init);
+      },
+    });
+  }
+
+  it("uses the status timeout the caller gave it, rather than one it pinned", async () => {
+    // The transport turns `timeoutMs` into its own AbortSignal, so the value
+    // never reaches the wire and cannot be asserted on a request. What can be
+    // asserted is the outcome it decides: the same slow response against two
+    // different timeouts has to end two different ways, or the option is
+    // being ignored. It was — this call pinned five seconds and nothing
+    // reached it.
+    const slow = clientWithSlowStatusPolls(150);
+
+    const tightTag = `ba-tight-${Math.random().toString(36).slice(2, 8)}`;
+    await seedTagged(1, tightTag);
+    await expect(
+      slow.items.bulkAction(
+        {
+          action: "transition",
+          state: "archived",
+          filter: { tags: [tightTag] },
+        },
+        {
+          statusTimeoutMs: 20,
+          pollIntervalMs: 5,
+          maxPollIntervalMs: 5,
+          maxWaitMs: 250,
+        },
+      ),
+    ).rejects.toMatchObject({ code: "timeout" });
+
+    const roomyTag = `ba-roomy-${Math.random().toString(36).slice(2, 8)}`;
+    const roomyIds = await seedTagged(1, roomyTag);
+    const result = await slow.items.bulkAction(
+      { action: "transition", state: "archived", filter: { tags: [roomyTag] } },
+      { statusTimeoutMs: 5_000, pollIntervalMs: 5 },
+    );
+    expect(result.succeeded).toBe(1);
+    expect((await client.items.get(roomyIds[0]!)).state).toBe("archived");
+  });
+
   it("dry_run returns matched ids and succeeded=0", async () => {
     const tag = `ba-dry-${Math.random().toString(36).slice(2, 8)}`;
     const ids = await seedTagged(2, tag);

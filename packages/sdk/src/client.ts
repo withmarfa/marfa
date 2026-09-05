@@ -570,6 +570,50 @@ export interface BulkActionResult {
 export type BulkActionJobStatus =
   "queued" | "in_progress" | "completed" | "failed" | "cancelled";
 
+/**
+ * Whether a failed bulk-action status poll describes the question failing
+ * rather than the job failing.
+ *
+ * Deliberately a small allow-list rather than "anything that is not a 4xx".
+ * A poll runs up to thirty minutes, so treating an unrecognized failure as
+ * transient means spending that budget on something that will never
+ * succeed, and reporting the wrong cause when it finally gives up.
+ */
+function isTransientStatusFailure(error: unknown): boolean {
+  if (!(error instanceof MarfaError)) return false;
+  // Status 0 is the transport's own failure rather than the server's.
+  if (error.code === "timeout" || error.code === "network_error") return true;
+  return isBackpressure(httpStatusOf(error));
+}
+
+/**
+ * The HTTP status a `MarfaError` describes, which is not always `status`.
+ *
+ * The transport parses a response body before it checks `ok`, so a 5xx whose
+ * body is not the server's JSON envelope throws `parse_error` with `status: 0`
+ * and the real code only in `details.httpStatus`. **That is the shape a 502,
+ * 503 or 504 takes in front of a loaded instance**, where the error page comes
+ * from a gateway rather than from the app — so a rule reading `status` alone
+ * misses the most likely 5xx there is, which is the exact case the retry above
+ * exists for.
+ */
+function httpStatusOf(error: MarfaError): number {
+  if (error.status !== 0) return error.status;
+  const carried = error.details?.httpStatus;
+  return typeof carried === "number" ? carried : 0;
+}
+
+/** Whether a status says "ask again later" rather than "stop asking".
+ *
+ *  `Retry-After` is not honored: `throwForError` does not carry response
+ *  headers, so the value cannot be read from here. A 429 is therefore re-asked
+ *  on the poll's own backoff, which is capped at `maxPollIntervalMs`. A caller
+ *  expecting to be rate-limited should raise that cap rather than rely on this
+ *  being polite. */
+function isBackpressure(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
 /** Polling knobs accepted by `bulkAction()`. Default polling is
  *  250ms → 500ms → 1s → 2s exponential, capped at the global max,
  *  with a 30-minute total wall-clock budget. */
@@ -580,6 +624,12 @@ export interface BulkActionPollOptions {
   maxPollIntervalMs?: number;
   /** Total wait budget (ms). Default 30 minutes. */
   maxWaitMs?: number;
+  /** Per-request timeout for one status poll (ms). Defaults to the
+   *  client's own `timeoutMs`. This is the ceiling on how long a single
+   *  status response may take, not on how long the job may run — that
+   *  is `maxWaitMs`. A poll that exceeds it is waited out and asked
+   *  again rather than ending the wait. */
+  statusTimeoutMs?: number;
   /** Called after each non-terminal poll. Useful for surfacing
    *  progress to a UI without consumers having to drive polling
    *  themselves via `bulkActionAsync` + `bulkActionStatus`. */
@@ -1410,11 +1460,23 @@ export class MarfaClient {
       }
       const queued = data as BulkActionJob;
       const final = await pollUntilTerminal({
-        fetchOnce: () => this.items.bulkActionStatus(queued.id),
+        fetchOnce: () =>
+          this.items.bulkActionStatus(queued.id, {
+            timeoutMs: options?.statusTimeoutMs,
+          }),
         isTerminal: (job) =>
           job.status === "completed" ||
           job.status === "failed" ||
           job.status === "cancelled",
+        // Asking about the job is not the job. A status response that
+        // times out, fails at the network, or comes back 5xx or 429
+        // says nothing about the write, which is still running on the
+        // server — so the poll waits and asks again instead of throwing
+        // a failure for work that is succeeding. Everything else ends
+        // the poll immediately: a 404 means the job is gone and a 401
+        // means the credential is, and retrying either until the
+        // thirty-minute budget expires is worse than failing now.
+        isRetryable: isTransientStatusFailure,
         onProgress: options?.onProgress,
         pollIntervalMs: options?.pollIntervalMs,
         maxPollIntervalMs: options?.maxPollIntervalMs,
@@ -1488,12 +1550,21 @@ export class MarfaClient {
       return data;
     },
 
-    /** Poll a bulk_action job by id. Single GET — no polling loop. */
-    bulkActionStatus: (jobId: string): Promise<BulkActionJob> =>
+    /** Poll a bulk_action job by id. Single GET — no polling loop.
+     *
+     *  The timeout falls through to the client's own rather than being
+     *  pinned here. It was pinned at five seconds, which made the one
+     *  call most likely to be slow the one call whose timeout could not
+     *  be raised: `ClientConfig.timeoutMs` did not reach it and no poll
+     *  option did either. */
+    bulkActionStatus: (
+      jobId: string,
+      options?: { timeoutMs?: number },
+    ): Promise<BulkActionJob> =>
       this.transport.request<BulkActionJob>(
         "GET",
         `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}`,
-        { timeoutMs: 5_000 },
+        { timeoutMs: options?.timeoutMs },
       ),
 
     /** Request cancellation of a bulk_action job. Idempotent —

@@ -1,5 +1,52 @@
 # @withmarfa/sdk
 
+## 5.1.0
+
+### A slow status poll no longer reports a failure for a bulk action that is succeeding
+
+`client.items.bulkAction()` starts a job and polls it to completion. The poll
+pinned its own five-second request timeout, which nothing could raise:
+`ClientConfig.timeoutMs` did not reach it and no poll option did either. So one
+slow status response threw out of `bulkAction` with `code: "timeout"` while the
+job carried on server-side, neither cancelled nor reported. A caller that
+retried did the work twice; a caller that surfaced the error told someone
+something untrue.
+
+Asking about a job is not the job. Two changes follow from that:
+
+- **A transport-level failure on a status poll is waited out and asked again**
+  rather than ending the wait — a timeout, a network error, a 429 or a 5xx. The
+  `maxWaitMs` budget still bounds it, and if that runs out the error you get is
+  the last real one rather than a `PollTimeoutError` that says nothing about
+  why the answer never came. Everything else still ends the poll at once: a 404
+  means the job is gone and a 401 means the credential is, and spending thirty
+  minutes on either is worse than failing now.
+- **`bulkActionStatus` no longer pins a timeout.** It falls through to the
+  client's own, and `bulkAction` accepts `statusTimeoutMs` to set it for the
+  polls it drives. That is the ceiling on one status response, not on how long
+  the job may run, which is still `maxWaitMs`.
+
+  **This moves an existing default**, which is the one behavior change here
+  rather than an addition: a bare `bulkActionStatus(jobId)` was bounded at five
+  seconds and is now bounded by the client's `timeoutMs`, thirty seconds unless
+  you set it. If you drive your own poll and relied on the old bound, pass
+  `{ timeoutMs: 5_000 }`.
+
+```ts
+await client.items.bulkAction(
+  { action: "transition", state: "archived", filter: { tags: ["wip"] } },
+  { statusTimeoutMs: 60_000, onProgress: (job) => report(job.processed) },
+);
+```
+
+Both additions are optional and no signature changes shape.
+
+**What is not handled:** a 429 is re-asked on the poll's own backoff rather than
+on the server's `Retry-After`, because the error thrown from a failed request
+does not carry response headers and the value cannot be read. If you expect to
+be rate-limited, raise `maxPollIntervalMs` rather than relying on this being
+polite.
+
 ## 5.0.0
 
 ### `@withmarfa/sdk/replica` is removed
