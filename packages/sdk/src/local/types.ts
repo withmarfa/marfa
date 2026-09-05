@@ -45,10 +45,17 @@ export type TargetKind = "item" | "edge";
  * They divide on what clears them. `auth`, `space_suspended`,
  * `quota_exceeded` and `retry_ceiling` all clear on their own or on an
  * operator's action, so retrying later is the right move. `needs_review`
- * does not: the write was made against a version of the row that no
- * longer exists, and no amount of waiting brings it back. Only the app
+ * does not, and no amount of waiting brings it back: only the app
  * re-applying the edit over what the server now holds, or dropping it,
  * gets that mutation moving.
+ *
+ * Two things reach `needs_review`, named together because the remedy is
+ * identical rather than because the causes are. The write was made
+ * against a version of the row that no longer exists; or the key it
+ * carries has already been answered for a different body, so the server
+ * keeps refusing this one under it. Either way the edit is still wanted
+ * and the queue cannot get it there — a person re-applies it, which
+ * makes a fresh mutation with a fresh key, or drops it.
  */
 export type BlockedReason =
   | "auth"
