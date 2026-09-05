@@ -6,6 +6,11 @@
  * has to be read call site by call site, and reading it wrong is the
  * defect the helper exists for. Delete this line when you do. */
 import { eq, and, desc, lt, or, gte, lte, isNull, like } from "drizzle-orm";
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  MIN_PAGE_LIMIT,
+} from "../../page-limits.js";
 import { createHash } from "node:crypto";
 import { generateId } from "@withmarfa/shared";
 import type { PaginatedResult } from "@withmarfa/shared";
@@ -105,7 +110,10 @@ export class PgAuditStore implements AuditStore {
     cursor?: string;
     space_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>> {
-    const limit = Math.max(1, Math.min(filters.limit ?? 50, 200));
+    const limit = Math.max(
+      MIN_PAGE_LIMIT,
+      Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
+    );
     const conditions = [];
 
     if (filters.action) {

@@ -18,6 +18,7 @@
  * caller. Listing/get is admin-or-platform.
  */
 import { Hono } from "hono";
+import { MAX_PAGE_LIMIT } from "../page-limits.js";
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { ConfigurationFieldSpec } from "@withmarfa/shared";
@@ -167,7 +168,7 @@ const listRoute = createRoute({
         .number()
         .int()
         .min(1)
-        .max(200)
+        .max(MAX_PAGE_LIMIT)
         .optional()
         .describe("Maximum number of integrations to return."),
     }),

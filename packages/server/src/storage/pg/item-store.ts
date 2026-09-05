@@ -19,6 +19,11 @@ import {
 } from "../space-condition.js";
 import { softDeleteClock } from "../soft-delete-clock.js";
 import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  MIN_PAGE_LIMIT,
+} from "../../page-limits.js";
+import {
   generateId,
   isValidId,
   getTypeSchema,
@@ -586,7 +591,10 @@ export class PgItemStore implements ItemStore {
     // ISO timestamps or a JSON-extracted value, so the wrong one compares
     // cleanly and returns a page that is simply not the next page.
     const cursorKey: CursorSortKey = cursorSortKey(sort, dir);
-    const limit = Math.min(filters.limit ?? 50, 200);
+    const limit = Math.max(
+      MIN_PAGE_LIMIT,
+      Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
+    );
 
     // For a property sort, the ORDER BY / cursor comparison runs against a
     // JSON-extracted expression rather than a column. NULLS LAST is applied in
