@@ -41,13 +41,13 @@ jobs:
     timeout-minutes: 15
     runs-on: ubuntu-latest
     outputs:
-      verdict: ${{ steps.run.outputs.verdict }}
-      detail: ${{ steps.run.outputs.detail }}
-      fields: ${{ steps.run.outputs.fields }}
+      verdict: ${{ steps.state.outputs.verdict }}
+      detail: ${{ steps.state.outputs.detail }}
+      fields: ${{ steps.state.outputs.fields }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -56,32 +56,41 @@ jobs:
 
       - name: Run the engine's contract against the target
         id: run
-        # `always()` is not needed on the step, but the outputs have to be
-        # written on the failing path as well as the passing one, or the
-        # notifier below has nothing to state and reports the check itself
-        # as inconclusive rather than reporting the failure.
-        continue-on-error: true
         env:
           MARFA_API_URL: ${{ vars.LOCAL_ENGINE_SMOKE_URL }}
           MARFA_API_KEY: ${{ secrets.LOCAL_ENGINE_SMOKE_KEY }}
         run: |
+          # `pipefail` is load-bearing: without it `tee` returns zero and a
+          # failing smoke is a passing step. With it, the default `bash -e`
+          # ends the step here — which is why nothing is written to
+          # `$GITHUB_OUTPUT` from this step and the next one does it.
           set -o pipefail
           if [ -z "${MARFA_API_KEY:-}" ]; then
-            echo "verdict=inconclusive" >> "$GITHUB_OUTPUT"
-            echo "detail=a target is configured but LOCAL_ENGINE_SMOKE_KEY is not set" >> "$GITHUB_OUTPUT"
-            echo 'fields={}' >> "$GITHUB_OUTPUT"
             echo "::error::LOCAL_ENGINE_SMOKE_URL is set and LOCAL_ENGINE_SMOKE_KEY is not."
             exit 1
           fi
-
-          # The output is read rather than the exit status: the run prints the
-          # server's own SHA, and a verdict that does not say what it tested
-          # against is not worth carrying into an alert.
           pnpm --filter @withmarfa/sdk run smoke 2>&1 | tee smoke.log
-          STATUS=${PIPESTATUS[0]}
 
-          SHA="$(sed -n 's/^server : //p' smoke.log | head -1)"
-          SUMMARY="$(grep -E '^[0-9]+/[0-9]+ green' smoke.log | head -1)"
+      # Separate, and `always()`, because the step above must be allowed to
+      # fail honestly: `continue-on-error` would make a failing smoke a
+      # green run in the Actions UI and suppress the failure email, which
+      # is half of how a CI failure is reported here.
+      #
+      # It has to be its own step for a second reason. The default shell is
+      # `bash -e`, so a failing pipeline aborts the step at the `tee` — any
+      # output-writing that followed it in the same step would never run,
+      # and the notifier below would report "inconclusive" with no SHA on
+      # exactly the runs that matter. The same shape is used by
+      # `openapi-drift.yml` and `integrations-pin-drift.yml`.
+      - name: State the finding
+        id: state
+        if: always()
+        env:
+          MARFA_API_URL: ${{ vars.LOCAL_ENGINE_SMOKE_URL }}
+          OUTCOME: ${{ steps.run.outcome }}
+        run: |
+          SHA="$(sed -n 's/^server : //p' smoke.log 2>/dev/null | head -1)"
+          SUMMARY="$(grep -E '^[0-9]+/[0-9]+ green' smoke.log 2>/dev/null | head -1)"
           [ -n "$SHA" ] || SHA=unknown
           [ -n "$SUMMARY" ] || SUMMARY="the run produced no summary line"
 
@@ -92,14 +101,12 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
-          if [ "$STATUS" -eq 0 ]; then
+          if [ "$OUTCOME" = "success" ]; then
             echo "verdict=green" >> "$GITHUB_OUTPUT"
-            echo "detail=$SUMMARY" >> "$GITHUB_OUTPUT"
           else
             echo "verdict=failed" >> "$GITHUB_OUTPUT"
-            echo "detail=$SUMMARY" >> "$GITHUB_OUTPUT"
-            exit "$STATUS"
           fi
+          echo "detail=$SUMMARY" >> "$GITHUB_OUTPUT"
 
   notify:
     # A scheduled check has no audience, so this job is the finding. Hosted,
@@ -111,6 +118,7 @@ jobs:
       || (github.event_name == 'workflow_dispatch'
       && github.ref == 'refs/heads/main'))
       && vars.ALERT_WEBHOOK_URL != ''
+      && vars.LOCAL_ENGINE_SMOKE_URL != ''
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:

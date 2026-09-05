@@ -32,6 +32,7 @@ import { MarfaError } from "../src/errors.js";
 import { openLocalStore, type LocalStore } from "../src/local/store/index.js";
 import { createLocalEngine } from "../src/local/engine.js";
 import { SINGLE_ACCOUNT, SINGLE_SPACE } from "../src/local/types.js";
+import type { LocalEngineEvent } from "../src/local/types.js";
 
 /**
  * A server on a real port, over a real socket.
@@ -93,7 +94,15 @@ const booted = local ? await bootLocal() : undefined;
 const configuredUrl = booted?.url ?? process.env.MARFA_API_URL;
 const configuredKey = booted?.apiKey ?? process.env.MARFA_API_KEY;
 
-if (configuredUrl === undefined || configuredKey === undefined) {
+// Empty, not just absent: an unset secret reaches a workflow as the empty
+// string, which would otherwise get past this and fail later with a stack
+// trace instead of the sentence written for it.
+if (
+  configuredUrl === undefined ||
+  configuredUrl === "" ||
+  configuredKey === undefined ||
+  configuredKey === ""
+) {
   console.error(
     "MARFA_API_URL and MARFA_API_KEY are both required, or MARFA_SMOKE_LOCAL=1 to boot this repository's server on SQLite. There is no default target, because a default here would silently test the wrong instance.",
   );
@@ -121,6 +130,7 @@ async function serverSha(): Promise<string> {
     const res = await fetch(new URL("/health", url).toString(), {
       headers: { authorization: `Bearer ${apiKey}` },
     });
+    if (!res.ok) return `unreadable (HTTP ${String(res.status)})`;
     const body = (await res.json()) as {
       version?: { sha?: string };
       status?: string;
@@ -143,7 +153,7 @@ interface Context {
   readonly track: (id: string) => string;
 }
 
-function assert(condition: boolean, what: string): void {
+function assert(condition: unknown, what: string): asserts condition {
   if (!condition) throw new Error(what);
 }
 
@@ -201,8 +211,19 @@ const CHECKS: readonly Check[] = [
   },
   {
     // Rule 10 against the real transaction rather than the in-process one.
-    // The call count is the assertion that matters: a client-side merge
-    // would show a second write here.
+    //
+    // The assertion that matters is the server's own report of what it
+    // did. An earlier version asserted only that the queue emptied, which
+    // an engine that never collided at all satisfies just as well: drop
+    // `expectedVersion` and "mine" silently overwrites "theirs", with no
+    // merge, no sibling, and a green run. That is the failure this check
+    // is named for, passing.
+    //
+    // The report is also how the sibling is identified. Inferring it from
+    // a before-and-after listing would make this a scheduled job that
+    // deletes rows it did not create whenever anything else writes to the
+    // space inside the window — and against a shared environment that is
+    // a destructive action taken on a guess.
     name: "a colliding update is settled by the server, not by the engine",
     run: async ({ client, store, track }) => {
       const note = await store.mutations.createItem({
@@ -211,26 +232,48 @@ const CHECKS: readonly Check[] = [
       });
       track(note.id);
 
+      const merges: Extract<LocalEngineEvent, { type: "mutation.merged" }>[] =
+        [];
       const engine = createLocalEngine({ store, client });
+      engine.on((event) => {
+        if (event.type === "mutation.merged") merges.push(event);
+      });
       await engine.drain();
 
       await store.mutations.updateItem(note.id, { body: "mine" });
       await client.items.update(note.id, { body: "theirs" });
-
-      const before = await client.items.list({ limit: 100 });
       await engine.drain();
-      const after = await client.items.list({ limit: 100 });
 
       assert(
         (await store.outbox.count()) === 0,
         "the update did not settle; the server may not resolve conflicts",
       );
-      // `keep_both_copies` on `body` means the server spawns a sibling in
-      // its own transaction. Whichever id it chose, it is one more row and
-      // it is the server's to remove.
-      for (const item of after.data) {
-        if (!before.data.some((seen) => seen.id === item.id)) track(item.id);
-      }
+
+      const merged = merges[0];
+      // Tracked before anything can throw. An assertion between the write
+      // and the tracking is how the one row whose id cannot be known in
+      // advance gets left behind on exactly the runs that fail.
+      if (merged?.conflictedCopyId !== undefined)
+        track(merged.conflictedCopyId);
+
+      assert(
+        merged !== undefined,
+        "the server reported no merge, so nothing collided — the update overwrote rather than merging",
+      );
+      assert(
+        merged.fields.includes("body"),
+        `the merge did not name body as the collided field: ${JSON.stringify(merged.fields)}`,
+      );
+      assert(
+        merged.strategy.body === "keep_both_copies",
+        `body resolved by ${String(merged.strategy.body)} rather than keep_both_copies`,
+      );
+      // The sibling the policy called for, named by the only thing that
+      // names it, and tracked so it leaves with everything else.
+      assert(
+        merged.conflictedCopyId !== undefined,
+        "keep_both_copies reported no sibling, so the losing value was dropped",
+      );
     },
   },
   {
@@ -254,6 +297,7 @@ const CHECKS: readonly Check[] = [
       await createLocalEngine({ store, client }).drain();
 
       let dropped = false;
+      let droppedStatus = 0;
       const losing = new MarfaClient({
         url,
         apiKey,
@@ -262,8 +306,13 @@ const CHECKS: readonly Check[] = [
           const method = (init?.method ?? "GET").toUpperCase();
           if (!dropped && method === "DELETE") {
             dropped = true;
-            // The server has committed by now. This is the answer going
-            // missing, not the request.
+            // Recorded before the body is discarded, because the whole
+            // point of this check is that the server ANSWERED and the
+            // answer was lost. Moving this throw above the `await` turns
+            // it into an offline pass, and without this record nothing
+            // would notice.
+            droppedStatus = response.status;
+            await response.body?.cancel();
             throw new TypeError("fetch failed");
           }
           return response;
@@ -273,6 +322,10 @@ const CHECKS: readonly Check[] = [
       await store.mutations.deleteItem(note.id);
       await createLocalEngine({ store, client: losing }).drain();
       assert(dropped, "no DELETE answer was dropped, so nothing was replayed");
+      assert(
+        droppedStatus >= 200 && droppedStatus < 300,
+        `the dropped DELETE answered ${String(droppedStatus)}, so the write may never have landed and this proves nothing about a replay`,
+      );
       assert(
         (await store.outbox.count()) === 1,
         "a lost answer should leave the delete queued for a replay",
@@ -295,7 +348,12 @@ async function main(): Promise<number> {
   const sha = await serverSha();
   console.log(`target : ${url}`);
   console.log(`server : ${sha}`);
-  console.log(`space  : ${spaceId}`);
+  // A server with no spaces has no id to give, and the sentinel for that
+  // is the empty string. Printing it bare advertises a field and leaves it
+  // blank, which reads as something failing to resolve.
+  console.log(
+    `space  : ${spaceId === "" ? "(single-space instance)" : spaceId}`,
+  );
   console.log("");
 
   const client = new MarfaClient({ url, apiKey });
