@@ -937,14 +937,22 @@ describe("a schema refusal from the server (seam: online)", () => {
       kind: "item.create",
       reason: "refused",
       httpStatus: 400,
-      // Both doors answer a schema refusal with this code now. They did
-      // not: the create door said `validation_error` where the update door
-      // said `invalid_properties`, and a classification recognizing only
-      // one of them treated the other as an ordinary 400 and spent no
-      // refresh at all. The classifier still accepts both, which is now
-      // belt and braces rather than the thing holding this up.
-      code: "invalid_properties",
     });
+    // Which of the two codes a schema refusal answers under is the
+    // server's business and is pinned door by door in its own suite. This
+    // one asserts only what the engine promises: whichever arrives, the
+    // write is classified as a schema refusal and the server's own code is
+    // recorded rather than stamped over.
+    //
+    // Asserting one of them here pinned the half of a split that was being
+    // removed, so the test failed on a server change that was an
+    // improvement. It is worth saying which way that split runs today,
+    // because it is not closed: this door — a create refused by the
+    // storage layer — answers `validation_error`, while the strict-mode
+    // space below answers `invalid_properties` from the route layer.
+    expect(["validation_error", "invalid_properties"]).toContain(
+      refused[0]?.code,
+    );
     expect(refused[0]?.message).toMatch(
       /refreshed type graph refuses it too.*title: Invalid input/s,
     );
