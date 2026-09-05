@@ -296,7 +296,10 @@ async function grantRows(
   return {
     consents: consents.length,
     accessTokens: access.length,
-    refreshTokens: refresh.map((r) => ({ revoked: Boolean(r.revoked) })),
+    // Ordered, because the select is not: rotated (revoked) rows first.
+    refreshTokens: refresh
+      .map((r) => ({ revoked: Boolean(r.revoked) }))
+      .sort((a, b) => Number(b.revoked) - Number(a.revoked)),
   };
 }
 
@@ -467,6 +470,71 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     expect(
       await authorizeOutcome(ctx, clientId, cookie, "core.note:read"),
     ).toBe("consent_screen");
+  });
+
+  it("a request the plugin refuses moves nothing, even with a live token and a matching client_id", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx, "Refused App");
+    const cookie = await signInUser(ctx, "refused@example.com");
+    const authUserId = await authUserIdFor(ctx, "refused@example.com");
+    const tokens = await codeGrant(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read offline_access",
+    );
+
+    // A non-Basic Authorization header: the plugin refuses the request
+    // before it authenticates anyone, while the resolver ignores the header
+    // and reads the matching body client_id. The row is still there and
+    // unmarked, which is what tells the after-hook the plugin did nothing.
+    const res = await request(ctx.app, "POST", "/auth/oauth2/revoke", {
+      form: { token: tokens.refresh_token as string, client_id: clientId },
+      headers: {
+        origin: ORIGIN,
+        authorization: "Bearer not-a-basic-credential",
+      },
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const rows = await grantRows(ctx, clientId, authUserId);
+    expect(rows.consents).toBe(1);
+    expect(rows.refreshTokens).toEqual([{ revoked: false }]);
+    expect((await onlyGrant(ctx)).properties.status).toBe("active");
+    expect((await revokedAudits(ctx)).data).toEqual([]);
+  });
+
+  it("a grant whose projection is already gone still loses its consent row and tokens", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx, "Projectionless App");
+    const cookie = await signInUser(ctx, "projectionless@example.com");
+    const authUserId = await authUserIdFor(ctx, "projectionless@example.com");
+    const tokens = await codeGrant(
+      ctx,
+      clientId,
+      cookie,
+      "core.note:read offline_access",
+    );
+
+    // The shape a hand-deleted record leaves: plugin rows, no projection.
+    const grant = await onlyGrant(ctx);
+    await ctx.storage.items.transition(
+      grant.id,
+      "revoked",
+      grant.space_id ?? undefined,
+    );
+    await ctx.storage.items.purge(grant.id, grant.space_id ?? undefined);
+
+    const res = await revoke(ctx, tokens.refresh_token as string, clientId);
+    expect(res.status).toBe(200);
+    const after = await grantRows(ctx, clientId, authUserId);
+    expect(after.consents).toBe(0);
+    expect(after.refreshTokens).toEqual([]);
+    const audits = await waitForAudit(
+      () => revokedAudits(ctx!),
+      (result) => result.data.length >= 1,
+    );
+    expect(audits.data[0]!.details.grant_item_id).toBeNull();
+    expect(audits.data[0]!.details.source).toBe("client");
   });
 
   it("a token sent with its Authorization scheme is revoked and cascaded like a bare one", async () => {

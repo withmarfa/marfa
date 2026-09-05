@@ -62,6 +62,9 @@ export async function revokeProjectedGrant(
         opts.authUserId,
       );
     }
+    // No projection to flip and no device codes bound to one: the plugin's
+    // records above were the whole of the grant.
+    if (opts.itemId === null) return;
     // Device codes after the tokens, and before the record. An outstanding
     // approved device code is another thing that still mints access, since
     // a poll inside its remaining TTL is a token mint and with
@@ -87,7 +90,6 @@ export async function revokeProjectedGrant(
     // plugin's. This function is already the single writer for both revoke
     // doors and already holds the consent lock, so keeping the sweep here
     // means one writer rather than two that can drift apart.
-    if (opts.itemId === null) return;
     await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
     await storage.items.update(
       opts.itemId,

@@ -24,6 +24,10 @@
 
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+  decodeBasicCredentials,
+  stripAccessTokenAuthorizationScheme,
+} from "better-auth/oauth2";
 import { auditGrantRevoked, revokeProjectedGrant } from "./grant-lifecycle.js";
 import { createHmac } from "node:crypto";
 import {
@@ -665,7 +669,7 @@ export function buildOauthProjectionPlugin(opts: {
                 // before-hook below. See `cascadeClientRevoke`.
                 matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
                 handler: createAuthMiddleware((ctx: HookCtxLite) =>
-                  cascadeClientRevoke(ctx, storage, refreshHasher),
+                  cascadeClientRevoke(ctx, storage),
                 ),
               },
             ]
@@ -796,16 +800,15 @@ interface RevokeResolution {
 }
 
 /**
- * The plugin's own normalization of the `token` field, reproduced: trimmed,
- * and a `Bearer ` or `DPoP ` scheme stripped. A client that sends its token
- * as it would in an Authorization header is accepted by the plugin, so the
- * hook has to see the same string or it skips a revocation the plugin
- * performed.
+ * The plugin's own normalization of the `token` field: trimmed, and a
+ * `Bearer ` or `DPoP ` scheme stripped, through the same function it calls.
+ * A client that sends its token as it would in an Authorization header is
+ * accepted by the plugin, so the hook has to see the same string or it
+ * skips a revocation the plugin performed.
  */
 function normalizeRevokeToken(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
-  const trimmed = raw.trim();
-  const stripped = trimmed.replace(/^(?:bearer|dpop)\s+/i, "").trim();
+  const stripped = stripAccessTokenAuthorizationScheme(raw.trim()).trim();
   return stripped.length > 0 ? stripped : undefined;
 }
 
@@ -831,22 +834,14 @@ export function resolveRevokeClientId(input: {
   if (typeof input.body?.client_assertion === "string") return undefined;
   const authorization = input.headers?.get("authorization");
   if (authorization && /^basic\s+/i.test(authorization)) {
+    // The plugin's own decoder, so the two cannot disagree about a form
+    // encoding, a padding rule or a separator; a header it refuses is one
+    // the plugin refuses too, and the hook then does nothing.
     try {
-      const decoded = Buffer.from(
-        authorization.replace(/^basic\s+/i, "").trim(),
-        "base64",
-      ).toString("utf8");
-      const separator = decoded.indexOf(":");
-      if (separator > 0) {
-        // Form-URL decoding, as RFC 6749 §2.3.1 and the plugin apply it.
-        return decodeURIComponent(
-          decoded.slice(0, separator).replaceAll("+", " "),
-        );
-      }
+      return decodeBasicCredentials(authorization).clientId;
     } catch {
       return undefined;
     }
-    return undefined;
   }
   const fromBody = input.body?.client_id;
   return typeof fromBody === "string" && fromBody.length > 0
@@ -881,7 +876,10 @@ export function resolveRevokeClientId(input: {
  * handed forward through the context merge Better Auth performs on a
  * before-hook's returned `context`. Nothing is written here; a before-hook
  * runs ahead of the plugin authenticating the client, and a write above
- * that line would be one an unauthenticated caller could drive.
+ * that line would be one an unauthenticated caller could drive. The one
+ * read it does perform, an indexed lookup on a hash the caller chose, is
+ * bounded by the endpoint's own per-IP cap and discloses nothing to the
+ * caller.
  */
 async function resolveClientRevoke(
   ctx: HookCtxLite,
@@ -934,9 +932,21 @@ async function resolveClientRevoke(
  * a refresh token means it marked the row, or the row the before-hook saw
  * is gone, which only the plugin's replay path does and only after deleting
  * every token of the grant. In both the tokens are dead and the two grant
- * records have to agree with that. A row still there behind a refusal
- * (client authentication failed, a malformed request) means the plugin
- * touched nothing, and neither does this.
+ * records have to agree with that. A row still there and unmarked behind a
+ * refusal (client authentication failed, a malformed request) means the
+ * plugin touched nothing, and neither does this; a row still there but
+ * marked means the plugin marked it and then failed on the access-token
+ * delete behind it, which is a partial run and cascades.
+ *
+ * Two shapes to know about. Two requests presenting the same live token at
+ * once both cascade: the loser meets the plugin's replay path, its row is
+ * gone by the time it looks, and it writes a second audit row over a
+ * cascade the winner already ran. The write is convergent under the
+ * consent lock, so nothing corrupts, and the second row names the same
+ * client. And a row deleted between the two hooks by anything else, such
+ * as the person's Disconnect landing in the same instant, cascades here
+ * too and is audited as the client's; idempotent, and a row nobody will
+ * ever act on.
  *
  * **Best-effort past the plugin's own work, and honest about what a
  * failure leaves.** The cascade runs the tokens, the consent row, the
@@ -953,9 +963,7 @@ async function resolveClientRevoke(
 async function cascadeClientRevoke(
   ctx: HookCtxLite,
   storage: Storage,
-  hasher: (token: string) => string,
 ): Promise<void> {
-  void hasher;
   const resolution = ctx.revokeResolution;
   if (!resolution) return;
   const { row, tokenHash, presentedClientId } = resolution;
@@ -979,11 +987,14 @@ async function cascadeClientRevoke(
     const succeeded = returned === null || returned === undefined;
     if (!succeeded) {
       const after = await provider.findRefreshTokenGrantKey(tokenHash);
-      if (after) {
+      if (after && !after.revoked) {
         // Refused before touching the row: nothing to agree with.
         return;
       }
-      // The replay path: the family is gone, and so must the grant be.
+      // Either the replay path, where the family is gone, or a row the
+      // plugin marked and then failed behind (its access-token delete
+      // threw): in both the tokens the client holds are dead and the grant
+      // records have to follow.
     }
 
     const spaceId = row.referenceId ?? undefined;
