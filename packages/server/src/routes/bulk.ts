@@ -36,9 +36,13 @@ import {
   isValidTimestamp,
   isValidTypeIdentifier,
   validateProperties,
+  getTypeSchema,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
-import { mergeUpdateProperties } from "../storage/merge-properties.js";
+import {
+  mergeUpdateProperties,
+  resolveIncomingProperties,
+} from "../storage/merge-properties.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAdmin,
@@ -183,7 +187,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -766,38 +770,77 @@ async function processBulkItem(
     // invalid, which is the whole hazard of moving a corpus.
     const resultingType =
       retype && raw.type !== existing.type ? raw.type : existing.type;
-    if (resultingType !== existing.type) {
-      // The one check the ordinary update path does not need and a move
-      // cannot go without: the destination may require fields the row has
-      // never carried, and its field types may not accept what the old
-      // properties hold. Judged on the properties the store is about to
-      // write, through the same helper it merges with, so this predicts
-      // the write rather than approximating it.
+    const isMove = resultingType !== existing.type;
+    // Both arms, and it used to be only the move. A same-type update ran
+    // no property validation at all, so this door stored the number 12345
+    // into `core.note.body`, a required string, and reported the entry as
+    // `updated`, while `PATCH /items/{id}` refuses the identical payload. The row was then invalid against its own type for every
+    // reader that trusts the declared shape because the server enforced
+    // it, and the door that skipped the check is the one built for volume.
+    //
+    // A move cannot go without it either, for its own reason: the
+    // destination may require fields the row has never carried, and its
+    // field types may not accept what the old properties hold.
+    //
+    // Judged on the properties the store is about to write, through the
+    // same helper it merges with, so this predicts the write rather than
+    // approximating it — and against the type the row ends up as, because
+    // judging a move against the type being left would admit one whose
+    // result the destination calls invalid.
+    if (isMove || raw.properties !== undefined) {
       const merged = mergeUpdateProperties(
         existing.properties,
-        raw.properties ?? {},
+        // Through `resolveIncomingProperties` rather than the raw payload,
+        // because that is the first thing the store does with it: it drops a
+        // `null` on any field the type does not require, so a body clearing an
+        // optional field writes nothing for it. Judging the raw payload
+        // validated a row carrying that `null` while the store wrote the old
+        // value — which is exactly the shape an integration's re-sync sends,
+        // and it is the difference between predicting the write and
+        // approximating it. `existing.type` rather than the destination for
+        // the same reason: the store resolves against the row's own type.
+        resolveIncomingProperties(
+          existing.type,
+          raw.properties,
+          false,
+          spaceId,
+        ) ?? {},
         false,
         "merge",
       );
-      const validation = validateProperties(resultingType, merged, {
-        ...(spaceId === undefined ? {} : { spaceId }),
-      });
-      if (!validation.success) {
-        // Named, not counted, and not a reason to abandon the rest — the
-        // point of moving a corpus per item is that some of it cannot go.
-        return {
-          result: {
-            index,
-            outcome: "errored",
-            id: existing.id,
-            error: {
-              code: ErrorCode.INVALID_PROPERTIES,
-              message: `Cannot move item to "${resultingType}": ${validation.errors
-                .map((e) => `${e.field}: ${e.message}`)
-                .join("; ")}`,
+      // The move stays unguarded, which is not an oversight: a destination
+      // with nothing registered is a destination that does not exist, and
+      // `validateProperties` answering `Unknown type` is the right refusal
+      // for a move into it. A same-type update cannot say that about the
+      // row's own type without refusing every write to a type whose schema
+      // this request's registry does not carry, so it asks first — the
+      // same guard the single-item door runs.
+      if (isMove || getTypeSchema(resultingType, spaceId) !== undefined) {
+        const validation = validateProperties(resultingType, merged, {
+          ...(spaceId === undefined ? {} : { spaceId }),
+        });
+        if (!validation.success) {
+          // Named, not counted, and not a reason to abandon the rest — the
+          // point of moving a corpus per item is that some of it cannot go,
+          // and the point of validating an ordinary update is that the one
+          // bad record is identifiable.
+          const detail = validation.errors
+            .map((e) => `${e.field}: ${e.message}`)
+            .join("; ");
+          return {
+            result: {
+              index,
+              outcome: "errored",
+              id: existing.id,
+              error: {
+                code: ErrorCode.INVALID_PROPERTIES,
+                message: isMove
+                  ? `Cannot move item to "${resultingType}": ${detail}`
+                  : `Invalid properties: ${detail}`,
+              },
             },
-          },
-        };
+          };
+        }
       }
     }
     assertTierApplicable(resultingType, raw.tier);
@@ -1020,12 +1063,14 @@ export function bulkRoutes(storage: Storage) {
       );
     }
 
-    // In atomic mode, pre-validate inputs that can be checked without a DB
-    // round-trip BEFORE we start writing. The SQLite storage layer can't
-    // roll back async transactions (see sqlite/index.ts:86–92), so once a
-    // write lands it's committed. PG does roll back, but pre-validation
-    // keeps both dialects consistent for the common "invalid type" /
-    // "invalid timestamp" error modes the test suite cares about.
+    // In atomic mode, pre-validate what can be checked without a database
+    // round trip before any writing starts. Both dialects roll back for
+    // real — the SQLite store's own docblock says so in terms, and this
+    // comment used to claim the opposite and cite lines that have since
+    // moved on to something else — so this is belt and braces rather than
+    // the mechanism. It is kept because refusing a malformed type or
+    // timestamp before touching the database gives the caller the reason
+    // rather than a rollback, and gives both dialects the same answer.
     if (atomic) {
       for (const [i, raw] of items.entries()) {
         if (!isValidTypeIdentifier(raw.type)) {

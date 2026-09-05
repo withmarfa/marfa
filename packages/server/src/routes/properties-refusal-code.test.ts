@@ -15,15 +15,15 @@
  * for their own reasons.
  *
  * One payload drives every door but the last, so the table cannot be
- * satisfied by doors that disagree about what they were asked. The bulk
- * update arm is the exception, and for a reason worth knowing: it validates
- * only when the entry moves the row to a different type. A bulk update that
- * leaves the type alone runs no property validation at all, so it refuses
- * nothing and has no code to compare — a gap on that door rather than a
- * disagreement about the code, and not what this file is holding. The retype
- * arm is the bulk door that does refuse, so it is the one in the table, and
- * its payload is bad by naming a destination the row cannot satisfy rather
- * than by carrying a value of the wrong shape.
+ * satisfied by doors that disagree about what they were asked. The retype
+ * arm is the exception: its payload is bad by naming a destination the row
+ * cannot satisfy rather than by carrying a value of the wrong shape, because
+ * that is the only way to be refused for moving somewhere.
+ *
+ * This docblock used to say the bulk update arm ran no property validation
+ * at all and so had no code to compare. That was true and is not: the arm
+ * validated only on a move, and a same-type entry went to the store unjudged.
+ * It is a row in the table now, driven by the same payload as the rest.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -181,6 +181,18 @@ const doors: { name: string; refuse: () => Promise<string> }[] = [
       bulkEntryCode([
         { type: "core.note", properties: BAD, source_id: uniq("bulk-create") },
       ]),
+  },
+  {
+    name: "POST /items/bulk updates without moving",
+    refuse: async () => {
+      const sourceId = uniq("bulk-update");
+      await bulkEntryOutcome([
+        { type: "core.note", properties: GOOD, source_id: sourceId },
+      ]);
+      return bulkEntryCode([
+        { type: "core.note", properties: BAD, source_id: sourceId },
+      ]);
+    },
   },
   {
     name: "POST /items/bulk moves a row to a type it does not satisfy",
