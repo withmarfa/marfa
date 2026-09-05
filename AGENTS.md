@@ -21,6 +21,8 @@ Typed data layer. This monorepo holds eight active workspace packages and the Di
 
 **Where the code has to run is what decides whether something is an Integration.** An Integration is installed into a deployment's integrations directory and dispatched by the runtime. A client's code can only run somewhere else: sync watches a filesystem, so it runs on the machine holding the files. It ships a manifest and no handler, and that manifest ships with the server build rather than being installed. Sync keeps its Connection, credentials, configuration and observability either way; none of that is what makes something an Integration.
 
+**Samples (`examples/`):** workspace packages, so they typecheck and build against the kit on every change rather than drifting until somebody next opens one. `electron-local` is a desktop application on `@withmarfa/sdk/local`: it opens the engine, writes with no network, and carries the build-time check that an artifact cross-built for another platform ships a SQLite binding that platform can load.
+
 **Infra (`infra/`):** `digitalocean` — compose files, Caddyfile, env templates, and the deploy shape for the droplet deployments (`deploy-server.yml` targets it).
 
 `@withmarfa/shared`, `@withmarfa/sdk`, `@withmarfa/runtime-sdk`, `@withmarfa/runtime-test`, and `@withmarfa/webhooks` publish to npm under the `@withmarfa` scope via OIDC trusted-publisher (`.github/workflows/publish.yml`), fired on `v*` tag pushes. Other workspace packages are private.

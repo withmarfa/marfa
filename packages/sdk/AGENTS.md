@@ -12,6 +12,35 @@ TypeScript HTTP client for the Marfa API. Public package, published to npm via O
 - `src/define-type.ts` — `defineType()` authoring helper. No-op at runtime; constrains the input to a structurally-valid `TypeSchema` at compile time.
 - `src/webhooks.ts` — inbound webhook signature verification (`verifyWebhookSignature`).
 
+## Subpaths with optional peers
+
+`./auth`, `./auth/node`, `./replica`, `./local`, `./electron`,
+`./electron/preload` and `./electron/renderer` each have their own tsup entry,
+so a consumer pays only for what it imports. `@tanstack/db`, `@libsql/client`, `drizzle-orm` and
+`electron` are optional peers and externalized in the bundle.
+
+**`electron` is also a devDependency**, which the others are too but for a
+sharper reason: `./electron` is typed against Electron's own `IpcMain`,
+`WebContents` and `WebPreferences` rather than against narrowed stand-ins, so
+the subpath cannot typecheck without the real declarations. A stand-in has to
+be kept in step with the thing it stands for, and the version that is not is
+the one that compiles while the application does not.
+
+**The three electron entries split for a harder reason than tree-shaking.** A
+sandboxed Electron preload is bundled into one CommonJS file and given a
+`require` that resolves `electron` and a few builtins and nothing off disk, so
+it can never load a native addon. An application bundling its preload against
+a combined entry would pull the store — and `@libsql/client` with it — into
+exactly that context. `./electron` is the main-process half;
+`./electron/preload` touches nothing but `contextBridge` and `ipcRenderer`.
+
+`./electron/renderer` is the third because a renderer can import neither of
+the others: one pulls the store, the other imports `electron`. It carries the
+channel names, the bridge's type and `refusalNameOf`, and its chunk imports
+nothing at all. A renderer needs that helper rather than reading `error.name`
+directly, because `contextBridge` discards an Error's own properties on the
+way across, so the class survives only in the message.
+
 ## Surface design
 
 - **Wire types are re-exported from `@withmarfa/shared`.** Don't redefine `Item`, `ApiKey`, etc. The SDK adds `ListFilters`, `SearchFilters`, `BulkInput`, `UpdateOptions`, `ConflictStrategy` — input/output sugar that doesn't belong on the server's wire shape.
@@ -34,6 +63,28 @@ The replica tests need the optional `@tanstack/db` peer installed. When a test d
 ## Build
 
 `tsup` produces `dist/index.js` (ESM) and `dist/index.d.ts`. `@withmarfa/types` declarations are inlined into the shared `.d.ts` so consumers only need `@withmarfa/sdk` and `@withmarfa/shared`.
+
+## Native platform packages, and why `createRequire` is not used to find them
+
+`src/electron/native-targets.ts` answers whether a desktop artifact carries a
+SQLite binding the machine it was built for can load. It walks `node_modules`
+up from a directory by hand rather than calling `require.resolve`, and that is
+load-bearing: **`createRequire` is not reliably Node's resolver.** Run under
+`tsx` it answers from a broader search, so a platform package merely present
+somewhere in a pnpm store resolves as though the application depended on it.
+The first version of the packaging check did exactly that and reported five
+sound platforms with one of them uninstalled — the failure it exists to catch,
+passing. Vitest patches resolution in the same direction, so a test could not
+have caught it either.
+
+It reads the object-file header rather than asking whether a file is present,
+because the shape being guarded against — the build host's binary sitting
+where another platform's belongs — looks like a healthy install from the
+filename down.
+
+`LIBSQL_NATIVE_TARGETS` is a copy of `libsql`'s own `optionalDependencies`, and
+`native-targets.test.ts` holds it to the original rather than to a reading of
+it.
 
 ## Versioning
 

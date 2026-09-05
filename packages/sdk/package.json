@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/sdk",
-  "version": "4.3.0",
+  "version": "4.4.0",
   "license": "Apache-2.0",
   "type": "module",
   "publishConfig": {
@@ -27,6 +27,18 @@
     "./local": {
       "types": "./dist/local/index.d.ts",
       "import": "./dist/local/index.js"
+    },
+    "./electron": {
+      "types": "./dist/electron/index.d.ts",
+      "import": "./dist/electron/index.js"
+    },
+    "./electron/preload": {
+      "types": "./dist/electron/preload/index.d.ts",
+      "import": "./dist/electron/preload/index.js"
+    },
+    "./electron/renderer": {
+      "types": "./dist/electron/renderer/index.d.ts",
+      "import": "./dist/electron/renderer/index.js"
     }
   },
   "files": [
@@ -51,12 +63,14 @@
     "typescript": "^6.0.3",
     "@tanstack/db": "^0.8.0",
     "@libsql/client": "^0.17.4",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "electron": "^44.2.0"
   },
   "peerDependencies": {
     "@tanstack/db": ">=0.6.17 <0.9.0",
     "@libsql/client": "^0.17.4",
-    "drizzle-orm": "^0.45.2"
+    "drizzle-orm": "^0.45.2",
+    "electron": ">=30"
   },
   "peerDependenciesMeta": {
     "@tanstack/db": {
@@ -66,6 +80,9 @@
       "optional": true
     },
     "drizzle-orm": {
+      "optional": true
+    },
+    "electron": {
       "optional": true
     }
   }
