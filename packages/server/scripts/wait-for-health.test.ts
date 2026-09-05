@@ -115,6 +115,12 @@ describe("attemptTimeoutMs", () => {
 
 describe("waitForHealth", () => {
   it("takes the per-attempt ceiling the caller gives it", async () => {
+    // The one case in this file whose derived ceiling is the subject rather
+    // than an inherited default, so it must keep deriving one. Everything
+    // else here gives an explicit `attemptTimeoutMs`, because a thirtieth of
+    // a budget picked to keep the suite fast is a bound on the runner rather
+    // than on the code.
+    //
     // The boot smoke hands this function what is left of a budget it
     // shares with the wait for the listen line, so the derived ceiling
     // narrows as the boot gets slower. A healthy endpoint answering in
@@ -139,7 +145,15 @@ describe("waitForHealth", () => {
 
   it("succeeds on a 200 and says so", async () => {
     const url = await serve(200);
-    const r = await waitForHealth({ url, budgetMs: 5_000 });
+    // The attempt ceiling is given rather than derived. Derived it would be
+    // a thirtieth of a budget chosen to keep this suite fast — 166ms for a
+    // real socket round trip — and the assertion below is that one attempt
+    // sufficed, which a timed-out first attempt breaks by making a second.
+    const r = await waitForHealth({
+      url,
+      budgetMs: 5_000,
+      attemptTimeoutMs: 5_000,
+    });
     expect(r.ok).toBe(true);
     expect(r.attempts).toBe(1);
   });
@@ -215,6 +229,10 @@ describe("waitForHealth", () => {
     const r = await waitForHealth({
       url,
       budgetMs: 300,
+      // Given, not derived: this budget would put a 10ms ceiling on each
+      // attempt, which says nothing about what the case is for. What is
+      // asserted is the stop reason; the attempts only have to happen.
+      attemptTimeoutMs: 300,
       pollIntervalMs: 50,
       shouldStop: () =>
         Date.now() - start >= 300
