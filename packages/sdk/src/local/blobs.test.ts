@@ -15,7 +15,12 @@ import {
   createKeysModeFixture,
   type KeysModeFixture,
 } from "../test-harness.js";
-import { createBlobStore, hashBlob, type LocalBlobs } from "./blobs.js";
+import {
+  collectBlobHashes,
+  createBlobStore,
+  hashBlob,
+  type LocalBlobs,
+} from "./blobs.js";
 import { openLocalStore, type LocalStore } from "./store/index.js";
 import { SINGLE_ACCOUNT, SINGLE_SPACE } from "./types.js";
 
@@ -123,7 +128,6 @@ describe("the blob cache", () => {
   it("never evicts bytes that are still owed to the server", async () => {
     const staged = filled(9);
     const { hash } = await blobs.stage(staged, "image/png");
-    expect(hash).toBe(hashBlob(staged));
 
     // Enough reads to turn the cache over twice. The staged bytes have no
     // row in the cache table at all, so the walk cannot reach them — the
@@ -134,7 +138,11 @@ describe("the blob cache", () => {
       await blobs.read(uploaded.hash);
     }
 
-    expect(await store.blobs.cache.totalBytes()).toBeLessThanOrEqual(CEILING);
+    // Exactly full, not merely within the ceiling. Four 32-byte reads
+    // against a 64-byte bound settle at 64 every time, so `<=` would also
+    // be satisfied by an evictor that emptied the cache — which is the
+    // failure this test is closest to.
+    expect(await store.blobs.cache.totalBytes()).toBe(CEILING);
     expect(blobs.held(hash)).toBe(true);
     expect(await blobs.read(hash)).toEqual(staged);
     expect(await store.blobs.get(hash)).toMatchObject({ state: "pending" });
@@ -157,5 +165,76 @@ describe("the blob cache", () => {
     expect(blobs.held(hash)).toBe(false);
     expect(blobs.held(kept.hash)).toBe(true);
     expect(await store.blobs.cache.totalBytes()).toBe(BLOB_BYTES);
+  });
+
+  it("refuses an upload whose bytes have left the disk", async () => {
+    const { hash } = await blobs.stage(filled(7), "image/png");
+    // The row survives its file: a store copied without its blob
+    // directory, or a sweep that took the bytes and not the queue. Nothing
+    // can be sent and nothing later will make it sendable, so holding the
+    // row would hold every write naming it for ever.
+    rmSync(blobs.pathFor(hash));
+
+    const flushed = await blobs.flush();
+
+    expect(flushed.uploaded).toEqual([]);
+    expect(flushed.refused).toHaveLength(1);
+    const refusal = flushed.refused[0];
+    expect(refusal).toMatchObject({
+      hash,
+      code: "blob_bytes_missing",
+      httpStatus: null,
+    });
+    // The message names the hash, because the message is what a person
+    // reads on the dead letter the refusal produces.
+    expect(refusal?.message).toContain(hash);
+    // Recorded as a refusal rather than left pending, which is what lets
+    // the drain dead-letter the writes waiting on it with a reason.
+    expect(await store.blobs.get(hash)).toMatchObject({
+      state: "failed",
+      code: "blob_bytes_missing",
+    });
+  });
+});
+
+/**
+ * The scan that decides which uploads a write waits for.
+ *
+ * A hash can sit anywhere a type puts a string, so the scan recurses. Both
+ * recursive arms are exercised here because neither is reachable from the
+ * top-level `blob_ref` string every other test seeds, and a miss is the
+ * single failure this scanning exists to prevent: the write that names the
+ * blob does not wait for its upload, and lands referencing nothing.
+ */
+describe("the scan for blob references", () => {
+  const hashOf = (letter: string): string => `sha256:${letter.repeat(64)}`;
+
+  it("reaches a hash nested in an array and behind an object", () => {
+    const found = new Set<string>();
+    collectBlobHashes(
+      {
+        blob_ref: hashOf("a"),
+        attachments: [hashOf("b"), { thumbnail: hashOf("c") }],
+        nested: { deeper: { list: [{ ref: hashOf("d") }] } },
+        // None of these is a blob reference, and a scan that treated any
+        // of them as one would make the drain wait on an upload nothing
+        // ever staged.
+        not_a_hash: "sha256:tooshort",
+        prose: "a sentence",
+        count: 3,
+        absent: null,
+      },
+      found,
+    );
+
+    expect([...found].sort()).toEqual(
+      [hashOf("a"), hashOf("b"), hashOf("c"), hashOf("d")].sort(),
+    );
+  });
+
+  it("agrees with the hash the staged bytes are named by", () => {
+    const found = new Set<string>();
+    collectBlobHashes({ blob_ref: hashBlob(filled(1)) }, found);
+    expect([...found]).toEqual([hashBlob(filled(1))]);
   });
 });
