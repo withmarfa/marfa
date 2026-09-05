@@ -716,7 +716,7 @@ export function checkTypeAccess(
 }
 
 /**
- * What a credential may read, as a list query can express it.
+ * What a credential may reach at a given level, as a list query can express it.
  *
  * **Returns a pair, and that is the point.** `allowed` alone cannot say what
  * a permission map says: a `"none"` entry subtracts, and a filter assembled
@@ -740,8 +740,9 @@ export function checkTypeAccess(
  * call site that took the permitted list without the exclusions would fail
  * open, which is the defect above reintroduced one layer up, and it would do
  * so silently — every suite that does not mint an exclusion-carrying key
- * would still pass. Returning one object makes it unrepresentable: nine call
- * sites cannot forget a field they have to destructure.
+ * would still pass. Returning one object makes it unrepresentable: a call
+ * site cannot forget a field it has to destructure. (Eight consumers today,
+ * seven through `getTypeFilter` and one direct, on the change stream.)
  *
  * `allowed: undefined` keeps meaning "no restriction" and `allowed: []` keeps
  * meaning "nothing visible", so the contract at every call site survives.

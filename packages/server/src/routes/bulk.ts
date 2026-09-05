@@ -1328,14 +1328,22 @@ export function bulkRoutes(storage: Storage) {
       "write",
     );
 
-    // The space's own read-narrowing lever, resolved the way the three read
-    // doors resolve it. This door passed nothing, so a match set included
-    // rows every read hides — the same shape as the reserved namespace, on a
-    // policy lever rather than a platform boundary. The compiler's own note
-    // says what it is for: it stops a caller switching the control off by
-    // broadening the query, and a door that never applies it is the broadest
-    // query there is. Applied to a write because narrowing what an action
-    // touches is the safer reading of a lever whose purpose is narrowing.
+    // The space's source filter, resolved the way the four list reads resolve
+    // it. This door passed nothing, so a match set included rows every read
+    // hides.
+    //
+    // That is a defect rather than a policy call, and `dry_run` is what makes
+    // it one: it answers with the matched ids, so this door is *already* a
+    // list read, and one that bypassed the lever entirely. The lever exists
+    // to stop a caller switching the control off by broadening a query, and
+    // reaching the same rows by swapping endpoint is that hole with an extra
+    // step. Once the query narrows, the actions behind it narrow with it,
+    // because it is one query.
+    //
+    // The cost is real and worth knowing: an action aimed at a source the
+    // filter excludes now matches nothing and reports `matched: 0` rather
+    // than refusing, which is the shape of a filter that found nothing. A
+    // space admin reaching those rows lifts the lever, acts, and restores it.
     const spaceConfigForAction =
       spaceId && storage.spaces
         ? await storage.spaces.getConfig(spaceId)
@@ -1409,10 +1417,11 @@ export function bulkRoutes(storage: Storage) {
         // **The opt-in asks who may write the type, not merely who named
         // it.** On a read this rule shapes an unnarrowed query and
         // permissions decide the rest. Here they do not: this door runs no
-        // per-row `requireTypeAccess`, and `getTypeFilter` compiles
-        // *readable* patterns, so a key holding `{"*": "read"}` arrives
-        // with no narrowing at all and never meets the fence that guards
-        // the reserved namespace on every single-item write door. Widening
+        // per-row `requireTypeAccess`, so whatever reaches the match query
+        // never meets the fence that guards the reserved namespace on every
+        // single-item write door. The type filter beside this is not that
+        // fence and cannot be: a credential holding `write` across the
+        // board passes it and is still not a platform one. Widening
         // on the name alone would therefore publish a write path into that
         // namespace which `PATCH /items/{id}` refuses to the same key.
         //

@@ -142,8 +142,11 @@ export interface ItemFilters {
   tags?: string[];
   filter?: string;
   allowed_types?: string[];
-  /** Patterns a `"none"` entry withholds, subtracted from `allowed_types`
-   *  under the specificity ranking `resolveTypePermission` uses. Distinct
+  /** Patterns the permission map withholds, subtracted from `allowed_types`
+   *  under the specificity ranking `resolveTypePermission` uses. A `"none"`
+   *  entry always lands here; a `"read"` entry does too when the caller
+   *  asked for a write-level filter, which is what `POST /items/bulk-actions`
+   *  does. Distinct
    *  from `exclude_system_types`, which is a fixed negative over one family
    *  owned by the route layer; this one is fed by the permission map. Always
    *  supplied together with `allowed_types` — see `computeTypeFilter`. */

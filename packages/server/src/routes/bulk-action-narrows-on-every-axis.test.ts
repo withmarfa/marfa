@@ -236,6 +236,38 @@ describe("the match set narrows on the space's source filter", () => {
     expect(ids).toContain(bookmark);
   });
 
+  it("narrows a space admin on source while not narrowing it on type", async () => {
+    const marker = `sa${Math.random().toString(36).slice(2, 8)}`;
+    const trustedNote = await seed(
+      trustedKey,
+      "core.note",
+      { body: "trusted" },
+      marker,
+    );
+    const untrustedNote = await seed(
+      untrustedKey,
+      "core.note",
+      { body: "untrusted" },
+      marker,
+    );
+
+    // The two axes answer differently for one credential, and nothing else
+    // in this file says so on a single subject. `space_admin` bypasses the
+    // permission maps, so the type axis never narrows it — it holds no
+    // explicit grant on `core.note` and reaches the row anyway. The source
+    // filter is not a permission map and has no such bypass, so the same
+    // credential in the same call is narrowed by it.
+    //
+    // Worth pinning together because the asymmetry is easy to state
+    // backwards: "admins are unaffected" is true of one axis and false of
+    // the other, and the published page said the wrong one until a review
+    // caught it.
+    const ids = await matchedIds(trustedKey, { tags: [marker] });
+
+    expect(ids).toContain(trustedNote);
+    expect(ids).not.toContain(untrustedNote);
+  });
+
   it("narrows a filter phrased on some other axis too", async () => {
     const marker = `ax${Math.random().toString(36).slice(2, 8)}`;
     const untrustedNote = await seed(
