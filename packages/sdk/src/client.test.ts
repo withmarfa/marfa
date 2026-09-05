@@ -1610,32 +1610,49 @@ describe("items.bulkAction", () => {
     });
   });
 
-  it("filter.state and filter.tier stay narrower than GET /items — the route has no revoked-state or all-tier match", () => {
+  it("filter.tier stays narrower than GET /items, and filter.state does not", () => {
     // The assertion here is the compile step, not a runtime expectation.
     // Each `@ts-expect-error` fails the build the moment the error it
     // names stops happening, which is exactly what widening the field
-    // back would do. Types are erased before this body runs, so no
-    // runtime check on these values can distinguish a narrowed type from
-    // a wide one — the sibling test below is what holds the server's
-    // half. This one goes red under `typecheck` rather than under the
-    // test runner.
-    // @ts-expect-error — `revoked` is a system.*-only lifecycle value;
-    // POST /items/bulk-actions filters over the ordinary three-state
-    // lifecycle only, so this must not typecheck.
-    const rejectedState: BulkActionFilter = { state: "revoked" };
+    // would do. Types are erased before this body runs, so no runtime
+    // check can distinguish a narrowed type from a wide one — the
+    // sibling below holds the route's half. This goes red under
+    // `typecheck` rather than under the runner.
+
     // @ts-expect-error — the bulk-action route has no `"all"` catch-all
     // on tier; that only exists on GET /items' wider ListFilters.
     const rejectedTier: BulkActionFilter = { tier: "all" };
 
-    // The other half, so this pins a narrowing to exactly two values
-    // rather than to anything narrower: both of these must still assign.
+    // `revoked` must ASSIGN. The route's filter takes every lifecycle
+    // value, and the reserved namespace's lifecycle is exactly `active`
+    // and `revoked` — so a filter refusing it puts every reserved row
+    // beyond the reach of any bulk action. This line failing to compile
+    // is the regression, not the fix.
+    const revokedFilter: BulkActionFilter = { state: "revoked" };
+
+    // The other half, so this pins the tier narrowing to exactly one
+    // value rather than to anything wider: these must still assign.
     const acceptedState: BulkActionFilter = { state: "trashed" };
     const acceptedTier: BulkActionFilter = { tier: "library" };
 
-    void [rejectedState, rejectedTier, acceptedState, acceptedTier];
+    // @ts-expect-error — the action's own target state is a different
+    // set from the filter's, and deliberately smaller: a bulk action
+    // selects revoked rows but may not move a row into `revoked`.
+    const rejectedTarget: BulkActionInput = {
+      action: "transition",
+      state: "revoked",
+    };
+
+    void [
+      rejectedTier,
+      revokedFilter,
+      acceptedState,
+      acceptedTier,
+      rejectedTarget,
+    ];
   });
 
-  it("the server refuses tier: all, and quietly matches nothing for state: revoked", async () => {
+  it("the route refuses tier: all and a state that is not a state, and takes revoked", async () => {
     const tag = `ba-narrow-${Math.random().toString(36).slice(2, 8)}`;
     await seedTagged(1, tag);
     const base = {
@@ -1644,14 +1661,13 @@ describe("items.bulkAction", () => {
       dry_run: true,
     };
 
-    // The control, so the two below are read against a filter that does
-    // match. Without it a zero could mean the tag never landed.
+    // The control, so a zero below cannot be read as the tag never
+    // landing.
     await expect(
       client.items.bulkAction({ ...base, filter: { tags: [tag] } }),
     ).resolves.toMatchObject({ matched: 1 });
 
-    // `tier` is still refused, which is the straightforward half: the
-    // route has no `"all"` catch-all, and says so.
+    // `tier` is refused: the route has no `"all"` catch-all, and says so.
     await expect(
       client.items.bulkAction({
         ...base,
@@ -1659,24 +1675,26 @@ describe("items.bulkAction", () => {
       }),
     ).rejects.toMatchObject({ code: "validation_error" });
 
-    // `state` is the half that changed, and it changed in the direction
-    // that makes the narrowing above matter more rather than less. The
-    // route used to refuse an unrecognized lifecycle value; it now takes
-    // it, applies it, and matches nothing. So a caller who types a state
-    // the bulk door does not have gets a clean answer saying zero rows
-    // were affected, which is indistinguishable from a filter that is
-    // correct and simply selects nothing.
-    //
-    // Nothing is destroyed by that — the actions are transition, tag and
-    // delete, and all three are no-ops over an empty match — but the
-    // typo survives, and the type is now the only thing that catches it.
+    // A value that is not a lifecycle state is still refused, which is
+    // the signal that matters: a typo does not become a quiet zero.
     await expect(
       client.items.bulkAction({
         ...base,
-        filter: {
-          tags: [tag],
-          state: "revoked",
-        } as unknown as BulkActionFilter,
+        filter: { tags: [tag], state: "revokd" } as unknown as BulkActionFilter,
+      }),
+    ).rejects.toMatchObject({ code: "validation_error" });
+
+    // `revoked` is a real lifecycle value and the filter takes it. The
+    // zero here is a property of this fixture, which seeds no revoked
+    // rows — not of the route. Asserting it pins the direction: a filter
+    // naming a state that genuinely selects nothing is a filter working,
+    // and the kit's type must keep offering it, because the reserved
+    // namespace's lifecycle is exactly `active` and `revoked` and a kit
+    // that refused it would put every reserved row beyond bulk reach.
+    await expect(
+      client.items.bulkAction({
+        ...base,
+        filter: { tags: [tag], state: "revoked" },
       }),
     ).resolves.toMatchObject({ matched: 0, succeeded: 0, errored: 0 });
   });

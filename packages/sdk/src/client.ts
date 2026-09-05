@@ -457,26 +457,26 @@ export interface BulkEdgeResult {
 }
 
 /** Filter shape for `POST /items/bulk-actions`. Close to the `GET /items`
- *  query grammar — every field is AND-composed, `filter` accepts the
- *  full filter-SQL DSL — but narrower on two axes: this route has no
- *  `"any"` / `"all"` catch-all, and `state` has no `revoked`. Both are
- *  refused with a 400 rather than ignored. Widen either only if the
- *  route itself starts accepting the wider value.
+ *  query grammar — every field is AND-composed and `filter` accepts the
+ *  full filter-SQL DSL — but narrower on one axis: this route has no
+ *  `"any"` / `"all"` catch-all on `tier`, and refuses it with a 400
+ *  rather than ignoring it. Widen it only if the route does.
  *
- *  This is a statement about these two fields and nothing wider. It does
- *  not say a bulk action cannot reach a revoked row: the default state
- *  mask drops only trashed rows, and the free-text `filter` DSL names
- *  `state` with no value allowlist, so neither path passes through the
- *  field narrowed here.
+ *  `state` takes every lifecycle value, `revoked` included, because the
+ *  route's filter does. That is not incidental: the reserved namespace's
+ *  lifecycle is exactly `active` and `revoked`, so a filter offering
+ *  three states put every reserved row beyond the reach of any bulk
+ *  action. Narrowing this field here would rebuild that wall one layer
+ *  up, where it would be harder to see.
  *
- *  Spelled as a union rather than as an exclusion, deliberately. An
- *  exclusion is a denylist over a type that grows elsewhere: add a fifth
- *  lifecycle value and it lands in this filter with no error, while the
- *  route's own enum stays as written and refuses it — which is the exact
- *  disagreement this shape was narrowed to remove. */
+ *  **The filter's `state` and an action's own `state` are different
+ *  sets and the difference is deliberate.** This one selects rows and
+ *  takes four; `transition`'s target takes three, because a bulk action
+ *  may not move a row into `revoked`. Reading one from the other is the
+ *  mistake this note exists to stop. */
 export interface BulkActionFilter {
   type?: string;
-  state?: "active" | "archived" | "trashed";
+  state?: ItemState;
   source?: string;
   tier?: Tier;
   tags?: string[];
