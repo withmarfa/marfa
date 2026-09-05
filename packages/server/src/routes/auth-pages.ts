@@ -32,7 +32,10 @@ import {
   intersectDeviceScopes,
 } from "./device-scope-merge.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
-import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import {
+  buildAllowedScopes,
+  REFRESH_TOKEN_PREFIX,
+} from "../auth/oauth-provider.js";
 import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
@@ -85,7 +88,6 @@ import type { OidcSigner } from "../auth/oidc-signing.js";
 import type { EvaluatePendingDeletion } from "../middleware/account-deletion-guard.js";
 
 const ACCESS_TOKEN_PREFIX = "marfa_at_";
-const REFRESH_TOKEN_PREFIX = "marfa_rt_";
 const ACCESS_TOKEN_TTL_MS = 3600_000; // 1 hour
 
 function generateToken(prefix: string): string {

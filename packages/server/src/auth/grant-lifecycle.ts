@@ -41,8 +41,11 @@ import { log } from "../middleware/logger.js";
 export async function revokeProjectedGrant(
   storage: Storage,
   opts: {
-    itemId: string;
-    properties: Record<string, unknown>;
+    /** The projection to flip, or null when the grant has the plugin's
+     *  records and no live projection: the tokens and consent row still go,
+     *  through the same lock, and there is no record to rewrite. */
+    itemId: string | null;
+    properties?: Record<string, unknown>;
     spaceId: string | undefined;
     clientId: string | undefined;
     authUserId: string | undefined;
@@ -84,6 +87,7 @@ export async function revokeProjectedGrant(
     // plugin's. This function is already the single writer for both revoke
     // doors and already holds the consent lock, so keeping the sweep here
     // means one writer rather than two that can drift apart.
+    if (opts.itemId === null) return;
     await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
     await storage.items.update(
       opts.itemId,
