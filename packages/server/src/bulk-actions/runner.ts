@@ -51,33 +51,6 @@ export interface RunChunkContext {
   ids: string[];
 }
 
-/**
- * The space an event about this row belongs to.
- *
- * **The row's own, not the job's.** A job records the space of the credential
- * that started it, and a platform admin has none — so a job an admin runs over
- * somebody else's rows published every event unscoped, and `pubsub` drops an
- * unscoped event for every space-bound subscriber while passing it to the
- * unscoped admin. The account whose rows were written was the one account not
- * told. On a purge that meant a client kept rendering rows the server no longer
- * had, with nothing to correct it: opening one reported not found, which reads
- * as a broken app rather than as a deletion.
- *
- * For a space-bound caller this changes nothing — storage is space-scoped at
- * the SQL layer, so a row it returned is already in the caller's space. It only
- * differs where the two were never the same thing.
- *
- * The job's space stays as the fallback for a deployment whose rows carry no
- * space at all, where an unscoped event is what an unscoped subscriber wants.
- */
-function spaceOf(
-  row: { space_id?: string | null },
-  jobSpaceId: string | null,
-): { spaceId?: string } {
-  const space = row.space_id ?? jobSpaceId;
-  return space != null ? { spaceId: space } : {};
-}
-
 export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
   const { input } = ctx;
   switch (input.action) {
@@ -132,7 +105,7 @@ async function runTransitionChunk({
     await publish({
       type: "state_changed",
       item,
-      ...spaceOf(item, spaceId),
+      ...(spaceId != null && { spaceId }),
       enableFanout: fansOutFor(input),
     });
   }
@@ -243,7 +216,7 @@ async function runPurgeChunk({
       await publishEdge({
         type: "edge_deleted",
         edge,
-        ...spaceOf(edge, spaceId),
+        ...(spaceId != null && { spaceId }),
         enableFanout: fansOutFor(input),
       });
     }
@@ -251,7 +224,7 @@ async function runPurgeChunk({
       await publish({
         type: "purged",
         item,
-        ...spaceOf(item, spaceId),
+        ...(spaceId != null && { spaceId }),
         enableFanout: fansOutFor(input),
       });
     }
@@ -333,7 +306,7 @@ async function runUpdateTagsChunk({
         type: "metadata_changed",
         item,
         metadata,
-        ...spaceOf(item, spaceId),
+        ...(spaceId != null && { spaceId }),
         enableFanout: fansOutFor(input),
       });
     }
@@ -525,7 +498,7 @@ async function publishUpdated(
     await publish({
       type: "updated",
       item,
-      ...spaceOf(item, spaceId),
+      ...(spaceId != null && { spaceId }),
       enableFanout: fansOutFor(input),
     });
   }
