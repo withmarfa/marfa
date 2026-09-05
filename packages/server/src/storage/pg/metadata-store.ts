@@ -3,6 +3,8 @@ import {
   typePatternToSql,
   typeFilterTerms,
   GLOBAL_TYPE_WILDCARD,
+  MarfaError,
+  ErrorCode,
   type Metadata,
 } from "@withmarfa/shared";
 import type { MetadataStore, SetExtensionsResult } from "../interface.js";
@@ -11,6 +13,7 @@ import type { PgDb } from "./connection.js";
 import type { PgTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
 import { announcesMetadataChange } from "../../metadata-namespaces.js";
+import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class PgMetadataStore implements MetadataStore {
   constructor(private db: PgDb) {}
@@ -188,16 +191,43 @@ export class PgMetadataStore implements MetadataStore {
 
   async merge(itemId: string, tags?: string[]): Promise<Metadata> {
     return this.db.transaction(async (tx) => {
+      // The item row first, unconditionally. The lock below is on
+      // `metadata`, and `writeSidecar` then writes `items`, so taking the
+      // sidecar alone inverts the order every other writer here holds —
+      // `removeTag` reads then writes `items` then `metadata`, so one
+      // `POST /items/{id}/tags` against one `DELETE /items/{id}/tags/{tag}`
+      // on the same row is a cycle, and nothing in this package retries a
+      // deadlock. `mutateExtension` claims the item row for exactly this
+      // reason and asks a predicate first; a tag write always announces, so
+      // there is nothing to ask.
+      await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(eq(items.id, itemId))
+        .for("update");
       const [row] = await tx
         .select()
         .from(metadata)
-        .where(eq(metadata.item_id, itemId));
+        .where(eq(metadata.item_id, itemId))
+        .for("update");
       const current: Metadata = row
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const mergedTags = tags
         ? [...new Set([...current.tags, ...tags])]
         : current.tags;
+      if (
+        mergedTags.length > MAX_TAGS_PER_ITEM &&
+        mergedTags.length > current.tags.length
+      ) {
+        // Inside the transaction that computes the set, on the same read the
+        // write uses. See MAX_TAGS_PER_ITEM for why that is the copy that
+        // holds, and why it fires only on an increase.
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
+        );
+      }
       await this.writeSidecar(tx, itemId, {
         tags: JSON.stringify(mergedTags),
       });
@@ -207,14 +237,41 @@ export class PgMetadataStore implements MetadataStore {
 
   async addTags(itemId: string, tags: string[]): Promise<Metadata> {
     return this.db.transaction(async (tx) => {
+      // The item row first, unconditionally. The lock below is on
+      // `metadata`, and `writeSidecar` then writes `items`, so taking the
+      // sidecar alone inverts the order every other writer here holds —
+      // `removeTag` reads then writes `items` then `metadata`, so one
+      // `POST /items/{id}/tags` against one `DELETE /items/{id}/tags/{tag}`
+      // on the same row is a cycle, and nothing in this package retries a
+      // deadlock. `mutateExtension` claims the item row for exactly this
+      // reason and asks a predicate first; a tag write always announces, so
+      // there is nothing to ask.
+      await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(eq(items.id, itemId))
+        .for("update");
       const [row] = await tx
         .select()
         .from(metadata)
-        .where(eq(metadata.item_id, itemId));
+        .where(eq(metadata.item_id, itemId))
+        .for("update");
       const current: Metadata = row
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const merged = [...new Set([...current.tags, ...tags])];
+      if (
+        merged.length > MAX_TAGS_PER_ITEM &&
+        merged.length > current.tags.length
+      ) {
+        // Inside the transaction that computes the set, on the same read the
+        // write uses. See MAX_TAGS_PER_ITEM for why that is the copy that
+        // holds, and why it fires only on an increase.
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
+        );
+      }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(merged) });
       return { ...current, tags: merged };
     });

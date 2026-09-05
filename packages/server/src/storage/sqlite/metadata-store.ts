@@ -3,6 +3,8 @@ import {
   typePatternToSql,
   typeFilterTerms,
   GLOBAL_TYPE_WILDCARD,
+  MarfaError,
+  ErrorCode,
   type Metadata,
 } from "@withmarfa/shared";
 import type { MetadataStore, SetExtensionsResult } from "../interface.js";
@@ -11,6 +13,7 @@ import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
 import { announcesMetadataChange } from "../../metadata-namespaces.js";
+import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class SqliteMetadataStore implements MetadataStore {
   constructor(private db: DrizzleDb) {}
@@ -203,6 +206,18 @@ export class SqliteMetadataStore implements MetadataStore {
       const mergedTags = tags
         ? [...new Set([...current.tags, ...tags])]
         : current.tags;
+      if (
+        mergedTags.length > MAX_TAGS_PER_ITEM &&
+        mergedTags.length > current.tags.length
+      ) {
+        // Inside the transaction that computes the set, on the same read the
+        // write uses. See MAX_TAGS_PER_ITEM for why that is the copy that
+        // holds, and why it fires only on an increase.
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
+        );
+      }
       await this.writeSidecar(tx, itemId, {
         tags: JSON.stringify(mergedTags),
       });
@@ -227,6 +242,18 @@ export class SqliteMetadataStore implements MetadataStore {
         ? rowToMetadata(row)
         : { item_id: itemId, tags: [], extensions: {} };
       const merged = [...new Set([...current.tags, ...tags])];
+      if (
+        merged.length > MAX_TAGS_PER_ITEM &&
+        merged.length > current.tags.length
+      ) {
+        // Inside the transaction that computes the set, on the same read the
+        // write uses. See MAX_TAGS_PER_ITEM for why that is the copy that
+        // holds, and why it fires only on an increase.
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
+        );
+      }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(merged) });
       const after = await tx
         .select()

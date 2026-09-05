@@ -63,6 +63,7 @@ import type {
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
+import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import {
   hydrateEdgesForItem,
   hydrateEdgesForItems,
@@ -1292,10 +1293,10 @@ export function itemRoutes(storage: Storage) {
     // against a number the write is about to change, so N concurrent
     // creates each see room and the space lands at limit + N - 1.
 
-    if (Array.isArray(body.tags) && body.tags.length > 100) {
+    if (Array.isArray(body.tags) && body.tags.length > MAX_TAGS_PER_ITEM) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 tags per item",
+        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
       );
     }
 
@@ -3150,10 +3151,10 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const tags = body.tags;
 
-    if (tags.length > 100) {
+    if (tags.length > MAX_TAGS_PER_ITEM) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 tags per item",
+        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
       );
     }
 
@@ -3198,37 +3199,26 @@ export function itemRoutes(storage: Storage) {
     // copies of one tag projects to one and passes it. This bounds what a
     // caller may send, that one bounds what the item may hold, and they are
     // different questions with different messages.
-    if (Array.isArray(tags) && tags.length > 100) {
+    if (Array.isArray(tags) && tags.length > MAX_TAGS_PER_ITEM) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 tags per item",
+        `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
       );
     }
 
-    // Projected before the write, not checked after it. The bound used to
-    // be enforced on the merged result the store had already stored, so a
-    // request over it returned 400 with its tags durably applied: a refusal
-    // that has already changed state is the shape a client cannot recover
-    // from, because it rolls nothing back locally having been told the
-    // write failed. Nothing announced it either, and since a tag write
-    // moves the item's modification time the leaked write also surfaced in
-    // a resuming client's catch-up.
+    // No projection here. This door used to read the metadata row, union the
+    // incoming tags into it and refuse over the bound, which was the right
+    // shape while the store enforced nothing — but it read in one
+    // transaction and wrote in another, so it never bounded anything under
+    // concurrency, and it cost an unconditional read on every successful
+    // request to duplicate a refusal the store now makes correctly. Both
+    // layers produced the same status, the same code and the same message,
+    // so nothing on the wire could tell them apart either.
     //
-    // The projection mirrors `metadata.merge`, which set-unions the
-    // incoming tags into the existing ones — the same prediction the
-    // sibling `addTags` door makes for the same reason. `tags` is optional
-    // on this door and a merge without it changes nothing, so there is
-    // nothing to project when it is absent.
-    if (Array.isArray(tags)) {
-      const existingMeta = await storage.metadata.get(id);
-      const projectedCount = new Set([...existingMeta.tags, ...tags]).size;
-      if (projectedCount > 100) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          "Maximum 100 tags per item (including existing tags)",
-        );
-      }
-    }
+    // What is still checked above is what a caller may *send*, which is a
+    // different question and one the store cannot answer: a body of a
+    // hundred and one copies of one tag projects to one and is inside the
+    // bound.
 
     const metadata = await storage.metadata.merge(id, tags);
 
@@ -3267,15 +3257,9 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const tags = body.tags;
 
-    const existingMeta = await storage.metadata.get(id);
-    const projectedCount = new Set([...existingMeta.tags, ...tags]).size;
-    if (projectedCount > 100) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Maximum 100 tags per item (including existing tags)",
-      );
-    }
-
+    // The resulting set is bounded by the store, inside the transaction that
+    // computes it. See the sibling door above for why the projection that
+    // used to sit here is gone.
     const metadata = await storage.metadata.addTags(id, tags);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
