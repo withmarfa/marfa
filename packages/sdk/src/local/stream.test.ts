@@ -364,6 +364,35 @@ describe("re-importing after being away (seam: online, no subscription)", () => 
     expect(await store.server.items.get(kept.id)).toBeDefined();
   });
 
+  it("keeps a system row the walk cannot see", async () => {
+    // The prune purges every held item absent from the walk, and the walk
+    // is `GET /items`, which excludes `system.*` unless the caller opts in
+    // with `include=system`. The stream carries no type filter, so the
+    // store holds those rows — and a re-import would then remove every one
+    // of them as "absent from the server", which is data loss rather than
+    // a stale cache.
+    //
+    // Nothing else in this file can see it: every other row here is
+    // `core.*`, so the walk returns them and the prune leaves them alone.
+    const ordinary = await client.items.create({
+      type: "core.note",
+      properties: { body: "ordinary" },
+    });
+    const reserved = await client.items.create({
+      type: "system.device",
+      properties: { name: "a laptop", kind: "desktop" },
+    });
+
+    await importAll({ store, client, prune: false });
+    expect(await store.server.items.get(reserved.id)).toBeDefined();
+
+    const result = await importAll({ store, client, prune: true });
+
+    expect(await store.server.items.get(reserved.id)).toBeDefined();
+    expect(await store.server.items.get(ordinary.id)).toBeDefined();
+    expect(result).toMatchObject({ prunedItems: 0 });
+  });
+
   it("never removes a row this client still has work queued for", async () => {
     const held = await client.items.create({
       type: "core.note",

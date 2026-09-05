@@ -369,6 +369,10 @@ export function createLocalSync(options: LocalSyncOptions): LocalSync {
         // store that refuses an event stops the stream at that event
         // rather than skipping past it.
         await applyEvent(store, event, eventId);
+        // After the apply and inside the awaited handler, so anything
+        // listening reads a store that already holds the change rather
+        // than racing it.
+        emit({ type: "store.changed", eventId });
       },
       onCatchupTooOld: () => {
         detached("reimport", async () => {

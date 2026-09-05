@@ -138,6 +138,53 @@ describe("the failure classification", () => {
     ).toMatchObject({ class: "transient" });
   });
 
+  it("dead-letters a body the server will never take", () => {
+    // A queued payload cannot be edited — no door takes "the same write,
+    // smaller" — so a retry budget spent on it ends with `retry_ceiling`,
+    // whose own promise is that retrying later is the right move. It is
+    // not. The dead letter keeps the write for a person to resend in a
+    // shape that fits.
+    expect(
+      classifyFailure(
+        new MarfaError("request_too_large", "body too large", 413),
+        "item.create",
+      ),
+    ).toMatchObject({ class: "permanent" });
+  });
+
+  it("parks a key that was spent on a different body", () => {
+    // Distinct from the in-flight case above, and the two are easy to
+    // read as one because both are about the key. That one says nothing
+    // has been decided and to ask again; this one says the key has
+    // already been answered for a different request.
+    //
+    // The engine can produce it: the drain reads the version from its
+    // local mirror at drain time, so a transient failure followed by an
+    // inbound event sends a new version under the key the mutation was
+    // written with.
+    //
+    // Not transient — a retry sends the same different body and meets the
+    // same refusal, and the person is then told the write ran out of
+    // retries when it was refused on the first. Not permanent — the edit
+    // is still wanted; it is the key that is spent.
+    expect(
+      classifyFailure(
+        new MarfaError("idempotency_key_reused", "already answered", 422),
+        "item.update",
+      ),
+    ).toMatchObject({ class: "blocked", reason: "needs_review" });
+
+    // By code, not by status: the same status carries refusals this
+    // engine's writes cannot produce, and reading the status alone would
+    // classify them without anyone having checked.
+    expect(
+      classifyFailure(
+        new MarfaError("compatible_with_violation", "unrelated", 422),
+        "item.update",
+      ),
+    ).toMatchObject({ class: "transient" });
+  });
+
   it("parks a write whose outcome the server can no longer report", () => {
     // The key was kept, so the write will not be performed twice, and the
     // stored answer is gone, so nothing can say whether the first attempt

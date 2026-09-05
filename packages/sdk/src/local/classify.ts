@@ -87,6 +87,34 @@ const UNREACHABLE_CODES = new Set(["network_error", "timeout"]);
 const KEY_IN_FLIGHT = "idempotency_key_in_flight";
 
 /**
+ * A refusal about the key rather than the row: it has already been
+ * answered for a different body.
+ *
+ * Read by code rather than by status. The same status carries refusals
+ * this engine's writes cannot produce, and classifying by status alone
+ * would bucket them all without anyone having checked which a mutation
+ * can actually meet.
+ */
+const KEY_REUSED = "idempotency_key_reused";
+
+/**
+ * The body is over the server's ceiling.
+ *
+ * Permanent rather than transient, and the distinction is what a person is
+ * told. A queued payload cannot be edited — no door takes "the same write,
+ * smaller" — so waiting changes nothing and a retry budget spent on it
+ * ends with `retry_ceiling`, whose own promise is that retrying later is
+ * the right move. It is not. The dead letter keeps the write for the app
+ * to show, drop, or resend in a shape that fits.
+ *
+ * The blob path reached this conclusion first, for its own uploads, and
+ * argued the mutation doors were different. They are not: the body limit
+ * is mounted on the item and edge doors too, so the same sentence applies
+ * to them word for word.
+ */
+const TOO_LARGE = new Set(["request_too_large", "blob_too_large"]);
+
+/**
  * A repeat resolved a key whose stored result is no longer held.
  *
  * The server kept the key, so it will not perform the write a second time,
@@ -163,6 +191,40 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
   }
 
   if (code === KEY_IN_FLIGHT) return { class: "transient", message };
+
+  // The key is spent, not the write.
+  //
+  // The engine can send a different body under one key: the drain reads
+  // the version from its local mirror at drain time, so a transient
+  // failure followed by an inbound event puts a new version in the
+  // request while the key stays as it was written.
+  //
+  // Neither obvious reading is honest. Transient retries to the ceiling
+  // and then tells a person the write "ran out of retries", for one
+  // refused on its first attempt and on every attempt after. Permanent
+  // dead-letters an edit that is still wanted — the key is spent, the
+  // intent is not. So it parks with its reason, which is what this
+  // classification already does for a suspended space and for the same
+  // reason: a refusal that is neither the write's fault nor forever.
+  //
+  // This is rule 5 applied rather than excepted. "Everything else is
+  // transient" is the default for a status whose meaning the client
+  // cannot determine; a refusal whose code the client can read and act
+  // on was never in that set.
+  //
+  // Freezing the body to the key was considered and does not work:
+  // recomputing the version is exactly what a correct client must do
+  // when an inbound event moves the row, so a frozen version would
+  // remove this refusal by guaranteeing a version conflict instead.
+  // Whether a rebased mutation should carry a new key is open, with a
+  // ticket and a measurement against it.
+  if (TOO_LARGE.has(code)) {
+    return { class: "permanent", code, httpStatus: status, message };
+  }
+
+  if (code === KEY_REUSED) {
+    return { class: "blocked", reason: "needs_review", message };
+  }
 
   if (code === RESULT_NOT_RETAINED) {
     return { class: "blocked", reason: "needs_review", message };

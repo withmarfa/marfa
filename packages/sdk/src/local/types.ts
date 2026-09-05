@@ -45,10 +45,17 @@ export type TargetKind = "item" | "edge";
  * They divide on what clears them. `auth`, `space_suspended`,
  * `quota_exceeded` and `retry_ceiling` all clear on their own or on an
  * operator's action, so retrying later is the right move. `needs_review`
- * does not: the write was made against a version of the row that no
- * longer exists, and no amount of waiting brings it back. Only the app
+ * does not, and no amount of waiting brings it back: only the app
  * re-applying the edit over what the server now holds, or dropping it,
  * gets that mutation moving.
+ *
+ * Two things reach `needs_review`, named together because the remedy is
+ * identical rather than because the causes are. The write was made
+ * against a version of the row that no longer exists; or the key it
+ * carries has already been answered for a different body, so the server
+ * keeps refusing this one under it. Either way the edit is still wanted
+ * and the queue cannot get it there — a person re-applies it, which
+ * makes a fresh mutation with a fresh key, or drops it.
  */
 export type BlockedReason =
   | "auth"
@@ -78,14 +85,12 @@ export interface OutboxEntry {
    * attempt makes every attempt its own write, which is the failure the
    * key exists to prevent arriving under cover of appearing to work.
    *
-   * The drain sends it on every door that accepts one, which is not yet
-   * the two update doors — and the reason is narrower than it looks. It
-   * is not that a retry might carry a merged body: this engine never
-   * merges, because the drain states `manual` and the server has the
-   * conflict. It is that the client's update options carry no key field
-   * at all, where the create and delete options do. Until they do, an
-   * update whose answer is lost re-sends the version it was computed
-   * against, meets the row already past it, and parks for review.
+   * The drain sends it on every door the queue uses, updates included.
+   *
+   * On an update it does more than name a repeat: the server derives a
+   * `keep_both_copies` sibling's id from it, so a replay lands in the
+   * same sibling rather than spawning a second copy of the text that
+   * lost.
    */
   idempotencyKey: string;
   state: OutboxRowState;
@@ -263,6 +268,21 @@ export type LocalEngineEvent =
    * says what a write created, so an app that does not read it here cannot
    * find the copy at all until the stream delivers it.
    */
+  /**
+   * An inbound change reached the store.
+   *
+   * The engine writes to the store and a projection reads from it, so
+   * something has to say when a read is worth repeating. Without this an
+   * app converges on its own writes and never on another device's: the
+   * rows are in the store and nothing says they arrived, which from a
+   * person's side is "sync is broken" with nothing visibly wrong.
+   *
+   * Deliberately coarse. It says a change landed, not what changed — a
+   * projection re-reads the store anyway, and naming the row here would
+   * invite an app to apply it from the event and hold a second copy of
+   * the merge rules.
+   */
+  | { type: "store.changed"; eventId: string | undefined }
   | {
       type: "mutation.merged";
       seq: number;

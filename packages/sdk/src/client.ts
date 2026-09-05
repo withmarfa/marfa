@@ -205,6 +205,9 @@ export interface ListFilters {
    * value widens the per-item shape. Prefer the typed helpers
    * (`listWithMetadata`, `listWithExtensions`) over raw strings.
    *
+   * - `system` — also returns `system.*` rows, which are omitted by
+   *   default. A read that prunes against its result needs this, or every
+   *   reserved row reads as one the server no longer has.
    * - `metadata` — wraps each entry as `{ item, metadata }`.
    * - `edges` — hydrates outbound edges per item grouped by type.
    * - `extensions` — hydrates extension namespaces (filtered by caller
@@ -1040,15 +1043,28 @@ export class MarfaClient {
     },
 
     listWithMetadata: async (
-      filters?: Omit<ListFilters, "include">,
+      filters?: Omit<ListFilters, "include"> & {
+        /**
+         * Also return `system.*` rows, which the route omits by default.
+         *
+         * A read that wants to know what the server holds — rather than
+         * what a person would browse — needs this. A client pruning
+         * against a walk without it removes every reserved row it holds,
+         * because they are absent from the read and indistinguishable
+         * from rows the server no longer has.
+         */
+        includeSystemTypes?: boolean;
+      },
     ): Promise<PaginatedResult<ItemWithMetadata>> => {
+      const { includeSystemTypes, ...rest } = filters ?? {};
       return this.transport.request<PaginatedResult<ItemWithMetadata>>(
         "GET",
         "/items",
         {
           query: {
-            ...filters,
-            include: "metadata",
+            ...rest,
+            include:
+              includeSystemTypes === true ? "metadata,system" : "metadata",
           },
         },
       );

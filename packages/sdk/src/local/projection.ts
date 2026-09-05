@@ -50,10 +50,11 @@ export interface ProjectionUtils {
    * Re-read the store into the collection.
    *
    * The engine writes to the store rather than to this, so something has
-   * to say when a read is worth repeating. Called by the app on the
-   * engine's events rather than driven from a timer here: a projection
-   * that polled would be a second scheduler beside the one the app
-   * already has, and would still be wrong about when to look.
+   * to say when a read is worth repeating. Call it on the engine's
+   * `store.changed` event, which fires after an inbound change has been
+   * applied, rather than from a timer here: a projection that polled
+   * would be a second scheduler beside the one the app already has, and
+   * would still be wrong about when to look.
    */
   refresh: () => Promise<void>;
 }

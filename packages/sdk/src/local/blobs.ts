@@ -11,6 +11,11 @@ import { isValidBlobHash } from "@withmarfa/shared";
 import type { MarfaClient } from "../client.js";
 import { MarfaError } from "../errors.js";
 import { classifyFailure } from "./classify.js";
+// The drain's own budget, so a blob and the write it holds up do not run
+// out at different times. Its import of this module is type-only and
+// erased, and this is read inside the factory rather than at module load,
+// so the pairing is not a runtime cycle.
+import { DEFAULT_RETRY_CEILING } from "./drain.js";
 import type { LocalStore } from "./store/index.js";
 
 /**
@@ -118,6 +123,13 @@ export interface BlobStoreOptions {
   dir?: string;
   /** Ceiling on downloaded bytes kept. See {@link DEFAULT_BLOB_CACHE_BYTES}. */
   maxCacheBytes?: number;
+  /**
+   * Attempts an upload gets before the bytes are handed back as refused.
+   * Defaults to {@link DEFAULT_RETRY_CEILING}, the same budget a mutation
+   * gets, because a blob that never lands holds a write behind it and the
+   * two should not run out at different times.
+   */
+  retryCeiling?: number;
   now?: () => string;
 }
 
@@ -148,6 +160,7 @@ function refusedForGood(error: unknown): boolean {
 
 export function createBlobStore(options: BlobStoreOptions): LocalBlobs {
   const { store, client } = options;
+  const uploadCeiling = options.retryCeiling ?? DEFAULT_RETRY_CEILING;
   const dir = options.dir ?? defaultBlobDir(store.path);
   const ceiling = options.maxCacheBytes ?? DEFAULT_BLOB_CACHE_BYTES;
   const now = options.now ?? (() => new Date().toISOString());
@@ -370,13 +383,43 @@ export function createBlobStore(options: BlobStoreOptions): LocalBlobs {
               };
             case "transient":
             case "blocked":
-            case "conflict":
+            case "conflict": {
               await store.blobs.recordAttempt(
                 blob.hash,
                 verdict.message,
                 now(),
               );
+              // Rule 5 in terms: no row retries for ever without saying
+              // why. Without this a blob meeting a quota, a suspension, a
+              // rate limit or any 5xx retried on every pass for the life
+              // of the store, while the write naming it sat as
+              // `awaitingUpload`, counted among the pending, with nothing
+              // emitted and no state that could say so.
+              //
+              // The refusal it is handed back with is the server's own
+              // rather than a bare "ran out of retries", because that is
+              // the sentence a person can act on — the bytes are still
+              // here, and what is wrong is a quota or an outage they can
+              // see named.
+              if (blob.attempts + 1 >= uploadCeiling) {
+                await store.blobs.fail(
+                  blob.hash,
+                  verdict.class === "blocked" ? verdict.reason : verdict.class,
+                  verdict.message,
+                  now(),
+                );
+                refused.push({
+                  hash: blob.hash,
+                  code:
+                    verdict.class === "blocked"
+                      ? verdict.reason
+                      : verdict.class,
+                  httpStatus: 0,
+                  message: verdict.message,
+                });
+              }
               break;
+            }
             // A blob has no type and no schema, so the schema arm cannot
             // describe one: a 400 here is the server refusing these bytes,
             // and no registry refresh changes that.

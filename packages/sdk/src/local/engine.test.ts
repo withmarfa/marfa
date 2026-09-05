@@ -9,7 +9,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarfaClient } from "../client.js";
 import {
   createKeysModeFixture,
@@ -183,6 +183,44 @@ describe("what the engine reports (seam: offline, then online)", () => {
     // fails to send.
     expect(status.connection).toBe("offline");
     expect(status.lastDrainedAt).toBeNull();
+  });
+});
+
+describe("converging on another device's edit (seam: online)", () => {
+  it("says a change landed, so a projection has something to refresh on", async () => {
+    await engine.start();
+    const notes = createProjection({ store, type: "core.note" });
+    await notes.preload();
+    expect([...notes.values()]).toHaveLength(0);
+
+    // The app's own writes reach a projection through the write path. A
+    // row that arrives on the stream does not: the engine writes to the
+    // store and the projection reads from it, so without a signal an app
+    // converges on its own edits and never on anybody else's — rows sit
+    // in the store while the screen says nothing arrived, which from a
+    // person's side is sync being broken with nothing visibly wrong.
+    const changed: string[] = [];
+    engine.on((event) => {
+      if (event.type === "store.changed") changed.push(event.type);
+    });
+
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "from another device" },
+    });
+
+    await vi.waitFor(() => {
+      expect(changed.length).toBeGreaterThan(0);
+    });
+
+    // The signal arrives after the apply, so a listener that refreshes on
+    // it reads a store that already holds the row rather than racing it.
+    await notes.utils.refresh();
+    expect([...notes.values()].map((note) => note.properties.body)).toContain(
+      "from another device",
+    );
+
+    await notes.cleanup();
   });
 });
 
