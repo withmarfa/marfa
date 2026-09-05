@@ -268,6 +268,21 @@ export type LocalEngineEvent =
    * says what a write created, so an app that does not read it here cannot
    * find the copy at all until the stream delivers it.
    */
+  /**
+   * An inbound change reached the store.
+   *
+   * The engine writes to the store and a projection reads from it, so
+   * something has to say when a read is worth repeating. Without this an
+   * app converges on its own writes and never on another device's: the
+   * rows are in the store and nothing says they arrived, which from a
+   * person's side is "sync is broken" with nothing visibly wrong.
+   *
+   * Deliberately coarse. It says a change landed, not what changed — a
+   * projection re-reads the store anyway, and naming the row here would
+   * invite an app to apply it from the event and hold a second copy of
+   * the merge rules.
+   */
+  | { type: "store.changed"; eventId: string | undefined }
   | {
       type: "mutation.merged";
       seq: number;
