@@ -981,10 +981,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Type identifier; matches subtypes via inheritance"
+              "description": "Type identifier; matches subtypes via inheritance. A concrete identifier the space does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page."
             },
             "required": false,
-            "description": "Type identifier; matches subtypes via inheritance",
+            "description": "Type identifier; matches subtypes via inheritance. A concrete identifier the space does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
             "name": "type",
             "in": "query"
           },
@@ -17311,10 +17311,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Restrict to a single type."
+              "description": "Restrict to a single type, subtypes included. A concrete identifier the space does not know is refused with 400 `unknown_type`."
             },
             "required": false,
-            "description": "Restrict to a single type.",
+            "description": "Restrict to a single type, subtypes included. A concrete identifier the space does not know is refused with 400 `unknown_type`.",
             "name": "type",
             "in": "query"
           },
@@ -26633,10 +26633,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Filter to a single type identifier"
+              "description": "Filter to a single type identifier, subtypes included. A concrete identifier the space does not know is refused with 400 `unknown_type`."
             },
             "required": false,
-            "description": "Filter to a single type identifier",
+            "description": "Filter to a single type identifier, subtypes included. A concrete identifier the space does not know is refused with 400 `unknown_type`.",
             "name": "type",
             "in": "query"
           },
