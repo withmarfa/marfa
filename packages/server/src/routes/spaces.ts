@@ -5,6 +5,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin, requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
+import { QuotaSchema } from "./_schemas.js";
 
 const TYPE_LIST = z.array(z.string());
 
@@ -166,16 +167,6 @@ const putConfigRoute = createRoute({
 // ---------------------------------------------------------------------------
 // Space quotas
 // ---------------------------------------------------------------------------
-
-const QuotaSchema = z.object({
-  space_id: z.string(),
-  items_limit: z.number().int().nullable(),
-  webhooks_limit: z.number().int().nullable(),
-  blobs_limit: z.number().int().nullable(),
-  storage_bytes_limit: z.number().int().nullable(),
-  rate_per_minute_limit: z.number().int().nullable(),
-  updated_at: z.string().nullable(),
-});
 
 const getQuotasRoute = createRoute({
   operationId: "getSpaceQuotas",

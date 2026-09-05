@@ -13,24 +13,13 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+import { EdgeSchema } from "./_schemas.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
-
-const EdgeSchema = z.object({
-  id: z.string(),
-  space_id: z.string().nullable().optional(),
-  source_id: z.string(),
-  target_id: z.string(),
-  edge_type: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  created_at: z.string(),
-  updated_at: z.string(),
-  version: z.number(),
-});
 
 /**
  * A refused update hands back the edge as it now stands.
@@ -42,9 +31,11 @@ const EdgeSchema = z.object({
  * is the current row and a version to retry against.
  *
  * Keyed `edge`, the same as the 200 body, so `res.edge` reads the same
- * either way — and so that nothing parses it as an item's snapshot. It
- * matters more than usual because there is no route that reads a single
- * edge by its id: this body is the only way back to a usable version.
+ * either way — and so that nothing parses it as an item's snapshot. The
+ * body still carries the whole edge rather than a version number now that
+ * `GET /edges/{id}` exists: a refused client can retry from what it was
+ * handed instead of spending a round trip re-reading what the refusal
+ * already knew.
  */
 const EdgeConflictSchema = z.object({
   error: z.object({
@@ -249,6 +240,34 @@ const createEdgeRoute = createRoute({
       },
       description:
         "The supplied `id` is taken by an edge that is not the one this request describes — a different source, target or type — or by one in a space the caller cannot see. An id naming this exact edge is a repeat and answers 200 instead. The response names the id as `existing_id`.",
+    },
+  },
+});
+
+const getEdgeRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  operationId: "getEdge",
+  tags: ["Edges"],
+  summary: "Get an edge",
+  description:
+    "Returns one edge by its id. The other ways to read an edge all need something the caller may not have: the whole space filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan. Cloaked as 404 across a space boundary, exactly as update and delete are.",
+  security: [{ bearerAuth: [] }],
+  request: { params: z.object({ id: z.string().describe("Edge id.") }) },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: z.object({ edge: EdgeSchema }) },
+      },
+      description: "The edge",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["edge_not_found"]),
+        },
+      },
+      description: "Edge not found",
     },
   },
 });
@@ -497,6 +516,36 @@ export function edgeRoutes(storage: Storage) {
     return c.json({ edge }, 201);
   });
 
+  router.openapi(getEdgeRoute, async (c) => {
+    requireAuth(c);
+    const { id } = c.req.valid("param");
+    const spaceId = c.get("apiKey")?.space_id;
+    const existing = await storage.edges.get(id);
+    // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
+    // space: a space-scoped caller must never learn another space's edge
+    // exists. Platform-admin / single-space keys carry no space_id and skip
+    // the check.
+    if (!existing || (spaceId && existing.space_id !== spaceId)) {
+      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+    }
+    // The same two gates update and delete apply, at `read` rather than
+    // `write`. Reading an edge discloses both endpoints and the properties
+    // on it, so a caller who may not read the source's type may not learn
+    // the relationship either.
+    //
+    // getIncludingTrashed for the reason the write paths use it: a plain
+    // `items.get` returns null for a trashed source, and a null source
+    // skips the type gate entirely rather than failing it. Trashing the
+    // source item would otherwise turn a refusal into a disclosure.
+    const srcItem = await storage.items.getIncludingTrashed(
+      existing.source_id,
+      spaceId,
+    );
+    if (srcItem) requireTypeAccess(c, srcItem.type, "read");
+    requireEdgePermission(c, existing.edge_type, "read");
+    return c.json({ edge: existing }, 200);
+  });
+
   router.openapi(updateEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
@@ -547,9 +596,9 @@ export function edgeRoutes(storage: Storage) {
     );
     if (!result.ok) {
       // The edit was computed from a state the server has left. Hand back
-      // the whole current edge: there is no route that reads one edge by
-      // id, so a client refused here has nowhere else to go for the
-      // version it needs to retry against.
+      // the whole current edge so the client can re-apply over it without
+      // a second round trip to `GET /edges/{id}`.
+      //
       // Returned rather than thrown, so the error handler that normally sets
       // this never runs. Same rule as the item door: a fresh refusal and its
       // idempotent replay must not describe one conflict differently.

@@ -976,6 +976,58 @@ describe("MarfaApiError structured fields", () => {
     });
   }
 
+  /**
+   * What `POST /edges` actually answers: the edge, under an `edge` key.
+   *
+   * Written out rather than trimmed to the fields a case reads, because a
+   * fixture is a claim about the wire. The previous one here was
+   * `{ id: "edge_1" }`, which the route has never sent -- and since the only
+   * caller discards the value, nothing was ever going to notice.
+   */
+  const EDGE = {
+    id: "edge_1",
+    space_id: "space_1",
+    source_id: "item_a",
+    target_id: "item_b",
+    edge_type: "parent-of",
+    properties: { note: "why" },
+    created_at: "2026-09-04T00:00:00.000Z",
+    updated_at: "2026-09-04T00:00:00.000Z",
+    version: 1,
+  };
+
+  it("createEdge returns the edge, not the envelope carrying it", async () => {
+    // The declared type said `{ id: string }` while the route answers
+    // `{ edge: Edge }`, so `.id` was `undefined` at runtime with the
+    // compiler insisting it was a string. The one caller discards the
+    // result, so the trap was laid for whoever came next.
+    const client = clientWith([
+      () => new Response(JSON.stringify({ edge: EDGE }), { status: 201 }),
+    ]);
+    const edge = await client.createEdge({
+      source_id: "item_a",
+      target_id: "item_b",
+      edge_type: "parent-of",
+    });
+    expect(edge.id).toBe("edge_1");
+    expect(edge).toEqual(EDGE);
+  });
+
+  it("createEdge hands back a version to update against", async () => {
+    // The reason the whole edge is worth returning rather than just an id:
+    // PATCH /edges/{id} takes `version` as a precondition, and a caller that
+    // only got an id has to read the edge back before it can use it.
+    const client = clientWith([
+      () => new Response(JSON.stringify({ edge: EDGE }), { status: 201 }),
+    ]);
+    const edge = await client.createEdge({
+      source_id: "item_a",
+      target_id: "item_b",
+      edge_type: "parent-of",
+    });
+    expect(edge.version).toBe(1);
+  });
+
   it("parses code and details from an error body", async () => {
     const client = clientWith([
       () => new Response(CARDINALITY_BODY, { status: 400 }),
@@ -1027,7 +1079,7 @@ describe("MarfaApiError structured fields", () => {
 
   it("ensureEdge returns created on success", async () => {
     const client = clientWith([
-      () => new Response(JSON.stringify({ id: "edge_1" }), { status: 201 }),
+      () => new Response(JSON.stringify({ edge: EDGE }), { status: 201 }),
     ]);
     await expect(
       client.ensureEdge({
