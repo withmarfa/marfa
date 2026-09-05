@@ -102,8 +102,10 @@ export function diffManifestGrants(
   // other error is an integration holding a credential shape nobody
   // approved. A key that disappears is a narrowing and is not reported.
   const oauth: ManifestGrantDelta["oauth"] = [];
-  for (const [name, to] of Object.entries(candidate.oauth_requirements)) {
-    const from = consented.oauth_requirements[name];
+  for (const [name, to] of Object.entries(
+    candidate.oauth_requirements ?? {},
+  )) {
+    const from = (consented.oauth_requirements ?? {})[name];
     if (from === undefined) oauth.push({ name, to });
     else if (from !== to) oauth.push({ name, from, to });
   }

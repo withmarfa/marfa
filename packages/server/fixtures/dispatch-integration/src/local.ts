@@ -74,13 +74,18 @@ const CURSOR_KEY = "main";
  * namespace is `acme` rather than `marfa`: this identifier never enters a
  * catalog, and one that reads like a real Marfa integration would be the
  * kind of thing somebody later tries to install.
+ *
+ * It declares nothing it has nothing to say about. Reading one direction
+ * on a schedule, it has no webhook to verify, no two-way handling and no
+ * credential requirement, and it used to carry all three because the
+ * schema demanded them.
  */
 export const DISPATCH_FIXTURE_MANIFEST = {
   name: "acme/dispatch-fixture",
   version: "0.1.0",
   publisher: "acme",
   description:
-    "Not an integration. The fixture the server image dispatches through to prove the runtime kit resolves to a single copy inside the image.",
+    "A fixture integration, installed by nothing. The server image dispatches through it to prove the runtime kit resolves to a single copy inside the image, then drops it.",
   manifest_schema_version: "2.0.0",
   direction: "read" as const,
   target_types: ["core.note"] as const,
@@ -90,14 +95,6 @@ export const DISPATCH_FIXTURE_MANIFEST = {
       config: { cron: "*/5 * * * *" },
     },
   ] as const,
-  bidirectional_handling: {
-    echo_ttl_seconds: 60,
-    lag_window_seconds: 60,
-    tombstone_mapping: "state-trashed" as const,
-    partial_write_mode: "all-or-nothing" as const,
-  },
-  oauth_requirements: {} as Record<string, "proxy" | "leased">,
-  webhook_verification: { method: "hmac-sha256" as const },
   permissions: {
     extension: { "connection.runtime": "write" as const },
     edge: {},

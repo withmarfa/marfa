@@ -1,9 +1,12 @@
 /**
  * The manifests this build ships rather than discovers.
  *
- * **An integration is something a deployment installs; a client is
- * something the platform knows about.** That distinction is the whole
- * reason this file exists. Integrations arrive as directories under
+ * **Where the code runs is a field on the manifest; this file is only
+ * about where the manifest comes from.** An integration is anything that
+ * ships a manifest and installs as a connection, whatever its upstream, so
+ * the client is not a different kind of thing — it is one that declares
+ * `runs_on: "client"`. What that costs a deployment is discoverability:
+ * integrations arrive as directories under
  * `MARFA_INTEGRATIONS_ROOT`, and the loader finds them by reading that
  * directory. A client's code has to run somewhere else: sync watches a
  * filesystem, so it can only run on the machine holding the files. There
@@ -35,3 +38,23 @@ export interface ClientManifest {
 export const CLIENT_MANIFESTS: readonly ClientManifest[] = [
   { name: SYNC_MANIFEST.name, manifest: SYNC_MANIFEST },
 ];
+
+/**
+ * This list is a shipping mechanism, not a definition. What makes a
+ * manifest a client is its own `runs_on` declaration, which the run route
+ * and the catalog reconcile both read; membership here only says the
+ * server carries the manifest as a workspace dependency instead of finding
+ * it on a disk. The two must agree, so the module refuses to load if they
+ * do not — a client manifest that forgot the field would be dispatched
+ * like any other integration, which is the failure this file exists to
+ * prevent and could not previously detect.
+ */
+for (const entry of CLIENT_MANIFESTS) {
+  if (entry.manifest.runs_on !== "client") {
+    throw new Error(
+      `CLIENT_MANIFESTS carries ${entry.name}, whose manifest declares ` +
+        `runs_on "${entry.manifest.runs_on}". A manifest this build ships ` +
+        `rather than discovers runs on the user's machine and has to say so.`,
+    );
+  }
+}

@@ -1,7 +1,7 @@
 {
   "id": "system.connection",
   "label": "Connection",
-  "description": "An approved relationship between this Marfa space and an external authority. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (a connected upstream service such as Google Calendar). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
+  "description": "An approved relationship between this Marfa space and something outside it. `kind` discriminates between variants: `app` (an OAuth client this user has authorized) and `integration` (anything installed from a manifest, whatever its upstream \u2014 a vendor service, a protocol, Marfa's own infrastructure, or nothing at all). Lifecycle bounded to active | revoked. Has no tier. The integration kind also carries a `runtime_status` distinct from the lifecycle `status`; runtime_status is server-stamped only (the runtime executor is the legitimate writer).",
   "version": 3,
   "fields": {
     "kind": {
@@ -41,7 +41,7 @@
     },
     "credential_ref": {
       "type": "string",
-      "description": "For kind: integration \u2014 id of a system.credential item holding the integration's API key"
+      "description": "For kind: integration \u2014 id of a system.credential item holding the credential the integration authenticates its upstream with"
     },
     "configuration": {
       "type": "object",
@@ -49,17 +49,17 @@
     },
     "direction": {
       "type": "enum",
-      "description": "For kind: integration \u2014 does this integration read from, write to, or both",
+      "description": "For kind: integration \u2014 does this integration read from its upstream, write to it, or both",
       "enum_values": ["read", "write", "both"]
     },
     "triggers": {
       "type": "array",
       "items_type": "object",
-      "description": "For kind: integration \u2014 array of trigger declarations. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid."
+      "description": "For kind: integration \u2014 array of trigger declarations, absent when the manifest declares none. Each entry shape: { type: 'schedule' | 'webhook' | 'item-event' | 'manual', ...per-type config }. The Integration manifest constrains which trigger types are valid, and a manifest whose code runs on the user's machine declares no triggers at all."
     },
     "attached_device": {
       "type": "string",
-      "description": "For kind: integration \u2014 id of a system.device item; set when the integration runs on a specific local device (e.g. a sync agent host)"
+      "description": "For kind: integration \u2014 id of a system.device item; set when the integration's manifest declares runs_on: client and names the machine its code runs on (e.g. a sync agent host)"
     },
     "runtime_status": {
       "type": "enum",

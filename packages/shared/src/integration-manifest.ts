@@ -58,6 +58,19 @@ import {
  *
  * Bidirectional handling — declared per-Integration in the manifest, not
  * per-space or platform-wide. Defaults match the design's stated defaults.
+ *
+ * What a manifest has to declare, and what it may leave out.
+ *
+ * An integration is whatever ships a manifest and installs as a
+ * connection, whatever its upstream: a vendor, a protocol, this
+ * platform's own infrastructure, or nothing at all. So the fields that
+ * only some of them have anything to say about are optional, and
+ * `validateManifestCoherence` judges agreement rather than presence — a
+ * webhook trigger needs a verification method, a `both` direction needs
+ * bidirectional handling, a server-run integration needs a trigger and a
+ * client-run one has none. `validateManifestAuthoring` adds the converse
+ * rules at the doors a manifest is written behind; they are deliberately
+ * not applied to stored rows, and the reason is written at that function.
  */
 const SEMVER_RE = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 
@@ -130,6 +143,21 @@ const TombstoneMappingSchema = z.enum([
 
 const PartialWriteModeSchema = z.enum(["all-or-nothing", "accept-partial"]);
 
+/**
+ * The echo-suppression window a connection runs under when its manifest
+ * declares no `bidirectional_handling` at all — a one-directional
+ * integration, which has no honest value for `partial_write_mode` and so
+ * declares none of the block.
+ *
+ * Named once and spent in three places: the two schema defaults below and
+ * the local runtime's registration builder, which used to read the field
+ * unconditionally. A number repeated at the fallback site is how the
+ * manifest and the runtime come to disagree about what an unconfigured
+ * connection means.
+ */
+export const DEFAULT_ECHO_TTL_SECONDS = 60;
+export const DEFAULT_LAG_WINDOW_SECONDS = 60;
+
 const BidirectionalHandlingSchema = z.object({
   /**
    * Echo-suppression TTL (seconds). The integration's `pending_writes` set
@@ -137,13 +165,21 @@ const BidirectionalHandlingSchema = z.object({
    * this window. Default 60 per Design Direction line 100; per-Integration
    * override allowed.
    */
-  echo_ttl_seconds: z.number().int().positive().default(60),
+  echo_ttl_seconds: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_ECHO_TTL_SECONDS),
   /**
    * External-truth-lag window (seconds). Reactive code that reads items
    * recently written by the same Connection waits at least this long
    * before trusting the read. Default 60.
    */
-  lag_window_seconds: z.number().int().positive().default(60),
+  lag_window_seconds: z
+    .number()
+    .int()
+    .positive()
+    .default(DEFAULT_LAG_WINDOW_SECONDS),
   /**
    * Tombstone mapping — what happens when the external service deletes
    * something Marfa has locally.
@@ -335,7 +371,34 @@ export const IntegrationManifestSchema = z
       }),
     description: z.string().min(1, "description is required"),
     direction: z.enum(["read", "write", "both"]),
-    triggers: z.array(TriggerSchema).min(1, "at least one trigger is required"),
+    /**
+     * Where this integration's code runs — manifest 2.2.0 additive field.
+     *
+     * `server` is a deployment's own runtime: the image installs the
+     * integration under `MARFA_INTEGRATIONS_ROOT` and dispatches it.
+     * `client` is a machine the deployment does not have, which is why
+     * the sync client watches a filesystem and Marfa cannot start it.
+     *
+     * Defaulted rather than optional on the parsed value, so the one
+     * parse every resolution already passes through is the single place
+     * that decides what absence means. Readers get a value, never a
+     * question, and nobody has to remember a helper.
+     *
+     * The run route reads this before it looks at triggers, and the
+     * catalog reconcile reads it instead of inferring a client from a
+     * registration miss — an inference that was correct while there was
+     * one client and silently wrong the moment there were two.
+     */
+    runs_on: z.enum(["server", "client"]).default("server"),
+    /**
+     * When the runtime is asked to run this integration. Optional, and
+     * `validateManifestCoherence` decides whether the manifest may omit
+     * it: a server-run integration declares at least one trigger, because
+     * a deployment that dispatches it has to be told when; a client-run
+     * one declares none, because the program that owns the code starts
+     * the run and no trigger kind honestly describes that.
+     */
+    triggers: z.array(TriggerSchema).optional(),
     target_types: z
       .array(
         z.string().refine((s) => isValidTypeIdentifier(s), {
@@ -343,8 +406,22 @@ export const IntegrationManifestSchema = z
         }),
       )
       .min(1, "at least one target_type is required"),
-    bidirectional_handling: BidirectionalHandlingSchema,
-    oauth_requirements: z.record(z.string().min(1), OAuthRequirementValue),
+    /**
+     * How a two-way integration handles echoes, lag, tombstones and
+     * partial writes. Optional: a manifest with one direction has no
+     * honest value for `partial_write_mode`, which describes a write path
+     * it does not have. `validateManifestCoherence` requires it of a
+     * `both` direction and of nothing else.
+     */
+    bidirectional_handling: BidirectionalHandlingSchema.optional(),
+    /**
+     * Per-capability OAuth requirements. Optional: an integration whose
+     * upstream needs no OAuth grant declares nothing rather than an empty
+     * record standing in for one.
+     */
+    oauth_requirements: z
+      .record(z.string().min(1), OAuthRequirementValue)
+      .optional(),
     /**
      * Static-API-token requirements — an additive manifest field.
      * Optional; present on integrations whose upstream uses a bearer
@@ -353,7 +430,14 @@ export const IntegrationManifestSchema = z
     token_requirements: z
       .record(z.string().min(1), TokenRequirementValue)
       .optional(),
-    webhook_verification: WebhookVerificationSchema,
+    /**
+     * How an inbound delivery on this connection is verified. Optional,
+     * and required by `validateManifestCoherence` exactly when the
+     * manifest declares a `webhook` trigger. It used to be required of
+     * every manifest, so most declared `hmac-sha256` by convention and a
+     * reader of one believed it verified webhooks it never receives.
+     */
+    webhook_verification: WebhookVerificationSchema.optional(),
     manifest_schema_version: SemverSchema,
     permissions: PermissionsSchema.optional(),
     /**
@@ -520,6 +604,121 @@ export function validateWriteFamilies(
     if (!covered.has(target)) {
       issues.push(
         `target type "${target}" belongs to no write family; every target travels in one`,
+      );
+    }
+  }
+  return issues;
+}
+
+/**
+ * Cross-field coherence a manifest must satisfy wherever it is read.
+ *
+ * The schema used to demand a value for `webhook_verification`,
+ * `bidirectional_handling` and `oauth_requirements` from every manifest,
+ * so most supplied a convention — and a convention in a manifest reads as
+ * a fact. Presence is no longer the question; agreement is. A field with
+ * nothing to say is absent, and a field that is present has to be true of
+ * the thing declaring it.
+ *
+ * **These are the rules every manifest already registered satisfies**,
+ * which is what makes them safe in the runtime validator. That validator
+ * runs against every connection's STORED manifest on every resolution and
+ * a credential mint fails closed, so a rule stored rows do not already
+ * meet is not a validation change, it is an outage. The stricter
+ * authoring rules live in `validateManifestAuthoring` for exactly that
+ * reason. Kept outside the Zod schema, like `validateWriteFamilies`, so
+ * the generated JSON Schema artifact stays derivable from a plain object
+ * schema.
+ */
+export function validateManifestCoherence(
+  manifest: Pick<
+    IntegrationManifest,
+    | "triggers"
+    | "direction"
+    | "webhook_verification"
+    | "bidirectional_handling"
+    | "runs_on"
+  >,
+): string[] {
+  const issues: string[] = [];
+  const triggers = manifest.triggers ?? [];
+  const declaresWebhook = triggers.some((t) => t.type === "webhook");
+
+  if (declaresWebhook && manifest.webhook_verification === undefined) {
+    issues.push(
+      "a webhook trigger needs webhook_verification: an inbound delivery has to be verified by some method, and there is no default",
+    );
+  }
+  if (manifest.direction === "both" && !manifest.bidirectional_handling) {
+    issues.push(
+      'direction "both" needs bidirectional_handling: a two-way integration has to say how it suppresses echoes and what it does with a tombstone',
+    );
+  }
+  if (manifest.runs_on === "client") {
+    if (manifest.triggers !== undefined) {
+      issues.push(
+        'a client-run integration declares no triggers: its code runs on a machine this deployment does not have, so nothing here can fire one',
+      );
+    }
+  } else if (triggers.length === 0) {
+    issues.push(
+      "a server-run integration declares at least one trigger, or nothing would ever run it",
+    );
+  }
+  return issues;
+}
+
+/**
+ * The stricter half, enforced where a manifest is written rather than
+ * where one is read.
+ *
+ * "A field with nothing to say is absent" is an authoring rule. Held at
+ * every door a manifest is authored behind — the in-tree manifest tests in
+ * this repository and in `withmarfa/integrations`, and the image build
+ * over the manifests it stages — it is system enforcement that cannot
+ * reach a row somebody already installed against.
+ *
+ * **Deliberately not in `validateManifestCoherence`.** Replayed over the
+ * stored catalog rows on 6 September 2026, these three refuse 46, 52 and
+ * 45 of 72 rows on staging and 43, 49 and 42 of 69 on production, 17 and 4
+ * of them carrying live connections. Putting them in the runtime validator
+ * before those rows move would fail resolution on every one of them, and
+ * `previewUpgrade` resolves the stored manifest to compute its diff — so
+ * the connections could not then be moved either. They move first, under
+ * the rules above; these follow.
+ */
+export function validateManifestAuthoring(
+  manifest: Pick<
+    IntegrationManifest,
+    | "triggers"
+    | "direction"
+    | "webhook_verification"
+    | "bidirectional_handling"
+    | "oauth_requirements"
+    | "token_requirements"
+    | "runs_on"
+  >,
+): string[] {
+  const issues = validateManifestCoherence(manifest);
+  const declaresWebhook = (manifest.triggers ?? []).some(
+    (t) => t.type === "webhook",
+  );
+
+  if (manifest.webhook_verification !== undefined && !declaresWebhook) {
+    issues.push(
+      "webhook_verification without a webhook trigger: nothing will ever verify a delivery this manifest cannot receive, so drop the field",
+    );
+  }
+  if (manifest.bidirectional_handling && manifest.direction !== "both") {
+    issues.push(
+      `bidirectional_handling on a "${manifest.direction}" integration: partial_write_mode describes a write path this manifest does not have, so drop the field`,
+    );
+  }
+  for (const field of ["oauth_requirements", "token_requirements"] as const) {
+    const value = manifest[field];
+    if (value !== undefined && Object.keys(value).length === 0) {
+      issues.push(
+        `${field} is declared and empty: an empty record is the absence of a requirement wearing the shape of one, so drop the field`,
       );
     }
   }

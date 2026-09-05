@@ -65,8 +65,8 @@ describe("IntegrationManifestSchema — happy path", () => {
     const result = IntegrationManifestSchema.safeParse(minimal);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.bidirectional_handling.echo_ttl_seconds).toBe(60);
-      expect(result.data.bidirectional_handling.lag_window_seconds).toBe(60);
+      expect(result.data.bidirectional_handling?.echo_ttl_seconds).toBe(60);
+      expect(result.data.bidirectional_handling?.lag_window_seconds).toBe(60);
     }
   });
 });
@@ -78,11 +78,7 @@ describe("IntegrationManifestSchema — required-field rejects", () => {
     "publisher",
     "description",
     "direction",
-    "triggers",
     "target_types",
-    "bidirectional_handling",
-    "oauth_requirements",
-    "webhook_verification",
     "manifest_schema_version",
   ] as const;
 

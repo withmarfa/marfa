@@ -438,7 +438,9 @@ async function applyUpgrade(
         // a connection whose own row disagrees with the manifest it now
         // resolves.
         direction: candidate.direction,
-        triggers: candidate.triggers,
+        ...(candidate.triggers !== undefined
+          ? { triggers: candidate.triggers }
+          : {}),
       },
     },
     input.spaceId,

@@ -163,9 +163,16 @@ export async function reconcileShippedCatalog(
     ? await loadInTreeManifests({ integrationsRoot: options.integrationsRoot })
     : { manifests: [], skipped: [] };
 
+  // What makes a discovered manifest wrong here is its own declaration,
+  // not whether this build happens to ship a client of the same name. The
+  // membership test was correct while there was one client and would have
+  // been silently wrong the moment a second one arrived — an enumeration
+  // standing in for a question the payload can answer.
   const clientNames = new Set(CLIENT_MANIFESTS.map((c) => c.manifest.name));
-  const collided = discovered.manifests.filter((entry) =>
-    clientNames.has(entry.manifest.name),
+  const collided = discovered.manifests.filter(
+    (entry) =>
+      entry.manifest.runs_on === "client" ||
+      clientNames.has(entry.manifest.name),
   );
   // Both sides are withheld, not just the loser. Picking one is the thing
   // being refused, and a deployment told which manifest it is missing and
@@ -181,11 +188,12 @@ export async function reconcileShippedCatalog(
     name,
     version: "",
     reason:
-      `${name} reached the catalog from the installed integrations ` +
-      `directory and from the manifests this build ships. A client is not ` +
-      `something a deployment installs, so one of the two is wrong; ` +
-      `neither was registered, because registration keys on (name, ` +
-      `version) and picking one would decide it silently.`,
+      `${name} was discovered in the installed integrations directory ` +
+      `while declaring runs_on "client", or while this build already ` +
+      `ships a client of that name. Code that runs on somebody else's ` +
+      `machine is not something a deployment installs, so one of the two ` +
+      `is wrong; neither was registered, because registration keys on ` +
+      `(name, version) and picking one would decide it silently.`,
   }));
 
   return {

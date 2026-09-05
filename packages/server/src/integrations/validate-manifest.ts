@@ -3,6 +3,7 @@ import {
   MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS,
   parseManifestSchemaMajor,
   validateWriteFamilies,
+  validateManifestCoherence,
 } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
 
@@ -40,6 +41,23 @@ export function validateManifest(input: unknown): ValidateManifestResult {
       errors: parsed.error.issues.map((issue) => ({
         path: issue.path.join(".") || "_root",
         message: issue.message,
+      })),
+    };
+  }
+
+  // Coherence, not presence: the manifest's own fields have to agree with
+  // each other. Deliberately the half every stored row already satisfies —
+  // this function runs against a connection's persisted manifest on every
+  // resolution and a mint fails closed, so a rule stored rows do not meet
+  // is an outage rather than a validation change. The stricter authoring
+  // rules are held at the doors a manifest is written behind instead.
+  const coherenceIssues = validateManifestCoherence(parsed.data);
+  if (coherenceIssues.length > 0) {
+    return {
+      ok: false,
+      errors: coherenceIssues.map((message) => ({
+        path: "_root",
+        message,
       })),
     };
   }

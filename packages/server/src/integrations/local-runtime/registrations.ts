@@ -26,6 +26,10 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import {
+  DEFAULT_ECHO_TTL_SECONDS,
+  DEFAULT_LAG_WINDOW_SECONDS,
+} from "@withmarfa/shared";
 import { validateManifest } from "../validate-manifest.js";
 import { discoverIntegrationDirs } from "../discover.js";
 import type { LocalIntegrationRegistration } from "./types.js";
@@ -99,12 +103,24 @@ export async function loadInTreeRegistrations(options: {
       );
       continue;
     }
-    const cronTrigger = validated.manifest.triggers.find(
-      (t) => t.type === "schedule",
-    );
+    // A manifest found in the integrations directory that declares it
+    // runs on a client is a staging fault rather than something to load:
+    // its handler is on somebody's own machine, so registering it here
+    // would advertise a dispatch this process cannot perform. The image
+    // build refuses to stage one, and this is the same refusal at the
+    // reading end, because the directory is not only written by the image.
+    if (validated.manifest.runs_on === "client") {
+      console.error(
+        `[local-runtime] ${dir} declares runs_on "client", so it is not ` +
+          `something this deployment dispatches; skipping.`,
+      );
+      continue;
+    }
+    const triggers = validated.manifest.triggers ?? [];
+    const cronTrigger = triggers.find((t) => t.type === "schedule");
     const triggerKinds = new Set<
       "schedule" | "webhook" | "item-event" | "manual"
-    >(validated.manifest.triggers.map((t) => t.type));
+    >(triggers.map((t) => t.type));
     registrations.push({
       name: validated.manifest.name,
       handlerModulePath: entryPath,
@@ -112,10 +128,15 @@ export async function loadInTreeRegistrations(options: {
         ? { scheduleCron: cronTrigger.config.cron }
         : {}),
       echo: {
+        // A one-directional manifest declares no bidirectional_handling,
+        // so the window comes from the shared constant rather than from a
+        // number spelled again here.
         echo_ttl_seconds:
-          validated.manifest.bidirectional_handling.echo_ttl_seconds,
+          validated.manifest.bidirectional_handling?.echo_ttl_seconds ??
+          DEFAULT_ECHO_TTL_SECONDS,
         lag_window_seconds:
-          validated.manifest.bidirectional_handling.lag_window_seconds,
+          validated.manifest.bidirectional_handling?.lag_window_seconds ??
+          DEFAULT_LAG_WINDOW_SECONDS,
       },
       triggerKinds,
     });

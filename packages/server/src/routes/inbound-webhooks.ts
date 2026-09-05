@@ -188,7 +188,7 @@ const createInboundWebhookRoute = createRoute({
   tags: ["Inbound Webhooks"],
   summary: "Register an inbound webhook subscription on a connection",
   description:
-    "Registers an inbound-webhook subscription so the connection's upstream service can deliver events into Marfa. Signature verification uses the adapter named in the connection manifest's `webhook_verification.method`; the `secret` is returned only once, in this response.",
+    "Registers an inbound-webhook subscription so the connection's upstream can deliver events into Marfa. Signature verification uses the adapter named in the connection manifest's `webhook_verification.method`; a manifest that declares none is refused, because nothing could verify the delivery. The `secret` is returned only once, in this response.",
   security: [{ bearerAuth: [] }],
   request: {
     params: ConnectionIdParam,
@@ -440,6 +440,19 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
       spaceId,
     );
 
+    // The manifest is what decides whether a subscription can exist here.
+    // This route used to read the method unconditionally, and every
+    // manifest supplied one because the schema demanded it — so a
+    // subscription could be registered against an integration with no
+    // webhook trigger, verified by a method its author never chose, for
+    // deliveries that would never arrive. A manifest that declares no
+    // verification is now told so rather than being handed a convention.
+    if (manifest.webhook_verification === undefined) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${manifest.name} declares no webhook_verification, so an inbound delivery on this connection could not be verified. A manifest that receives webhooks declares a webhook trigger and the method that verifies it.`,
+      );
+    }
     const verification_method = manifest.webhook_verification.method;
     const verification_adapter_id: string | undefined = undefined;
 

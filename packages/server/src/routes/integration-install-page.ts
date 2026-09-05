@@ -158,7 +158,7 @@ interface TriggerEntry {
  * doesn't drop manifest information the flat layout used to show.
  */
 function renderTriggerDetail(manifest: Record<string, unknown>): string {
-  const triggers = manifest.triggers;
+  const triggers = manifest.triggers ?? [];
   if (!Array.isArray(triggers) || triggers.length === 0) return "";
   const lines = (triggers as TriggerEntry[]).map((t) => {
     const detail =
