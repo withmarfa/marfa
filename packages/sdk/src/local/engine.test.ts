@@ -209,9 +209,23 @@ describe("converging on another device's edit (seam: online)", () => {
       properties: { body: "from another device" },
     });
 
-    await vi.waitFor(() => {
-      expect(changed.length).toBeGreaterThan(0);
-    });
+    // Bounded explicitly. The stock `vi.waitFor` budget is 1s, and what this
+    // waits on is a full round trip — create over HTTP, server write, event
+    // log, SSE fanout, client receive, engine apply, signal. On a busy machine
+    // that is the same assertion-shaped clock this suite has already been
+    // caught by once, and it fails as `expected 0 to be greater than 0`, which
+    // names no budget. The runner's own budget is 60s, so this still fails
+    // first and says why.
+    await vi.waitFor(
+      () => {
+        expect(
+          changed.length,
+          "the engine applied an inbound change and fired no store.changed " +
+            "within 5s, so a projection would never converge on it",
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 5_000 },
+    );
 
     // The signal arrives after the apply, so a listener that refreshes on
     // it reads a store that already holds the row rather than racing it.

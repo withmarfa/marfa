@@ -8,7 +8,7 @@
  * difference is what the server did. So the modes are asserted here, from
  * the outside, against what actually reached the server.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarfaClient } from "../client.js";
 import {
   createKeysModeFixture,
@@ -92,6 +92,16 @@ describe("unauthorized and server_error", () => {
   });
 });
 
+/**
+ * How long a reconnect is given before the kit is called broken.
+ *
+ * Not a performance bound. A kit that never reconnects produces one open and
+ * no more, so this only has to be past any scheduling delay — the retry itself
+ * is ~5ms. The runner's own budget is 60s, so this stays the thing that fails
+ * first and the failure names what it means.
+ */
+const RECONNECT_BUDGET_MS = 5_000;
+
 describe("stream_close", () => {
   it("carries the opening frame and then ends the connection", async () => {
     seam.mode = "stream_close";
@@ -111,15 +121,43 @@ describe("stream_close", () => {
     // an intermediary looks like — and what makes a silently-skipped gap
     // indistinguishable from a healthy quiet stream unless something
     // catches up.
-    await new Promise((resolve) => setTimeout(resolve, 200));
+    //
+    // Waited for rather than slept through. The reconnect is the behaviour
+    // under test, and the previous form — sleep 200ms, then assert more than
+    // one connection had opened — turned the runner's deadline into a logic
+    // assertion. Its failure reads `expected 1 to be greater than 1`, which
+    // names no budget and looks nothing like a timeout, and it fires on a
+    // machine busy enough that a 5ms retry does not get a second turn inside
+    // 200ms. That is a statement about the runner, not about the kit.
+    //
+    // The bound is the runner's, and it is derived: a kit that never
+    // reconnects produces one open and no more, so any wait long enough to
+    // rule out scheduling delay separates the regression from the load. Five
+    // seconds is far past either.
+    //
+    // Both conditions are inside the wait rather than only the first. Every
+    // connection says where the log stood before it ended, so a cursor
+    // follows each open — and closing the moment the second open arrives can
+    // cut between the two, which would make the pairing assertion a race
+    // rather than a check. Cutting before the first payload frame would
+    // reproduce a connection that never worked, which is a different failure:
+    // a client never told where the log stands has nothing to catch up from.
+    await vi.waitFor(
+      () => {
+        expect(
+          opens.length,
+          "the kit opened one connection and never reconnected after the " +
+            `server ended it, within ${String(RECONNECT_BUDGET_MS)}ms`,
+        ).toBeGreaterThan(1);
+        expect(
+          cursors,
+          "a connection opened without saying where the log stood",
+        ).toHaveLength(opens.length);
+      },
+      { timeout: RECONNECT_BUDGET_MS },
+    );
     subscription.close();
 
-    expect(opens.length).toBeGreaterThan(1);
-    // Every connection said where the log stood before it ended. Cutting
-    // before the first payload frame would reproduce a connection that
-    // never worked, which is a different failure: a client never told
-    // where the log stands has nothing to catch up from.
-    expect(cursors).toHaveLength(opens.length);
     expect(errors).toEqual([]);
   });
 
