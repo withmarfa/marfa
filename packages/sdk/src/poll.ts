@@ -8,22 +8,6 @@
  * `pollIntervalMs` / `maxWaitMs` / `maxPollIntervalMs`.
  */
 
-export interface PollOptions {
-  /** Initial poll interval in ms. Doubles on each tick until
-   *  `maxPollIntervalMs`. Default 250ms. */
-  pollIntervalMs?: number;
-  /** Ceiling for the backoff. Default 2000ms. */
-  maxPollIntervalMs?: number;
-  /** Total poll budget in ms. Throws `PollTimeoutError` past this.
-   *  Default 30 minutes (matches the server's
-   *  `MAX_BULK_ACTION_ITEMS_HARD` worst-case wall-clock). */
-  maxWaitMs?: number;
-  /** Callback after each poll attempt. Receives the result the
-   *  `isTerminal` check returned `false` for — useful for surfacing
-   *  progress to a UI. */
-  onProgress?: (result: never) => void;
-}
-
 const DEFAULT_INTERVAL_MS = 250;
 const DEFAULT_MAX_INTERVAL_MS = 2_000;
 const DEFAULT_MAX_WAIT_MS = 30 * 60_000;
@@ -45,6 +29,16 @@ export interface PollHookOptions<T> {
   pollIntervalMs?: number;
   maxPollIntervalMs?: number;
   maxWaitMs?: number;
+  /** Whether a thrown `fetchOnce` should be waited out rather than
+   *  ending the poll. Absent, any throw ends it, which is the right
+   *  default for a caller that cannot say which failures are transient.
+   *
+   *  **A poll asks about work that is already running.** The question
+   *  failing is not the work failing, so a predicate that recognizes a
+   *  transport-level failure turns a slow answer into a delay rather
+   *  than into a reported failure for a job that is still going. The
+   *  wall-clock budget still bounds it: a retry is not free time. */
+  isRetryable?: (error: unknown) => boolean;
 }
 
 /** Poll until `isTerminal` returns true or the budget is exhausted.
@@ -62,7 +56,20 @@ export async function pollUntilTerminal<T>(
   let interval = startInterval;
 
   for (;;) {
-    const result = await opts.fetchOnce();
+    let result: T;
+    try {
+      result = await opts.fetchOnce();
+    } catch (err) {
+      if (!opts.isRetryable?.(err)) throw err;
+      // The budget is checked before sleeping rather than before
+      // retrying, so the failure the caller finally sees is the last
+      // real one instead of a `PollTimeoutError` that says nothing
+      // about why the answer never came.
+      if (Date.now() - start >= maxWait) throw err;
+      await sleepFor(Math.min(interval, maxWait - (Date.now() - start)));
+      interval = Math.min(interval * 2, maxInterval);
+      continue;
+    }
     if (opts.isTerminal(result)) return result;
     opts.onProgress?.(result);
 
@@ -71,10 +78,13 @@ export async function pollUntilTerminal<T>(
       throw new PollTimeoutError(elapsed);
     }
 
-    const sleep = Math.min(interval, maxWait - elapsed);
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, sleep);
-    });
+    await sleepFor(Math.min(interval, maxWait - elapsed));
     interval = Math.min(interval * 2, maxInterval);
   }
+}
+
+function sleepFor(ms: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
