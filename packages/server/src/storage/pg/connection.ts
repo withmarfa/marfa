@@ -102,6 +102,35 @@ export function pgApplicationName(processRole: string | undefined): string {
  */
 export const PG_UNNAMED_APPLICATION_NAME = "marfa";
 
+/**
+ * Every pool this server opens, which is the second half of every
+ * `application_name` it stamps.
+ *
+ * A list rather than five string literals at five call sites, because
+ * `/health` has to recognize the labels these produce in order to attribute a
+ * connection to the pool that opened it — and a suffix spelled independently
+ * at both ends can be renamed at one of them. Renaming `app` here is a type
+ * error at every site instead, which is the property the endpoint's
+ * attribution depends on and cannot check for itself.
+ */
+export const PG_POOLS = [
+  "app",
+  "session",
+  "lock",
+  "exclusive",
+  "consent",
+] as const;
+
+export type PgPool = (typeof PG_POOLS)[number];
+
+/**
+ * The `application_name` one pool stamps: this process's label, then the pool
+ * that opened the connection. The single spelling of that join.
+ */
+export function pgPoolClient(applicationName: string, pool: PgPool): string {
+  return `${applicationName}:${pool}`;
+}
+
 const POOL_IDLE_TIMEOUT_SECONDS = 30;
 
 /**
@@ -316,7 +345,7 @@ export async function createConnection(
     // held is what decides whether the pool is a pool or a queue, and no
     // connection budget can see that.
     max: options?.maxPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS,
-    connection: { application_name: `${appName}:app` },
+    connection: { application_name: pgPoolClient(appName, "app") },
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
     max_lifetime: POOL_MAX_LIFETIME_SECONDS,
     // Named prepared statements live on the backend that saw the PREPARE.
@@ -372,7 +401,7 @@ export async function createConnection(
       options?.maxPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS,
       SESSION_POOL_MAX_CONNECTIONS,
     ),
-    connection: { application_name: `${appName}:session` },
+    connection: { application_name: pgPoolClient(appName, "session") },
     // Same reasoning as the app pool. This one matters more per socket:
     // between streams it holds its slots open with nothing to show for it.
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
@@ -382,7 +411,7 @@ export async function createConnection(
   });
   const jobHolderClient = postgres(sessionModeUrl, {
     max: 1,
-    connection: { application_name: `${appName}:lock` },
+    connection: { application_name: pgPoolClient(appName, "lock") },
     // The idle timeout only ever fires on a process that lost the
     // election and released its reservation — a held reservation is
     // exempt by construction — so the loser's probe connection closes
@@ -426,7 +455,7 @@ export async function createConnection(
   // lifecycle never opens it.
   const lockClient = postgres(connectionString, {
     max: LOCK_POOL_MAX_CONNECTIONS,
-    connection: { application_name: `${appName}:exclusive` },
+    connection: { application_name: pgPoolClient(appName, "exclusive") },
     idle_timeout: LOCK_POOL_IDLE_TIMEOUT_SECONDS,
     max_lifetime: POOL_MAX_LIFETIME_SECONDS,
     // Same reasoning as the app client, and it applies here for the same

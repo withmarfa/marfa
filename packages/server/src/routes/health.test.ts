@@ -599,12 +599,14 @@ describe("GET /health pool occupancy", () => {
    * reading existed — the probe missed its budget, or the database refused —
    * and the external status page keys on it.
    *
-   * Every shape here is a pool with nothing left to hand out, including two
-   * that a verdict would have had to refuse rather than judge. Each is read
-   * twice with the cache expired between, so a decision needing successive
-   * readings to agree would have had both. `free` is asserted alongside the
-   * status so the case cannot pass by never reaching exhaustion at all,
-   * which is how this test would rot into one that proves nothing.
+   * Every shape here is a pool with nothing left to hand out, and the four
+   * straddle the removed verdict's own guard: three sat at `in_use === size`,
+   * which it judged and degraded on, and the fourth exceeds the size, which
+   * it refused. Each is read twice with the cache expired between, so a
+   * decision needing successive readings to agree would have had both. `free`
+   * is asserted alongside the status so the case cannot pass by never
+   * reaching exhaustion at all, which is how this test would rot into one
+   * that proves nothing.
    *
    * Reconnecting occupancy to the status reddens this and nothing else.
    */

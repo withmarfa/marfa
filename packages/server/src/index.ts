@@ -53,6 +53,7 @@ import { setConsentLockBackend } from "./auth/consent-lock.js";
 import { createPgConsentLockBackend } from "./storage/pg/consent-lock-backend.js";
 import {
   pgApplicationName,
+  pgPoolClient,
   type PgClient,
   type PgDb,
 } from "./storage/pg/connection.js";
@@ -248,7 +249,9 @@ async function main() {
         // attributes these backends to this deployment. Without it they
         // counted toward the ceiling under `other`, alongside whatever
         // else happens to be connected.
-        connection: { application_name: `${applicationName}:consent` },
+        connection: {
+          application_name: pgPoolClient(applicationName, "consent"),
+        },
         idle_timeout: 30,
         max_lifetime: 30 * 60,
         onnotice: () => {

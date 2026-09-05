@@ -6,16 +6,17 @@ import { storedValueScan } from "../storage/stored-value-scan.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
-import type { AppConfig } from "../config.js";
+import { PROCESS_ROLES, type AppConfig } from "../config.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OidcProviderHealth } from "../auth/oidc-availability.js";
 import {
   DEFAULT_POOL_MAX_CONNECTIONS,
+  PG_POOLS,
   PG_UNNAMED_APPLICATION_NAME,
   pgApplicationName,
+  pgPoolClient,
   type PgClient,
 } from "../storage/pg/connection.js";
-import { PROCESS_ROLES } from "../config.js";
 
 interface ComponentStatus {
   status: "ok" | "degraded" | "down";
@@ -235,30 +236,31 @@ export const CONNECTIONS_CACHE_MS = 15_000;
  * alerts on. The value here is watching the number climb toward the ceiling
  * beforehand.
  */
-/** The pools this server opens, which is the second half of every label it
- *  stamps. Four come from `createConnection`; the fifth, `consent`, is built
- *  in `index.ts`, so a new pool anywhere needs adding here or it reports as
- *  somebody else's traffic. */
-const MARFA_POOLS = ["app", "session", "lock", "exclusive", "consent"];
-
 /**
  * The `application_name` shape this server sets: one of the labels it can
  * build, then the pool that opened the connection.
  *
- * **Built from the same function the pools stamp**, over the same role list
- * `MARFA_PROCESS_ROLE` is parsed against, rather than spelled out again as a
+ * **Built from the same values the pools stamp** — `pgApplicationName` over
+ * the role list `MARFA_PROCESS_ROLE` is parsed against, and `PG_POOLS` over
+ * the suffixes `pgPoolClient` joins on — rather than spelled out again as a
  * pattern that happens to match. Spelled out, this quietly decided for itself
- * which labels were Marfa's: a role outside the set it knew was bucketed as
+ * which labels were Marfa's: one it did not recognize was bucketed as
  * `other`, the pool tally below then found nothing under this process's own
  * label, and the figure read as a permanently idle pool. Nothing failed and
- * nothing said the reading was meaningless. Derived, a new role reaches the
- * regex and the pools together or reaches neither.
+ * nothing said the reading was meaningless.
+ *
+ * Both halves matter, and deriving only one of them left the same hole
+ * reachable from the other end: with `:app` still spelled here, renaming the
+ * app pool's suffix in `connection.ts` would leave this pattern matching a
+ * label nothing stamps any more, and the tally publishing a confident zero
+ * for a pool it never found. There is one spelling of each now, so a rename
+ * is a type error rather than a silent zero.
  */
 const MARFA_CLIENT = new RegExp(
   `^(?:${[
     PG_UNNAMED_APPLICATION_NAME,
     ...PROCESS_ROLES.map(pgApplicationName),
-  ].join("|")}):(?:${MARFA_POOLS.join("|")})$`,
+  ].join("|")}):(?:${PG_POOLS.join("|")})$`,
 );
 
 /** A backend sitting in the pool, free to be handed out. */
@@ -394,35 +396,33 @@ async function readDatabaseConnections(
   };
 }
 
-/**
- * **Pool occupancy is reported, never judged.** Nothing in this file turns
- * `database_connections.pool` into a component status, and that is a decision
- * rather than an omission.
- *
- * The obvious version — degrade when the pool has no free slot while the
- * probe still answers — cannot be taken honestly from this reading, because
- * the reading runs on the pool it measures. `storage.pgClient` is the app
- * pool, one postgres.js instance opens at most `max` backends, and at sample
- * time one of them is the observing query. So a single process's busy count
- * is bounded by `size - 1` and the exhausted case is unreachable; the one
- * route to equality is a pool briefly overshooting its size mid-recycle,
- * which is the false positive. Where the tally *can* reach the size — several
- * replicas sharing one `application_name`, so `in_use` sums the role while
- * `size` stays one process's — it reaches it at a fraction of true occupancy,
- * and the check would go red for scaling out.
- *
- * A verdict worth having needs a reading taken off the pool it measures — a
- * dedicated single connection, or the session pool — and a threshold derived
- * from a duration spent at zero free rather than from point samples a cache
- * length apart. That is a design change and belongs in its own review.
- *
- * So `components.database` means exactly what it meant before this reading
- * existed: the probe missed its budget, or the database refused. The climb
- * toward the limit is published instead, where a watcher can graph `free`
- * falling and `idle_in_transaction` rising without the endpoint having to
- * shout. Reporting a number and degrading on a state is the split this file
- * draws everywhere else.
- */
+// **Pool occupancy is reported, never judged.** Nothing in this file turns
+// `database_connections.pool` into a component status, and that is a decision
+// rather than an omission.
+//
+// The obvious version — degrade when the pool has no free slot while the
+// probe still answers — cannot be taken honestly from this reading, because
+// the reading runs on the pool it measures. `storage.pgClient` is the app
+// pool, one postgres.js instance opens at most `max` backends, and at sample
+// time one of them is the observing query. So a single process's busy count
+// is bounded by `size - 1` and the exhausted case is unreachable; the one
+// route to equality is a pool briefly overshooting its size mid-recycle,
+// which is the false positive. Where the tally *can* reach the size — several
+// replicas sharing one `application_name`, so `in_use` sums the role while
+// `size` stays one process's — it reaches it at a fraction of true occupancy,
+// and the check would go red for scaling out.
+//
+// A verdict worth having needs a reading taken off the pool it measures — a
+// dedicated single connection, or the session pool — and a threshold derived
+// from a duration spent at zero free rather than from point samples a cache
+// length apart. That is a design change and belongs in its own review.
+//
+// So `components.database` means exactly what it meant before this reading
+// existed: the probe missed its budget, or the database refused. The climb
+// toward the limit is published instead, where a watcher can graph `free`
+// falling and `idle_in_transaction` rising without the endpoint having to
+// shout. Reporting a number and degrading on a state is the split this file
+// draws everywhere else.
 
 export function healthRoutes(
   storage: Storage,
@@ -447,7 +447,10 @@ export function healthRoutes(
   // This process's own app-pool label and size, resolved once. Both are
   // fixed for the life of the process, and the label has to match what the
   // pools actually stamp or the reading attributes this server to `other`.
-  const appPoolClient = `${pgApplicationName(config.processRole)}:app`;
+  const appPoolClient = pgPoolClient(
+    pgApplicationName(config.processRole),
+    "app",
+  );
   const appPoolSize = config.dbPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS;
   let connectionsCache: { at: number; value: DatabaseConnections } | null =
     null;
@@ -476,40 +479,6 @@ export function healthRoutes(
     const components: Record<string, ComponentStatus> = {};
     let overall: "ok" | "degraded" = "ok";
 
-    // How much of the connection ceiling this deployment is holding. Pool
-    // exhaustion has taken this deployment down twice and nothing published
-    // the number that would have shown either coming — the provider offers
-    // no connection-count metric at all, so the server that owns the pools
-    // is the only thing that can say.
-    //
-    // Published as a block of its own carrying no status, and nothing below
-    // consults it: `components.database` answers whether the database is
-    // serving, this answers how much room is left before it stops. Two places
-    // saying the same thing in different words is how a watcher ends up keyed
-    // on the wrong one.
-    let databaseConnections: DatabaseConnections | undefined;
-    if (pgClient) {
-      const cached = connectionsCache;
-      if (cached && performance.now() - cached.at < CONNECTIONS_CACHE_MS) {
-        databaseConnections = cached.value;
-      } else {
-        try {
-          const outcome = await withBudget(
-            readDatabaseConnections(pgClient, appPoolClient, appPoolSize),
-          );
-          if (outcome !== TIMED_OUT) {
-            databaseConnections = outcome;
-            connectionsCache = { at: performance.now(), value: outcome };
-          }
-        } catch {
-          // Omitted rather than guessed. Whatever stopped this from
-          // answering is what the database component below reports on, and
-          // it falls back to the probe's own answer when there is no
-          // reading to judge.
-        }
-      }
-    }
-
     // Database. `down` and `degraded` are different answers and the
     // difference is the useful part: `down` means the database refused,
     // `degraded` means we could not get an answer inside the budget, which
@@ -533,12 +502,10 @@ export function healthRoutes(
         };
       } else {
         // The probe answered, and that is the whole question this component
-        // asks. `database_connections` above may be up to
-        // `CONNECTIONS_CACHE_MS` old — the right currency for a figure that
-        // moves this slowly, and what keeps a health check from taking a pool
-        // slot in order to measure pool slots — but nothing here reads it, so
-        // its age cannot reach this status. See the note above
-        // `healthRoutes` for why occupancy is reported rather than judged.
+        // asks. The pool figures are read below and nothing here consults
+        // them — not their value, and not their age, which can be up to
+        // `CONNECTIONS_CACHE_MS`. See the note above `healthRoutes` for why
+        // occupancy is reported rather than judged.
         components.database = { status: "ok", latency_ms: latencyMs };
       }
     } catch (err) {
@@ -549,6 +516,51 @@ export function healthRoutes(
       };
     }
     if (components.database.status !== "ok") overall = "degraded";
+
+    // How much of the connection ceiling this deployment is holding. Pool
+    // exhaustion has taken this deployment down twice and nothing published
+    // the number that would have shown either coming — the provider offers
+    // no connection-count metric at all, so the server that owns the pools
+    // is the only thing that can say.
+    //
+    // Published as a block of its own carrying no status, and nothing
+    // consults it: `components.database` answers whether the database is
+    // serving, this answers how much room is left before it stops. Two places
+    // saying the same thing in different words is how a watcher ends up keyed
+    // on the wrong one.
+    //
+    // **Read after the database probe, and the order is load-bearing.** Both
+    // run on the app pool, and a probe that loses its budget is not cancelled
+    // — `withBudget` says so — it stays queued for a slot. Taken first, this
+    // reading could therefore leave a query queued that the database probe
+    // then waits behind, and the probe would report `degraded` because
+    // something this endpoint did was still holding the pool. That is
+    // occupancy reaching `components.database` by contention rather than by
+    // verdict, which is the same wrong answer through a quieter route. An
+    // earlier revision of this branch hoisted the read above the probe so a
+    // verdict could consult these figures; the verdict is gone, so the reason
+    // is too, and this sits where it did before.
+    let databaseConnections: DatabaseConnections | undefined;
+    if (pgClient) {
+      const cached = connectionsCache;
+      if (cached && performance.now() - cached.at < CONNECTIONS_CACHE_MS) {
+        databaseConnections = cached.value;
+      } else {
+        try {
+          const outcome = await withBudget(
+            readDatabaseConnections(pgClient, appPoolClient, appPoolSize),
+          );
+          if (outcome !== TIMED_OUT) {
+            databaseConnections = outcome;
+            connectionsCache = { at: performance.now(), value: outcome };
+          }
+        } catch {
+          // Omitted rather than guessed. Whatever stopped this from
+          // answering has already been reported by the database component
+          // above, on its own probe rather than on this one.
+        }
+      }
+    }
 
     // Blob storage. Same budget, and the same reason for one: on the
     // hosted deployment this is a network call to object storage.
