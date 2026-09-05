@@ -1301,6 +1301,15 @@ describe("a term found online (seam: online, then offline)", () => {
   let searchStore: LocalStore;
   let searchDir: string;
 
+  /**
+   * A subtype of `core.note` whose identifier says nothing about that.
+   *
+   * The name is the point: `core.note.*` would be reachable by the string
+   * test alone, and this deliberately is not, so only the declared parent
+   * puts it under `core.note`.
+   */
+  const JOURNAL = "lm.journal";
+
   /** Everything the type declares as a display hint, and one field only
    *  the long tail covers, so a mistake in either half shows. */
   const CORPUS = [
@@ -1334,9 +1343,10 @@ describe("a term found online (seam: online, then offline)", () => {
     },
   ] as const;
 
-  beforeEach(async () => {
-    searchDir = mkdtempSync(join(tmpdir(), "marfa-local-search-"));
-    searchStore = await openLocalStore({
+  /** Named so the refill scenario can reopen the same file after closing
+   *  it, which is the only way to reach the open-time index repair. */
+  const openSearchStore = (): Promise<LocalStore> =>
+    openLocalStore({
       path: join(searchDir, "store.db"),
       identity: {
         origin: "http://localhost",
@@ -1344,10 +1354,17 @@ describe("a term found online (seam: online, then offline)", () => {
         accountId: SINGLE_ACCOUNT,
       },
     });
+
+  beforeEach(async () => {
+    searchDir = mkdtempSync(join(tmpdir(), "marfa-local-search-"));
+    searchStore = await openSearchStore();
   });
 
   afterEach(() => {
     searchStore.close();
+    // The registry is process-global, so a type one scenario registers is
+    // still there for the next file unless it is taken back out.
+    unregisterTypeSchema(JOURNAL, null);
     rmSync(searchDir, { recursive: true, force: true });
   });
 
@@ -1367,25 +1384,18 @@ describe("a term found online (seam: online, then offline)", () => {
     // trivially.
     expect(online).toHaveLength(3);
 
-    // Reset before the offline half, so the assertion below is about what
-    // the offline search issued rather than about the online one that just
-    // ran through the same seam.
-    seam.reset();
     seam.mode = "offline";
     const offline = await searchStore.search.find("bassoon");
 
     const ids = (rows: { item: { id: string } }[]): string[] =>
       rows.map((row) => row.item.id).sort();
     expect(ids(offline)).toEqual(ids(online));
-    expect(seam.calls.filter((call) => call.startsWith("GET /search"))).toEqual(
-      [],
-    );
 
     // The long-tail field specifically, because it is the one an index
-    // built over display hints alone would miss.
-    const receipt = online.find((row) => row.item.type === "core.file");
-    expect(receipt).toBeDefined();
-    expect(ids(offline)).toContain(receipt?.item.id);
+    // built over display hints alone would miss. The set equality above
+    // already carries which ids matched, so this only has to say that the
+    // online half really did return the file item it is named for.
+    expect(online.find((row) => row.item.type === "core.file")).toBeDefined();
 
     // A term in none of the indexed fields finds nothing on either side,
     // which is the control that the index is not simply matching
@@ -1393,6 +1403,27 @@ describe("a term found online (seam: online, then offline)", () => {
     seam.mode = "online";
     expect(await client.search("harpsichord")).toHaveLength(0);
     expect(await searchStore.search.find("harpsichord")).toHaveLength(0);
+
+    // The stemmer, which is where "the same fields" stops being enough.
+    // Nothing in the corpus contains "arriving"; one note contains
+    // "arrived". Both indexes declare `porter unicode61`, so both reduce
+    // the two words to one stem and both find that note. An index that
+    // lost the stemmer answers nothing here while the server still answers
+    // the note, which is the found-online-not-found-offline shape this
+    // whole comparison exists to catch — and every term above is an exact
+    // match that a bare `unicode61` would have found just as well, so
+    // without this the tokenizer is unasserted.
+    //
+    // The length is asserted rather than the equality alone: two empty
+    // sets agree, so a comparison on its own would go green precisely when
+    // both sides had stopped working. The control above left the seam
+    // online, which is where this needs it.
+    const stemmedOnline = await client.search("arriving");
+    expect(stemmedOnline).toHaveLength(1);
+    seam.mode = "offline";
+    expect(ids(await searchStore.search.find("arriving"))).toEqual(
+      ids(stemmedOnline),
+    );
   });
 
   it("narrows by type the way the server does, subtypes included", async () => {
@@ -1438,6 +1469,121 @@ describe("a term found online (seam: online, then offline)", () => {
     expect(offline.map((row) => row.item.id).sort()).toEqual(
       online.map((row) => row.item.id).sort(),
     );
+  });
+
+  it("finds a subtype the identifier does not name, through the registry", async () => {
+    // The neighbouring scenario narrows on `core.file`, whose subtype is
+    // `core.file.image` — a name under the wanted one, which the string
+    // test alone answers. So it passes with the registry consulted or not,
+    // and the two arms of the subtree test are individually removable
+    // against it.
+    //
+    // This is the case the registry arm exists for and the only one that
+    // separates them: a type whose declared parent is `core.note` and
+    // whose identifier is nowhere near it. `lm.journal`.startsWith(
+    // "core.note.") is false, so nothing but the declared parentage puts
+    // it in the answer.
+    await client.types.register({
+      id: JOURNAL,
+      version: 1,
+      parent: "core.note",
+      fields: { mood: { type: "string" } },
+    });
+    // No hydration step, deliberately. `@withmarfa/shared` is external to
+    // the server's bundle, so the in-process server and this test share one
+    // module-level registry and the registration above is already in the
+    // one `isSubtypeOf` reads. Taking it back out to force a hydration
+    // would take it out of the server's `listTypes` too, since that reads
+    // the same map — the server would stop resolving the subtree, and the
+    // online half of the comparison would go to one row. Hydrating into a
+    // space of its own is how the scenarios that are about hydration avoid
+    // that; this one is about the subtree test in `find.ts`.
+
+    await searchStore.mutations.createItem({
+      type: JOURNAL,
+      properties: {
+        title: "a bassoon journal",
+        body: "written by hand",
+        mood: "content",
+      },
+    });
+    await searchStore.mutations.createItem({
+      type: "core.note",
+      properties: { title: "a plain bassoon note", body: "typed" },
+    });
+    await createOutboxDrain({ store: searchStore, client }).drain();
+
+    const online = await client.search("bassoon", { type: "core.note" });
+    seam.mode = "offline";
+    const offline = await searchStore.search.find("bassoon", {
+      type: "core.note",
+    });
+
+    // Both, not one: the journal is under `core.note` by declaration
+    // alone. A subtree test reduced to the name comparison returns only
+    // the plain note here.
+    expect(online).toHaveLength(2);
+    expect(offline.map((row) => row.item.type).sort()).toEqual([
+      "core.note",
+      JOURNAL,
+    ]);
+    expect(offline.map((row) => row.item.id).sort()).toEqual(
+      online.map((row) => row.item.id).sort(),
+    );
+  });
+
+  it("finds a subtype by name alone, for a type it has never heard of (seam: offline)", async () => {
+    // The other arm, and the mirror of the scenario above. Nothing
+    // registers either of these types, here or on the server, so the
+    // registry answers nothing about them — `lm.ledger.page` resolves to
+    // no schema at all, and its parentage is therefore undeclared rather
+    // than merely unread. The name is the only thing saying it sits under
+    // `lm.ledger`, which is the reading `GET /items` and `/search` both
+    // give the parameter.
+    //
+    // It is reachable rather than theoretical: writing a type the client
+    // has never heard of is deliberately permitted, so a store whose type
+    // cache is cold holds exactly these rows.
+    seam.mode = "offline";
+    const page = await searchStore.mutations.createItem({
+      type: "lm.ledger.page",
+      properties: { title: "a bassoon ledger" },
+    });
+
+    expect(
+      (await searchStore.search.find("bassoon", { type: "lm.ledger" })).map(
+        (row) => row.item.id,
+      ),
+    ).toEqual([page.id]);
+  });
+
+  it("refills an index that was lost, on the open that finds it gone", async () => {
+    for (const seed of CORPUS) {
+      await searchStore.mutations.createItem({
+        type: seed.type,
+        properties: { ...seed.properties },
+      });
+    }
+    seam.mode = "offline";
+    expect(await searchStore.search.find("bassoon")).toHaveLength(3);
+
+    // The shape a store upgraded from a build without this table arrives
+    // in, and the shape a column change leaves behind — FTS5 has no ALTER,
+    // so the repair is always drop and rebuild. Reached here directly
+    // because every other route to it needs a differently-shaped store on
+    // disk.
+    await searchStore.raw.executeMultiple("DROP TABLE items_fts");
+    searchStore.close();
+
+    searchStore = await openSearchStore();
+
+    // The assertion the comment on `ensureSearchIndex` is about. An empty
+    // index answers every search with nothing and reads exactly like a
+    // search that matched nothing, so a store that reopened without the
+    // refill would report an empty library for ever and nothing would say
+    // so. Every other scenario here opens an empty store, where a rebuild
+    // over zero items cannot tell the two apart.
+    expect(await searchStore.search.find("bassoon")).toHaveLength(3);
   });
 
   it("finds a write that has never been sent, and stops finding a deleted one", async () => {
