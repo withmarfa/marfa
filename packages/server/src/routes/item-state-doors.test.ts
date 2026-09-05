@@ -263,14 +263,39 @@ describe("every route that can set an item's state on create is accounted for", 
     const covered = new Set(DOORS.map((d) => d.route));
 
     const unclassified: string[] = [];
+    const considered = new Set<string>();
     for (const route of registered) {
       const [method, path] = route.split(" ");
       if (!path?.startsWith("/items")) continue;
       if (!["POST", "PUT", "PATCH"].includes(method ?? "")) continue;
+      considered.add(route);
       if (covered.has(route)) continue;
       if (route in NOT_A_STATE_CREATE_DOOR) continue;
       unclassified.push(route);
     }
+
+    // The control, and the boundary this filter draws.
+    //
+    // A prefix walk that matched nothing would pass both assertions above
+    // having measured nothing — the shape a renamed mount or a moved route
+    // produces. So assert it found the doors it is looking for.
+    expect(registered.size).toBeGreaterThan(50);
+    expect(considered.size).toBeGreaterThan(3);
+    expect(considered.has("POST /items")).toBe(true);
+
+    // **And what it cannot see, stated rather than implied.** The scope is a
+    // URL prefix, so it covers routes mounted under `/items` and nothing
+    // else. Twenty-eight files call an item write; two of them are route
+    // files under `/items`. The rest reach the store from `/credentials`,
+    // `/auth`, `/admin` and `/connections`, and from the connections
+    // pipeline, which serves no route at all.
+    //
+    // `idempotent-write-doors.test.ts` derives its scope from the tree
+    // instead, and its header argues against exactly this walk. Bringing
+    // this one onto that mechanism is T-1302: the walk is already
+    // generic, and the work is the twenty-three writers it makes visible,
+    // each needing a row or a stated reason. Sized rather than started, so
+    // this control is not mistaken for the fix.
 
     // A new route that can write items lands here. Give it a row in `DOORS`
     // if it accepts a state on create, or an entry above saying why it does
