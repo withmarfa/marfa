@@ -41,6 +41,7 @@ import { adminPlatformTypeRoutes } from "./routes/admin-platform-types.js";
 import { adminRuntimeJobsRoutes } from "./routes/admin-runtime-jobs.js";
 import { authRoutes, DEVICE_CODE_GRANT_TYPE } from "./routes/auth-pages.js";
 import { oauthRegisterRoutes } from "./routes/oauth-register.js";
+import { oauthPluginFenceRoutes } from "./routes/oauth-plugin-fence.js";
 import {
   oauthProviderAuthServerMetadata,
   oauthProviderOpenIdConfigMetadata,
@@ -440,7 +441,6 @@ export function createApp(
           "/auth/oauth2/token": 60,
           "/auth/oauth2/introspect": 60,
           "/auth/oauth2/revoke": 30,
-          "/auth/oauth2/consent": 30,
           "/auth/oauth2/authorize": 30,
           "/auth/authorize/decision": 30,
           "/auth/authorize": 60,
@@ -765,6 +765,13 @@ export function createApp(
       ),
     );
   }
+
+  // The plugin's management endpoints — consent rows, clients, the resource
+  // registry — answer 404 here before the catch-all can serve them. Marfa's
+  // own routes are the only writers of a grant's two records; the reasoning
+  // and the list are in `routes/oauth-plugin-fence.ts`, and a test holds the
+  // list to what the plugin registers.
+  app.route("/auth", oauthPluginFenceRoutes());
 
   // Marfa-owned /auth/error page. The @better-auth/oauth-provider plugin
   // redirects unrecoverable authorize failures here (e.g. invalid_client from
