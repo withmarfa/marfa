@@ -37,6 +37,7 @@ import {
   isValidTypeIdentifier,
   validateProperties,
   getTypeSchema,
+  resolveEnforcement,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
 import {
@@ -1310,14 +1311,39 @@ export function bulkRoutes(storage: Storage) {
       }
     }
 
-    const spaceId = c.get("apiKey")?.space_id;
-
-    // Non-admin callers see their match set narrowed to writable types.
-    // Purge already rejected non-admin above, so getTypeFilter is a no-op
-    // for admin callers regardless.
-    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
-
     const callerKey = c.get("apiKey");
+    const spaceId = callerKey?.space_id;
+
+    // Narrowed to what the caller may *write*, which this comment claimed
+    // before the code did it. The filter compiled readable patterns, so a
+    // key holding `{"*": "read"}` arrived with nothing narrowed at all and
+    // the actions below then wrote to everything it matched — a reach
+    // `PATCH /items/{id}` refuses the same key on the same row. This door
+    // runs no per-row permission check, so the filter is the whole of it.
+    //
+    // Purge already rejected non-admin above, and admin bypasses the maps,
+    // so this is a no-op for an admin caller regardless of level.
+    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
+      c,
+      "write",
+    );
+
+    // The space's own read-narrowing lever, resolved the way the three read
+    // doors resolve it. This door passed nothing, so a match set included
+    // rows every read hides — the same shape as the reserved namespace, on a
+    // policy lever rather than a platform boundary. The compiler's own note
+    // says what it is for: it stops a caller switching the control off by
+    // broadening the query, and a door that never applies it is the broadest
+    // query there is. Applied to a write because narrowing what an action
+    // touches is the safer reading of a lever whose purpose is narrowing.
+    const spaceConfigForAction =
+      spaceId && storage.spaces
+        ? await storage.spaces.getConfig(spaceId)
+        : null;
+    const enforcementForAction = resolveEnforcement(
+      spaceConfigForAction,
+      callerKey,
+    );
 
     // The type axis is not the only one a caller can be narrower than.
     // `system.activity` sits in every runtime credential's type filter —
@@ -1363,6 +1389,8 @@ export function bulkRoutes(storage: Storage) {
         filter: filter.filter,
         allowed_types: allowedTypes,
         excluded_types: excludedTypes,
+        // Per row, from the row's own type, as on every read door.
+        source_filter: enforcementForAction.source_filter,
         // The reserved namespace, and this door narrows harder than the
         // read doors it agrees with.
         //
