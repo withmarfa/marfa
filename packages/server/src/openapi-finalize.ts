@@ -158,7 +158,7 @@ const INTERNAL_OPERATION_IDS = new Set<string>([
  * Consumer routes defined as plain Hono handlers, invisible to the
  * `createRoute` reflection. Documented here so the reference is complete.
  */
-const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
+export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
   "/events": {
     get: {
       operationId: "streamEvents",
@@ -210,7 +210,7 @@ const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       },
     },
   },
-  "/oauth2/register": {
+  "/auth/oauth2/register": {
     post: {
       operationId: "registerOAuthClient",
       tags: ["Auth"],
@@ -422,18 +422,6 @@ const RATE_LIMITED_RESPONSE = {
 };
 
 /**
- * Operations that are published but not served at the path they are
- * published under, so nothing can be true of them.
- *
- * `/oauth2/register` is mounted under `/auth`, making the real path
- * `/auth/oauth2/register`. Declaring headers and a refusal on the phantom
- * would be describing a route that answers nothing. The wrong path predates
- * this and is tracked separately; what belongs here is only the refusal to
- * add to it.
- */
-const UNSERVED_PATHS = new Set(["/oauth2/register"]);
-
-/**
  * Responses that answer with an error status without passing through the
  * error handler, so `X-Error-Code` is never set on them.
  *
@@ -577,7 +565,6 @@ export function finalizeOpenAPISpec<T extends OpenAPIDoc>(spec: T): T {
   // reference has no way to know which routes the reflection happened to
   // see.
   for (const [pathKey, methods] of Object.entries(nextPaths)) {
-    if (UNSERVED_PATHS.has(pathKey)) continue;
     const withHeaders: Record<string, unknown> = {};
     for (const [method, op] of Object.entries(methods)) {
       if (op === null || typeof op !== "object") {

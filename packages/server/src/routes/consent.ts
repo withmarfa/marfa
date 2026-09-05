@@ -974,6 +974,7 @@ export function renderConsentScreen(params: ConsentParams): string {
   };
 
   let contentHtml: string;
+  let asksForMore = false;
   if (showDiff) {
     const nextLiterals = params.scopes.map(scopeLiteralFor);
     const diff = computeConsentDiff(params.priorScopes ?? [], nextLiterals);
@@ -986,6 +987,7 @@ export function renderConsentScreen(params: ConsentParams): string {
     const kept = lookup(diff.kept);
     const addedVisible = added.filter((s) => !isHidden(s));
     const keptVisible = kept.filter((s) => !isHidden(s));
+    asksForMore = addedVisible.length > 0;
 
     const newSection =
       addedVisible.length > 0
@@ -1098,8 +1100,14 @@ export function renderConsentScreen(params: ConsentParams): string {
   // suspicion the situation does not warrant. The wording below is true in
   // both cases without claiming a cause the server cannot always know.
   const title = showDiff ? "One more thing" : "Allow access";
+  // A diff with nothing under "New" is an app confirming what it already
+  // holds, which happens when a request narrows or when the standing grant
+  // covers it but the provider asked for a fresh decision. "A little more"
+  // would then be a claim the screen itself contradicts two lines down.
   const sub = showDiff
-    ? `You have used <b>${safeClient}</b> before. It is asking for a little more.`
+    ? asksForMore
+      ? `You have used <b>${safeClient}</b> before. It is asking for a little more.`
+      : `You have used <b>${safeClient}</b> before. It is asking you to confirm what it already has.`
     : `<b>${safeClient}</b> wants to access your space. You can change this anytime in settings.`;
   const primaryLabel = showDiff ? "Continue" : "Allow access";
 
