@@ -662,3 +662,60 @@ describe("IntegrationManifestSchema — publisher", () => {
     expect(IntegrationManifestSchema.safeParse(without).success).toBe(false);
   });
 });
+
+describe("IntegrationManifestSchema — a manifest declares only what is true of it", () => {
+  // The three fields every manifest had to supply a value for, and which
+  // most had no honest value for. A field with nothing to say is absent.
+  const {
+    webhook_verification: _wv,
+    bidirectional_handling: _bh,
+    oauth_requirements: _oa,
+    ...SPARSE
+  } = { ...VALID_MANIFEST, direction: "read" as const };
+  void _wv;
+  void _bh;
+  void _oa;
+
+  it("accepts a manifest declaring none of the three optional fields", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...SPARSE,
+      triggers: [{ type: "schedule" as const, config: { cron: "0 * * * *" } }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a manifest that omits triggers when it runs on the client", () => {
+    const { triggers: _t, ...noTriggers } = SPARSE;
+    void _t;
+    const result = IntegrationManifestSchema.safeParse({
+      ...noTriggers,
+      runs_on: "client",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("defaults runs_on to server when the manifest does not declare it", () => {
+    const result = IntegrationManifestSchema.safeParse(VALID_MANIFEST);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.runs_on).toBe("server");
+  });
+
+  it("carries a declared runs_on through the parse", () => {
+    const { triggers: _t, ...noTriggers } = SPARSE;
+    void _t;
+    const result = IntegrationManifestSchema.safeParse({
+      ...noTriggers,
+      runs_on: "client",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.runs_on).toBe("client");
+  });
+
+  it("refuses a runs_on value outside the pair", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      runs_on: "worker",
+    });
+    expect(result.success).toBe(false);
+  });
+});
