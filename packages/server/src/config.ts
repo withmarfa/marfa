@@ -176,6 +176,10 @@ export interface AppConfig {
    *  a soft-delete permanent rather than reusable: every revoke-then-reconnect
    *  cycle leaves one behind and nothing swept them. */
   revokedGrantRetentionDays?: number;
+  /** Days an app grant may go unused before it is retired: the grant
+   *  cascade runs and an `auth.grant.retired` row is written. Default 365;
+   *  env override `MARFA_GRANT_INACTIVITY_DAYS`; `0` disables. */
+  grantInactivityDays?: number;
   /** Cadence (ms) for the activity purger. Default 3_600_000 (1h);
    *  env override `MARFA_ACTIVITY_PURGE_INTERVAL_MS`. */
   activityPurgeIntervalMs?: number;
@@ -907,6 +911,10 @@ export function loadConfig(): AppConfig {
     revokedGrantRetentionDays: envNumber(
       process.env.MARFA_REVOKED_GRANT_RETENTION_DAYS,
       90,
+    ),
+    grantInactivityDays: envNumber(
+      process.env.MARFA_GRANT_INACTIVITY_DAYS,
+      365,
     ),
     activityRetentionDays: envNumber(
       process.env.MARFA_ACTIVITY_RETENTION_DAYS,

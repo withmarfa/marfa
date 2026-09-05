@@ -1322,6 +1322,50 @@ export class PgItemStore implements ItemStore {
     });
   }
 
+  async listInactiveAppGrants(cutoffIso: string): Promise<
+    {
+      id: string;
+      spaceId: string | null;
+      clientId: string | null;
+      authUserId: string | null;
+      lastUsedAt: string | null;
+      grantedAt: string | null;
+      properties: Record<string, unknown>;
+    }[]
+  > {
+    // ISO-8601 strings compare lexically in timestamp order, which is what
+    // every other sweep here relies on too. A grant never used falls back
+    // to when it was granted, so a grant approved and forgotten retires on
+    // the same clock as one used once and forgotten.
+    const rows = await this.db
+      .select()
+      .from(items)
+      .where(
+        and(
+          eq(items.type, "system.connection"),
+          eq(items.state, "active"),
+          sql`${items.properties}->>'kind' = 'app'`,
+          sql`${items.properties}->>'status' = 'active'`,
+          sql`coalesce(${items.properties}->>'last_used_at', ${items.properties}->>'granted_at') < ${cutoffIso}`,
+        ),
+      );
+    return rows.map((row) => {
+      const item = rowToItem(row);
+      const props = item.properties;
+      const str = (v: unknown): string | null =>
+        typeof v === "string" ? v : null;
+      return {
+        id: item.id,
+        spaceId: item.space_id ?? null,
+        clientId: str(props.client_id),
+        authUserId: str(props.user_id),
+        lastUsedAt: str(props.last_used_at),
+        grantedAt: str(props.granted_at),
+        properties: props,
+      };
+    });
+  }
+
   async restore(id: string, spaceId?: string): Promise<Item> {
     const row = await this.getRaw(id, spaceId);
     if (!row) {

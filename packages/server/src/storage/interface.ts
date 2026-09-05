@@ -849,6 +849,24 @@ export interface ItemStore {
     beforeDate: string,
     spaceId?: string | null,
   ): Promise<number>;
+  /**
+   * Every live app grant nobody has used since `cutoffIso`: kind `app`,
+   * active on both lifecycle axes, and `last_used_at`, or `granted_at`
+   * where the grant was never used, older than the cutoff. The inactivity
+   * retirer walks this and runs the grant cascade on each; the columns it
+   * returns are what the audit row names.
+   */
+  listInactiveAppGrants(cutoffIso: string): Promise<
+    {
+      id: string;
+      spaceId: string | null;
+      clientId: string | null;
+      authUserId: string | null;
+      lastUsedAt: string | null;
+      grantedAt: string | null;
+      properties: Record<string, unknown>;
+    }[]
+  >;
 }
 
 /**

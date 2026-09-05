@@ -32,6 +32,7 @@ import { VersionThinner } from "./storage/version-thinner.js";
 import {
   ActivityPurger,
   RevokedGrantPurger,
+  GrantInactivityRetirer,
   RevokedKeyReaper,
   TrashPurger,
   AuthSessionCleaner,
@@ -551,6 +552,35 @@ async function main() {
       },
       () => {
         revokedGrantPurger.stop();
+      },
+    );
+  }
+  // A grant nobody has used for a year is retired through the same cascade
+  // a Disconnect runs, with an audit row saying why. The tombstone it leaves
+  // then falls to the revoked-grant purge above, and a client left with no
+  // grant to the DCR reaper. `0` disables.
+  const grantInactivityDays = config.grantInactivityDays ?? 365;
+  const grantInactivityRetirer =
+    grantInactivityDays > 0
+      ? new GrantInactivityRetirer(
+          storage,
+          grantInactivityDays,
+          config.dcrClientCleanupIntervalMs ?? 86_400_000,
+          undefined,
+          storage.coordination,
+        )
+      : undefined;
+  if (grantInactivityRetirer) {
+    scheduleJob(
+      {
+        name: "grant-inactivity-retire",
+        logName: "Inactive grant retirement",
+        intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
+        firstRunDelaySeconds: 40,
+        runOnce: () => grantInactivityRetirer.runScheduled(),
+      },
+      () => {
+        grantInactivityRetirer.start();
       },
     );
   }
