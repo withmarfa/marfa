@@ -620,6 +620,41 @@ export function roleBypassesPermissionMaps(key: ApiKey | undefined): boolean {
   return key.role === "instance_admin" || key.role === "space_admin";
 }
 
+/**
+ * Whether this credential may write a row in a reserved namespace.
+ *
+ * The predicate form of the fence `checkTypeAccess` applies, extracted
+ * because a second door needs to ask the same question without throwing:
+ * `POST /items/bulk-actions` narrows a match set rather than refusing a
+ * row, so it has to *ask* what this decides rather than be told by an
+ * exception. Restating it there would have been a second copy of the one
+ * rule that decides who reaches the platform's own rows.
+ *
+ * Three ways through, and the third is narrower than it looks. A platform
+ * credential passes outright. A runtime credential writing `system.activity`
+ * passes, because that is the channel an integration reports its own
+ * progress through and without it a legitimate one cannot emit anything —
+ * whose rows it may touch is then decided per row by the attribution rule
+ * rather than here. And a runtime credential writing a `marfa.*` type its
+ * manifest declared passes, because that literal is the platform's own
+ * declaration for that credential.
+ *
+ * **The map is read directly rather than resolved, and that is the whole
+ * safety of the third arm.** `resolveTypePermission` honours wildcards, so
+ * any member key holding `"*": "write"` would otherwise cross the reserved
+ * boundary. Only an exact literal qualifies. `system.*` keeps the blanket
+ * refusal beyond the activity carve-out: nothing projects a system-type
+ * write.
+ */
+export function mayWriteReserved(key: ApiKey, type: string): boolean {
+  if (key.is_platform) return true;
+  const tier = classifyNamespace(type);
+  if (tier !== "system" && tier !== "marfa") return true;
+  if (key.is_runtime_credential !== true) return false;
+  if (type === "system.activity") return true;
+  return tier === "marfa" && key.type_permissions[type] === "write";
+}
+
 export function checkTypeAccess(
   apiKey: ApiKey | undefined,
   type: string,
@@ -649,30 +684,14 @@ export function checkTypeAccess(
   // legitimate integration can't emit activity rows.
   if (level === "write") {
     const tier = classifyNamespace(type);
-    if ((tier === "system" || tier === "marfa") && !key.is_platform) {
-      const isRuntimeActivityWrite =
-        key.is_runtime_credential === true && type === "system.activity";
-      // The platform's own integrations write items of marfa.* types on
-      // the user's behalf, and their runtime credentials project each
-      // manifest target type as an EXACT literal in type_permissions.
-      // That literal is the platform's own declaration for this
-      // credential, so it opens the fence for precisely that type.
-      // Wildcards and subtree patterns never qualify: any member key
-      // holding `"*": "write"` would otherwise cross the reserved
-      // boundary, and `resolveTypePermission` resolves those patterns —
-      // which is exactly why this check reads the map directly instead.
-      // `system.*` keeps the blanket refusal: nothing projects a
-      // system-type write beyond the activity carve-out above.
-      const isManifestGrantedMarfaWrite =
-        tier === "marfa" &&
-        key.is_runtime_credential === true &&
-        key.type_permissions[type] === "write";
-      if (!isRuntimeActivityWrite && !isManifestGrantedMarfaWrite) {
-        throw new MarfaError(
-          ErrorCode.TYPE_NOT_PERMITTED,
-          `Reserved namespace: only platform credentials may write ${tier}.* items`,
-        );
-      }
+    if (
+      (tier === "system" || tier === "marfa") &&
+      !mayWriteReserved(key, type)
+    ) {
+      throw new MarfaError(
+        ErrorCode.TYPE_NOT_PERMITTED,
+        `Reserved namespace: only platform credentials may write ${tier}.* items`,
+      );
     }
   }
 

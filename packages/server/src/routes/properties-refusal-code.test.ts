@@ -28,6 +28,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
+  runBulkActionAsync,
   request,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
@@ -192,6 +193,27 @@ const doors: { name: string; refuse: () => Promise<string> }[] = [
       return bulkEntryCode([
         { type: "core.note", properties: BAD, source_id: sourceId },
       ]);
+    },
+  },
+  {
+    name: "POST /items/bulk-actions updates properties by filter",
+    refuse: async () => {
+      const marker = uniq("bulk-action");
+      const seeded = await request(ctx.app, "POST", "/items", {
+        key: RUNTIME_KEY,
+        body: { type: "core.note", properties: GOOD, tags: [marker] },
+      });
+      expect(seeded.status).toBe(201);
+      const { result } = await runBulkActionAsync(
+        ctx,
+        {
+          action: "update_properties",
+          patch: BAD,
+          filter: { tags: [marker] },
+        },
+        RUNTIME_KEY,
+      );
+      return result?.errors?.[0]?.code ?? "no error reported";
     },
   },
   {

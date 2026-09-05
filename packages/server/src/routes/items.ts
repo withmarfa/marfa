@@ -63,6 +63,7 @@ import type {
 import { planCascadeDelete } from "../storage/edge-cascade.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { publish, publishEdge } from "../pubsub.js";
+import { excludesSystemTypes } from "./_system-type-visibility.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import {
   hydrateEdgesForItem,
@@ -2306,12 +2307,12 @@ export function itemRoutes(storage: Storage) {
     const includeMetadata = includeSet.has("metadata");
     const includeEdges = includeSet.has("edges");
     const includeExtensions = includeSet.has("extensions");
-    const includeSystemTypes = includeSet.has("system");
 
-    // system.* excluded by default; caller opts in via ?include=system or a specific system.* type filter.
-    const typeIsSystemTarget =
-      typeof type === "string" && type.startsWith("system.");
-    const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
+    // system.* is excluded by default and opted back in by the token or by a
+    // type filter that names the namespace. Through the shared rule rather
+    // than restated here: this sentence was written out twice and omitted
+    // once, and the door that omitted it matched rows its siblings hide.
+    const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
     const callerKeyForRead = c.get("apiKey");
     const callerSpaceIdForRead = callerKeyForRead?.space_id;

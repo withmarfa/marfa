@@ -51,6 +51,7 @@ import {
   requireEdgePermission,
   requireActivityAttribution,
   requireMirrorProtection,
+  mayWriteReserved,
   requireDeclaredTypeMatches,
   permitsActivityAttribution,
   permitsMirrorWrite,
@@ -61,6 +62,7 @@ import {
   INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
 import { createOwnershipGuard, liveConnectionIds } from "./_orphaned.js";
+import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
@@ -1315,6 +1317,8 @@ export function bulkRoutes(storage: Storage) {
     // for admin callers regardless.
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
 
+    const callerKey = c.get("apiKey");
+
     // The type axis is not the only one a caller can be narrower than.
     // `system.activity` sits in every runtime credential's type filter —
     // that grant is what lets an integration report its own progress — so a
@@ -1331,7 +1335,7 @@ export function bulkRoutes(storage: Storage) {
     // row the patch produces — the same two halves every other door
     // checks. Before, or an integration edits a sibling's activity without
     // naming a connection at all; after, or it re-points its own.
-    const callerKey = c.get("apiKey");
+
     const patch = body.action === "update_properties" ? body.patch : undefined;
     const mayAct = (item: Item): boolean =>
       permitsActivityAttribution(callerKey, item.type, item.properties) &&
@@ -1359,6 +1363,45 @@ export function bulkRoutes(storage: Storage) {
         filter: filter.filter,
         allowed_types: allowedTypes,
         excluded_types: excludedTypes,
+        // The reserved namespace, and this door narrows harder than the
+        // read doors it agrees with.
+        //
+        // It passed nothing, so a filter naming no type matched
+        // platform-internal rows the sibling read hides — `revoked` is
+        // reachable only on a `system.*` type and the default state mask
+        // drops only trashed rows, so nothing else stood in the way. A dry
+        // run then enumerated them and every unbounded action acted on what
+        // it enumerated.
+        //
+        // One flag closes both ways in, because it narrows the type column
+        // rather than the state one: the structured `state` and the
+        // free-text grammar, which recognizes `state` with no value
+        // allowlist, reach the same rows.
+        //
+        // **The opt-in asks who may write the type, not merely who named
+        // it.** On a read this rule shapes an unnarrowed query and
+        // permissions decide the rest. Here they do not: this door runs no
+        // per-row `requireTypeAccess`, and `getTypeFilter` compiles
+        // *readable* patterns, so a key holding `{"*": "read"}` arrives
+        // with no narrowing at all and never meets the fence that guards
+        // the reserved namespace on every single-item write door. Widening
+        // on the name alone would therefore publish a write path into that
+        // namespace which `PATCH /items/{id}` refuses to the same key.
+        //
+        // `mayWriteReserved` is that fence in predicate form rather than a
+        // second copy of it, so the integration that legitimately reaches
+        // its own `system.activity` rows here still does — narrowed per row
+        // afterwards by the attribution rule, which is where whose rows it
+        // may touch is decided.
+        //
+        // There is no widening token beside it for the ordinary reason: a
+        // read widened by one answers a bigger question, an action widened
+        // by one acts on more rows.
+        exclude_system_types: !(
+          namesSystemNamespace(filter.type) &&
+          callerKey !== undefined &&
+          mayWriteReserved(callerKey, filter.type ?? "")
+        ),
         timestamp_after: filter.timestamp_after,
         timestamp_before: filter.timestamp_before,
         limit: Math.min(200, cap + 1 - matched.length),
