@@ -8,7 +8,7 @@ import {
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import { spaceBucketCondition } from "../space-condition.js";
+import { spaceSentinelCondition } from "../space-condition.js";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -150,7 +150,7 @@ export class SqliteTypeStore implements TypeStore {
           // The platform bucket, addressed through the shared helper rather
           // than spelled inline — the stores came to disagree about what an
           // absent space means precisely by spelling it.
-          spaceBucketCondition(customTypes.space_id, ""),
+          spaceSentinelCondition(customTypes.space_id, ""),
           ne(customTypes.origin, "platform"),
           inArray(
             customTypes.id,
@@ -173,7 +173,7 @@ export class SqliteTypeStore implements TypeStore {
           // named-space branch is the correct one. Passing the literal
           // through the helper rather than spelling the comparison keeps
           // one place deciding what a space fence looks like.
-          spaceBucketCondition(customTypes.space_id, ""),
+          spaceSentinelCondition(customTypes.space_id, ""),
           eq(customTypes.origin, "platform"),
         ),
       )

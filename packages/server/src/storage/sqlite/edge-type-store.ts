@@ -1,11 +1,5 @@
-/* eslint-disable no-restricted-syntax -- Not yet on the shared space
- * fence. `storage/space-condition.ts` is the one spelling of it, and
- * this store predates it; the rule covers every store so a new file is
- * covered by default, which leaves the existing ones needing a line
- * that says so. Normalizing one is a change of its own: an absent space
- * has to be read call site by call site, and reading it wrong is the
- * defect the helper exists for. Delete this line when you do. */
 import { and, eq } from "drizzle-orm";
+import { spaceSentinelCondition } from "../space-condition.js";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { EdgeTypeSchema } from "@withmarfa/shared";
 import type { EdgeTypeStore, LoadedEdgeType } from "../interface.js";
@@ -23,7 +17,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
     const rows = await this.db
       .select()
       .from(customEdgeTypes)
-      .where(eq(customEdgeTypes.space_id, spaceId ?? ""))
+      .where(spaceSentinelCondition(customEdgeTypes.space_id, spaceId))
       .all();
     return rows.map(parseRow);
   }
@@ -35,7 +29,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
       .where(
         and(
           eq(customEdgeTypes.id, id),
-          eq(customEdgeTypes.space_id, spaceId ?? ""),
+          spaceSentinelCondition(customEdgeTypes.space_id, spaceId),
         ),
       )
       .get();
@@ -74,7 +68,7 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
       .where(
         and(
           eq(customEdgeTypes.id, id),
-          eq(customEdgeTypes.space_id, spaceId ?? ""),
+          spaceSentinelCondition(customEdgeTypes.space_id, spaceId),
         ),
       )
       .run();

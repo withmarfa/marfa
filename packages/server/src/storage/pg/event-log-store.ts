@@ -49,7 +49,15 @@ export class PgEventLogStore implements EventLogStore {
     spaceId?: string,
   ): Promise<PersistedEvent[]> {
     const conditions = [gt(eventLog.id, afterId)];
-    if (spaceId) conditions.push(eq(eventLog.space_id, spaceId));
+    // Explicit rather than truthy. The two are the same today because the
+    // signature is `string | undefined` and the empty string is not a space
+    // id on this column, which is nullable — but `cleanup` on this same store
+    // takes `string | null | undefined` and does a three-way, so one file
+    // holds two vocabularies for one value, and a truthiness test is what
+    // turns the difference into a silent widening if the signatures ever meet.
+    if (spaceId !== undefined) {
+      conditions.push(eq(eventLog.space_id, spaceId));
+    }
 
     const rows = await this.db
       .select()
@@ -101,9 +109,10 @@ export class PgEventLogStore implements EventLogStore {
     const query = this.db
       .select({ max: sql<bigint | null>`MAX(${eventLog.id})` })
       .from(eventLog);
-    const rows = spaceId
-      ? await query.where(eq(eventLog.space_id, spaceId))
-      : await query;
+    const rows =
+      spaceId !== undefined
+        ? await query.where(eq(eventLog.space_id, spaceId))
+        : await query;
     const max = rows[0]?.max ?? null;
     if (max === null) return null;
     // pg returns aggregate as string; normalize to bigint.
@@ -114,9 +123,10 @@ export class PgEventLogStore implements EventLogStore {
     const query = this.db
       .select({ min: sql<bigint | null>`MIN(${eventLog.id})` })
       .from(eventLog);
-    const rows = spaceId
-      ? await query.where(eq(eventLog.space_id, spaceId))
-      : await query;
+    const rows =
+      spaceId !== undefined
+        ? await query.where(eq(eventLog.space_id, spaceId))
+        : await query;
     const min = rows[0]?.min ?? null;
     if (min === null) return null;
     // pg returns aggregate as string; normalize to bigint.

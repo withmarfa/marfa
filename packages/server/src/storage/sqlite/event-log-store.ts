@@ -46,7 +46,15 @@ export class SqliteEventLogStore implements EventLogStore {
     // Convert the bigint cursor to number for the bind, then re-bigint each
     // returned id so the public PersistedEvent shape matches PG's bigint.
     const conditions = [gt(eventLog.id, Number(afterId))];
-    if (spaceId) conditions.push(eq(eventLog.space_id, spaceId));
+    // Explicit rather than truthy. The two are the same today because the
+    // signature is `string | undefined` and the empty string is not a space
+    // id on this column, which is nullable — but `cleanup` on this same store
+    // takes `string | null | undefined` and does a three-way, so one file
+    // holds two vocabularies for one value, and a truthiness test is what
+    // turns the difference into a silent widening if the signatures ever meet.
+    if (spaceId !== undefined) {
+      conditions.push(eq(eventLog.space_id, spaceId));
+    }
 
     const rows = await this.db
       .select()
@@ -93,25 +101,27 @@ export class SqliteEventLogStore implements EventLogStore {
   }
 
   async getMaxId(spaceId?: string): Promise<bigint | null> {
-    const result = spaceId
-      ? await this.db.get<{ max: number | bigint | null }>(
-          sql`SELECT MAX(id) AS max FROM event_log WHERE space_id = ${spaceId}`,
-        )
-      : await this.db.get<{ max: number | bigint | null }>(
-          sql`SELECT MAX(id) AS max FROM event_log`,
-        );
+    const result =
+      spaceId !== undefined
+        ? await this.db.get<{ max: number | bigint | null }>(
+            sql`SELECT MAX(id) AS max FROM event_log WHERE space_id = ${spaceId}`,
+          )
+        : await this.db.get<{ max: number | bigint | null }>(
+            sql`SELECT MAX(id) AS max FROM event_log`,
+          );
     if (result.max == null) return null;
     return typeof result.max === "bigint" ? result.max : BigInt(result.max);
   }
 
   async getMinRetainedId(spaceId?: string): Promise<bigint | null> {
-    const result = spaceId
-      ? await this.db.get<{ min: number | bigint | null }>(
-          sql`SELECT MIN(id) AS min FROM event_log WHERE space_id = ${spaceId}`,
-        )
-      : await this.db.get<{ min: number | bigint | null }>(
-          sql`SELECT MIN(id) AS min FROM event_log`,
-        );
+    const result =
+      spaceId !== undefined
+        ? await this.db.get<{ min: number | bigint | null }>(
+            sql`SELECT MIN(id) AS min FROM event_log WHERE space_id = ${spaceId}`,
+          )
+        : await this.db.get<{ min: number | bigint | null }>(
+            sql`SELECT MIN(id) AS min FROM event_log`,
+          );
     if (result.min == null) return null;
     return typeof result.min === "bigint" ? result.min : BigInt(result.min);
   }

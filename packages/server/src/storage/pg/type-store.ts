@@ -16,7 +16,7 @@ import {
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
-import { spaceBucketCondition } from "../space-condition.js";
+import { spaceSentinelCondition } from "../space-condition.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -208,7 +208,7 @@ export class PgTypeStore implements TypeStore {
           // The platform bucket, addressed through the shared helper rather
           // than spelled inline — the stores came to disagree about what an
           // absent space means precisely by spelling it.
-          spaceBucketCondition(customTypes.space_id, ""),
+          spaceSentinelCondition(customTypes.space_id, ""),
           ne(customTypes.origin, "platform"),
           inArray(
             customTypes.id,
@@ -227,7 +227,7 @@ export class PgTypeStore implements TypeStore {
       .where(
         and(
           eq(customTypes.id, id),
-          eq(customTypes.space_id, ""),
+          spaceSentinelCondition(customTypes.space_id, ""),
           eq(customTypes.origin, "platform"),
         ),
       )
