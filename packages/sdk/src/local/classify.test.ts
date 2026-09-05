@@ -60,6 +60,14 @@ describe("the failure classification", () => {
     // them dead-letters a schema refusal from the other door without the
     // registry refresh the contract owes it — silently, because a dead
     // letter is what a permanent refusal is supposed to produce.
+    //
+    // The codes are crossed with the kinds deliberately, and the kind is
+    // deliberately irrelevant: this arm answers on the code alone, so all
+    // four rows must agree. That is worth pinning rather than assuming,
+    // because the arm immediately below it does read the kind — a 409 is
+    // a conflict on an update and permanent on a create — so "the kind
+    // decides" is true one branch away, and a well-meant symmetry here
+    // would send a schema refusal from the create door to a dead letter.
     for (const [code, kind] of [
       ["validation_error", "item.create"],
       ["invalid_properties", "item.update"],
