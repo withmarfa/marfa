@@ -162,6 +162,13 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
               // what comes back is the row the server settled on, and the
               // only 409 left is one it could not merge at all.
               conflict: "auto",
+              // The key the mutation was written with, which every other
+              // door has carried since the queue started minting them.
+              // Without it a replayed update is a second write: the
+              // server derives a `keep_both_copies` sibling's id from
+              // this, so a lost answer spawned a second copy of the
+              // losing text with nothing linking it to the first.
+              ...keyed,
               // The merged row arrives through the ordinary settle and
               // looks like any other write, so without this a person's
               // text leaves the row they typed it into with nothing said.

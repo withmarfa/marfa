@@ -117,6 +117,20 @@ export interface UpdateOptions {
   conflict?: ConflictStrategy;
   /** Custom conflict resolver (required when `conflict` is `"callback"`). */
   resolve?: ConflictResolver;
+  /**
+   * Key this update so a repeat of it is the same write.
+   *
+   * Sent as `Idempotency-Key`, and it does more here than on a create. The
+   * server derives a `keep_both_copies` sibling's id from it, so an update
+   * whose answer was lost replays into the *same* sibling instead of
+   * spawning a second copy of the text that lost.
+   *
+   * Sent on the first attempt only. A `callback` strategy re-sends a body
+   * its resolver produced, and a second body under one key would be
+   * answered with the first body's result; `auto` and `manual` make one
+   * request, so for them it covers everything.
+   */
+  idempotencyKey?: string;
   /** Toggle the tier (`library` ↔ `feed`). Independent of the version-merge
    *  path for `properties`; a tier-only update never conflicts. */
   tier?: Tier;
@@ -1124,6 +1138,7 @@ export class MarfaClient {
         options?.tier,
         onAutoMerge,
         options?.source_id,
+        options?.idempotencyKey,
       );
     },
 
