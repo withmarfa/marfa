@@ -272,6 +272,40 @@ describe("items.upsert", () => {
 // Conflict resolution
 // ---------------------------------------------------------------------------
 
+describe("a 409 the update path does not resolve", () => {
+  it("refuses rather than resolving with no item", async () => {
+    // `PATCH /items/{id}` publishes three `409` shapes: a version
+    // conflict, an ancestor that cannot be merged against, and an
+    // ordinary error envelope carrying `source_id_conflict`,
+    // `type_mismatch` or `provenance_collision`.
+    //
+    // The transport hands every `409` body back unchanged rather than
+    // throwing, so reading "not the first, not the second, therefore
+    // success" takes the third for a resolved update and returns its
+    // absent `item`. A refusal then arrives as a successful write of
+    // `undefined` — and in the local engine's drain that settles a
+    // mutation the server rejected and drops it from the queue.
+    const first = await client.items.create({
+      type: "core.note",
+      properties: { body: "first" },
+      source_id: "collide-a",
+    });
+    await client.items.create({
+      type: "core.note",
+      properties: { body: "second" },
+      source_id: "collide-b",
+    });
+
+    await expect(
+      client.items.update(
+        first.id,
+        { body: "moved" },
+        { source_id: "collide-b" },
+      ),
+    ).rejects.toMatchObject({ code: "source_id_conflict", status: 409 });
+  });
+});
+
 describe("conflict resolution", () => {
   it("auto-merges non-conflicting fields", async () => {
     const item = await createNote();

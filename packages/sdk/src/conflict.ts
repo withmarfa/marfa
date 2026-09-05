@@ -8,7 +8,11 @@ import type {
   Tier,
 } from "@withmarfa/shared";
 import type { HttpTransport } from "./transport.js";
-import { AncestorUnavailableError, ConflictError } from "./errors.js";
+import {
+  AncestorUnavailableError,
+  ConflictError,
+  MarfaError,
+} from "./errors.js";
 
 /**
  * Conflict resolution strategy for item updates.
@@ -102,6 +106,37 @@ function toConflictError(
   );
 }
 
+/**
+ * A `409` that is neither of the two this module knows how to read.
+ *
+ * The route publishes three: a version conflict, an ancestor that cannot
+ * be merged against, and an ordinary error envelope carrying
+ * `source_id_conflict`, `type_mismatch` or `provenance_collision`. The
+ * transport hands every `409` body back unchanged rather than throwing,
+ * so deciding "not the first, not the second, therefore success" reads the
+ * third as a resolved update and returns its absent `item` — a refusal
+ * arriving at the caller as a successful write of `undefined`.
+ *
+ * Branch on the shape rather than asserting it, which is what the edge
+ * door beside this already does, and for the same reason written there
+ * before this arm existed.
+ */
+function isErrorEnvelope(
+  body: unknown,
+): body is { error: { code: string; message?: string } } {
+  if (typeof body !== "object" || body === null) return false;
+  if (!("error" in body)) return false;
+  if ("item" in body && (body as { item?: unknown }).item !== undefined) {
+    return false;
+  }
+  const error = (body as { error?: unknown }).error;
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as { code?: unknown }).code === "string"
+  );
+}
+
 /** The response shape an update answers with, resolved or not. */
 interface UpdateSuccess {
   item: Item;
@@ -160,6 +195,19 @@ export async function handleConflictUpdate(
     );
 
     if (!isConflictResponse(result) && !isAncestorUnavailable(result)) {
+      // Inside this branch rather than before it, because the two arms
+      // above also carry an `error` and no `item` — testing the envelope
+      // first would swallow a version conflict. What is left here is
+      // either a resolved update or the third arm, and only the first has
+      // an item to return.
+      if (isErrorEnvelope(result)) {
+        throw new MarfaError(
+          result.error.code,
+          result.error.message ?? "The update was refused",
+          409,
+        );
+      }
+
       const report = result.conflict_resolution;
       if (report && onAutoMerge) {
         await onAutoMerge({
