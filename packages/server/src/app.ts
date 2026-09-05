@@ -441,7 +441,6 @@ export function createApp(
           "/auth/oauth2/token": 60,
           "/auth/oauth2/introspect": 60,
           "/auth/oauth2/revoke": 30,
-          "/auth/oauth2/consent": 30,
           "/auth/oauth2/authorize": 30,
           "/auth/authorize/decision": 30,
           "/auth/authorize": 60,

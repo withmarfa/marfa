@@ -300,20 +300,20 @@ The OAuth-protocol surface is owned by the [@better-auth/oauth-provider](https:/
 
 **Plugin endpoints (via Better Auth basePath `/auth`):**
 
-| Endpoint                                                    | RFC / spec                                                                                |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `POST /auth/oauth2/authorize` + `POST /auth/oauth2/consent` | Authorization Code + PKCE S256, public clients (no secret)                                |
-| `POST /auth/oauth2/token`                                   | `authorization_code`, `refresh_token`, `client_credentials` — refresh rotation built in   |
-| `POST /auth/oauth2/userinfo`                                | OIDC userinfo                                                                             |
-| `POST /auth/oauth2/revoke`                                  | RFC 7009                                                                                  |
-| `POST /auth/oauth2/introspect`                              | RFC 7662 — new for Marfa                                                                  |
-| `POST /auth/oauth2/register`                                | RFC 7591 DCR (public — `allowUnauthenticatedClientRegistration: true`)                    |
-| `GET/POST /auth/oauth2/end-session` + `POST .../confirm`    | OIDC RP-Initiated Logout; Marfa fronts the GET in `routes/auth-pages.ts`                  |
-| `POST /auth/oauth2/continue`                                | The plugin's own post-login continuation; unused here, since sign-in returns to authorize |
-| `GET /.well-known/oauth-authorization-server/auth`          | RFC 8414 §3.1 — well-known segment inserted before the issuer path                        |
-| `GET /.well-known/openid-configuration/auth`                | RFC 8414 §3.1, OIDC document                                                              |
-| `GET /auth/.well-known/openid-configuration`                | OIDC Discovery — issuer plus suffix                                                       |
-| `GET /auth/jwks`                                            | JWKS for id_token verification                                                            |
+| Endpoint                                                 | RFC / spec                                                                              |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `GET/POST /auth/oauth2/authorize`                        | Authorization Code + PKCE S256, public clients (no secret); consent is Marfa's, below   |
+| `POST /auth/oauth2/token`                                | `authorization_code`, `refresh_token`, `client_credentials` — refresh rotation built in |
+| `POST /auth/oauth2/userinfo`                             | OIDC userinfo                                                                           |
+| `POST /auth/oauth2/revoke`                               | RFC 7009                                                                                |
+| `POST /auth/oauth2/introspect`                           | RFC 7662 — new for Marfa                                                                |
+| `POST /auth/oauth2/register`                             | RFC 7591 DCR (public — `allowUnauthenticatedClientRegistration: true`)                  |
+| `GET/POST /auth/oauth2/end-session` + `POST .../confirm` | OIDC RP-Initiated Logout; Marfa fronts the GET in `routes/auth-pages.ts`                |
+| `POST /auth/oauth2/continue`                             | The plugin's own post-login continuation; unused here, sign-in returns to authorize     |
+| `GET /.well-known/oauth-authorization-server/auth`       | RFC 8414 §3.1 — well-known segment inserted before the issuer path                      |
+| `GET /.well-known/openid-configuration/auth`             | RFC 8414 §3.1, OIDC document                                                            |
+| `GET /auth/.well-known/openid-configuration`             | OIDC Discovery — issuer plus suffix                                                     |
+| `GET /auth/jwks`                                         | JWKS for id_token verification                                                          |
 
 **The plugin's management endpoints are fenced, and the fence is held to what the plugin registers.** Beside the protocol endpoints above, the plugin registers a management API, most of it gated on a signed-in session and nothing else: `consent`, `get-consent`, `get-consents`, `update-consent` and `delete-consent` over `auth_oauth_consent`; `create-client`, `get-client`, `get-clients`, `public-client`, `public-client-prelogin`, `update-client`, `client/rotate-secret` and `delete-client` over `auth_oauth_client`; the two `/admin/oauth2/*-client` variants; and the RFC 8707 resource registry under `/admin/oauth2/resources`. `routes/oauth-plugin-fence.ts` answers 404 on every one of them, in both trailing-slash spellings, mounted in `app.ts` ahead of the catch-all. **A grant is two records** — the plugin's consent row and the `system.connection` projection — and only Marfa's consent decision and revoke cascade write both; driven against staging, `update-consent` widened the consent row with no screen and no audit row and the next authorize for that scope was answered silently, while `delete-consent` removed the row and left the tokens and the security page listing behind. The plugin's `consent` endpoint is the same writer one step earlier, and Marfa's consent screen never reaches it over the wire: `POST /auth/authorize/decision` accepts through the plugin in-process, so the HTTP endpoint is fenced too. The client endpoints are the sharper case: with `clientPrivileges` unset their gate is any signed-in session, and `create-client` admits the whole registration allowlist rather than the dynamic-registration ceiling. The `/admin/oauth2/*` family is marked server-only by the plugin and was never routed; it is fenced so a version that exposes it changes nothing here. `routes/oauth-plugin-fence.test.ts` enumerates the plugin's endpoint record and fails on any routable path, under any prefix, that is neither on the reachable list nor fenced, and on a reachable path that answers with the fence's signature, so a plugin upgrade that adds a door reddens instead of opening and moving a path between the lists is a change the suite sees. The fence holds at the wire only; a handler calling the plugin's API in-process is held by review.
 
@@ -532,7 +532,6 @@ Defaults (per-minute window per IP), in insertion order — `app.ts` is the sour
 | `/auth/oauth2/token`        | 60  |
 | `/auth/oauth2/introspect`   | 60  |
 | `/auth/oauth2/revoke`       | 30  |
-| `/auth/oauth2/consent`      | 30  |
 | `/auth/oauth2/authorize`    | 30  |
 | `/auth/authorize/decision`  | 30  |
 | `/auth/authorize`           | 60  |

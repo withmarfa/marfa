@@ -23,8 +23,9 @@
  *   - extracts `client_id` + `scope` from the verified parameter set for
  *     rendering
  *   - keeps the signed parameter set as `oauthQuery` so the consent form
- *     can POST it back to `/auth/oauth2/consent` unchanged (the plugin's
- *     before-hook re-verifies the sig). Marfa's own display-only
+ *     can POST it back unchanged to `/auth/authorize/decision`, which
+ *     forwards it to the plugin in-process (the plugin re-verifies the
+ *     sig; its wire endpoint is fenced). Marfa's own display-only
  *     parameters are lifted off first — the signature covers every other
  *     key, so a parameter added to the URL for the page's benefit has to
  *     be one this route knows to remove
