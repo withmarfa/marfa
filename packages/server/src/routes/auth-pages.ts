@@ -2760,6 +2760,24 @@ export function authRoutes(
       );
     }
 
+    // A code is exchanged once. The client stops polling on success per RFC
+    // 8628 §3.5, so a second poll is a code that has left the device: a log,
+    // a shared terminal, a replayed request. `invalid_grant` per RFC 6749
+    // §5.2, the same answer a revoked grant gets, so the two are not told
+    // apart from outside.
+    if (row.status === "redeemed") {
+      log("info", "device token refused: code already exchanged", {
+        client_id: row.client_id,
+      });
+      return c.json(
+        {
+          error: "invalid_grant",
+          error_description: "The device code is invalid, expired, or revoked.",
+        },
+        400,
+      );
+    }
+
     if (row.status === "pending") {
       // Slow-down detection: if the client polled inside the interval
       // window, return slow_down + bumped interval.
@@ -2961,6 +2979,27 @@ export function authRoutes(
       refreshRaw === undefined
         ? undefined
         : hashApiKey(refreshRaw.slice(REFRESH_TOKEN_PREFIX.length), salt);
+
+    // Spend the code before minting against it. The flip is conditional on
+    // the row still reading approved, so two polls racing for one code see
+    // one winner and the other is refused rather than both minting a pair.
+    // Before rather than after the mint, because a code spent by a mint that
+    // then failed costs the device a restart, while a mint that succeeded
+    // ahead of a flip that then failed would have handed out a pair the
+    // code could still be exchanged for again.
+    const spent = await storage.oauth.redeemDeviceCode(row.id);
+    if (!spent) {
+      log("info", "device token refused: code exchanged concurrently", {
+        client_id: row.client_id,
+      });
+      return c.json(
+        {
+          error: "invalid_grant",
+          error_description: "The device code is invalid, expired, or revoked.",
+        },
+        400,
+      );
+    }
 
     await storage.oauthProvider.mintTokenPair({
       accessTokenHash: accessHash,

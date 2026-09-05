@@ -1944,3 +1944,62 @@ describe("POST /auth/device/consent binds the code inside the consent lock", () 
     expect(heldAtBinding).toBe(true);
   });
 });
+
+describe("POST /auth/device/token — a device code is exchanged once", () => {
+  it("REGRESSION: a second poll with the same approved code is refused and mints nothing", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await createClient(ctx);
+    const initResult = await initiate(ctx, clientId, "core.note:read");
+    const cookie = await signInAndCookie(
+      ctx,
+      "once@example.com",
+      "correct horse",
+    );
+    const approve = await ctx.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: new URLSearchParams({
+          user_code: initResult.user_code,
+          decision: "approve",
+        }).toString(),
+      }),
+    );
+    expect(approve.status).toBe(200);
+
+    const first = await pollToken(ctx, initResult.device_code, clientId);
+    expect(first.status).toBe(200);
+    expect(first.body.access_token).toMatch(/^marfa_at_/);
+
+    // The code has been spent: the row reads redeemed, and a replay gets the
+    // refusal a revoked grant gets rather than a second pair.
+    const row = await ctx.storage.oauth.findDeviceCodeByUserCode(
+      initResult.user_code,
+    );
+    expect(row?.status).toBe("redeemed");
+    const second = await pollToken(ctx, initResult.device_code, clientId);
+    expect(second.status).toBe(400);
+    expect(second.body.error).toBe("invalid_grant");
+
+    // And only one access token exists for the grant.
+    const schemaModule =
+      ctx.storage.betterAuthDialect === "pg"
+        ? await import("../storage/pg/schema.js")
+        : await import("../storage/sqlite/schema.js");
+    const { eq } = await import("drizzle-orm");
+    const db = ctx.storage.betterAuthDb as {
+      select: () => {
+        from: (t: unknown) => { where: (w: unknown) => Promise<unknown[]> };
+      };
+    };
+    const tokens = await db
+      .select()
+      .from(schemaModule.auth_oauth_access_token)
+      .where(eq(schemaModule.auth_oauth_access_token.clientId, clientId));
+    expect(tokens.length).toBe(1);
+  });
+});
