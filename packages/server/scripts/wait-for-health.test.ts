@@ -149,15 +149,29 @@ describe("waitForHealth", () => {
     // both failures previously produced `role=X /health never answered 200`
     // and nothing else, so naming each is only half of it — they also have
     // to differ.
+    // The budget is derived rather than picked, because one of the
+    // assertions below counts attempts against a wall clock. A cycle costs
+    // an attempt timeout, which is a thirtieth of the budget, plus a poll
+    // interval — so two cycles fit whenever the budget is a little over
+    // twice the interval. Forty times it is roughly eighteen times the
+    // headroom two attempts need.
+    //
+    // That headroom is the point. This runs on a shared machine, and a
+    // process that is not scheduled reaches its deadline having made one
+    // attempt, which reads as "it did not retry" and means "it was not
+    // given a turn". At 600ms it read the runner rather than the code and
+    // reddened a branch that had not touched this file.
+    const POLL_MS = 50;
+    const BUDGET_MS = 40 * POLL_MS;
     const rejected = await waitForHealth({
       url: await serve(503),
-      budgetMs: 600,
-      pollIntervalMs: 50,
+      budgetMs: BUDGET_MS,
+      pollIntervalMs: POLL_MS,
     });
     const refused = await waitForHealth({
       url: await closedPort(),
-      budgetMs: 600,
-      pollIntervalMs: 50,
+      budgetMs: BUDGET_MS,
+      pollIntervalMs: POLL_MS,
     });
     expect(rejected.ok).toBe(false);
     expect(rejected.lastOutcome).toContain("503");
