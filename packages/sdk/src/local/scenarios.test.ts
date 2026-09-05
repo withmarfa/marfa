@@ -636,13 +636,19 @@ describe("two clients editing different fields (seam: online)", () => {
 });
 
 describe("an update whose answer was lost (seam: lost_response, then online)", () => {
-  it("replays into the merge rather than parking, and spawns nothing", async () => {
+  it("replays into the same sibling rather than spawning a second", async () => {
     const note = await store.mutations.createItem({
       type: "core.note",
-      properties: { body: "first" },
+      properties: { body: "as written" },
     });
     await drain.drain();
-    await store.mutations.updateItem(note.id, { title: "mine" });
+
+    // `body` deliberately, because it is `keep_both_copies` on
+    // `core.note` and is therefore the field where a replay can go wrong.
+    // Another device moves the row on first, so the queued edit is a real
+    // collision when it finally goes out.
+    await store.mutations.updateItem(note.id, { body: "mine" });
+    await client.items.update(note.id, { body: "theirs" });
 
     // The write lands and the client is told nothing came back.
     seam.mode = "lost_response";
@@ -651,42 +657,24 @@ describe("an update whose answer was lost (seam: lost_response, then online)", (
     seam.mode = "online";
     await drain.drain();
 
-    // A create repeats safely on the id the client minted, and a delete on
-    // the key it carries. An update has neither, so the replay re-sends
-    // the version it was computed against and the server has moved past
-    // it. What it meets now is the merge rather than a refusal, so the
-    // edit settles instead of parking for a person to redo.
     expect(await store.outbox.list()).toEqual([]);
     expect(await store.deadLetters.list()).toEqual([]);
 
-    // And it settles once — but not for the reason it first appears.
+    // Two rows, not three. The first send resolved the collision and the
+    // server spawned a sibling for the text that lost; the replay resolved
+    // it again and, because the sibling's id is derived from the key the
+    // mutation was written with, landed on the *same* sibling.
     //
-    // `title` DOES collide: the ancestor has neither value, so the field
-    // differs from it on both sides and the server puts it in the
-    // conflict set. What saves the replay is the policy rather than the
-    // absence of a collision — `core.note` keeps both copies for `body`
-    // and `notes` only, and resolves `title` last-writer-wins.
-    //
-    // On a `keep_both_copies` field this replay would spawn a SECOND
-    // sibling, because the server's deterministic sibling id is derived
-    // from the idempotency key and an update carries none. That is the
-    // same missing key the note below describes, and it is the reason
-    // this scenario uses `title`: the `body` case cannot pass until the
-    // key covers updates.
+    // Without that key the ids diverge and a person is left with two
+    // copies of one edit and nothing saying they are the same edit — which
+    // is the whole reason an update carries a key at all, and the thing
+    // this scenario exists to catch.
     const onServer = await client.items.list({ limit: 50 });
-    expect(onServer.data).toHaveLength(1);
-    expect(onServer.data[0]).toMatchObject({
-      id: note.id,
-      properties: { title: "mine" },
-    });
-
-    // The gap that remains, stated rather than asserted away: the row was
-    // written twice, so the version moved twice for one edit. The contract
-    // closes that with the idempotency key covering updates as it already
-    // covers creates and deletes, which needs a key field the client's
-    // update options do not yet carry. Merging makes the outcome right; it
-    // does not make the write a no-op.
-    expect(onServer.data[0]?.version).toBeGreaterThan(2);
+    expect(onServer.data).toHaveLength(2);
+    expect(onServer.data.map((item) => item.properties.body).sort()).toEqual([
+      "mine",
+      "theirs",
+    ]);
   });
 });
 

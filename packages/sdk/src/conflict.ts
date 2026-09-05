@@ -123,6 +123,7 @@ export async function handleConflictUpdate(
   tier?: Tier,
   onAutoMerge?: ConflictAutoMergeListener,
   sourceId?: string,
+  idempotencyKey?: string,
 ): Promise<Item> {
   let properties = clientPatch;
   let currentVersion = version;
@@ -136,6 +137,19 @@ export async function handleConflictUpdate(
         // resolves, and the server does the rest. `manual` and `callback`
         // send nothing, so they receive the envelope.
         ...(strategy === "auto" && { query: { conflict: "auto" } }),
+        // The first attempt only, and the distinction is the whole reason
+        // this was withheld until now: a `callback` retry re-sends a body
+        // the resolver produced, and a second body under one key would be
+        // answered with the first body's result. `auto` and `manual` never
+        // reach a second attempt, so for them this is every request they
+        // make.
+        //
+        // What it buys is the sibling. The server derives a
+        // `keep_both_copies` sibling's id from this key, so a replayed
+        // update resolves to the same id rather than spawning a second
+        // copy of the losing text.
+        ...(attempt === 0 &&
+          idempotencyKey !== undefined && { idempotencyKey }),
         body: {
           properties,
           version: currentVersion,

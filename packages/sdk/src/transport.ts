@@ -242,6 +242,8 @@ export class HttpTransport {
       query?:
         | Record<string, string | number | boolean | string[] | undefined>
         | object;
+      /** Sent as `Idempotency-Key`. See {@link RawRequestOptions}. */
+      idempotencyKey?: string;
     },
   ): Promise<T | ConflictResponse> {
     const response = await this.rawRequest(method, path, options);
