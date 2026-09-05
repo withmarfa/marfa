@@ -22,6 +22,7 @@ import {
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
+import { excludesSystemTypes } from "./_system-type-visibility.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import {
   refuseUnknownQueryParams,
@@ -65,10 +66,13 @@ const searchRoute = createRoute({
         .describe("Filter by tier; `all` or absent means unfiltered.")
         .optional(),
       /** What the token does is in the published description rather than
-       *  restated here. The reason `system.*` is excluded by default is not
-       *  recorded anywhere in this repository — `storage/interface.ts` gives
-       *  the mechanism and no rationale — so nothing is asserted about it
-       *  here. An earlier draft of this comment invented one. */
+       *  restated here, and the rule deciding whether it applies is in
+       *  `_system-type-visibility.ts` rather than in this file. That module
+       *  is also where the rationale lives now: this comment used to say it
+       *  was recorded nowhere, which was true when written and stopped being
+       *  so when the rule three doors were each spelling out became one
+       *  function. An earlier draft of this comment invented a rationale,
+       *  which is why it then asserted nothing. */
       include: z
         .string()
         .describe(
@@ -223,10 +227,9 @@ export function searchRoutes(storage: Storage) {
         .map((s) => s.trim())
         .filter((s) => s.length > 0),
     );
-    const includeSystemTypes = includeSet.has("system");
-    const typeIsSystemTarget =
-      typeof type === "string" && type.startsWith("system.");
-    const excludeSystemTypes = !includeSystemTypes && !typeIsSystemTarget;
+    // Through the shared rule rather than restated: this door and the item
+    // list both wrote it out, and the bulk-action door wrote nothing.
+    const excludeSystemTypes = excludesSystemTypes(includeSet, type);
 
     const callerKeyForSearch = c.get("apiKey");
     const callerSpaceIdForSearch = callerKeyForSearch?.space_id;

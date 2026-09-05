@@ -26,6 +26,11 @@ import type { Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
 import { publish, publishEdge } from "../pubsub.js";
+import { getTypeSchema, validateProperties } from "@withmarfa/shared";
+import {
+  mergeUpdateProperties,
+  resolveIncomingProperties,
+} from "../storage/merge-properties.js";
 import { log } from "../middleware/logger.js";
 
 export interface ChunkOutcome {
@@ -363,6 +368,54 @@ async function runUpdatePropertiesChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
+        // The patch is judged against the row it lands on, which means
+        // reading the row: this door takes a filter rather than a list, so
+        // the ids were frozen when the job was made and the rows may have
+        // moved since. The single-item door judges the merged result rather
+        // than the body, so a patch removing a required field is refused
+        // even though it names no invalid value, and this judges the same
+        // thing through the same helper.
+        //
+        // Nothing judged it before, and this is the widest of the six
+        // enumerated item-write doors: one patch reaches every row the
+        // filter matched, so a single call could leave thousands invalid
+        // against their own schemas.
+        //
+        // The schema guard is the single-item door's. `validateProperties`
+        // reports an absent schema as `Unknown type` rather than as no
+        // opinion, so judging unguarded would refuse every row of a type
+        // this worker's registry does not carry.
+        const before = await storage.items.get(id, spaceId ?? undefined);
+        if (before && getTypeSchema(before.type, spaceId ?? undefined)) {
+          const merged = mergeUpdateProperties(
+            before.properties,
+            resolveIncomingProperties(
+              before.type,
+              input.patch,
+              false,
+              spaceId ?? undefined,
+            ) ?? {},
+            false,
+            "merge",
+          );
+          const validation = validateProperties(before.type, merged, {
+            ...(spaceId == null ? {} : { spaceId }),
+          });
+          if (!validation.success) {
+            // Errored per row rather than thrown for the chunk: this route's
+            // established answer is that one unreachable row must not fail an
+            // action over thousands, and the loop already reports a version
+            // conflict that way.
+            errors.push({
+              id,
+              code: "invalid_properties",
+              message: `Invalid properties: ${validation.errors
+                .map((e) => `${e.field}: ${e.message}`)
+                .join("; ")}`,
+            });
+            continue;
+          }
+        }
         const result = await storage.items.update(
           id,
           { properties: input.patch },

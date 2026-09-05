@@ -34,6 +34,20 @@ const DEFAULT_STALE_AFTER_MS = 60_000;
  *  `BulkActionResponse` shape (server emits ids only when small enough
  *  to be useful). Mirrors `routes/bulk.ts:860`. */
 const RESPONSE_IDS_CAP = 100;
+/**
+ * Cap the `errors` array for the same reason `ids` is capped, and the reason
+ * is now sharper than symmetry.
+ *
+ * `errored` beside it is the true count, so nothing is lost by truncating the
+ * list; what is lost by not truncating it is the job row. Until property
+ * patches were judged per row, the only per-row error this action produced
+ * was a version conflict, which needs a concurrent writer per row. A patch
+ * the type refuses fails *every* matched row, so one mistyped call against a
+ * fifty-thousand-row match set serialized fifty thousand entries into the
+ * row and returned them whole on every terminal poll — and the kits poll
+ * transparently, so a caller would not have asked for it.
+ */
+const RESPONSE_ERRORS_CAP = 100;
 
 export interface BulkActionWorkerOptions {
   storage: Storage;
@@ -303,7 +317,12 @@ export class BulkActionWorker {
       ...(accSucceeded.length > 0 && accSucceeded.length <= RESPONSE_IDS_CAP
         ? { ids: accSucceeded }
         : {}),
-      ...(accErrors.length > 0 ? { errors: accErrors } : {}),
+      // Truncated rather than omitted past the cap: a caller with one bad
+      // patch wants to see what the refusal says, and one entry says it as
+      // well as fifty thousand. `errored` carries the count either way.
+      ...(accErrors.length > 0
+        ? { errors: accErrors.slice(0, RESPONSE_ERRORS_CAP) }
+        : {}),
       ...(input.action === "purge"
         ? { blob_hashes_referenced: accBlobHashes.size }
         : {}),
