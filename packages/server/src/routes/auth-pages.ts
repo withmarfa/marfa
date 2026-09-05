@@ -2757,8 +2757,12 @@ export function authRoutes(
         // and only once the code is bound: an approval that
         // lost to a deny in another tab is told it did not take effect, and
         // must not leave a row that answers the next browser authorize with
-        // a code and no screen. A projection without a row is the state
-        // this change repairs, and the next approval repairs it again.
+        // a code and no screen. The trade: a throw from this write now lands
+        // after the bind, so the device gets its tokens on the next poll
+        // while the person sees an error and no `auth.grant.created` row is
+        // written. That is a projection without a row, the state this
+        // change repairs, and the next approval repairs it again; the other
+        // order wrote a row for an approval that never took effect.
         if (bound && provider && typeof provider.upsertConsent === "function") {
           await provider.upsertConsent({
             clientId: row.client_id,

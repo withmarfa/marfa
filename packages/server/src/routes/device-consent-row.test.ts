@@ -5,16 +5,22 @@
  * the plugin's `auth_oauth_consent` row. The device flow writes the
  * projection itself and issues tokens from Marfa's own table, so it never
  * passed through the plugin's consent endpoint and never left a consent row
- * behind. Every reader of the plugin's half then treated a device grant as
- * no grant at all: a browser authorize for the same app rendered the consent
- * screen as if the person had never approved it, and the revoke cascade had
- * one record to drop where the code flow has two.
+ * behind. Neither consent check could then see a device grant, the plugin's
+ * exact-membership skip nor Marfa's coverage check: a browser authorize for
+ * the same app rendered the consent screen as if the person had never
+ * approved it. The revoke cascade deletes the row by pair whether or not one
+ * exists, so nothing leaked; the record was absent.
  *
- * The cases here drive the real flow rather than seeding rows: a device
- * approval, then the plugin's tables read back; a code-flow authorize for the
- * same app answered silently because the row now covers it; a re-approval
- * leaving one row rather than two; and a revoke removing the row with the
- * rest.
+ * The cases drive the real flow, with two exceptions that seed what the flow
+ * cannot produce on demand: a consent row standing with no projection (the
+ * shape a failed projection write leaves), and a drifted space binding. A
+ * device approval leaves one row carrying the merged scopes and the grant's
+ * space; a browser authorize is then answered silently; a re-approval widens
+ * the one row; in hosted mode the row is bound to the space and a drifted
+ * binding is re-stamped; a standalone row is narrowed to the approval,
+ * deliberately; the row equals the merged set where merging is not a union;
+ * an approval whose bind fails leaves no row; revoking the grant removes the
+ * row and the browser is asked again.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
@@ -403,7 +409,9 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     const grant = await onlyGrant(ctx);
     const rows = await consentRows(ctx, clientId, authUserId);
     expect(rows).toHaveLength(1);
-    expect(rows[0]!.scopes).toEqual(grant.properties.scopes);
+    expect(rows[0]!.scopes).toEqual(
+      [...(grant.properties.scopes as string[])].sort(),
+    );
     expect(rows[0]!.scopes).toContain("core.note:write");
   });
 

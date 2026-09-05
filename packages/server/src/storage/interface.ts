@@ -2121,12 +2121,14 @@ export interface OauthProviderStore {
    * browser authorize for the same app rendered consent afresh.
    *
    * `scopes` is the projection's merged set, not this approval alone, and
-   * it replaces what the row held: the projection is the grant and the row
-   * mirrors it. The two can differ when a row stands with no projection
+   * it replaces the scopes the row held (claims and resources, which the
+   * device flow never writes, stand): the projection is the grant and the
+   * row mirrors it. The two can differ when a row stands with no projection
    * beside it (the code flow logs a failed projection write and issues its
    * code anyway); a later device approval then narrows the row to what the
-   * person just approved, deliberately, since that is less access rather
-   * than more and the browser asks again for the rest. `referenceId` is the
+   * person just approved, deliberately. That is less recorded consent
+   * rather than more, since tokens already issued outlive the row, and the
+   * browser asks again for the rest. `referenceId` is the
    * user's space id, the value `consentReferenceId` hands the plugin, and
    * it is written on update as well because the plugin's lookup filters on
    * it.

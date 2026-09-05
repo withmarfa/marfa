@@ -580,8 +580,9 @@ export class PgOauthProviderStore implements OauthProviderStore {
     // check followed by an insert loses a race to a constraint violation,
     // and a throw here lands after the projection is written and before the
     // device code flips. The update half re-stamps `referenceId`, because
-    // the plugin's own lookup filters on it whenever it is set (always, here:
-    // it is the space id), and a row whose binding drifted would otherwise
+    // the plugin's own lookup filters on it whenever it is set (the space id
+    // in hosted mode; nothing on a single-space self-host, where re-stamping
+    // null is a no-op), and a row whose binding drifted would otherwise
     // match nothing and be re-created behind the same constraint.
     await this.db
       .insert(auth_oauth_consent)
