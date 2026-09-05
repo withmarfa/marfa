@@ -971,7 +971,7 @@
           "Items"
         ],
         "summary": "List items",
-        "description": "Returns a paginated list of items in the space, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
+        "description": "Returns a paginated list of items in the space, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes `system`, which is not a hydration: it widens the rows returned to include `system.*` items, which this listing omits by default. Unrecognized query parameters are refused with `400` rather than ignored, so a misspelled filter cannot silently return an unfiltered page. A parameter of your own — a cache-buster, an analytics tag — must start with `_`, which is always ignored.",
         "security": [
           {
             "bearerAuth": []
@@ -1127,10 +1127,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated extras to hydrate inline: edges, metadata, extensions"
+              "description": "Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate those extras inline on the rows already being returned. `system` is different in kind: it widens the row set, opting in `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token."
             },
             "required": false,
-            "description": "Comma-separated extras to hydrate inline: edges, metadata, extensions",
+            "description": "Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate those extras inline on the rows already being returned. `system` is different in kind: it widens the row set, opting in `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token.",
             "name": "include",
             "in": "query"
           }
@@ -9778,7 +9778,7 @@
           "Items"
         ],
         "summary": "Bulk get items by id",
-        "description": "Reads up to 100 items by id in one round-trip. Space-scoped and permission-filtered exactly like the single-item GET: ids the caller cannot read (other space, type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request. Optional `include` hydrates edges, metadata, extensions, or system items inline.",
+        "description": "Reads up to 100 items by id in one round-trip. Space-scoped and permission-filtered exactly like the single-item GET: ids the caller cannot read (other space, type not permitted, trashed, or missing) are silently omitted rather than erroring the whole request. Optional `include` takes the same tokens as GET /items: `edges`, `metadata` and `extensions` hydrate an extra inline, while `system` widens the result to include `system.*` items, which are omitted by default.",
         "security": [
           {
             "bearerAuth": []
@@ -9808,7 +9808,7 @@
                         "system"
                       ]
                     },
-                    "description": "Extras to hydrate inline: edges, metadata, extensions, system. Mirrors the GET /items `include` tokens."
+                    "description": "`edges`, `metadata` and `extensions` hydrate those extras inline on the items already being returned. `system` is different in kind: it widens the result to include `system.*` items, which are omitted by default. Mirrors the GET /items `include` tokens."
                   }
                 },
                 "required": [
@@ -17346,10 +17346,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated opt-in inclusions, e.g. `system`."
+              "description": "Comma-separated opt-in inclusions. `system` widens the row set to include `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token. It is the only token this route reads."
             },
             "required": false,
-            "description": "Comma-separated opt-in inclusions, e.g. `system`.",
+            "description": "Comma-separated opt-in inclusions. `system` widens the row set to include `system.*` items, which are excluded by default. A `type` filter in the `system.` namespace, concrete or wildcard, opts in on its own without the token. It is the only token this route reads.",
             "name": "include",
             "in": "query"
           },

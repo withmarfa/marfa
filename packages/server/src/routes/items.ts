@@ -475,7 +475,7 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description: `Returns a paginated list of items in the space, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. ${UNKNOWN_PARAM_NOTE}`,
+  description: `Returns a paginated list of items in the space, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. That same parameter also takes \`system\`, which is not a hydration: it widens the rows returned to include \`system.*\` items, which this listing omits by default. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -555,7 +555,12 @@ const listItemsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Comma-separated extras to hydrate inline: edges, metadata, extensions",
+          "Comma-separated tokens. `edges`, `metadata` and `extensions` hydrate " +
+            "those extras inline on the rows already being returned. `system` is " +
+            "different in kind: it widens the row set, opting in `system.*` items, " +
+            "which are excluded by default. A `type` filter in the `system.` " +
+            "namespace, concrete or wildcard, opts in on its own without the " +
+            "token.",
         ),
     }),
   },

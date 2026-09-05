@@ -234,3 +234,75 @@ describe("POST /items/bulk-get", () => {
     expect(data.items.map((i) => i.id)).toEqual([noteId]);
   });
 });
+
+/**
+ * The `system` token on the third surface that reads it.
+ *
+ * `bulk-get` filters in JavaScript — `if (!includeSystem &&
+ * item.type.startsWith("system.")) continue;` — rather than through the SQL
+ * exclusion the two listing routes compile. So the mutation controls on those
+ * routes do not reach it: delete that line and every other test in the
+ * repository still passes, while this door starts handing `system.*` rows to
+ * every caller regardless of the token.
+ *
+ * It is also the door where a caller most confidently believes it asked for
+ * the row, because it named the id. A dropped system row leaves the array
+ * short with no signal, exactly like an id the caller may not read.
+ */
+describe("POST /items/bulk-get and the system token", () => {
+  async function seedPair(
+    marker: string,
+  ): Promise<{ noteId: string; deviceId: string }> {
+    const note = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: `bulk-sys-${marker}` } },
+    });
+    const device = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.device",
+        properties: { name: `bulk-sys-${marker}`, kind: "laptop" },
+      },
+    });
+    expect(note.status).toBe(201);
+    expect(device.status).toBe(201);
+    const { item: n } = (await note.json()) as { item: { id: string } };
+    const { item: d } = (await device.json()) as { item: { id: string } };
+    return { noteId: n.id, deviceId: d.id };
+  }
+
+  async function fetched(ids: string[], include?: string[]): Promise<string[]> {
+    const res = await request(ctx.app, "POST", "/items/bulk-get", {
+      key: ctx.adminKey,
+      body: { ids, ...(include === undefined ? {} : { include }) },
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as BulkGetResponse;
+    return data.items.map((i) => i.id);
+  }
+
+  it("drops a system id the caller named, when the token is absent", async () => {
+    const { noteId, deviceId } = await seedPair("absent");
+    const got = await fetched([noteId, deviceId]);
+    // The ordinary id as well, so this cannot pass against an empty response.
+    expect(got).toContain(noteId);
+    expect(got).not.toContain(deviceId);
+  });
+
+  it("returns it when the token is present", async () => {
+    const { noteId, deviceId } = await seedPair("present");
+    const got = await fetched([noteId, deviceId], ["system"]);
+    expect(got).toContain(noteId);
+    expect(got).toContain(deviceId);
+  });
+
+  it("refuses a token it does not declare", async () => {
+    // Unlike the listing routes, this door's `include` is a closed enum, so a
+    // misspelling is a 400 here and silently ignored there.
+    const res = await request(ctx.app, "POST", "/items/bulk-get", {
+      key: ctx.adminKey,
+      body: { ids: [], include: ["sytem"] },
+    });
+    expect(res.status).toBe(400);
+  });
+});

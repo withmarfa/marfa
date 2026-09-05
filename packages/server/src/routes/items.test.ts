@@ -2857,3 +2857,185 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
     expect(firstPageIds.has(restBody.data[0]?.id ?? "")).toBe(false);
   });
 });
+
+/**
+ * The `include` token that widens the row set rather than hydrating an extra.
+ *
+ * It had no test anywhere before this one — not on `/items`, not on `/search`,
+ * and not in the conformance suite, which covers the default exclusion and the
+ * explicit-type path and never the token. Two independently written client kits
+ * lost data to it, both by listing everything they could see and pruning what
+ * the listing did not carry.
+ *
+ * Every case that asserts an absence pairs it with an ordinary row that must be
+ * present, because an assertion checking only that the system row is missing
+ * passes against a listing that returned nothing at all. The type-filter case
+ * asserts a presence only, and is right to: under `type=system.device` the
+ * ordinary row is correctly absent.
+ */
+describe("GET /items?include=system", () => {
+  async function seedPair(
+    marker: string,
+  ): Promise<{ noteId: string; deviceId: string }> {
+    const note = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: `include-system-${marker}` },
+        tags: [`include-system-${marker}`],
+      },
+    });
+    const device = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.device",
+        properties: { name: `include-system-${marker}`, kind: "laptop" },
+        tags: [`include-system-${marker}`],
+      },
+    });
+    expect(note.status).toBe(201);
+    expect(device.status).toBe(201);
+    const { item: noteItem } = (await note.json()) as { item: { id: string } };
+    const { item: deviceItem } = (await device.json()) as {
+      item: { id: string };
+    };
+    return { noteId: noteItem.id, deviceId: deviceItem.id };
+  }
+
+  async function listedIdsAs(key: string, query: string): Promise<string[]> {
+    const res = await request(ctx.app, "GET", query, { key });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { data: { id: string }[] };
+    return body.data.map((r) => r.id);
+  }
+
+  async function listedIds(query: string): Promise<string[]> {
+    return listedIdsAs(ctx.adminKey, query);
+  }
+
+  it("omits system.* rows when the token is absent", async () => {
+    const { noteId, deviceId } = await seedPair("absent");
+    const ids = await listedIds("/items?tags=include-system-absent&limit=200");
+    expect(ids).toContain(noteId);
+    expect(ids).not.toContain(deviceId);
+  });
+
+  it("returns system.* rows when the token is present", async () => {
+    const { noteId, deviceId } = await seedPair("present");
+    const ids = await listedIds(
+      "/items?tags=include-system-present&include=system&limit=200",
+    );
+    expect(ids).toContain(noteId);
+    expect(ids).toContain(deviceId);
+  });
+
+  it("opts in on a specific system.* type filter without the token", async () => {
+    const { deviceId } = await seedPair("bytype");
+    const ids = await listedIds(
+      "/items?type=system.device&tags=include-system-bytype&limit=200",
+    );
+    expect(ids).toContain(deviceId);
+  });
+
+  // Every other case in this file and its sibling runs as `ctx.adminKey`, whose
+  // role short-circuits `computeTypeFilter` (`middleware/auth.ts:737`), so
+  // `allowed_types` is inert in all of them. `exclude_system_types` and
+  // `allowed_types` are independent arguments to the same storage call, and
+  // nothing asserted how they compose — which matters now the published
+  // description advertises the token to every client.
+  //
+  // The grant has to name the system type. A key holding only `core.note`
+  // proves nothing: the device is absent whether the token was honored or
+  // ignored, so the test would pass against a handler that dropped `system`
+  // entirely. That was the first version of this test, and it is the guard
+  // that cannot fail for the reason it exists.
+  //
+  // Reads to `system.*` are unrestricted by role (`auth.ts:641`), so the
+  // permission map is the only thing fencing them.
+  async function scopedKey(
+    label: string,
+    perms: Record<string, "read" | "write">,
+  ): Promise<string> {
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label,
+        source: `${label}-src`,
+        role: "member",
+        type_permissions: perms,
+      },
+    });
+    expect(res.status).toBe(201);
+    const { key } = (await res.json()) as { key: string };
+    return key;
+  }
+
+  it("composes with the caller's type permissions rather than bypassing them", async () => {
+    const { noteId, deviceId } = await seedPair("granted");
+    const key = await scopedKey("include-system-granted", {
+      "core.note": "read",
+      "system.device": "read",
+    });
+
+    const withToken = await listedIdsAs(
+      key,
+      "/items?tags=include-system-granted&include=system&limit=200",
+    );
+    const without = await listedIdsAs(
+      key,
+      "/items?tags=include-system-granted&limit=200",
+    );
+
+    // Granted the type, the token is what decides. Both directions, so the
+    // case reddens if `system` stops being read.
+    expect(withToken).toContain(noteId);
+    expect(withToken).toContain(deviceId);
+    expect(without).toContain(noteId);
+    expect(without).not.toContain(deviceId);
+  });
+
+  it("does not let the token reach past a type the caller cannot read", async () => {
+    const { noteId, deviceId } = await seedPair("withheld");
+    const key = await scopedKey("include-system-withheld", {
+      "core.note": "read",
+    });
+
+    const ids = await listedIdsAs(
+      key,
+      "/items?tags=include-system-withheld&include=system&limit=200",
+    );
+    // The fence outranks the token: the note is readable and the device is not,
+    // even though the token asked for it.
+    expect(ids).toContain(noteId);
+    expect(ids).not.toContain(deviceId);
+  });
+
+  it("composes with a hydrating token without either losing its effect", async () => {
+    const { noteId, deviceId } = await seedPair("compose");
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/items?tags=include-system-compose&include=metadata,system&limit=200",
+      { key: ctx.adminKey },
+    );
+    expect(res.status).toBe(200);
+    // `metadata` changes the envelope: each row becomes `{ item, metadata }`
+    // rather than a bare item. That is itself a second way this parameter does
+    // more than hydrate inline, and the first draft of this test read `r.id`
+    // and got two `undefined`s back.
+    const body = (await res.json()) as {
+      data: { item: { id: string }; metadata: { tags: string[] } }[];
+    };
+    const ids = body.data.map((r) => r.item.id);
+    expect(ids).toContain(noteId);
+    expect(ids).toContain(deviceId);
+    // Assert the tag rather than that `metadata` is defined. The handler falls
+    // back to `{ item_id, tags: [], extensions: {} }` for a row it found no
+    // metadata for, so `toBeDefined()` holds even if hydration dropped the
+    // system row — and the envelope is already forced by the line above, which
+    // throws if it is wrong. The tag is what proves the extra reached both.
+    for (const row of body.data) {
+      expect(row.metadata.tags).toContain("include-system-compose");
+    }
+  });
+});

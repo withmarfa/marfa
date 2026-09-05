@@ -207,3 +207,75 @@ describe("GET /search?tags=", () => {
     expect(data.results).toHaveLength(0);
   });
 });
+
+/**
+ * The one `include` token this route reads, which widens the row set rather
+ * than hydrating anything. Untested here until now, and untested on `/items`
+ * too — the conformance suite covers the default exclusion and the explicit
+ * type filter and never the token itself.
+ *
+ * The case that asserts an absence pairs it with an ordinary row that must be
+ * found, because a search asserting only the system row's absence passes
+ * against an index that matched nothing at all. The type-filter case asserts a
+ * presence only, and is right to.
+ */
+describe("GET /search?include=system", () => {
+  // One standalone token per case. Tokenization is whitespace-based, so a
+  // two-word marker searches as two terms and matches far more than intended.
+  const token = (marker: string): string =>
+    `sysinc${marker}${String(Date.now())}`;
+
+  async function seedPair(
+    word: string,
+  ): Promise<{ noteId: string; deviceId: string }> {
+    const note = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: `${word} note` },
+      },
+    });
+    const device = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.device",
+        properties: { name: word, kind: "laptop" },
+      },
+    });
+    expect(note.status).toBe(201);
+    expect(device.status).toBe(201);
+    const { item: n } = (await note.json()) as { item: { id: string } };
+    const { item: d } = (await device.json()) as { item: { id: string } };
+    return { noteId: n.id, deviceId: d.id };
+  }
+
+  async function foundIds(query: string): Promise<string[]> {
+    const res = await request(ctx.app, "GET", query, { key: ctx.adminKey });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { results: { item: { id: string } }[] };
+    return body.results.map((r) => r.item.id);
+  }
+
+  it("omits system.* rows when the token is absent", async () => {
+    const word = token("absent");
+    const { noteId, deviceId } = await seedPair(word);
+    const ids = await foundIds(`/search?q=${word}`);
+    expect(ids).toContain(noteId);
+    expect(ids).not.toContain(deviceId);
+  });
+
+  it("returns system.* rows when the token is present", async () => {
+    const word = token("present");
+    const { noteId, deviceId } = await seedPair(word);
+    const ids = await foundIds(`/search?q=${word}&include=system`);
+    expect(ids).toContain(noteId);
+    expect(ids).toContain(deviceId);
+  });
+
+  it("opts in on a specific system.* type filter without the token", async () => {
+    const word = token("bytype");
+    const { deviceId } = await seedPair(word);
+    const ids = await foundIds(`/search?q=${word}&type=system.device`);
+    expect(ids).toContain(deviceId);
+  });
+});
