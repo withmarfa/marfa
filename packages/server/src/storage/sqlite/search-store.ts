@@ -7,6 +7,7 @@ import {
   type SearchResult,
 } from "@withmarfa/shared";
 import type { SearchStore, SearchFilters } from "../interface.js";
+import { normalizeTimeBound } from "../interface.js";
 import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { DrizzleDb } from "./connection.js";
 import { rowToItem, rowToMetadata, type ItemRow } from "./helpers.js";
@@ -102,6 +103,26 @@ export class SqliteSearchStore implements SearchStore {
 
     if (filters.exclude_system_types) {
       conditions.push("AND i.type NOT LIKE 'system.%'");
+    }
+
+    // The Postgres store's twin, and deliberately the same expression:
+    // `COALESCE(timestamp, created_at)`, inclusive, normalized to the
+    // stored width before a lexical text comparison sees it.
+    const timestampAfter = normalizeTimeBound(
+      filters.timestamp_after,
+      "timestamp_after",
+    );
+    if (timestampAfter !== undefined) {
+      conditions.push("AND COALESCE(i.timestamp, i.created_at) >= ?");
+      params.push(timestampAfter);
+    }
+    const timestampBefore = normalizeTimeBound(
+      filters.timestamp_before,
+      "timestamp_before",
+    );
+    if (timestampBefore !== undefined) {
+      conditions.push("AND COALESCE(i.timestamp, i.created_at) <= ?");
+      params.push(timestampBefore);
     }
 
     // Items must have ALL specified tags (AND semantics).

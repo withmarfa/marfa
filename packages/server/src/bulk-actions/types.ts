@@ -7,19 +7,39 @@
  * enforced by the openapi-freshness CI gate.
  */
 import { z } from "@hono/zod-openapi";
+import { ItemStateEnum } from "../routes/_schemas.js";
+import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
 
-export const BulkActionFilterSchema = z
-  .object({
-    type: z.string().optional(),
-    state: z.enum(["active", "archived", "trashed"]).optional(),
-    source: z.string().optional(),
-    tier: z.enum(["library", "feed"]).optional(),
-    tags: z.array(z.string()).optional(),
-    timestamp_after: z.string().optional(),
-    timestamp_before: z.string().optional(),
-    filter: z.string().optional(),
-  })
-  .optional();
+/**
+ * The bulk-action match set, and the only declaration of it.
+ *
+ * Filter fields carry the same semantics as the `GET /items` query. One
+ * JSON object so bulk_action callers don't have to shove a filter
+ * expression through query-string encoding.
+ *
+ * `POST /items/bulk-actions` used to declare this shape a second time in
+ * its own route file, field for field, with nothing holding the two in
+ * step: the openapi-freshness gate compares the generated specification
+ * against the routes, so it watched the route copy and not this one. Two
+ * renames and a missing lifecycle state later, the route imports this
+ * instead. Keeping the declaration here rather than in the route is what
+ * lets the substrate hold the shape without depending on the published
+ * client package, which is why the copy existed at all.
+ */
+export const BulkActionFilterShape = z.object({
+  type: z.string().optional(),
+  state: ItemStateEnum.optional(),
+  source: z.string().optional(),
+  tier: z.enum(["library", "feed"]).optional(),
+  tags: z.array(z.string()).optional(),
+  timestamp_after: z.string().optional(),
+  timestamp_before: z.string().optional(),
+  /** Full filter-SQL DSL string, same grammar as GET /items?filter=. */
+  filter: z.string().optional(),
+});
+
+/** The same shape as the request takes it: absent means "every item". */
+export const BulkActionFilterSchema = BulkActionFilterShape.optional();
 
 const BulkActionBaseSchema = z.object({
   filter: BulkActionFilterSchema,
@@ -57,6 +77,29 @@ export const BulkActionInputSchema = z.discriminatedUnion("action", [
 ]);
 
 export type BulkActionInput = z.infer<typeof BulkActionInputSchema>;
+
+/**
+ * The request shape each `action` selects, keyed by the action name.
+ *
+ * Read off the union's own options rather than restated, for the reason
+ * the filter above is declared once: a variant added to the union is in
+ * this map the moment it is added, so the body-field refusal covers it
+ * with no second edit and cannot fall behind.
+ *
+ * Declared over the union's own `action` so the refusal can index it
+ * without a not-found branch — and a not-found branch here could only
+ * ever be a silent skip, which is the failure this map serves a refusal
+ * against.
+ */
+export const BULK_ACTION_SHAPES: Record<
+  BulkActionInput["action"],
+  DeclaresKeys
+> = Object.fromEntries(
+  BulkActionInputSchema.options.map((option) => [
+    option.shape.action.value,
+    option,
+  ]),
+) as Record<string, DeclaresKeys>;
 
 export const BulkActionErrorEntrySchema = z.object({
   id: z.string(),

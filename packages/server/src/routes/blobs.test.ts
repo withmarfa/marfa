@@ -280,6 +280,96 @@ describe("POST /blobs/cleanup", () => {
     expect(body.removed).toBe(body.orphaned);
   });
 
+  /**
+   * The scan used to walk the corpus twice — once bare, which applies the
+   * default that hides the bin, and once with the state pinned to
+   * `trashed` — purely to see all four states. It is one pass with
+   * `all_states` now, and nothing covered the pinned pass, so a collapse
+   * that dropped the bin would have been silently destructive: a blob
+   * referenced only by a trashed item would be deleted out from under the
+   * restore that is the whole reason the bin exists.
+   */
+  it("keeps a blob referenced only by a trashed item", async () => {
+    const data = new TextEncoder().encode("bytes only the bin points at");
+    const uploadRes = await ctx.app.request("/blobs", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/octet-stream",
+      },
+      body: data,
+    });
+    const { hash } = (await uploadRes.json()) as { hash: string };
+
+    const createRes = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        state: "trashed",
+        properties: { body: "in the bin, still holds a file", blob_ref: hash },
+      },
+    });
+    expect(createRes.status).toBe(201);
+
+    const cleanupRes = await request(
+      ctx.app,
+      "POST",
+      "/blobs/cleanup?dry_run=false",
+      { key: ctx.adminKey },
+    );
+    expect(cleanupRes.status).toBe(200);
+
+    // The blob is still readable, which is the property. A count of
+    // orphans would pass whether or not this particular hash survived.
+    const headRes = await ctx.app.request(`/blobs/${hash}`, {
+      method: "HEAD",
+      headers: { Authorization: `Bearer ${ctx.adminKey}` },
+    });
+    expect(headRes.status).toBe(200);
+  });
+
+  /** The archived and revoked states reach the scan through the bare
+   *  listing's default rather than through the pinned pass, so they were
+   *  covered only incidentally. Named here so the widening is checked on
+   *  every state rather than on the one that changed. */
+  it("keeps a blob referenced only by an archived or revoked item", async () => {
+    for (const [state, type, properties] of [
+      ["archived", "core.note", { body: "archived, holds a file" }],
+      ["revoked", "system.device", { name: "Revoked laptop", kind: "laptop" }],
+    ] as const) {
+      const data = new TextEncoder().encode(`bytes only ${state} points at`);
+      const uploadRes = await ctx.app.request("/blobs", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.adminKey}`,
+          "Content-Type": "application/octet-stream",
+        },
+        body: data,
+      });
+      const { hash } = (await uploadRes.json()) as { hash: string };
+
+      const createRes = await request(ctx.app, "POST", "/items", {
+        key: ctx.adminKey,
+        body: { type, state, properties: { ...properties, blob_ref: hash } },
+      });
+      expect(createRes.status).toBe(201);
+
+      const cleanupRes = await request(
+        ctx.app,
+        "POST",
+        "/blobs/cleanup?dry_run=false",
+        { key: ctx.adminKey },
+      );
+      expect(cleanupRes.status).toBe(200);
+
+      const headRes = await ctx.app.request(`/blobs/${hash}`, {
+        method: "HEAD",
+        headers: { Authorization: `Bearer ${ctx.adminKey}` },
+      });
+      expect(headRes.status).toBe(200);
+    }
+  });
+
   it("keeps a blob referenced only by version history", async () => {
     const data = new TextEncoder().encode("bytes only history points at");
     const uploadRes = await ctx.app.request("/blobs", {

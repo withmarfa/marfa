@@ -10,7 +10,6 @@ import {
   getTypeSchema,
   getEdgeTypeSchema,
   validateProperties,
-  ITEM_STATES,
   SYSTEM_DEFAULT_STATE,
   validateTransition,
   SYSTEM_TYPE_IDS,
@@ -88,21 +87,28 @@ import {
   ItemWithMetadataSchema,
   ItemDetailSchema,
   MetadataSchema,
+  ALL_STATES,
+  resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
+import {
+  refuseUnknownQueryParams,
+  UNKNOWN_PARAM_NOTE,
+} from "./_unknown-query-keys.js";
 
 /**
- * The `?state=` value that means "every state, trashed included".
+ * The `?edge[<type>]=<id>` / `?backref[<type>]=<id>` shorthand keys.
  *
- * Deliberately not a member of the lifecycle vocabulary: it is a
- * widening of the default rather than a state a row can be in, and
- * nothing may compare it against the column. Named here rather than
- * spelled inline so the route and its description cannot drift.
+ * Declared once because two things read it now: the clause builder that
+ * compiles a match into the filter grammar, and the unknown-parameter
+ * refusal, which would otherwise reject every one of them. Two copies of
+ * this pattern would mean a working shorthand starting to answer 400 the
+ * moment one of them changed.
  */
-const ALL_STATES = "any";
+const EDGE_SHORTHAND_KEY = /^(edge|backref)\[([^\]]+)\]$/;
 
 // ---------------------------------------------------------------------------
 // Reusable schemas (Item / Metadata / ItemWithMetadata live in _schemas.ts;
@@ -460,8 +466,7 @@ const listItemsRoute = createRoute({
   path: "/",
   tags: ["Items"],
   summary: "List items",
-  description:
-    "Returns a paginated list of items in the space, narrowed by the query parameters; a `type` filter matches subtypes via inheritance. Lists are lean by default — use `include` to hydrate edges, metadata, or extensions inline and avoid an N+1.",
+  description: `Returns a paginated list of items in the space, narrowed by the query parameters; a \`type\` filter matches subtypes via inheritance. Lists are lean by default — use \`include\` to hydrate edges, metadata, or extensions inline and avoid an N+1. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -473,7 +478,7 @@ const listItemsRoute = createRoute({
         .string()
         .optional()
         .describe(
-          "Filter by lifecycle state. `any` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.",
+          `Filter by lifecycle state. \`${ALL_STATES}\` returns every state including trashed, which a resuming client needs in order to see a row go to the bin; omitting the parameter keeps the default, which excludes trashed rows.`,
         ),
       source: z.string().optional().describe("Filter by source credential"),
       tier: z
@@ -2123,6 +2128,13 @@ export function itemRoutes(storage: Storage) {
     refuseRenamedTimeQueryParams(c.req.raw.url, {
       catchUpFilter: "updated_after",
     });
+    // After the renamed-name refusal, so a retired name still gets the
+    // message that tells a caller what replaced it rather than the
+    // general one. The edge shorthands are allowed by pattern: the type
+    // is part of the key, so no schema can enumerate them.
+    refuseUnknownQueryParams(c.req.raw.url, listItemsRoute.request.query, {
+      allow: [EDGE_SHORTHAND_KEY],
+    });
 
     const query = c.req.valid("query");
 
@@ -2159,18 +2171,8 @@ export function itemRoutes(storage: Storage) {
     }
 
     // `any` is a widening, not a state, so it never reaches the column
-    // comparison. Resolved before the enum check for that reason: cast
-    // first and it would be validated as a lifecycle value and refused.
-    const allStates = query.state === ALL_STATES;
-    const state = allStates
-      ? undefined
-      : (query.state as ItemState | undefined);
-    if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Invalid state: ${state}`,
-      );
-    }
+    // comparison. Shared with `GET /export`, which reads the same filter.
+    const { state, all_states: allStates } = resolveStateFilter(query.state);
 
     const tagsParam = query.tags;
     const tags = tagsParam
@@ -2180,12 +2182,24 @@ export function itemRoutes(storage: Storage) {
     // ?edge[X]=Y and ?backref[X]=Y shorthands are AND-composed with any existing filter= param.
     const rawQuery = new URL(c.req.raw.url).searchParams;
     const edgeClauses: string[] = [];
-    const shorthandRe = /^(edge|backref)\[([^\]]+)\]$/;
+    const shorthandRe = EDGE_SHORTHAND_KEY;
     for (const [key, val] of rawQuery.entries()) {
-      // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec -- using String#match for boolean shape check; no captures needed
-      if (key.match(shorthandRe) && val) {
-        edgeClauses.push(`${key} eq "${val.replace(/"/g, '\\"')}"`);
+      if (!shorthandRe.test(key)) continue;
+      // A shorthand with nothing after the `=` used to be skipped here,
+      // which returned an unfiltered page at 200 — the failure the
+      // unknown-parameter refusal exists to remove, reached through the
+      // exemption that keeps the shorthand working. The exemption matches
+      // on the key alone, because the type is part of the key; the value
+      // has to be checked where it is read. `updated_after` carries
+      // `.min(1)` for the same reason on this same door.
+      if (val === "") {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `The "${key}" filter was sent with no value. An edge shorthand names the item on the other end of the edge, so an empty one narrows nothing and would return the whole listing.`,
+          { empty_parameters: [key] },
+        );
       }
+      edgeClauses.push(`${key} eq "${val.replace(/"/g, '\\"')}"`);
     }
     let filter = query.filter ?? undefined;
     if (edgeClauses.length > 0) {
