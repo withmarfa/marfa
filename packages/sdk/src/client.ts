@@ -1704,11 +1704,19 @@ export class MarfaClient {
      * policy, so resolution is to re-apply the change over that and send
      * again. Omit it and the write is unconditional, which is what every
      * caller written before this got.
+     *
+     * `opts.idempotencyKey` is honored by this door like every other write
+     * door. It matters most here *because* of `version`: without a key, an
+     * update whose answer was lost replays as a fresh write, and the first
+     * attempt has already moved the version — so the replay is refused as a
+     * conflict over an edit that in fact landed. With one, the server
+     * answers the repeat from its record and the caller sees what the first
+     * attempt returned.
      */
     update: async (
       id: string,
       properties: Record<string, unknown>,
-      opts?: { version?: number },
+      opts?: { version?: number } & IdempotentWriteOptions,
     ): Promise<Edge> => {
       // `requestWithConflict` rather than `request`, so the 409 body
       // survives. The generic path would throw a `MarfaError` built from
@@ -1722,6 +1730,9 @@ export class MarfaClient {
             properties,
             ...(opts?.version !== undefined && { version: opts.version }),
           },
+          ...(opts?.idempotencyKey !== undefined && {
+            idempotencyKey: opts.idempotencyKey,
+          }),
         },
       )) as
         { edge: Edge } | { error: { code: string; status: 409 }; edge?: Edge };

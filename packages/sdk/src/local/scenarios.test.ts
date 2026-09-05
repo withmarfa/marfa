@@ -390,6 +390,8 @@ describe("the key a mutation was written with (seam: offline, then online)", () 
       target_id: other.id,
       edge_type: "references",
     });
+    await store.mutations.updateItem(other.id, { body: "two, edited" });
+    await store.mutations.updateEdge(edge.id, { weight: 2 });
     await store.mutations.deleteEdge(edge.id);
     await store.mutations.deleteItem(note.id);
 
@@ -397,7 +399,7 @@ describe("the key a mutation was written with (seam: offline, then online)", () 
     seam.reset();
     seam.mode = "online";
     const pass = await drain.drain();
-    expect(pass).toMatchObject({ sent: 5, remaining: 0 });
+    expect(pass).toMatchObject({ sent: 7, remaining: 0 });
 
     // One request per queued mutation, in the order they were written, so
     // the key on each request belongs to the row beside it. Asserting the
@@ -408,6 +410,8 @@ describe("the key a mutation was written with (seam: offline, then online)", () 
       "POST /items",
       "POST /items",
       "POST /edges",
+      `PATCH /items/${other.id}`,
+      `PATCH /edges/${edge.id}`,
       `DELETE /edges/${edge.id}`,
       `DELETE /items/${note.id}`,
     ]);
