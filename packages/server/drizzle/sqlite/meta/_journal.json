@@ -610,6 +610,13 @@
       "when": 1788598400000,
       "tag": "0086_items_trashed_at",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "6",
+      "when": 1788598401000,
+      "tag": "0087_enrichment_queue_by_arrival",
+      "breakpoints": true
     }
   ]
 }

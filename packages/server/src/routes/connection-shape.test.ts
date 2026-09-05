@@ -92,7 +92,7 @@ describe("system.connection — kind: integration shape", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorResponse;
-    expect(body.error.code).toBe("validation_error");
+    expect(body.error.code).toBe("invalid_properties");
   });
 
   it("rejects an invalid direction value", async () => {
@@ -108,7 +108,7 @@ describe("system.connection — kind: integration shape", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorResponse;
-    expect(body.error.code).toBe("validation_error");
+    expect(body.error.code).toBe("invalid_properties");
   });
 
   it("rejects an invalid kind value", async () => {
@@ -124,7 +124,7 @@ describe("system.connection — kind: integration shape", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorResponse;
-    expect(body.error.code).toBe("validation_error");
+    expect(body.error.code).toBe("invalid_properties");
   });
 
   it("accepts feed_activity: true (the per-Connection feed-tier toggle)", async () => {

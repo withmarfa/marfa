@@ -937,11 +937,13 @@ describe("a schema refusal from the server (seam: online)", () => {
       kind: "item.create",
       reason: "refused",
       httpStatus: 400,
-      // The create door's code, which is not the code the update door
-      // gives for the same refusal. A classification that recognized only
-      // the update door's would have treated this as an ordinary 400 and
-      // spent no refresh at all.
-      code: "validation_error",
+      // Both doors answer a schema refusal with this code now. They did
+      // not: the create door said `validation_error` where the update door
+      // said `invalid_properties`, and a classification recognizing only
+      // one of them treated the other as an ordinary 400 and spent no
+      // refresh at all. The classifier still accepts both, which is now
+      // belt and braces rather than the thing holding this up.
+      code: "invalid_properties",
     });
     expect(refused[0]?.message).toMatch(
       /refreshed type graph refuses it too.*title: Invalid input/s,

@@ -57,7 +57,21 @@ export class SqliteEnrichmentStore implements EnrichmentStore {
           ),
         ),
       )
-      .orderBy(asc(items.updated_at))
+      // When the file arrived, not when it last changed. The column had to
+      // mean "how long has this been waiting", and `updated_at` stopped
+      // meaning that once a tag or extension write started moving it: an
+      // item that has not been extracted was pushed to the back of the
+      // queue by any write at all, so ordinary tagging of a file awaiting
+      // extraction delayed it and repeated tagging delayed it without
+      // bound. Nothing failed or errored on the way -- the symptom is a
+      // file that simply never gets its contents extracted.
+      //
+      // `created_at` is immovable, which is the property that matters:
+      // candidacy is decided by the enrichment-state anti-join, so a row
+      // re-offered after a blob change or a version bump is reordered
+      // against every other candidate by age rather than by recency, and
+      // nothing a caller does can move any of them.
+      .orderBy(asc(items.created_at))
       .limit(limit)
       .all();
     return rows

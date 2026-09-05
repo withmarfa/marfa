@@ -160,7 +160,7 @@ describe("system.activity — schema + feed-tier exception", () => {
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorResponse;
-    expect(body.error.code).toBe("validation_error");
+    expect(body.error.code).toBe("invalid_properties");
   });
 
   it("filters action_required activities via the regular filter DSL", async () => {

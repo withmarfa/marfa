@@ -573,10 +573,7 @@ CREATE INDEX IF NOT EXISTS \`idx_inbound_webhooks_connection_id\` ON \`inbound_w
 
 CREATE INDEX IF NOT EXISTS \`idx_items_created_at\` ON \`items\` (\`created_at\`);
 
-CREATE INDEX IF NOT EXISTS "idx_items_enrichment_candidates" ON "items" ("updated_at")
-  WHERE ("type" = 'core.file' OR "type" LIKE 'core.file.%')
-    AND "state" <> 'trashed'
-    AND json_extract("properties", '$.blob_ref') IS NOT NULL;
+CREATE INDEX IF NOT EXISTS \`idx_items_enrichment_candidates\` ON \`items\` (\`created_at\`) WHERE (type = 'core.file' OR type LIKE 'core.file.%') AND state <> 'trashed' AND json_extract(properties, '$.blob_ref') IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_items_source_dedup\`
   ON \`items\` (COALESCE(\`space_id\`, ''), \`source\`, \`source_id\`)

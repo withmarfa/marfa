@@ -1813,7 +1813,7 @@
             }
           },
           "400": {
-            "description": "The item is not an integration's copy",
+            "description": "The item is not an integration's copy, or its properties no longer satisfy its type",
             "content": {
               "application/json": {
                 "schema": {
@@ -1825,7 +1825,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "validation_error"
+                            "validation_error",
+                            "invalid_properties"
                           ]
                         },
                         "message": {
