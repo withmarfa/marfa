@@ -1,4 +1,5 @@
 import { createRoute, z } from "@hono/zod-openapi";
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { randomBytes } from "node:crypto";
 import {
   MarfaError,
@@ -317,9 +318,9 @@ const listDeliveriesRoute = createRoute({
         .number()
         .int()
         .min(1)
-        .max(200)
+        .max(MAX_PAGE_LIMIT)
         .optional()
-        .default(50)
+        .default(DEFAULT_PAGE_LIMIT)
         .describe("Maximum number of deliveries to return."),
     }),
   },

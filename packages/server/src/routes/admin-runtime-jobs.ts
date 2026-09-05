@@ -17,6 +17,11 @@
  * span every space, so a space-bound credential is refused.
  */
 import { createRoute, z } from "@hono/zod-openapi";
+import {
+  DEFAULT_PAGE_LIMIT,
+  MAX_PAGE_LIMIT,
+  MIN_PAGE_LIMIT,
+} from "../page-limits.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
@@ -45,9 +50,15 @@ const listDeadLettersRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      limit: z.coerce.number().int().min(1).max(200).default(50).openapi({
-        description: "Maximum rows to return (newest failures first).",
-      }),
+      limit: z.coerce
+        .number()
+        .int()
+        .min(MIN_PAGE_LIMIT)
+        .max(MAX_PAGE_LIMIT)
+        .default(DEFAULT_PAGE_LIMIT)
+        .openapi({
+          description: "Maximum rows to return (newest failures first).",
+        }),
     }),
   },
   responses: {

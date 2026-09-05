@@ -17,6 +17,7 @@
  * large to write to a database per dialect.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -356,7 +357,8 @@ function syntheticCalendar(
         const offset =
           filters.cursor === undefined ? 0 : Number(filters.cursor);
         const end = Math.min(
-          offset + Math.min(filters.limit ?? 50, 200),
+          offset +
+            Math.min(filters.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT),
           eligible.length,
         );
         return Promise.resolve({
