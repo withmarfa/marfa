@@ -279,15 +279,16 @@ async function seedClientWithCeilingNull(c: TestContext): Promise<string> {
  * and a new one fails the build until it is named with a reason.
  *
  * **What this cannot see, stated because the previous version of this comment
- * claimed a completeness it did not have.** The vendored OAuth plugin serves
+ * claimed a completeness it did not have.** The vendored OAuth plugin carries
  * two registration endpoints of its own, `POST /oauth2/create-client` and
- * `POST /admin/oauth2/create-client`, both reachable through the `/auth/*`
- * catch-all and both writing `auth_oauth_client.scopes` directly through
- * Better Auth's adapter. They never call Marfa's store, so no scan of this
- * tree reaches them. They write the registrant's own requested ceiling, which
- * is the correct behavior for a registration endpoint — the point of naming
- * them here is that "every writer is covered" would be false, and a guard
- * that overstates its reach is worse than one that states its edge.
+ * `POST /admin/oauth2/create-client`, both writing `auth_oauth_client.scopes`
+ * directly through Better Auth's adapter. They never call Marfa's store, so
+ * no scan of this tree reaches them. Neither is served any more: both are
+ * fenced from the wire in `routes/oauth-plugin-fence.ts`, whose own test
+ * holds that list to what the plugin registers. The point of naming them
+ * here is still that "every writer is covered" would be false for the
+ * in-process path, and a guard that overstates its reach is worse than one
+ * that states its edge.
  */
 /**
  * The text of the object literal starting at `open`, balanced across nesting

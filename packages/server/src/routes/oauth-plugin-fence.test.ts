@@ -16,14 +16,18 @@ import {
  * catch-all can serve them, and the list of what is refused is held to what
  * the plugin actually registers.
  *
- * Two properties, and neither implies the other. The enumeration case says
- * the two lists between them name every `/oauth2/*` and `/admin/oauth2/*`
- * path the vendored plugin registers and nothing it does not, so a plugin
- * upgrade that adds a door, or a fence entry that has gone stale, both
- * redden. The driven cases say the fence is actually mounted ahead of the
- * catch-all: a signed-in session reaching a fenced path gets the Marfa 404
- * and the row it aimed at is unchanged, while the protocol endpoints beside
- * it still answer as themselves.
+ * Three properties, and none implies the others. The enumeration case says
+ * the two lists between them decide every path the plugin routes, whatever
+ * its prefix, and name nothing the plugin no longer registers, so a plugin
+ * upgrade that adds a door and a fence entry that has gone stale both
+ * redden. The driven case says the fence is actually mounted ahead of the
+ * catch-all: a signed-in session reaching a fenced path, in either
+ * trailing-slash spelling, gets the Marfa 404 and neither its consent row
+ * nor the client table moves. The control cases say the signature the
+ * driven case keys on is the fence's alone, and that every path declared
+ * reachable answers as itself rather than with that signature, and the
+ * reachable list itself is pinned, so moving a path between the two lists
+ * is a change the suite sees.
  */
 
 vi.setConfig({ testTimeout: 45_000 });
@@ -37,26 +41,40 @@ afterEach(async () => {
 
 const ORIGIN = "http://localhost:0";
 
-/** Every `/oauth2/*` or `/admin/oauth2/*` path the plugin registers, read
- *  off the plugin's own endpoint record rather than from a list somebody
- *  typed. Options are the minimum the factory accepts; endpoint
- *  registration does not depend on them. */
-function pluginOauthPaths(): string[] {
+interface PluginEndpoint {
+  path: string;
+  /** True only when every registration of the path is marked server-only,
+   *  which Better Auth's router never serves over HTTP. */
+  serverOnly: boolean;
+}
+
+/** Every path the plugin registers, read off its own endpoint record rather
+ *  than from a list somebody typed. Options are the minimum the factory
+ *  accepts; the record is a flat literal, so they gate nothing. */
+function pluginEndpoints(): PluginEndpoint[] {
   const plugin = oauthProvider({
     loginPage: "/auth/sign-in",
     consentPage: "/auth/authorize",
   });
   const endpoints = (
-    plugin as unknown as { endpoints: Record<string, { path: string }> }
-  ).endpoints;
-  const paths = new Set<string>();
-  for (const endpoint of Object.values(endpoints)) {
-    const path = endpoint.path;
-    if (path.startsWith("/oauth2/") || path.startsWith("/admin/oauth2/")) {
-      paths.add(path);
+    plugin as unknown as {
+      endpoints: Record<
+        string,
+        { path: string; options?: { metadata?: { SERVER_ONLY?: boolean } } }
+      >;
     }
+  ).endpoints;
+  const byPath = new Map<string, boolean>();
+  for (const endpoint of Object.values(endpoints)) {
+    const serverOnly = endpoint.options?.metadata?.SERVER_ONLY === true;
+    byPath.set(
+      endpoint.path,
+      (byPath.get(endpoint.path) ?? true) && serverOnly,
+    );
   }
-  return [...paths].sort();
+  return [...byPath.entries()]
+    .map(([path, serverOnly]) => ({ path, serverOnly }))
+    .sort((a, b) => a.path.localeCompare(b.path));
 }
 
 /** Sign up + verify + sign in; returns the session cookie (`name=value`). */
@@ -79,26 +97,135 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
   }
   const setCookie = signInRes.headers.get("set-cookie");
   if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
-  for (const part of setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/)) {
-    const head = part.split(";")[0];
-    if (head?.includes("session_token")) return head;
-  }
-  throw new Error("sign-in: session_token cookie not found");
+  // The cookie name carries the configured prefix (`marfa.auth.session_token`),
+  // so match the name rather than splitting on a character class that a dot
+  // would defeat.
+  const match = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(setCookie);
+  if (!match?.[1]) throw new Error("sign-in: session_token cookie not found");
+  return match[1];
 }
 
-/** Substitute concrete segments for the Hono parameters a fenced path
- *  carries, so a request can actually be sent to it. */
-function concrete(path: string): string {
-  return path
-    .replace(":identifier", "https%3A%2F%2Fapi.example.com")
-    .replace(":client_id", "some-client");
+async function betterAuthSchema(c: TestContext) {
+  return c.storage.betterAuthDialect === "pg"
+    ? await import("../storage/pg/schema.js")
+    : await import("../storage/sqlite/schema.js");
+}
+
+interface InsertingDb {
+  insert: (table: unknown) => {
+    values: (v: Record<string, unknown>) => {
+      run?: () => Promise<unknown>;
+      execute?: () => Promise<unknown>;
+    };
+  };
+}
+
+async function authUserIdFor(c: TestContext, email: string): Promise<string> {
+  const schema = await betterAuthSchema(c);
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    select: () => {
+      from: (t: unknown) => {
+        where: (w: unknown) => Promise<{ id: string }[]>;
+      };
+    };
+  };
+  const rows = await db
+    .select()
+    .from(schema.auth_user)
+    .where(eq(schema.auth_user.email, email));
+  const id = rows[0]?.id;
+  if (!id) throw new Error(`authUserIdFor: no auth_user for ${email}`);
+  return id;
+}
+
+/** A client row for the consent row to point at, and something a successful
+ *  `create-client` or `delete-client` would visibly change. */
+async function seedClient(c: TestContext): Promise<string> {
+  const schema = await betterAuthSchema(c);
+  const db = c.storage.betterAuthDb as InsertingDb;
+  const isPg = c.storage.betterAuthDialect === "pg";
+  const asColumn = (v: readonly string[]): unknown =>
+    isPg ? [...v] : JSON.stringify(v);
+  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
+  const now = new Date();
+  const op = db.insert(schema.auth_oauth_client).values({
+    id: `pk_${Math.random().toString(36).slice(2, 10)}`,
+    clientId,
+    name: "Fenced App",
+    redirectUris: asColumn(["https://example.com/cb"]),
+    grantTypes: asColumn(["authorization_code"]),
+    disabled: false,
+    createdAt: now,
+    updatedAt: now,
+    public: true,
+    tokenEndpointAuthMethod: "none",
+  });
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+  return clientId;
+}
+
+const SEEDED_SCOPES = ["core.note:read"];
+
+/** The consent row a live grant carries, for `update-consent` and
+ *  `delete-consent` to have something a successful call would change. */
+async function seedConsent(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+): Promise<void> {
+  const schema = await betterAuthSchema(c);
+  const db = c.storage.betterAuthDb as InsertingDb;
+  const now = new Date();
+  const op = db.insert(schema.auth_oauth_consent).values({
+    id: `cons_${Math.random().toString(36).slice(2)}`,
+    clientId,
+    userId: authUserId,
+    scopes:
+      c.storage.betterAuthDialect === "pg"
+        ? SEEDED_SCOPES
+        : JSON.stringify(SEEDED_SCOPES),
+    consentGiven: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+}
+
+/** The consent rows for a (client, user) pair, scopes normalized across the
+ *  array column and the JSON-string column. */
+async function consentScopes(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+): Promise<string[][]> {
+  const schema = await betterAuthSchema(c);
+  const { and, eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    select: () => {
+      from: (t: unknown) => {
+        where: (w: unknown) => Promise<{ scopes: unknown }[]>;
+      };
+    };
+  };
+  const rows = await db
+    .select()
+    .from(schema.auth_oauth_consent)
+    .where(
+      and(
+        eq(schema.auth_oauth_consent.clientId, clientId),
+        eq(schema.auth_oauth_consent.userId, authUserId),
+      ),
+    );
+  return rows.map((row) =>
+    Array.isArray(row.scopes)
+      ? (row.scopes as string[])
+      : (JSON.parse(String(row.scopes)) as string[]),
+  );
 }
 
 async function countClients(c: TestContext): Promise<number> {
-  const schema =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schema = await betterAuthSchema(c);
   const db = c.storage.betterAuthDb as {
     select: () => { from: (table: unknown) => Promise<unknown[]> };
   };
@@ -106,85 +233,160 @@ async function countClients(c: TestContext): Promise<number> {
   return rows.length;
 }
 
+/** Substitute concrete segments for the Hono parameters a path carries, so a
+ *  request can actually be sent to it. */
+function concrete(path: string): string {
+  return path
+    .replaceAll(":identifier", "https%3A%2F%2Fapi.example.com")
+    .replaceAll(":client_id", "some-client");
+}
+
+/** The fence's signature, and only the fence's: the catch-all's own 404 is a
+ *  bare response with no header, and the app-level `notFound` sends the
+ *  envelope without the header. */
+async function isFenced(res: Response): Promise<boolean> {
+  if (res.status !== 404) return false;
+  if (res.headers.get("x-error-code") !== "not_found") return false;
+  const body = (await res.json().catch(() => null)) as {
+    error?: { code?: string };
+  } | null;
+  return body?.error?.code === "not_found";
+}
+
+/** A body a real caller of the management API would send, so the fence is
+ *  shown to win before any handler could read it. */
+const MANAGEMENT_BODY = {
+  id: "x",
+  client_id: "some-client",
+  client_name: "Fenced",
+  redirect_uris: ["https://example.com/cb"],
+  update: { scopes: ["core.note:read"] },
+  accept: true,
+  oauth_query: "client_id=some-client&sig=nope",
+};
+
 describe("the plugin's management endpoints are fenced", () => {
-  it("the reachable and fenced lists between them name every /oauth2 path the plugin registers, and nothing else", () => {
-    const registered = pluginOauthPaths();
+  it("the reachable and fenced lists between them decide every path the plugin routes, and name nothing else", () => {
+    const registered = pluginEndpoints();
+    const known = new Set(registered.map((e) => e.path));
+    const routable = registered.filter((e) => !e.serverOnly).map((e) => e.path);
     const reachable = new Set(REACHABLE_PLUGIN_ENDPOINTS);
     const fenced = new Set(FENCED_PLUGIN_ENDPOINTS);
+
+    // The reachable list is a decision, so it is written twice. Without
+    // this, moving a path from the fenced list to the reachable one is a
+    // one-line change every other case here accepts: the partition still
+    // holds and a reopened door answers as the plugin would, which is
+    // exactly what the signature control below is satisfied by.
+    expect([...REACHABLE_PLUGIN_ENDPOINTS].sort()).toEqual([
+      "/oauth2/authorize",
+      "/oauth2/continue",
+      "/oauth2/end-session",
+      "/oauth2/end-session/confirm",
+      "/oauth2/introspect",
+      "/oauth2/register",
+      "/oauth2/revoke",
+      "/oauth2/token",
+      "/oauth2/userinfo",
+    ]);
 
     // A path in both lists is a contradiction: the fence would win at
     // runtime and the reachable list would be lying about it.
     for (const path of reachable) expect(fenced.has(path)).toBe(false);
 
-    // Every registered path is decided one way or the other. A plugin
-    // upgrade that registers something new lands here first.
-    const undecided = registered.filter(
+    // Every routable path is decided one way or the other, whatever prefix
+    // it carries. A plugin upgrade that registers something new, under any
+    // prefix, lands here first.
+    const undecided = routable.filter(
       (path) => !reachable.has(path) && !fenced.has(path),
     );
     expect(undecided).toEqual([]);
 
+    // The premise the enumeration rests on: the plugin does route the
+    // protocol surface, so an empty `routable` would not be a clean pass.
+    for (const path of reachable) {
+      expect(routable, `${path} is not routable`).toContain(path);
+    }
+
     // And both lists describe paths that exist, so a stale entry — a path
     // the plugin stopped registering — reddens rather than reading as a
     // protection.
-    const known = new Set(registered);
     for (const path of [...reachable, ...fenced]) {
       expect(known.has(path), `${path} is not a plugin endpoint`).toBe(true);
     }
   });
 
-  it("a signed-in session gets the Marfa 404 on every fenced path and changes nothing", async () => {
+  it("a signed-in session gets the Marfa 404 on every fenced path in both spellings, and neither its consent row nor the client table moves", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const cookie = await signInUser(ctx, "fence@example.com");
+    const authUserId = await authUserIdFor(ctx, "fence@example.com");
+    const clientId = await seedClient(ctx);
+    await seedConsent(ctx, clientId, authUserId);
     const clientsBefore = await countClients(ctx);
 
     for (const path of FENCED_PLUGIN_ENDPOINTS) {
-      for (const method of ["GET", "POST"]) {
-        const res = await request(ctx.app, method, `/auth${concrete(path)}`, {
-          headers: { cookie, origin: ORIGIN },
-          // A body a real caller would send, so the fence is shown to win
-          // before any handler could read it.
-          ...(method === "POST" && {
-            body: {
-              id: "x",
-              client_id: "some-client",
-              client_name: "Fenced",
-              redirect_uris: ["https://example.com/cb"],
-              update: { scopes: ["core.note:read"] },
-            },
-          }),
-        });
-        expect(res.status, `${method} ${path}`).toBe(404);
-        expect(res.headers.get("x-error-code"), `${method} ${path}`).toBe(
-          "not_found",
-        );
-        const body = (await res.json()) as { error?: { code?: string } };
-        expect(body.error?.code, `${method} ${path}`).toBe("not_found");
+      for (const spelling of [concrete(path), `${concrete(path)}/`]) {
+        for (const method of ["GET", "POST"]) {
+          const res = await request(ctx.app, method, `/auth${spelling}`, {
+            headers: { cookie, origin: ORIGIN },
+            ...(method === "POST" && {
+              body: { ...MANAGEMENT_BODY, client_id: clientId },
+            }),
+          });
+          expect.soft(await isFenced(res), `${method} ${spelling}`).toBe(true);
+        }
       }
     }
 
-    // `POST /oauth2/create-client` would have written a row for this
-    // session's own space; the count is what says it never ran.
+    // `update-consent` and `delete-consent` aimed at this row; `create-client`
+    // and `delete-client` at this table. The reads say none of them ran.
+    expect(await consentScopes(ctx, clientId, authUserId)).toEqual([
+      SEEDED_SCOPES,
+    ]);
     expect(await countClients(ctx)).toBe(clientsBefore);
   });
 
-  it("the protocol endpoints beside the fence still answer as themselves", async () => {
+  it("the signature is the fence's alone, and every reachable path answers as itself", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
+    const cookie = await signInUser(ctx, "control@example.com");
 
-    // The plugin's own refusal, not a 404: a token request with no grant.
+    // An unknown `/auth/*` path is refused by the catch-all with a bare 404
+    // and no header. That difference is what the driven case keys on, so a
+    // later global 404 shaper that added the header everywhere would hollow
+    // it out; this pins the shape.
+    const unknown = await request(ctx.app, "GET", "/auth/oauth2/no-such-path", {
+      headers: { cookie },
+    });
+    expect(unknown.status).toBe(404);
+    expect(unknown.headers.get("x-error-code")).toBeNull();
+
+    // Nothing declared reachable carries the fence's signature. Moving a
+    // path from the fenced list to this one is therefore a change the suite
+    // sees, not a one-line way to reopen a door.
+    for (const path of REACHABLE_PLUGIN_ENDPOINTS) {
+      for (const method of ["GET", "POST"]) {
+        const res = await request(ctx.app, method, `/auth${concrete(path)}`, {
+          headers: { cookie, origin: ORIGIN },
+          ...(method === "POST" && { form: { client_name: "x" } }),
+        });
+        expect.soft(await isFenced(res), `${method} ${path}`).toBe(false);
+      }
+    }
+
+    // And three of them answer with their own refusals, not a 404: a token
+    // request with no grant, userinfo with no bearer, and Marfa's own
+    // registration handler refusing the content type.
     const token = await request(ctx.app, "POST", "/auth/oauth2/token", {
       form: { grant_type: "refresh_token" },
       headers: { origin: ORIGIN },
     });
-    expect(token.status).not.toBe(404);
     expect(token.status).toBeGreaterThanOrEqual(400);
     expect(token.status).toBeLessThan(500);
+    expect(token.status).not.toBe(404);
 
-    // Userinfo with no bearer is the plugin's 401.
     const userinfo = await request(ctx.app, "GET", "/auth/oauth2/userinfo");
     expect(userinfo.status).toBe(401);
 
-    // Registration is Marfa's own handler, mounted ahead of the fence and
-    // the catch-all alike; its content-type refusal proves it still runs.
     const register = await request(ctx.app, "POST", "/auth/oauth2/register", {
       form: { client_name: "x" },
     });

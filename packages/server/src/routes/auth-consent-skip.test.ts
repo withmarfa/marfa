@@ -421,11 +421,21 @@ describe("GET /auth/authorize (consent skip) — harness", () => {
     // refuse it. If this ever returns anything else, the origin check
     // has been disabled (it switches itself off in test environments
     // unless configured) and every skip test in this file would pass
-    // whether or not the route forwards a usable origin.
-    const res = await request(ctx.app, "POST", "/auth/oauth2/consent", {
-      body: { accept: true, oauth_query: "client_id=nope&sig=nope" },
-      headers: { cookie },
-    });
+    // whether or not the route forwards a usable origin. The check is a
+    // library-wide middleware, so any plugin endpoint the catch-all serves
+    // shows it; the consent endpoint itself is fenced from the wire (see
+    // `routes/oauth-plugin-fence.ts`) and answers 404 before the check.
+    const res = await request(
+      ctx.app,
+      "POST",
+      "/auth/oauth2/end-session/confirm",
+      {
+        // Form-encoded because that endpoint accepts nothing else, and the
+        // media-type check runs ahead of the origin check.
+        form: { oauth_query: "client_id=nope&sig=nope" },
+        headers: { cookie },
+      },
+    );
     expect(res.status).toBe(403);
   });
 });
