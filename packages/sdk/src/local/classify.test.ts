@@ -138,6 +138,20 @@ describe("the failure classification", () => {
     ).toMatchObject({ class: "transient" });
   });
 
+  it("dead-letters a body the server will never take", () => {
+    // A queued payload cannot be edited — no door takes "the same write,
+    // smaller" — so a retry budget spent on it ends with `retry_ceiling`,
+    // whose own promise is that retrying later is the right move. It is
+    // not. The dead letter keeps the write for a person to resend in a
+    // shape that fits.
+    expect(
+      classifyFailure(
+        new MarfaError("request_too_large", "body too large", 413),
+        "item.create",
+      ),
+    ).toMatchObject({ class: "permanent" });
+  });
+
   it("parks a key that was spent on a different body", () => {
     // Distinct from the in-flight case above, and the two are easy to
     // read as one because both are about the key. That one says nothing

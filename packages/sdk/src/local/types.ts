@@ -85,14 +85,12 @@ export interface OutboxEntry {
    * attempt makes every attempt its own write, which is the failure the
    * key exists to prevent arriving under cover of appearing to work.
    *
-   * The drain sends it on every door that accepts one, which is not yet
-   * the two update doors — and the reason is narrower than it looks. It
-   * is not that a retry might carry a merged body: this engine never
-   * merges, because the drain states `manual` and the server has the
-   * conflict. It is that the client's update options carry no key field
-   * at all, where the create and delete options do. Until they do, an
-   * update whose answer is lost re-sends the version it was computed
-   * against, meets the row already past it, and parks for review.
+   * The drain sends it on every door the queue uses, updates included.
+   *
+   * On an update it does more than name a repeat: the server derives a
+   * `keep_both_copies` sibling's id from it, so a replay lands in the
+   * same sibling rather than spawning a second copy of the text that
+   * lost.
    */
   idempotencyKey: string;
   state: OutboxRowState;

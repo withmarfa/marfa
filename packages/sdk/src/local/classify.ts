@@ -98,6 +98,23 @@ const KEY_IN_FLIGHT = "idempotency_key_in_flight";
 const KEY_REUSED = "idempotency_key_reused";
 
 /**
+ * The body is over the server's ceiling.
+ *
+ * Permanent rather than transient, and the distinction is what a person is
+ * told. A queued payload cannot be edited — no door takes "the same write,
+ * smaller" — so waiting changes nothing and a retry budget spent on it
+ * ends with `retry_ceiling`, whose own promise is that retrying later is
+ * the right move. It is not. The dead letter keeps the write for the app
+ * to show, drop, or resend in a shape that fits.
+ *
+ * The blob path reached this conclusion first, for its own uploads, and
+ * argued the mutation doors were different. They are not: the body limit
+ * is mounted on the item and edge doors too, so the same sentence applies
+ * to them word for word.
+ */
+const TOO_LARGE = new Set(["request_too_large", "blob_too_large"]);
+
+/**
  * A repeat resolved a key whose stored result is no longer held.
  *
  * The server kept the key, so it will not perform the write a second time,
@@ -201,6 +218,10 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
   // remove this refusal by guaranteeing a version conflict instead.
   // Whether a rebased mutation should carry a new key is open, with a
   // ticket and a measurement against it.
+  if (TOO_LARGE.has(code)) {
+    return { class: "permanent", code, httpStatus: status, message };
+  }
+
   if (code === KEY_REUSED) {
     return { class: "blocked", reason: "needs_review", message };
   }

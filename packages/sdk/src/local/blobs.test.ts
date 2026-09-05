@@ -238,3 +238,56 @@ describe("the scan for blob references", () => {
     expect([...found]).toEqual([hashBlob(filled(1))]);
   });
 });
+
+describe("an upload that keeps being refused", () => {
+  it("stops, and hands back the reason rather than retrying for ever", async () => {
+    // Rule 5 says no row retries for ever without saying why. The flush
+    // recorded an attempt for a transient, blocked or conflict verdict and
+    // compared it to nothing, so a blob meeting a quota, a suspension, a
+    // rate limit or any 5xx was re-sent on every pass for the life of the
+    // store — while the write naming it sat as `awaitingUpload`, counted
+    // among the pending, with no state that could say so.
+    const failing = new MarfaClient({
+      url: "http://localhost",
+      apiKey: "k",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { code: "quota_exceeded", message: "over" },
+            }),
+            { status: 429, headers: { "content-type": "application/json" } },
+          ),
+        ),
+    });
+    const stubborn = createBlobStore({
+      store,
+      client: failing,
+      maxCacheBytes: CEILING,
+      retryCeiling: 3,
+      now: steppingClock,
+    });
+
+    const bytes = new Uint8Array(BLOB_BYTES).fill(7);
+    const staged = await stubborn.stage(bytes, "application/octet-stream");
+
+    // Collected across passes rather than read from the last one: it
+    // gives up part-way through, and every flush after that has nothing
+    // left to refuse.
+    const refused: unknown[] = [];
+    for (let pass = 0; pass < 6; pass += 1) {
+      refused.push(...(await stubborn.flush()).refused);
+    }
+
+    // It gave up, and said what the server said rather than "ran out of
+    // retries" — the bytes are still here and a quota is something a
+    // person can act on.
+    expect(refused).toEqual([
+      expect.objectContaining({ hash: staged.hash, code: "quota_exceeded" }),
+    ]);
+    // The bytes are retained, which is rule 14: losing a person's
+    // attachment because an upload was refused is the outcome it exists to
+    // prevent.
+    expect(stubborn.held(staged.hash)).toBe(true);
+  });
+});
