@@ -453,9 +453,15 @@ function summarize(group: ScopeGroup): string {
     // a switch, so it is capitalized and free to carry a comma; joined into
     // a sentence, the capital lands mid-clause and the comma turns one item
     // into two. `CAPABILITY_SHORT` exists for precisely this and says so.
+    // The OIDC lookup is asked only of an OIDC literal. The profile
+    // category's pattern is the bare word `profile`, the same string as the
+    // OIDC scope, and asked by pattern alone the lookup answered "your name"
+    // for a grant over the whole profile surface.
     const label =
       capabilityShort(scope.typePattern) ??
-      oidcShort(scope.oidcScope ?? scope.typePattern) ??
+      (scope.kind === "oidc"
+        ? oidcShort(scope.oidcScope ?? scope.typePattern)
+        : undefined) ??
       scopeShort(scope.typePattern) ??
       SCOPE_LABELS[scope.typePattern] ??
       (scope.kind === "oidc" ? undefined : humanizeType(scope.typePattern));
@@ -684,6 +690,11 @@ export const SCOPE_SHORT: Record<string, string> = {
   // The short form names the thing rather than both halves, which is what a
   // list item can be. The row is where the reader gets the rest.
   "system.activity": "activity",
+  // The toggle label is "Profile", which is right above a switch and wrong
+  // mid-sentence, where a capital reads as a name. The category's short form
+  // follows the OIDC literals it is summarized beside: "your name, your email
+  // address and your profile".
+  profile: "your profile",
 };
 
 /** The inline-list form for a type pattern, or undefined where its toggle
@@ -1051,9 +1062,12 @@ export function renderConsentScreen(params: ConsentParams): string {
           const typePattern =
             parsed?.typePattern ??
             (lastColon > 0 ? lit.slice(0, lastColon) : lit);
+          // Same collision as the summary: `profile` is both the OIDC
+          // literal and the profile category's pattern, so the OIDC label
+          // is consulted only for the OIDC kind.
           const name =
             capabilityShort(typePattern) ??
-            oidcLabel(typePattern) ??
+            (parsed?.kind === "oidc" ? oidcLabel(typePattern) : undefined) ??
             SCOPE_LABELS[typePattern] ??
             humanizeType(typePattern);
           return parsed ? withOperation(parsed, name) : name;

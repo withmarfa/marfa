@@ -44,6 +44,19 @@ describe("default permission bundles derive from the registry", () => {
     }
   });
 
+  it("the profile bundle carries the OIDC literals and the category's read, never its write", () => {
+    // Read rides with the claims because showing a person to themselves is
+    // what every app asking for `profile` is doing; write is administrative
+    // authority over the profile and is asked for by name.
+    expect(bundle("profile").scopes).toEqual([
+      "openid",
+      "profile",
+      "email",
+      "profile:read",
+    ]);
+    expect(bundle("profile").default_on).toBe(true);
+  });
+
   it("admits exactly one system scope: the connections toggle, read-only", () => {
     const systemScopes = buildDefaultPermissionBundles()
       .flatMap((b) => b.scopes)

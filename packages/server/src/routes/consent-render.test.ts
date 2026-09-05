@@ -310,6 +310,59 @@ describe("renderConsentScreen — soft-tile groups", () => {
     expect(html).not.toContain("<span>Confirm your identity</span>");
   });
 
+  it("summarizes the four-scope profile group naming name, email and profile once each", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [
+        {
+          kind: "oidc",
+          typePattern: "openid",
+          operation: "none",
+          oidcScope: "openid",
+        },
+        {
+          kind: "oidc",
+          typePattern: "profile",
+          operation: "none",
+          oidcScope: "profile",
+        },
+        {
+          kind: "oidc",
+          typePattern: "email",
+          operation: "none",
+          oidcScope: "email",
+        },
+        // The profile category's read, whose pattern is the same bare word
+        // as the OIDC literal above. Asked by pattern alone, the OIDC short
+        // form answered "your name" for it, so the summary said "your name"
+        // twice and never named the profile.
+        { kind: "profile", typePattern: "profile", operation: "read" },
+      ],
+    });
+    // The sentence is capitalized at its first word, so compare lowercase.
+    const desc = (
+      /<span class="gdesc">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
+    ).toLowerCase();
+    expect(desc).toContain("your name");
+    expect(desc).toContain("your email address");
+    expect(desc).toContain("your profile");
+    expect(desc.match(/your name/g)?.length).toBe(1);
+    // The row keeps the toggle label and says what it permits.
+    expect(html).toContain("Profile (read only)");
+  });
+
+  it("does not describe the profile category's read as the OIDC literal", () => {
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [{ kind: "profile", typePattern: "profile", operation: "read" }],
+    });
+    const desc = (
+      /<span class="gdesc">([^<]*)<\/span>/.exec(html)?.[1] ?? ""
+    ).toLowerCase();
+    expect(desc).toContain("your profile");
+    expect(desc).not.toContain("your name");
+  });
+
   it("ships the master-toggle cascade enhancement script", () => {
     const html = renderConsentScreen(PARAMS);
     expect(html).toMatch(
