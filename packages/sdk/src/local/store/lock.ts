@@ -261,13 +261,76 @@ export function acquireStoreLock(storePath: string): StoreLock {
     if (holder !== undefined && stillHolding(holder)) {
       return { writer: false, heldBy: holder, release: () => undefined };
     }
+    // Clearing a dead holder and claiming in its place is one critical
+    // section, and exactly one opener may be inside it.
+    //
+    // An unlink alone is not that. It removes whatever is at the path now,
+    // not the dead holder read a moment ago, so two openers finding the
+    // same stale file both unlink and both claim — the second removing the
+    // first's *fresh* lock on the way past. Both come away writers, and
+    // the first's release is a no-op because the token no longer matches,
+    // so it never cleans up and goes on reporting that it holds the write.
+    // Measured against this file: one run in ten at twenty-four openers.
+    //
+    // Two narrower designs were tried and are recorded because each looks
+    // sufficient and is not. Renaming the stale file and verifying the
+    // token still leaves the path empty while the loser inspects what it
+    // moved. Taking an exclusive right for the *clear* alone still lets
+    // two openers claim afterwards, because the right ended before the
+    // claim did.
+    //
+    // So the right spans both, and it is released in a `finally`: an
+    // opener that wins it and then finds the situation changed must still
+    // hand it back, or the marker outlives the process and no later opener
+    // can ever clear a stale lock — a store that nothing can open again
+    // after one crash, which is a worse failure than the race.
+    const takeover = `${path}.takeover`;
+    const marker = `${takeover}.${String(process.pid)}.${token}`;
+    let heldRight = false;
+    let won = false;
     try {
-      unlinkSync(path);
+      writeFileSync(marker, token);
+      linkSync(marker, takeover);
+      heldRight = true;
     } catch {
-      // Another opener got there first. Fall through and let the retry
-      // decide, rather than assuming which of us won.
+      // Somebody else is inside. Fall through and refuse rather than
+      // racing them for a file neither of us should be touching.
+    } finally {
+      try {
+        unlinkSync(marker);
+      } catch {
+        // Never created, or already gone.
+      }
     }
-    if (!claim()) {
+
+    if (heldRight) {
+      try {
+        // Read again under the right, not before it. Winning says nobody
+        // else is clearing the file; it says nothing about the file still
+        // being the one this caller judged dead. A straggler that read the
+        // stale holder, waited while somebody else cleared it and claimed,
+        // and only then won the right would otherwise unlink a live lock.
+        const current = readHolder(path);
+        if (current === undefined || current.token === holder?.token) {
+          try {
+            unlinkSync(path);
+          } catch {
+            // Already gone, which is the outcome this was reaching for.
+          }
+          won = claim();
+        }
+      } finally {
+        try {
+          unlinkSync(takeover);
+        } catch {
+          // Left behind only if this process died holding it. The next
+          // opener then cannot clear a stale lock, which is why this is a
+          // `finally` rather than a branch.
+        }
+      }
+    }
+
+    if (!won) {
       return {
         writer: false,
         heldBy: readHolder(path) ?? {
