@@ -35,7 +35,17 @@ export function envNumber(raw: string | undefined, fallback: number): number {
  */
 export type DbPoolMode = "session" | "transaction";
 
-export type ProcessRole = "web" | "worker" | "both";
+/**
+ * Every role `MARFA_PROCESS_ROLE` may name, in one place because more than
+ * one thing has to enumerate them: `parseProcessRole` accepts exactly these,
+ * and `/health` builds the set of `application_name` labels it recognizes by
+ * running each of them through `pgApplicationName`. A role added here reaches
+ * both; a role added to only one of them would connect under a label the
+ * reading cannot attribute.
+ */
+export const PROCESS_ROLES = ["web", "worker", "both"] as const;
+
+export type ProcessRole = (typeof PROCESS_ROLES)[number];
 
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
@@ -722,11 +732,12 @@ export function parseDbPoolMode(raw: string | undefined): DbPoolMode {
 function parseProcessRole(raw: string | undefined): ProcessRole {
   const value = raw?.trim().toLowerCase();
   if (value === undefined || value === "") return "both";
-  if (value === "web" || value === "worker" || value === "both") return value;
+  if ((PROCESS_ROLES as readonly string[]).includes(value))
+    return value as ProcessRole;
   // A typo silently defaulting to `both` would run every consumer twice
   // across a split deployment, so an unknown value refuses to boot.
   throw new Error(
-    `Unknown MARFA_PROCESS_ROLE=${raw ?? ""}. Legal values: web | worker | both.`,
+    `Unknown MARFA_PROCESS_ROLE=${raw ?? ""}. Legal values: ${PROCESS_ROLES.join(" | ")}.`,
   );
 }
 

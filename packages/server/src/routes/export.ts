@@ -7,10 +7,8 @@ import {
   ErrorCode,
   GLOBAL_TYPE_WILDCARD,
   isValidTypePattern,
-  ITEM_STATES,
   resolveEnforcement,
 } from "@withmarfa/shared";
-import type { ItemState } from "@withmarfa/shared";
 import * as tar from "tar-stream";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -30,6 +28,11 @@ import {
 } from "../storage/pg/streaming-rls.js";
 import type { StreamRlsContext } from "../storage/pg/streaming-rls.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
+import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
+import {
+  refuseUnknownQueryParams,
+  UNKNOWN_PARAM_NOTE,
+} from "./_unknown-query-keys.js";
 
 /**
  * Acquire the stream's RLS connection, mapping pool exhaustion to the
@@ -137,7 +140,8 @@ const exportRoute = createRoute({
   tags: ["Export"],
   summary: "Export space data",
   description:
-    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's custom type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry.",
+    "Streams the space's items with their metadata (tags and extensions) as `{item, metadata}` NDJSON lines, followed by the edges between exported items as `{edge}` lines (default) or, with `format=archive`, a `marfa-archive-v1.tar.gz` carrying `manifest.json`, `items.ndjson`, `edges.ndjson`, `types.ndjson` (the space's custom type and edge-type registrations, so a restore into an empty space can write the items that use them), and blob bytes that `POST /admin/restore-archive` can ingest. Space-scoped, exporting only what the caller can read; the response streams until the filter is exhausted. Only edges whose endpoints are both in the exported item set are included, so a filtered export never references items it does not carry. " +
+    UNKNOWN_PARAM_NOTE,
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -145,7 +149,12 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe("Filter to a single type identifier"),
-      state: z.string().optional().describe("Filter by item state"),
+      state: z
+        .string()
+        .optional()
+        .describe(
+          `Filter by item state. \`${ALL_STATES}\` exports every state including trashed, in one pass — which is what an export meaning "everything this space holds" needs, since the archive is what a restore reads back. Omitting the parameter keeps the default every item read applies, which excludes trashed rows.`,
+        ),
       source: z.string().optional().describe("Filter by source credential"),
       timestamp_after: z
         .string()
@@ -226,6 +235,10 @@ export function exportRoutes(
     // following that advice would land back in the silence the refusal is
     // here to prevent.
     refuseRenamedTimeQueryParams(c.req.raw.url, { catchUpFilter: "none" });
+    // One check for both output formats: `format=archive` is handled by a
+    // separate function further down but arrives through this handler and
+    // shares this query schema, so refusing here covers both.
+    refuseUnknownQueryParams(c.req.raw.url, exportRoute.request.query);
 
     const query = c.req.valid("query");
 
@@ -291,13 +304,10 @@ export function exportRoutes(
       );
     }
 
-    const state = query.state as ItemState | undefined;
-    if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Invalid state: ${state}`,
-      );
-    }
+    // Same resolution as `GET /items`, sentinel included. Export shares the
+    // storage filter with the listing, so a door that could not name every
+    // state was a route-layer gap rather than a missing capability.
+    const { state, all_states: allStates } = resolveStateFilter(query.state);
 
     const timestampAfter = query.timestamp_after;
     const timestampBefore = query.timestamp_before;
@@ -328,6 +338,7 @@ export function exportRoutes(
                 spaceId,
                 type,
                 state,
+                all_states: allStates,
                 source,
                 timestamp_after: timestampAfter,
                 timestamp_before: timestampBefore,
@@ -457,10 +468,12 @@ async function handleArchiveExport(
   if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
     throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
   }
-  const state = c.req.query("state") as ItemState | undefined;
-  if (state && !(ITEM_STATES as readonly string[]).includes(state)) {
-    throw new MarfaError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${state}`);
-  }
+  // The NDJSON path's twin, and it has to read the parameter the same way:
+  // the two formats are one door with one query schema, so a sentinel
+  // honored by one and stripped by the other would be worse than neither.
+  const { state, all_states: allStates } = resolveStateFilter(
+    c.req.query("state"),
+  );
   const timestampAfter = c.req.query("timestamp_after");
   const timestampBefore = c.req.query("timestamp_before");
   const source = c.req.query("source");
@@ -488,6 +501,7 @@ async function handleArchiveExport(
           spaceId,
           type,
           state,
+          all_states: allStates,
           source,
           timestamp_after: timestampAfter,
           timestamp_before: timestampBefore,

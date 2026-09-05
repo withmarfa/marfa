@@ -32,6 +32,60 @@
  */
 import { z } from "@hono/zod-openapi";
 import { RoleResponseSchema } from "./role-schema.js";
+import { ITEM_STATES, MarfaError, ErrorCode } from "@withmarfa/shared";
+import type { ItemState } from "@withmarfa/shared";
+
+/**
+ * The lifecycle states an item can be in, as a Zod enum.
+ *
+ * Derived from the canonical list rather than restated, because restating
+ * it is how the platform ended up with doors that disagreed about how many
+ * states there are: the bulk-action filter enumerated three of the four and
+ * so could not select the reserved namespace at all, whose types use a
+ * bounded `active | revoked` lifecycle and nothing else.
+ *
+ * **This is the enum for naming a state, not for reaching one.** A
+ * transition's *target* is a narrower set than this and is written out
+ * separately on the doors that take one, because which states a type can
+ * move to is the lifecycle graph's answer and differs per type.
+ */
+export const ItemStateEnum = z.enum(
+  ITEM_STATES as unknown as [ItemState, ...ItemState[]],
+);
+
+/**
+ * The `?state=` value that means "every state, trashed included".
+ *
+ * Deliberately not a member of the lifecycle vocabulary: it is a widening
+ * of the default rather than a state a row can be in, and nothing may
+ * compare it against the column.
+ */
+export const ALL_STATES = "any";
+
+/**
+ * Resolve a `?state=` parameter into the pair the storage filter takes.
+ *
+ * One implementation for every door that reads items, because the doors
+ * disagreed: the item listing gained the sentinel and `GET /export` did
+ * not, so the one read whose whole purpose is a complete copy was the one
+ * that could not ask for every state and quietly returned the space minus
+ * its bin. The archive an export writes is what a restore reads back, so
+ * that omission is silently lossy in the place it matters most.
+ *
+ * The sentinel is resolved before the membership check rather than after.
+ * Cast first and it would be validated as a lifecycle value and refused
+ * for not being one.
+ */
+export function resolveStateFilter(raw: string | undefined): {
+  state: ItemState | undefined;
+  all_states: boolean;
+} {
+  if (raw === ALL_STATES) return { state: undefined, all_states: true };
+  if (raw !== undefined && !(ITEM_STATES as readonly string[]).includes(raw)) {
+    throw new MarfaError(ErrorCode.VALIDATION_ERROR, `Invalid state: ${raw}`);
+  }
+  return { state: raw as ItemState | undefined, all_states: false };
+}
 
 export const EdgeSchema = z.object({
   id: z.string(),
@@ -60,7 +114,7 @@ export const ItemSchema = z.object({
   id: z.string(),
   type: z.string(),
   properties: z.record(z.string(), z.unknown()),
-  state: z.enum(["active", "archived", "trashed", "revoked"]),
+  state: ItemStateEnum,
   /** Optional — `system.*` items have no tier. */
   tier: z.enum(["library", "feed"]).optional(),
   /**

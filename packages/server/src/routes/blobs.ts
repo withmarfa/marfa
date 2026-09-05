@@ -578,34 +578,38 @@ export function blobRoutes(
     // Paginate through all items and extract every blob hash from properties
     const referencedHashes = new Set<string>();
 
-    const scanItems = async (state?: string): Promise<void> => {
-      let cursor: string | undefined;
-      let hasMore = true;
-      while (hasMore) {
-        const page = await storage.items.list({
-          spaceId,
-          state: state as import("@withmarfa/shared").ItemState | undefined,
-          limit: 200,
-          cursor,
-        });
-        for (const item of page.data) {
-          collectBlobHashes(item.properties, referencedHashes);
-        }
-
-        // Also scan metadata extensions for blob references
-        const ids = page.data.map((item) => item.id);
-        const metadataList = await storage.metadata.getMany(ids);
-        for (const meta of metadataList) {
-          collectBlobHashes(meta.extensions, referencedHashes);
-        }
-        cursor = page.cursor ?? undefined;
-        hasMore = page.has_more;
+    // One pass over every lifecycle state. This walked the corpus twice —
+    // once bare and once with the state pinned to `trashed` — because the
+    // bare listing applies the default that hides the bin, and there was no
+    // way to ask for all four states at once. `all_states` is that way, and
+    // it is one filter rather than a second full scan.
+    //
+    // The union has to include the bin: a blob referenced only by a trashed
+    // item is still referenced, and removing it would strip the bytes out
+    // from under a restore. The pinned second pass was what held that, so
+    // the widening here is load-bearing rather than a tidy-up.
+    let cursor: string | undefined;
+    let hasMore = true;
+    while (hasMore) {
+      const page = await storage.items.list({
+        spaceId,
+        all_states: true,
+        limit: 200,
+        cursor,
+      });
+      for (const item of page.data) {
+        collectBlobHashes(item.properties, referencedHashes);
       }
-    };
 
-    // Scan active items and trashed items (don't remove blobs still in trash)
-    await scanItems();
-    await scanItems("trashed");
+      // Also scan metadata extensions for blob references
+      const ids = page.data.map((item) => item.id);
+      const metadataList = await storage.metadata.getMany(ids);
+      for (const meta of metadataList) {
+        collectBlobHashes(meta.extensions, referencedHashes);
+      }
+      cursor = page.cursor ?? undefined;
+      hasMore = page.has_more;
+    }
 
     // A hash referenced only by a version snapshot is still referenced:
     // deleting it would strip the bytes out from under a version read.

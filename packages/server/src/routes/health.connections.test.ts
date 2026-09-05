@@ -12,10 +12,15 @@
  * cases.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, TEST_POOL_SIZE } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 const isPg = process.env.DB_DIALECT === "pg";
+
+/** What the test harness's pool stamps. It passes `pgApplicationName` with
+ *  no role, matching the `AppConfig` the health routes are built with, so
+ *  this is the label the endpoint looks for. */
+const APP_POOL = "marfa-both:app";
 
 interface ConnectionsBody {
   database_connections?: {
@@ -24,7 +29,14 @@ interface ConnectionsBody {
     max_connections: number;
     reserved: number;
     clients: Record<string, Record<string, number>>;
+    pool?: {
+      size: number;
+      in_use: number;
+      idle_in_transaction: number;
+      free: number;
+    };
   };
+  components: { database?: { status: string } };
 }
 
 describe.skipIf(!isPg)("GET /health database connections", () => {
@@ -82,6 +94,48 @@ describe.skipIf(!isPg)("GET /health database connections", () => {
         (k) => k === "other" || /^marfa(-[a-z]+)?:(app|session|lock)$/.test(k),
       ),
     ).toBe(true);
+  });
+
+  it("attributes this process's own pool, against the size it was built with", async () => {
+    const res = await request(ctx.app, "GET", "/health");
+    const body = (await res.json()) as ConnectionsBody;
+    const pool = body.database_connections?.pool;
+
+    expect(pool).toBeDefined();
+    if (!pool) return;
+
+    // The size the test context actually builds its pool with. A pool
+    // reported against the production default would read as roomy whatever
+    // it was holding, which is the failure this figure exists to prevent.
+    expect(pool.size).toBe(TEST_POOL_SIZE);
+
+    // The reading runs on the app pool, so its own backend is in this
+    // bucket and `active` while the query executes. `clients` shows it,
+    // because that block describes the database as it is; the pool tally
+    // must not, because a constant one added to every reading a process
+    // takes of itself is the instrument's own weight rather than
+    // occupancy — and on a pool of three it is a third of the range.
+    //
+    // Asserted as the exact difference rather than as a bound, because
+    // that is what proves `pg_backend_pid()` actually matched: a query
+    // that excluded nothing, and one that excluded everything, both
+    // satisfy an inequality.
+    const own = body.database_connections?.clients[APP_POOL] ?? {};
+    const nonIdle = Object.entries(own)
+      .filter(([state]) => state !== "idle")
+      .reduce((sum, [, count]) => sum + count, 0);
+    expect(nonIdle).toBeGreaterThan(0);
+    expect(pool.in_use).toBe(nonIdle - 1);
+
+    expect(pool.idle_in_transaction).toBeLessThanOrEqual(pool.in_use);
+    expect(pool.free).toBe(Math.max(0, pool.size - pool.in_use));
+
+    // The component says nothing about occupancy — the probe answered, which
+    // is the whole question it asks. Asserted here rather than only against
+    // fakes because this is the path where the figures come from a real
+    // `pg_stat_activity`, so it is the one that would catch the reading being
+    // wired back into the status.
+    expect(body.components.database?.status).toBe("ok");
   });
 
   it("serves the reading from cache rather than probing per request", async () => {
