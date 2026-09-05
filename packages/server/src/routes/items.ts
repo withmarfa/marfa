@@ -12,7 +12,7 @@ import {
   validateProperties,
   SYSTEM_DEFAULT_STATE,
   validateTransition,
-  SYSTEM_TYPE_IDS,
+  hasBoundedLifecycle,
   resolveEnforcement,
   isTypeInStrictMode,
   getSourceAllowlist,
@@ -1333,14 +1333,30 @@ export function itemRoutes(storage: Storage) {
     }
     // `system.*` items have no tier; reject explicit values on write, and
     // stamp `undefined` rather than the library default.
-    const isSystemTypeWrite = SYSTEM_TYPE_IDS.has(type);
-    if (isSystemTypeWrite && body.tier !== undefined) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "tier is not applicable to system.* items",
-        { field: "tier" },
-      );
-    }
+    //
+    // Asked through the same predicate the delete door uses, so the two
+    // cannot answer differently for a reserved-root type this build did not
+    // seed: one refusing the tier while the other still stamps a default is
+    // how a platform record ends up with a field its own lifecycle has no
+    // room for.
+    // The refusal comes from the shared rule rather than a copy of it. This
+    // door had its own, with the same message, in the file that already
+    // imports the rule for the update door — which is the disagreement
+    // `_tier-rules.ts` was written to prevent, surviving inside one of the
+    // doors it was written for.
+    assertTierApplicable(type, body.tier);
+    // Still needed after the refusal, because what a system write stamps is a
+    // separate question from what it accepts. What it prevents is inheriting
+    // the credential's own default: a key with `default_tier: "feed"` would
+    // otherwise put every `system.*` row it writes into the feed.
+    //
+    // It does not prevent a tier altogether, which the surrounding code reads
+    // as though it does. The column is NOT NULL with a `library` default and
+    // the store writes `input.tier ?? "library"`, so the row lands on
+    // `library` either way and no tier is not a representable state. Whether
+    // that matters depends on whether anything reads a system row's tier as a
+    // surfacing decision, which is a schema question rather than this door's.
+    const isSystemTypeWrite = hasBoundedLifecycle(type);
     let tierValue: "library" | "feed" | undefined = isSystemTypeWrite
       ? undefined
       : (body.tier ?? credential?.default_tier ?? "library");
