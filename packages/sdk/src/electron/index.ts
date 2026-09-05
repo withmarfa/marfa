@@ -3,7 +3,7 @@
  *
  * Its own subpath because `electron` is an optional peer: a consumer that is
  * not building a desktop application should not be made to install it. The
- * same reason `./local` and `./replica` are subpaths.
+ * same reason `./local` is a subpath.
  *
  * **This is the main-process half.** The preload half is
  * `@withmarfa/sdk/electron/preload`, and the split is not tidiness: a

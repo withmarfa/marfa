@@ -21,7 +21,6 @@ export default defineConfig({
     "src/index.ts",
     "src/auth/index.ts",
     "src/auth/node/index.ts",
-    "src/replica/index.ts",
     "src/local/index.ts",
     "src/electron/index.ts",
     "src/electron/preload/index.ts",

@@ -383,8 +383,8 @@ describe("the announced cursor", () => {
  * The reason it needs an arm of its own rather than falling through: the
  * router parses any frame it does not recognize and hands it to
  * `onEvent`, where it would arrive as a `MarfaEvent` it is not a member
- * of. A caller switching on `type` ignores it and a replica drops it for
- * want of an `item`, but neither is a contract — and a control frame
+ * of. A caller switching on `type` ignores it, and one keying off `item`
+ * drops it for want of one, but neither is a contract — and a control frame
  * reaching an event handler is a lie about the type either way.
  */
 describe("a stream that stopped delivering", () => {

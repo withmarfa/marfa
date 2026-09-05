@@ -287,11 +287,10 @@ describe("live frames held past the limit while the catch-up runs", () => {
  * more fragile rather than less.
  *
  * Both probes below are the shapes a real client takes. `edges: "none"`
- * is what the first-party replica subscribes with by design, because a
- * replica of a type holds items and would discard every edge frame
- * anyway; a credential scoped to a single type is the ordinary shape of
- * a narrow integration credential. Neither should be reachable by the
- * traffic it opted out of.
+ * is what a subscriber that holds items asks for, because it would
+ * discard every edge frame anyway; a credential scoped to a single type
+ * is the ordinary shape of a narrow integration credential. Neither
+ * should be reachable by the traffic it opted out of.
  *
  * Asserted by completion rather than by absence: the catch-up finishes,
  * the stream stays open, and the anchor published afterwards arrives.

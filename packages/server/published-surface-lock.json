@@ -10,9 +10,9 @@
     "exports": 9
   },
   "@withmarfa/sdk": {
-    "version": "4.8.0",
-    "hash": "0e5ba26b3d7884587be121ca02113afa85904583eb607ace9dc1bb1b2fb051c3",
-    "exports": 249
+    "version": "5.0.0",
+    "hash": "fe66348afce7c59a02f93e9df20061916491de11e8b82853e969f37e0ee49b92",
+    "exports": 246
   },
   "@withmarfa/shared": {
     "version": "7.1.0",
