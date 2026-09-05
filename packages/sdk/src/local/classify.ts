@@ -129,10 +129,26 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
     return { class: "blocked", reason: "needs_review", message };
   }
 
-  // An update the server would not settle. That covers a base version the
-  // row has moved past, and a base whose snapshot has been thinned so far
-  // that there is nothing left to merge against; the code says which, and
-  // neither is something this engine may resolve on its own.
+  // An update the server would not settle.
+  //
+  // The obvious case is no longer reachable from the drain: it sends
+  // `conflict=auto`, so a base the row has moved past is merged rather
+  // than refused. What still arrives here is narrower and worth naming,
+  // because the bucket looks unchanged while its contents have moved.
+  //
+  // `ancestor_unavailable` — the base version's snapshot has been thinned
+  // past merging. Never auto-resolved, by design, and parking is the only
+  // honest answer.
+  //
+  // `type_mismatch` — the drain sends `type` from its local mirror of
+  // server state, and a stale mirror earns a 409. That one is recoverable
+  // rather than permanent, which is why it parks with the edit intact
+  // instead of dead-lettering: the mirror catches up and the write is
+  // still wanted. Dead-lettering it would discard a write that would
+  // succeed on the next pass.
+  //
+  // A caller sending `manual` or `callback` still meets the ordinary
+  // version conflict here too. The engine may resolve none of them.
   if (status === 409 && kind.endsWith(".update")) {
     return { class: "conflict", code, httpStatus: status, message };
   }

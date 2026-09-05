@@ -1,4 +1,4 @@
-import type { Edge, Item, Metadata } from "@withmarfa/shared";
+import type { Edge, Item, Metadata, MergeStrategy } from "@withmarfa/shared";
 
 /**
  * Which server, which space and which account this store belongs to.
@@ -234,6 +234,32 @@ export type LocalEngineEvent =
       edges: number;
       prunedItems: number;
       prunedEdges: number;
+    }
+  /**
+   * The server merged a conflicting update, and what it did with the
+   * values that lost.
+   *
+   * Worth telling the app for the same reason a prune is: something a
+   * person typed has just left the row they typed it into. The merged row
+   * arrives through the ordinary settle and looks like any other write, so
+   * without this the only account of a `keep_both_copies` field is a
+   * sibling appearing later out of the stream with nothing connecting it
+   * to the edit that made it.
+   *
+   * `conflictedCopyId` is the only place that sibling is named. No route
+   * says what a write created, so an app that does not read it here cannot
+   * find the copy at all until the stream delivers it.
+   */
+  | {
+      type: "mutation.merged";
+      seq: number;
+      id: string;
+      /** The fields that collided. */
+      fields: string[];
+      /** Keyed by field, the policy the server applied. */
+      strategy: Record<string, MergeStrategy>;
+      /** The sibling holding the losing values, when a field kept both. */
+      conflictedCopyId?: string;
     };
 
 /** Whether the engine is reaching the server, and how it knows. */

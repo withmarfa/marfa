@@ -126,8 +126,10 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
                   ? {}
                   : { type: known.type }
                 : { type: payload.type }),
-              // Stated rather than inherited, because what it means changed
-              // and the default reading it would inherit did too. The kit
+              // Stated rather than inherited. The client's default has
+              // been `auto` throughout; what changed is what `auto` does,
+              // not what the default is — so this line documents rather
+              // than alters, and is worth keeping for that. The kit
               // once merged a conflict in this process and spawned the
               // sibling resolution can call for as a plain second create —
               // an engine keeping a resolution rule of its own, which a
@@ -138,6 +140,25 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
               // what comes back is the row the server settled on, and the
               // only 409 left is one it could not merge at all.
               conflict: "auto",
+              // The merged row arrives through the ordinary settle and
+              // looks like any other write, so without this a person's
+              // text leaves the row they typed it into with nothing said.
+              // `conflictedCopyId` is also the only place the sibling is
+              // named — no route reports what a write created — so an app
+              // that does not read it here cannot find the copy until the
+              // stream happens to deliver it.
+              onAutoMerge: (merged) => {
+                emit({
+                  type: "mutation.merged",
+                  seq: entry.seq,
+                  id: entry.id,
+                  fields: merged.fields,
+                  strategy: merged.strategy,
+                  ...(merged.conflictedCopyId === undefined
+                    ? {}
+                    : { conflictedCopyId: merged.conflictedCopyId }),
+                });
+              },
             },
           );
           return { ok: true, item };

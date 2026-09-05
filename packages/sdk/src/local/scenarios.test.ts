@@ -540,11 +540,31 @@ describe("two clients editing one field (seam: online)", () => {
     const pass = await drain.drain();
     expect(pass).toMatchObject({ sent: 1, remaining: 0 });
 
-    // One PATCH and nothing else. This is the assertion that distinguishes
-    // a server-side resolution from a client-side one: an engine merging
-    // here would show up as a second call, the sibling's `POST /items`,
-    // and a second device on a different kit would spawn a different one.
+    // One PATCH and nothing else.
+    //
+    // This does not by itself separate a server-side resolution from a
+    // client-side one — the kit's old `manual` path also issued exactly
+    // one PATCH, then parked. It is a forward-looking pin: the deleted
+    // client-side merge spawned the sibling as a second `POST /items`,
+    // and the `callback` strategy that still exists re-sends a merged
+    // body as a second PATCH. Either would break this line.
     expect(seam.calls).toEqual([`PATCH /items/${note.id}`]);
+
+    // What actually separates the two is who made the sibling, and the
+    // server saying so is the only report of it: no route names what a
+    // write created.
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "mutation.merged",
+        fields: ["body"],
+      }),
+    );
+    const merged = events.find((event) => event.type === "mutation.merged");
+    expect(
+      merged !== undefined && "conflictedCopyId" in merged
+        ? merged.conflictedCopyId
+        : undefined,
+    ).toBeDefined();
 
     // The sibling exists and the server made it, inside the write's own
     // transaction. Asserting only on the count would pass against an
@@ -584,10 +604,20 @@ describe("an update whose answer was lost (seam: lost_response, then online)", (
     expect(await store.outbox.list()).toEqual([]);
     expect(await store.deadLetters.list()).toEqual([]);
 
-    // And it settles once. A replay that spawned a second row would be the
-    // failure this scenario is really watching for, because `title` here
-    // does not collide and a colliding field would reach the sibling path
-    // twice.
+    // And it settles once — but not for the reason it first appears.
+    //
+    // `title` DOES collide: the ancestor has neither value, so the field
+    // differs from it on both sides and the server puts it in the
+    // conflict set. What saves the replay is the policy rather than the
+    // absence of a collision — `core.note` keeps both copies for `body`
+    // and `notes` only, and resolves `title` last-writer-wins.
+    //
+    // On a `keep_both_copies` field this replay would spawn a SECOND
+    // sibling, because the server's deterministic sibling id is derived
+    // from the idempotency key and an update carries none. That is the
+    // same missing key the note below describes, and it is the reason
+    // this scenario uses `title`: the `body` case cannot pass until the
+    // key covers updates.
     const onServer = await client.items.list({ limit: 50 });
     expect(onServer.data).toHaveLength(1);
     expect(onServer.data[0]).toMatchObject({
