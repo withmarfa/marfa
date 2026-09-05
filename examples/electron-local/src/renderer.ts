@@ -38,8 +38,8 @@ async function render(): Promise<void> {
     ...notes.map((note) => {
       const row = document.createElement("li");
       const title =
-        typeof note.properties.title === "string"
-          ? note.properties.title
+        typeof note.properties.body === "string"
+          ? note.properties.body
           : "(untitled)";
       // `version: 0` is the engine's mark for a row the server has not seen.
       row.textContent = note.version === 0 ? `${title} — not sent yet` : title;
@@ -58,11 +58,16 @@ async function render(): Promise<void> {
 
 form.addEventListener("submit", (submit) => {
   submit.preventDefault();
-  const title = input.value.trim();
-  if (title === "") return;
+  const text = input.value.trim();
+  if (text === "") return;
   input.value = "";
   void marfa
-    .createItem({ type: "core.note", properties: { title } })
+    // `body` because `core.note` requires it, and the engine validates
+    // against the type graph before the write is queued — so a note
+    // carrying only a title is refused here rather than dead-lettering
+    // later. The field a sample writes should be the one the type asks
+    // for.
+    .createItem({ type: "core.note", properties: { body: text } })
     .then(render)
     .catch((error: unknown) => {
       // `error.name` is not the thing to read: `contextBridge` rebuilds the

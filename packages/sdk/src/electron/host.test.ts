@@ -203,7 +203,7 @@ describe("the Electron main-process host", () => {
     const opened = await host(userDataDir());
     await opened.store.mutations.createItem({
       type: "core.note",
-      properties: { title: "written offline" },
+      properties: { body: "written offline", title: "written offline" },
     });
     const held = await opened.store.visible.listItems();
     expect(held.map((item) => item.properties.title)).toEqual([
@@ -216,7 +216,7 @@ describe("the Electron main-process host", () => {
     const first = await host(userData);
     await first.store.mutations.createItem({
       type: "core.note",
-      properties: { title: "survives a restart" },
+      properties: { body: "survives a restart", title: "survives a restart" },
     });
     first.close();
     open.splice(open.indexOf(first), 1);
@@ -240,7 +240,7 @@ describe("the bridge between the host and a sandboxed renderer", () => {
 
     await bridge.createItem({
       type: "core.note",
-      properties: { title: "through the bridge" },
+      properties: { body: "through the bridge", title: "through the bridge" },
     });
     const held = await bridge.listItems();
     expect(held.map((item) => item.properties.title)).toEqual([
@@ -300,8 +300,12 @@ describe("the bridge between the host and a sandboxed renderer", () => {
       renderers: () => [readerPair.renderer],
     });
     const readerBridge = createLocalBridge(readerPair.ipcRenderer);
+    // A valid payload, deliberately. Validation runs before the write is
+    // enqueued, so an invalid one is refused for being invalid and never
+    // reaches the read-only guard this test is about — which would make
+    // it pass for the wrong reason and stop covering the guard at all.
     const readOnly = await readerBridge
-      .createItem({ type: "core.note", properties: {} })
+      .createItem({ type: "core.note", properties: { body: "refused" } })
       .then(() => undefined)
       .catch((error: unknown) => error as Error);
 
