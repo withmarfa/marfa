@@ -637,6 +637,53 @@ describe("GET /health pool occupancy", () => {
     },
   );
 
+  /**
+   * The other way occupancy could reach `components.database`, and the one a
+   * verdict's removal does not close on its own.
+   *
+   * Both the connections read and the database probe run on the app pool, and
+   * a probe that loses its budget is not cancelled — `withBudget` says so; it
+   * stays queued for a slot. Read first, the connections query can therefore
+   * leave a backend queued that the database probe then waits behind, and the
+   * probe degrades because of something this endpoint was still holding. That
+   * is pool occupancy moving the status by contention rather than by verdict:
+   * the same wrong answer, reached quietly.
+   *
+   * The fakes here cannot contend — they are independent promises — so what
+   * is pinned is the ordering that makes contention unconstructible. An
+   * earlier revision of this branch hoisted the read above the probe so a
+   * verdict could consult the figures; this reddens if that comes back.
+   */
+  it("probes the database before reading the pool they share", async () => {
+    const calls: string[] = [];
+    const storage = {
+      keys: {
+        count: () => {
+          calls.push("probe");
+          return Promise.resolve(3);
+        },
+      },
+      pgClient: () => {
+        calls.push("connections");
+        return Promise.resolve(activity({ idle: 1 }));
+      },
+    } as unknown as Storage;
+
+    const body = (await (
+      await healthRoutes(
+        storage,
+        buildBlobs(() => Promise.resolve(false)),
+        pooledConfig,
+      ).request("/")
+    ).json()) as PoolBody;
+
+    expect(calls).toEqual(["probe", "connections"]);
+    // Both still happened: an ordering assertion that passed because one of
+    // them never ran would prove nothing.
+    expect(body.components.database?.status).toBe("ok");
+    expect(body.database_connections?.pool).toBeDefined();
+  });
+
   it("reports how much of the pool is held, not only whether it answered", async () => {
     const body = (await (
       await pooled({ active: 1, idle: 2 }).request("/")
