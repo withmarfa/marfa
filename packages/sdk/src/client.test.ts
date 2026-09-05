@@ -9,7 +9,7 @@ import {
   BulkActionWorker,
 } from "@withmarfa/server";
 import { MarfaClient } from "./client.js";
-import type { BulkActionFilter } from "./client.js";
+import type { BulkActionFilter, BulkActionInput } from "./client.js";
 import {
   ConflictError,
   NotFoundError,
@@ -1635,11 +1635,19 @@ describe("items.bulkAction", () => {
     const acceptedState: BulkActionFilter = { state: "trashed" };
     const acceptedTier: BulkActionFilter = { tier: "library" };
 
-    // @ts-expect-error — the action's own target state is a different
-    // set from the filter's, and deliberately smaller: a bulk action
-    // selects revoked rows but may not move a row into `revoked`.
+    // The action's own target state is a different set from the filter's
+    // and deliberately smaller: a bulk action selects revoked rows but may
+    // not move a row into `revoked`.
+    //
+    // The directive sits on the property rather than above the
+    // declaration, because that is where the compiler reports it. Above
+    // the `const` it suppresses nothing and `@ts-expect-error` then fails
+    // the build as unused — and with the type missing from the imports it
+    // was satisfied by "cannot find name" instead, which let the whole
+    // assertion pass while pinning nothing at all.
     const rejectedTarget: BulkActionInput = {
       action: "transition",
+      // @ts-expect-error — `revoked` is not a transition target.
       state: "revoked",
     };
 
