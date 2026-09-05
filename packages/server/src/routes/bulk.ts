@@ -37,6 +37,7 @@ import {
   isValidTypeIdentifier,
   validateProperties,
   getTypeSchema,
+  resolveEnforcement,
 } from "@withmarfa/shared";
 import type { Item, Metadata } from "@withmarfa/shared";
 import {
@@ -1310,14 +1311,47 @@ export function bulkRoutes(storage: Storage) {
       }
     }
 
-    const spaceId = c.get("apiKey")?.space_id;
-
-    // Non-admin callers see their match set narrowed to writable types.
-    // Purge already rejected non-admin above, so getTypeFilter is a no-op
-    // for admin callers regardless.
-    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
-
     const callerKey = c.get("apiKey");
+    const spaceId = callerKey?.space_id;
+
+    // Narrowed to what the caller may *write*, which this comment claimed
+    // before the code did it. The filter compiled readable patterns, so a
+    // key holding `{"*": "read"}` arrived with nothing narrowed at all and
+    // the actions below then wrote to everything it matched — a reach
+    // `PATCH /items/{id}` refuses the same key on the same row. This door
+    // runs no per-row permission check, so the filter is the whole of it.
+    //
+    // Purge already rejected non-admin above, and admin bypasses the maps,
+    // so this is a no-op for an admin caller regardless of level.
+    const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
+      c,
+      "write",
+    );
+
+    // The space's source filter, resolved the way the four list reads resolve
+    // it. This door passed nothing, so a match set included rows every read
+    // hides.
+    //
+    // That is a defect rather than a policy call, and `dry_run` is what makes
+    // it one: it answers with the matched ids, so this door is *already* a
+    // list read, and one that bypassed the lever entirely. The lever exists
+    // to stop a caller switching the control off by broadening a query, and
+    // reaching the same rows by swapping endpoint is that hole with an extra
+    // step. Once the query narrows, the actions behind it narrow with it,
+    // because it is one query.
+    //
+    // The cost is real and worth knowing: an action aimed at a source the
+    // filter excludes now matches nothing and reports `matched: 0` rather
+    // than refusing, which is the shape of a filter that found nothing. A
+    // space admin reaching those rows lifts the lever, acts, and restores it.
+    const spaceConfigForAction =
+      spaceId && storage.spaces
+        ? await storage.spaces.getConfig(spaceId)
+        : null;
+    const enforcementForAction = resolveEnforcement(
+      spaceConfigForAction,
+      callerKey,
+    );
 
     // The type axis is not the only one a caller can be narrower than.
     // `system.activity` sits in every runtime credential's type filter —
@@ -1363,6 +1397,8 @@ export function bulkRoutes(storage: Storage) {
         filter: filter.filter,
         allowed_types: allowedTypes,
         excluded_types: excludedTypes,
+        // Per row, from the row's own type, as on every read door.
+        source_filter: enforcementForAction.source_filter,
         // The reserved namespace, and this door narrows harder than the
         // read doors it agrees with.
         //
@@ -1381,10 +1417,11 @@ export function bulkRoutes(storage: Storage) {
         // **The opt-in asks who may write the type, not merely who named
         // it.** On a read this rule shapes an unnarrowed query and
         // permissions decide the rest. Here they do not: this door runs no
-        // per-row `requireTypeAccess`, and `getTypeFilter` compiles
-        // *readable* patterns, so a key holding `{"*": "read"}` arrives
-        // with no narrowing at all and never meets the fence that guards
-        // the reserved namespace on every single-item write door. Widening
+        // per-row `requireTypeAccess`, so whatever reaches the match query
+        // never meets the fence that guards the reserved namespace on every
+        // single-item write door. The type filter beside this is not that
+        // fence and cannot be: a credential holding `write` across the
+        // board passes it and is still not a platform one. Widening
         // on the name alone would therefore publish a write path into that
         // namespace which `PATCH /items/{id}` refuses to the same key.
         //

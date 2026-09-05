@@ -716,7 +716,7 @@ export function checkTypeAccess(
 }
 
 /**
- * What a credential may read, as a list query can express it.
+ * What a credential may reach at a given level, as a list query can express it.
  *
  * **Returns a pair, and that is the point.** `allowed` alone cannot say what
  * a permission map says: a `"none"` entry subtracts, and a filter assembled
@@ -740,13 +740,35 @@ export function checkTypeAccess(
  * call site that took the permitted list without the exclusions would fail
  * open, which is the defect above reintroduced one layer up, and it would do
  * so silently — every suite that does not mint an exclusion-carrying key
- * would still pass. Returning one object makes it unrepresentable: nine call
- * sites cannot forget a field they have to destructure.
+ * would still pass. Returning one object makes it unrepresentable: a call
+ * site cannot forget a field it has to destructure. (Eight consumers today,
+ * seven through `getTypeFilter` and one direct, on the change stream.)
  *
  * `allowed: undefined` keeps meaning "no restriction" and `allowed: []` keeps
  * meaning "nothing visible", so the contract at every call site survives.
  */
-export function computeTypeFilter(apiKey: ApiKey | undefined): TypeFilter {
+export function computeTypeFilter(
+  apiKey: ApiKey | undefined,
+  /**
+   * Which grants count as permitting a type.
+   *
+   * `"read"` is the default and the historical behaviour, and it is right for
+   * a listing: a caller may see anything it may read or write. A door that
+   * *writes* what it matched has to ask the narrower question, and the one
+   * that did not was `POST /items/bulk-actions` — filter-in, no per-row
+   * permission check, so a key granted read across the board arrived with
+   * nothing narrowed and then wrote to everything it matched. Two comments in
+   * that route already said the narrowing was to writable types, which is
+   * what made it hard to see: the sentence was there and the code did
+   * something else.
+   *
+   * A read-only grant lands in `excluded` rather than merely being left out
+   * of `allowed`, because a broader pattern would otherwise readmit it:
+   * `{"*": "write", "user.secret": "read"}` has to subtract the literal or
+   * the wildcard covers it.
+   */
+  level: "read" | "write" = "read",
+): TypeFilter {
   // OAuth (`scope_enforced`) keys do NOT bypass: they are held to their
   // granted scopes, which project into this same map.
   // A fresh object each time rather than one shared constant: these travel
@@ -760,7 +782,7 @@ export function computeTypeFilter(apiKey: ApiKey | undefined): TypeFilter {
   const allowed: string[] = [];
   const excluded: string[] = [];
   for (const [pattern, permission] of Object.entries(apiKey.type_permissions)) {
-    if (permission === "read" || permission === "write") {
+    if (permission === "write" || (level === "read" && permission === "read")) {
       allowed.push(pattern);
     } else {
       // Anything that is not a grant is an exclusion. An `else` rather than a
@@ -1232,6 +1254,9 @@ export function requireProfilePermission(
   );
 }
 
-export function getTypeFilter(c: Context<AppEnv>): TypeFilter {
-  return computeTypeFilter(c.get("apiKey"));
+export function getTypeFilter(
+  c: Context<AppEnv>,
+  level: "read" | "write" = "read",
+): TypeFilter {
+  return computeTypeFilter(c.get("apiKey"), level);
 }

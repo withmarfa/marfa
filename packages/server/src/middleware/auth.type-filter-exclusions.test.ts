@@ -160,6 +160,33 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     expect(matchesTypeFilter("core.note", filter)).toBe(false);
   });
 
+  it("subtracts a read grant at write level, so a wildcard cannot readmit it", () => {
+    // The write level is what `POST /items/bulk-actions` asks for, and this
+    // is the half of it that a route test cannot reach. A read grant has to
+    // land in `excluded` rather than merely be left out of `allowed`,
+    // because a broader write pattern spanning it would otherwise put the
+    // row back.
+    //
+    // It needs a *ranking* difference to be observable at all: with two
+    // exact patterns the subtraction compiles away to nothing and the SQL is
+    // byte-identical either way, so a suite built on `{a: "read", b:
+    // "write"}` proves the level and says nothing about the exclusion. The
+    // wildcard beside the literal is what makes the two arms differ.
+    const key = memberKey({ "*": "write", "user.secret": "read" });
+
+    expect(computeTypeFilter(key, "write")).toEqual({
+      allowed: ["*"],
+      excluded: ["user.secret"],
+    });
+
+    // And at read level the same grant is admitted, which is what says the
+    // exclusion above is the level's doing rather than the pattern's.
+    expect(computeTypeFilter(key, "read")).toEqual({
+      allowed: ["*", "user.secret"],
+      excluded: [],
+    });
+  });
+
   it("does not restrict a role that bypasses the permission maps", () => {
     const key = { ...memberKey({}), role: "space_admin" as const };
     const filter = computeTypeFilter(key);

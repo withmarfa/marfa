@@ -167,26 +167,33 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // The opt-in is a platform credential naming a reserved type, and this
     // is the half that is easy to leave out.
     //
-    // This door runs no per-row `requireTypeAccess`, and `getTypeFilter`
-    // compiles *readable* patterns, so a key holding `{"*": "read"}` reaches
-    // it with no narrowing at all and never meets the platform-credential
-    // fence that guards `system.*` on every single-item write door. Gating
-    // only the default and letting anyone widen by naming a type would
-    // therefore publish a write path into the reserved namespace that
+    // This door runs no per-row `requireTypeAccess`, so a credential that
+    // reaches the match query never meets the platform-credential fence that
+    // guards `system.*` on every single-item write door. Gating only the
+    // default and letting anyone widen by naming a type would therefore
+    // publish a write path into the reserved namespace that
     // `PATCH /items/{id}` refuses to the same key.
+    //
+    // **The grant has to be `write`, and that is the whole reason this case
+    // works.** It held `{"*": "read"}` until the filter started narrowing to
+    // writable types, at which point the key matched *nothing at all* — so
+    // the refusal below passed without the fence ever being reached, on a
+    // query that returned zero rows. A write grant is what puts the fence
+    // back in the path as the only thing standing between this key and a
+    // reserved row.
     const raw = `marfa_k1_reader_${Math.random().toString(36).slice(2)}`;
     await ctx.storage.keys.create(
       {
         label: "reads-everything",
         source: `reader-${raw.slice(-6)}`,
         role: "member",
-        type_permissions: { "*": "read" },
+        type_permissions: { "*": "write" },
       },
       hashApiKey(raw, "test-salt"),
     );
 
     const marker = Math.random().toString(36).slice(2, 8);
-    const { deviceId } = await seedPair(marker);
+    const { noteId, deviceId } = await seedPair(marker);
 
     const { initialStatus, result } = await runBulkActionAsync(
       ctx,
@@ -201,8 +208,25 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     expect(initialStatus).toBe(200);
     expect(result?.ids ?? []).not.toContain(deviceId);
 
-    // Not vacuous: the platform credential naming the same type finds it, so
-    // this case fails because of the credential rather than the filter.
+    // Not vacuous, on the same credential: this key reaches the door and
+    // matches an ordinary row, so the reserved row is absent because the
+    // fence refused it rather than because the query found nothing. The
+    // control has to run as *this* key — the platform check below says
+    // something about the platform credential and nothing about this one.
+    const { result: ownReach } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "update_tags",
+        add: ["reader-probe"],
+        filter: { tags: [marker] },
+        dry_run: true,
+      },
+      raw,
+    );
+    expect(ownReach?.ids ?? []).toContain(noteId);
+
+    // And the platform credential naming the same reserved type finds it, so
+    // the refusal is about the credential rather than about the filter.
     const asPlatform = await matchedIds({
       type: "system.device",
       tags: [marker],
