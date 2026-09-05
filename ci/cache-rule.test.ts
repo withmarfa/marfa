@@ -19,9 +19,10 @@
  *   - The chain is written out a second time inside the `cache:` value.
  *     `runs-on` cannot read `env`, which is the usual explanation, and the
  *     usual explanation does not finish the argument: `runs-on` *can* read
- *     `needs`, and all eight jobs already declare `needs: changes`, so the
- *     `changes` job could emit the resolved runner once and both keys could
- *     read it. That route was considered and declined, not missed. It moves
+ *     `needs`, and every job that caches already declares `needs: changes`
+ *     except the surface-lock drift check, which is deliberately ungated —
+ *     so the `changes` job could emit the resolved runner once and both keys
+ *     could read it for the rest. That route was considered and declined, not missed. It moves
  *     where a job runs out of the job and into another job's output, so
  *     `runs-on` stops telling you where the job runs and you have to trace
  *     an output to find out. That legibility is worth more than the second
