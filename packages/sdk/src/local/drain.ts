@@ -215,7 +215,10 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
           const edge = await client.edges.update(
             entry.targetId,
             payload.properties,
-            version === undefined ? undefined : { version },
+            {
+              ...keyed,
+              ...(version === undefined ? {} : { version }),
+            },
           );
           return { ok: true, edge };
         }
