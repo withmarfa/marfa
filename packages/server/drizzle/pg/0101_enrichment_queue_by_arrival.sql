@@ -15,11 +15,15 @@
 -- one query's ordering and predicate, and a second copy on a column that
 -- query no longer reads is dead weight on every write to items.
 --
--- Built in a plain CREATE INDEX, which takes a lock that blocks writes to
--- items for the length of the build. CONCURRENTLY is not available rather
--- than not considered: the migrator runs the whole pending set inside one
--- transaction, and Postgres forbids CONCURRENTLY in a transaction block. The
--- index is partial over file items carrying a blob, so it is a small
--- fraction of the table rather than the whole of it.
+-- The DROP takes ACCESS EXCLUSIVE on items, which blocks reads as well as
+-- writes, and the migrator runs the whole pending set inside one
+-- transaction — so the lock is held from this statement until the entire
+-- migration run commits, not for the length of the index build. Size the
+-- deploy window against the whole pending set rather than against this file.
+--
+-- That same single transaction is why CONCURRENTLY is not available rather
+-- than not considered: Postgres forbids it in a transaction block. The index
+-- is partial over file items carrying a blob, so the build itself is a small
+-- fraction of the table.
 DROP INDEX IF EXISTS idx_items_enrichment_candidates;--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS idx_items_enrichment_candidates ON public.items USING btree (created_at) WHERE (((type = 'core.file'::text) OR (type ~~ 'core.file.%'::text)) AND (state <> 'trashed'::text) AND ((properties ->> 'blob_ref'::text) IS NOT NULL));

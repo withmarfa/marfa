@@ -16,7 +16,7 @@
  * Runs against whichever dialect the suite is running, so both are held to
  * one contract rather than one of them being covered.
  *
- * Separate from `rollback-event-doors.test.ts`, which holds the neighbouring
+ * Separate from `rollback-event-doors.test.ts`, which holds the neighboring
  * property — that a write which is undone tells the stream nothing. That
  * file's door table records the transaction each door opens, so a door that
  * gains one here reddens there too, by design.

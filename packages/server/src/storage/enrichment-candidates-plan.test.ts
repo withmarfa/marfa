@@ -60,8 +60,10 @@ describe("sqlite candidate query plan", () => {
         .map((r) => String((r as Record<string, unknown>).detail))
         .join("\n");
       // "SCAN items USING INDEX idx_…" is the desired shape: an ordered
-      // walk of the partial index, already sorted by updated_at. The bad
-      // plan is a bare table scan plus a temporary sort.
+      // walk of the partial index, already sorted by the column the index is
+      // keyed on — created_at, which is when a file arrived and the order
+      // the queue is served in. The bad plan is a bare table scan plus a
+      // temporary sort.
       expect(detail).toContain(
         "SCAN items USING INDEX idx_items_enrichment_candidates",
       );

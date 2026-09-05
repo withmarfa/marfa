@@ -344,10 +344,19 @@ const promoteItemRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema([
+            "validation_error",
+            // Reachable, though not from anything the caller sends: the copy
+            // takes the mirror's properties verbatim and they are validated
+            // on write, so a type whose required list tightened after the
+            // mirror was stored refuses the copy it would once have
+            // accepted.
+            "invalid_properties",
+          ]),
         },
       },
-      description: "The item is not an integration's copy",
+      description:
+        "The item is not an integration's copy, or its properties no longer satisfy its type",
     },
     404: {
       content: {
@@ -2045,7 +2054,31 @@ export function itemRoutes(storage: Storage) {
     // the stream never learned the row existed at all, short of a full
     // re-import. The promoted copy is a new row written by an ordinary
     // write door, and every other such door announces one.
-    await publish({ type: "created", item: promoted, spaceId });
+    //
+    // `metadata` is the literal the create door builds for the same reason:
+    // a fresh row's metadata layer is exactly what the write put there, and
+    // a promotion writes no tags. Carrying it is not tidiness. `publish`
+    // omits the key entirely when it is absent, so the webhook sends
+    // `metadata: null` and the integration envelope sends nothing at all —
+    // a handler reading `payload.metadata.tags`, which is safe on every
+    // other `item.created`, would throw on this one alone.
+    //
+    // `enableFanout: false`, which is the one thing a promotion must not do.
+    // The mirror is an integration's reflection of an upstream record;
+    // pushing the copy back out makes that integration create a SECOND
+    // upstream record for the thing the mirror already reflects, which is
+    // the duplication the mirror-and-promote split exists to prevent.
+    // Dispatch suppresses only the originating connection and a person
+    // promoting has none, so nothing else would stop it. Declining costs
+    // this announcement nothing: fan-out governs neither the event log nor
+    // the stream, and those are what the announcement is for.
+    await publish({
+      type: "created",
+      item: promoted,
+      metadata: { item_id: promoted.id, tags: [], extensions: {} },
+      spaceId,
+      enableFanout: false,
+    });
     await publishEdge({
       type: "edge_created",
       edge: promotionEdge,
@@ -3118,6 +3151,11 @@ export function itemRoutes(storage: Storage) {
     const body = c.req.valid("json");
     const tags = body.tags;
 
+    // Not subsumed by the projection below, though it reads as though it
+    // should be: the projection counts a deduplicated set, so a body of 101
+    // copies of one tag projects to one and passes it. This bounds what a
+    // caller may send, that one bounds what the item may hold, and they are
+    // different questions with different messages.
     if (Array.isArray(tags) && tags.length > 100) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
