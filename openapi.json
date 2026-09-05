@@ -20899,11 +20899,6 @@
                     "created_at": {
                       "type": "string"
                     },
-                    "expires_at": {
-                      "type": "string",
-                      "nullable": true,
-                      "description": "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one."
-                    },
                     "last_used_at": {
                       "type": "string",
                       "nullable": true

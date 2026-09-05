@@ -17,6 +17,7 @@ import {
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { RoleRequestSchema, RoleResponseSchema } from "./role-schema.js";
+import { KeyResponseSchema } from "./_schemas.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -58,33 +59,6 @@ export function assertUnreservedSource(source: string): void {
 const EdgePermissionsSchema = z
   .record(z.string(), z.enum(["read", "write"]))
   .optional();
-
-const KeyResponseSchema = z.object({
-  id: z.string(),
-  key: z.string(),
-  label: z.string(),
-  source: z.string(),
-  role: RoleResponseSchema,
-  default_tier: z.enum(["library", "feed"]),
-  is_platform: z.boolean(),
-  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
-  extension_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  edge_permissions: EdgePermissionsSchema,
-  metadata_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  created_at: z.string(),
-  expires_at: z
-    .string()
-    .nullable()
-    .optional()
-    .describe(
-      "Hard lifetime bound. NULL for human-minted keys, which never expire. Runtime credentials are always stamped; a key past this instant is refused exactly like a revoked one.",
-    ),
-  last_used_at: z.string().nullable(),
-});
 
 const KeyListItemSchema = z.object({
   id: z.string(),

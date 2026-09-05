@@ -16,6 +16,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { KeyResponseSchema } from "./_schemas.js";
 
 let ctx: TestContext;
 
@@ -54,6 +55,64 @@ async function createKey(overrides: Record<string, unknown> = {}): Promise<{
   };
   return body;
 }
+
+describe("the key a create route returns", () => {
+  // Two tests, because the defect has two halves and one assertion cannot
+  // reach both. This one pins the HANDLER: an expiry is settable only through
+  // `createRuntimeCredential`, which no route reaches, so a key minted through
+  // a door has none by construction and the response must not carry the field.
+  //
+  // It says nothing about the declaration. Re-adding `expires_at` to the
+  // shared schema leaves this green, because a declaration does not put a
+  // field into a response — which is the whole reason the two drifted apart
+  // in the first place. The declaration is pinned separately, below.
+  it("carries no expiry, because a create route cannot mint one", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.adminKey,
+      body: {
+        label: `expiry-${suffix}`,
+        source: `expiry-${suffix}`,
+        role: "member",
+        default_tier: "feed",
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    // The field itself, not a falsy value: a response sending `null` would
+    // satisfy an optional-chained read and still contradict the declaration.
+    expect(
+      Object.hasOwn(body, "expires_at"),
+      "a create response carried an expiry field, so the declaration and the handler disagree about what a minted key can have",
+    ).toBe(false);
+    // A control, so the assertion above cannot pass on an empty body.
+    expect(body.id).toBeTruthy();
+    expect(body.key).toBeTruthy();
+  });
+});
+
+describe("the declaration a create route publishes", () => {
+  // The other half. This one reddens when the schema regains a field the
+  // handler cannot fill, which is the regression the consolidation exists to
+  // prevent and which the response-body test above cannot see.
+  //
+  // Asserted against the schema rather than the generated specification so it
+  // fails at the declaration rather than three steps downstream of it, where
+  // the message would be about a large JSON artifact instead of about a line
+  // somebody wrote.
+  it("does not promise an expiry the handler cannot send", () => {
+    const shape = Object.keys(KeyResponseSchema.shape);
+    expect(
+      shape,
+      "the create response declares an expiry, which no key a create route can mint will ever carry, so the published specification promises generated clients a property that cannot arrive",
+    ).not.toContain("expires_at");
+    // A control: a wrong import or an emptied schema would otherwise satisfy
+    // the assertion above by containing nothing at all.
+    expect(shape).toContain("created_at");
+    expect(shape).toContain("last_used_at");
+  });
+});
 
 describe("PATCH /keys/{id}", () => {
   it("updates label, permissions, and defaults in place", async () => {

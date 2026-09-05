@@ -46,8 +46,8 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { evictSpaceStatus } from "../middleware/space-suspension.js";
 import { PendingDeletePurger } from "../storage/retention.js";
-import { RoleRequestSchema, RoleResponseSchema } from "./role-schema.js";
-import { QuotaSchema } from "./_schemas.js";
+import { RoleRequestSchema } from "./role-schema.js";
+import { KeyResponseSchema, QuotaSchema } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -113,26 +113,6 @@ const ApiKeySummarySchema = z.object({
   source: z.string(),
   role: z.string(),
   is_platform: z.boolean(),
-  created_at: z.string(),
-  last_used_at: z.string().nullable(),
-});
-
-const KeyResponseSchema = z.object({
-  id: z.string(),
-  key: z.string(),
-  label: z.string(),
-  source: z.string(),
-  role: RoleResponseSchema,
-  default_tier: z.enum(["library", "feed"]),
-  is_platform: z.boolean(),
-  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
-  extension_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
-  edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
-  metadata_permissions: z
-    .record(z.string(), z.enum(["read", "write"]))
-    .optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });

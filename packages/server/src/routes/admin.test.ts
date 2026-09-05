@@ -200,6 +200,18 @@ describe("admin happy paths", () => {
     expect(keyRes.status).toBe(201);
     const minted = (await keyRes.json()) as { key: string };
 
+    // Both mint doors share one response declaration, and the declaration
+    // carries no expiry because neither door can produce one: an expiry is
+    // settable only through the runtime credential mint, which no route
+    // reaches. The sibling assertion on `POST /keys` cannot see this door, and
+    // the stored record does carry an optional expiry — so a handler here
+    // spreading the record rather than projecting it would ship a field the
+    // specification does not declare, with nothing red.
+    expect(
+      Object.hasOwn(minted, "expires_at"),
+      "the administrative mint returned an expiry field, which its shared response declaration does not carry and no key this door can mint would ever have",
+    ).toBe(false);
+
     // And the credential really is bounded to it, which is the property the
     // space-scoped surfaces depend on.
     const stored = (await ctx.storage.keys.list()).find(

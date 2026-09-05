@@ -9,8 +9,29 @@
  * file declares a shape this file already exports.
  *
  * Nothing here imports from a route file, so any of them can import this.
+ *
+ * **Sharing a name with another route file is not by itself a reason to move
+ * a shape here.** Three names are declared in more than one route file and
+ * are left where they are, for two different reasons.
+ *
+ * The two id parameters differ in more than their names suggest. Most copies
+ * are a bare string with a description written for their own route; one adds
+ * `.min(1)`, which reaches the published specification as a `minLength` on
+ * three operations and on no others. So consolidating them is not a move but
+ * a choice — one validation and one description for every route that shares
+ * the name — and that choice would silently add a constraint to some routes
+ * or drop it from others. Worth doing deliberately; not worth doing as
+ * tidying.
+ *
+ * The two space shapes differ outright, the administrative one carrying a
+ * status the user-facing one does not, so folding them is a surface change in
+ * one direction or a regression in the other.
+ *
+ * What belongs here is a shape two doors are trying to describe identically
+ * and failing to.
  */
 import { z } from "@hono/zod-openapi";
+import { RoleResponseSchema } from "./role-schema.js";
 import { ITEM_STATES, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 
@@ -225,4 +246,42 @@ export const ItemDetailSchema = z.object({
   neighbors_truncated: z.boolean().optional(),
   neighbors_omitted: z.number().int().optional(),
   versions: z.array(VersionSchema).optional(),
+});
+
+/**
+ * An API key as a create route answers it.
+ *
+ * Two doors mint a key — the space caller's own and the platform-admin one
+ * that binds a key to a space — and they answered with two declarations that
+ * had drifted apart. One carried `expires_at` and the other did not.
+ *
+ * **The one without it was right.** An expiry is settable only through
+ * `createRuntimeCredential`, which the storage interface documents as
+ * requiring one and which the integration runtime calls in process. No route
+ * reaches it, and `CreateKeyInput` cannot carry an expiry, so every key either
+ * door can mint has none. Declaring the field on a create response promised
+ * generated clients a property that could never arrive.
+ *
+ * It stays real on the read side: `GET /keys` returns stored rows, so a
+ * runtime credential's stamp does reach a caller listing keys, and the list
+ * schema keeps the field. The expiry belongs to the read, not to the creates.
+ */
+export const KeyResponseSchema = z.object({
+  id: z.string(),
+  key: z.string(),
+  label: z.string(),
+  source: z.string(),
+  role: RoleResponseSchema,
+  default_tier: z.enum(["library", "feed"]),
+  is_platform: z.boolean(),
+  type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
+  extension_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
+  metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  created_at: z.string(),
+  last_used_at: z.string().nullable(),
 });
