@@ -114,7 +114,7 @@ export default [
           selector:
             "CallExpression[callee.name=/^(eq|ne|isNull|isNotNull)$/] > MemberExpression[property.name='space_id']",
           message:
-            "Build the space fence with spaceCondition / spaceBucketCondition / spaceOrPlatformCondition from storage/space-condition.js. Spelling it inline is how the stores came to disagree about what an absent space means.",
+            "Build the space fence with a helper from storage/space-condition.js rather than spelling it inline, which is how the stores came to disagree about what an absent space means. Pick by the column: spaceCondition, spaceBucketCondition or spaceOrPlatformCondition for a nullable space_id, and spaceSentinelCondition for blobs, custom_types and custom_edge_types, whose space_id is NOT NULL DEFAULT '' — the other three emit IS NULL against those and match nothing, silently.",
         },
       ],
     },

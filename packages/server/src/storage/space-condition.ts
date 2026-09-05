@@ -74,6 +74,34 @@ export function spaceBucketCondition(column: Column, spaceId: SpaceScope): SQL {
 }
 
 /**
+ * Narrow to `spaceId` on a column that stores the space-less bucket as the
+ * empty string rather than as NULL.
+ *
+ * Three tables encode it that way — `blobs`, `custom_types` and
+ * `custom_edge_types` — because their primary keys are composite and a
+ * nullable column in one behaves inconsistently across SQLite and Postgres.
+ * The rationale is at the schema.
+ *
+ * **This exists because {@link spaceBucketCondition} is wrong against those
+ * columns and cannot say so.** It emits `IS NULL` for an absent space, which
+ * against a `NOT NULL DEFAULT ''` column matches no row and raises no error:
+ * the caller gets an empty result and nothing anywhere reports a mistake. The
+ * three call sites that reach those tables dodge it today by passing a literal
+ * `""`, and two of them carry a comment explaining why. Nothing stopped a
+ * fourth from passing `null`.
+ *
+ * Takes the same nullable input as its sibling and normalizes it here, so a
+ * caller holding a `space_id` off a credential does not have to remember which
+ * of the two encodings the table it is about to query happens to use.
+ */
+export function spaceSentinelCondition(
+  column: Column,
+  spaceId: string | null | undefined,
+): SQL {
+  return eq(column, spaceId ?? "");
+}
+
+/**
  * A space's own rows plus the platform-scoped ones.
  *
  * The catalog widening: `system.integration` rows are registered by a
