@@ -218,6 +218,14 @@ export interface SearchFilters {
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;
+  /** Lower bound on the item's own time — `timestamp`, falling back to
+   *  `created_at` — inclusive, exactly as `ItemFilters` reads it. Search
+   *  advertises parity with `GET /items` in its own description and took
+   *  neither bound, so a date-narrowed search was not expressible and a
+   *  caller who sent one got a successful response over the whole corpus. */
+  timestamp_after?: string;
+  /** Upper bound on the same expression, inclusive. */
+  timestamp_before?: string;
   allowed_types?: string[];
   /** Mirrors `ItemFilters.excluded_types`. */
   excluded_types?: string[];
@@ -362,14 +370,64 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * the same cursor handed to the new ordering is refused rather than
  * silently honoured.
  *
- * The key names the catch-up ordering against everything else, rather
- * than naming each of the item listing's several sorts. That is the split
- * worth drawing, because it is the one a caller can cross without meaning
- * to: `sort` is set explicitly, so dropping it between pages is a visible
- * caller error, while `updated_after` is a filter and dropping a filter
- * while keeping the cursor is the ordinary client mistake.
+ * **The key names the ordering the request actually resolved to**, column
+ * and direction, rather than only naming the catch-up ordering against
+ * everything else. An earlier version drew that narrower split on the
+ * argument that `sort` is set explicitly, so dropping it between pages is
+ * a visible caller error while dropping a filter is the ordinary one. The
+ * argument holds for a hand-written client and not for one assembling a
+ * request from parts, which is the case this exists for; and under the
+ * narrow key every one of the item listing's orderings was tagged
+ * `created_at`, so a cursor taken under `?sort=updated_at` replayed under
+ * `?sort=timestamp` passed the check and bounded the page against the
+ * wrong column — the exact failure, reached through the guard against it.
+ *
+ * Direction is part of the key for the same reason the column is. The
+ * comparison flips with it, so the same cursor replayed under the
+ * opposite direction re-serves rows already delivered, silently and with
+ * no more signal than the column case has.
+ *
+ * The key is computed from the *resolved* ordering, never from the raw
+ * parameters, so a caller who omits `sort` on one page and spells out the
+ * default on the next is not refused: both resolve to the same ordering
+ * and therefore to the same key.
  */
-export type CursorSortKey = "created_at" | "updated_at";
+export type CursorSortKey = string;
+
+/**
+ * The ordering identity a cursor carries. Every construction goes through
+ * here so the spelling cannot drift between the encode side and the
+ * expectation the decode side checks against.
+ */
+export function cursorSortKey(
+  sort:
+    | { kind: "system"; column: SystemSortField }
+    | { kind: "property"; field: string },
+  direction: SortDirection,
+): CursorSortKey {
+  const column =
+    sort.kind === "system" ? sort.column : `properties.${sort.field}`;
+  return `${column}:${direction}`;
+}
+
+/**
+ * How a cursor issued before the key named the resolved ordering is read.
+ *
+ * Those carry a bare `created_at` or `updated_at`, or no key at all, and
+ * each of those spellings meant exactly one ordering when it was written:
+ * the default listing, newest-created first, and the catch-up, oldest
+ * modification first. Mapping them keeps a page that is in flight across
+ * a deploy working, which is the same courtesy the absent key already
+ * had. Anything else a legacy cursor was tagged with is refused rather
+ * than guessed at, which is the safe direction.
+ */
+const LEGACY_CURSOR_KEYS: Readonly<Record<string, CursorSortKey>> = {
+  created_at: "created_at:desc",
+  updated_at: "updated_at:asc",
+};
+
+/** The ordering an unkeyed cursor came from — the only one there was. */
+const UNKEYED_CURSOR_ORDERING: CursorSortKey = "created_at:desc";
 
 export function encodeKeyedCursor(
   sortValue: string | null,
@@ -394,10 +452,21 @@ function assertCursorKey(cursor: string, expected: CursorSortKey): void {
       "Invalid pagination cursor",
     );
   }
-  const key =
+  const carried =
     typeof parsed === "object" && parsed !== null && "k" in parsed
       ? parsed.k
-      : "created_at";
+      : UNKEYED_CURSOR_ORDERING;
+  // `hasOwnProperty` rather than `in`, which walks the prototype chain: a
+  // cursor tagged `"toString"` would otherwise be looked up and answered
+  // with a function. Harmless today, because the result is compared for
+  // equality against a string and a function is not one, but the safety
+  // is in the comparison rather than in the lookup, which is the wrong
+  // place for it to live.
+  const key =
+    typeof carried === "string" &&
+    Object.prototype.hasOwnProperty.call(LEGACY_CURSOR_KEYS, carried)
+      ? LEGACY_CURSOR_KEYS[carried]
+      : carried;
   if (key !== expected) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,
@@ -596,6 +665,14 @@ export interface ItemStore {
    * items are not returned by `get`/`list`, and do not leak to this
    * method via `restore` either; use the normal `restore()` to
    * un-trash.
+   *
+   * **`trashed` is the whole of the difference, in both dialects.** `get`
+   * rejects on `state === "trashed"` and tests nothing else, so archived
+   * and revoked rows come back from it already; this method drops that one
+   * test and adds no other state. The pairing of names suggests a wider
+   * gap than exists — that `get` means "active" and this means "any
+   * state" — and a caller swapping to it is widening its input by exactly
+   * one state rather than by four.
    */
   getIncludingTrashed(id: string, spaceId?: string): Promise<Item | null>;
   list(filters: ItemFilters): Promise<PaginatedResult<Item>>;
@@ -677,9 +754,18 @@ export interface ItemStore {
     by?: ItemStatsAxis,
   ): Promise<Record<string, number>>;
   /**
-   * Hard-delete every trashed item whose `updated_at` is strictly older
-   * than `beforeDate` (an ISO 8601 timestamp). Cleans the search index
-   * for each row. Returns the number of rows deleted.
+   * Hard-delete every trashed item that entered the bin strictly before
+   * `beforeDate` (an ISO 8601 timestamp). Cleans the search index for
+   * each row. Returns the number of rows deleted.
+   *
+   * The window is measured from `trashed_at`, the time of the transition
+   * into the soft-deleted state, falling back to `updated_at` for a row
+   * carrying no stamp. `updated_at` alone used to decide it, and it is
+   * the modification time rather than the removal time: any write to a
+   * trashed row moved it, so editing something already in the bin
+   * restarted its retention clock. The fallback covers only rows soft-
+   * deleted by a build predating the column, where reproducing the old
+   * behavior beats a row nothing can purge.
    *
    * Unlike `bulkPurge`, this drops the purged items' edges itself (both
    * directions, inside the same transaction). It is the terminal step of
@@ -754,6 +840,23 @@ export interface ItemStore {
   ): Promise<number>;
 }
 
+/**
+ * What `setExtensions` answers: the item's whole extensions map after the
+ * write, and the modification time the write left on the item row.
+ *
+ * `updated_at` is null when nothing in the set announces, because then the
+ * item row was never touched and there is no new value to report. A caller
+ * publishing the item beside the write needs this half: the frame it holds
+ * was read before the write, so announcing that one describes an
+ * `updated_at` the row does not have. A client watermarking on the value
+ * re-fetches on its next catch-up, and a client comparing it against a
+ * later read sees a change nothing told it about.
+ */
+export interface SetExtensionsResult {
+  extensions: Record<string, Record<string, unknown>>;
+  updated_at: string | null;
+}
+
 export interface MetadataStore {
   get(itemId: string): Promise<Metadata>;
   getMany(itemIds: string[]): Promise<Metadata[]>;
@@ -793,6 +896,36 @@ export interface MetadataStore {
     namespace: string,
     data: Record<string, unknown>,
   ): Promise<Record<string, Record<string, unknown>>>;
+  /**
+   * `setExtension` for several namespaces of one item at once, replacing
+   * each named namespace and leaving the rest of the map alone.
+   *
+   * The extensions of an item are one JSON column, so writing them one
+   * namespace at a time rewrites that column once per namespace and — for
+   * every namespace that announces — bumps the item's modification time
+   * again beside it. On the archive restore, which is the caller this
+   * exists for, that multiplied by every item in the archive on the one
+   * path whose whole purpose is moving a lot of rows at once. Passing the
+   * set the caller already holds collapses it to one write of each row.
+   *
+   * The bump is decided once for the whole set: if any namespace in it
+   * announces, the item is bumped once, which is what a caller writing
+   * them together means by "the item changed". An empty set writes
+   * nothing at all rather than touching the row to store what it already
+   * holds.
+   *
+   * Unconditional replace, with `setExtension`'s hazard and not
+   * `mutateExtension`'s guarantee: a value derived from a previous read
+   * still belongs in `mutateExtension`.
+   *
+   * Answers the post-write modification time alongside the map, because
+   * the caller this exists for publishes the item it just wrote and would
+   * otherwise announce the value the row carried before the bump.
+   */
+  setExtensions(
+    itemId: string,
+    entries: Record<string, Record<string, unknown>>,
+  ): Promise<SetExtensionsResult>;
   /**
    * Atomic namespace-scoped read / mutate / write. `mutate` is handed the
    * namespace's current contents (an empty record when unset) exactly

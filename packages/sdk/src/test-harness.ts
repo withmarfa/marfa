@@ -6,6 +6,8 @@ import {
   createApp,
   createSqliteStorage,
   FilesystemBlobBackend,
+  initEventLog,
+  __resetCycleDetectionForTests,
   type AppConfig,
   type Storage,
 } from "@withmarfa/server";
@@ -128,11 +130,47 @@ export interface KeysModeFixture {
   cleanup: () => void;
 }
 
+/**
+ * Behavior a fixture turns on beyond the app itself.
+ *
+ * Separate from `AppConfig` because none of it is configuration the
+ * server reads: it is wiring the server's own bootstrap performs and
+ * `createApp` does not.
+ */
+export interface FixtureOptions {
+  /**
+   * Wire the event log.
+   *
+   * **Without this, a subscription's event ids are `undefined` and replay
+   * is inert.** `createApp` does not call `initEventLog`, so nothing is
+   * appended to `event_log`: live frames still arrive, and every one of
+   * them carries no id, `subscription.lastEventId` never moves off the
+   * announced value, a `Last-Event-ID` replays nothing, and a cursor
+   * older than the log can never be refused as too old — because the
+   * check is skipped entirely when the log is empty. All of that is
+   * silent. A suite testing cursors against a fixture without this flag
+   * passes while proving nothing, which is why it is written down here
+   * rather than left to be rediscovered.
+   *
+   * Off by default, and that is the point. `initEventLog` sets
+   * module-global state in the server's pubsub module, so turning it on
+   * for every fixture would turn event persistence on for every suite in
+   * this package at once — the change most likely to produce a flake
+   * nobody attributes correctly. `cleanup` unwires it again, so a file
+   * that asks for it does not leave it on for whatever runs next.
+   */
+  eventLog?: boolean;
+}
+
 export async function createKeysModeFixture(
   configOverrides?: Partial<AppConfig>,
+  options?: FixtureOptions,
 ): Promise<KeysModeFixture> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-keys-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
+  // Before the app, so nothing this fixture serves can be written without
+  // reaching the log.
+  if (options?.eventLog) initEventLog(storage.eventLog);
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(
     storage,
@@ -164,6 +202,11 @@ export async function createKeysModeFixture(
     fetch,
     storage,
     cleanup: () => {
+      // Unwired here rather than left for the next fixture to overwrite:
+      // the binding is module-global and outlives the storage handle it
+      // points at, so a suite that ran after this one would be appending
+      // to a database that has been closed.
+      if (options?.eventLog) __resetCycleDetectionForTests();
       void storage.close();
     },
   };

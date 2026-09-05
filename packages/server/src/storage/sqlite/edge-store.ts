@@ -29,6 +29,7 @@ import {
   encodeCursor,
   decodeCursor,
   encodeKeyedCursor,
+  cursorSortKey,
   decodeKeyedCursor,
   normalizeTimeBound,
 } from "../interface.js";
@@ -178,7 +179,12 @@ export class SqliteEdgeStore implements EdgeStore {
       "updated_after",
     );
     const catchUp = updatedAfter !== undefined;
-    const key: CursorSortKey = catchUp ? "updated_at" : "created_at";
+    // Both of this listing's orderings, named the same way the item
+    // listing names its several: column and direction, so one mechanism
+    // covers both doors and neither can drift into its own spelling.
+    const key: CursorSortKey = catchUp
+      ? cursorSortKey({ kind: "system", column: "updated_at" }, "asc")
+      : cursorSortKey({ kind: "system", column: "created_at" }, "desc");
     const conditions = [];
     if (filters?.spaceId) {
       conditions.push(eq(edges.space_id, filters.spaceId));

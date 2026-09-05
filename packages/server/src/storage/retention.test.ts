@@ -53,26 +53,35 @@ async function seedItemWithUpdatedAt(opts: {
   if (opts.state !== "active") {
     await ctx.storage.items.transition(opts.id, opts.state, opts.spaceId);
   }
-  // Force the updated_at to a contrived value via raw SQL — both dialects
+  // Force the timestamps to a contrived value via raw SQL — both dialects
   // expose `__pgClient` / `__sqliteAll` / `__sqliteRun` escape hatches on
   // storage; here we just write directly through the Drizzle internals.
+  //
+  // `trashed_at` moves with `updated_at`, because "seed a row this old" is
+  // one intent and the trash sweep reads the stamp in preference to the
+  // modification time. Left alone where it is null, so an active row does
+  // not acquire a removal time it never had.
   const dialect = process.env.DB_DIALECT ?? "sqlite";
   if (dialect === "pg") {
     const s = ctx.storage as unknown as {
       __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
     };
-    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
-      opts.updatedAtIso,
-      opts.id,
-    ]);
+    await s.__pgClient(
+      `UPDATE items SET updated_at = $1,
+         trashed_at = CASE WHEN trashed_at IS NULL THEN NULL ELSE $1 END
+       WHERE id = $2`,
+      [opts.updatedAtIso, opts.id],
+    );
   } else {
     const s = ctx.storage as unknown as {
       __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
     };
-    await s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
-      opts.updatedAtIso,
-      opts.id,
-    ]);
+    await s.__sqliteRun(
+      `UPDATE items SET updated_at = ?,
+         trashed_at = CASE WHEN trashed_at IS NULL THEN NULL ELSE ? END
+       WHERE id = ?`,
+      [opts.updatedAtIso, opts.updatedAtIso, opts.id],
+    );
   }
 }
 

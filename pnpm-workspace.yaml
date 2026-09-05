@@ -1,5 +1,9 @@
 packages:
   - "packages/*"
+  # Sample applications. In the workspace rather than beside it so they
+  # typecheck and build against the kit on every change, instead of drifting
+  # until somebody next opens one.
+  - "examples/*"
   # The server's dispatch fixture. A package rather than a test file
   # because the property it proves is a bundling one: it has to be built
   # by tsup with the runtime kit externalized, the way a real integration

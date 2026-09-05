@@ -5,7 +5,7 @@ import {
   GLOBAL_TYPE_WILDCARD,
   type Metadata,
 } from "@withmarfa/shared";
-import type { MetadataStore } from "../interface.js";
+import type { MetadataStore, SetExtensionsResult } from "../interface.js";
 import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import type { PgTxContext } from "./request-context.js";
@@ -109,12 +109,18 @@ export class PgMetadataStore implements MetadataStore {
    * The bump matters because an incremental catch-up filters on
    * `items.updated_at`. Leaving it where it was hands a resuming client
    * a short list that looks complete.
+   *
+   * Returns the modification time it wrote, or `null` when the write
+   * announced nothing and the item row was left alone. A caller that
+   * publishes the item alongside the write needs the post-bump value:
+   * the frame it holds was read before this ran, so announcing that one
+   * describes the row as it was rather than as it is.
    */
   private async writeSidecar(
     tx: PgTxContext,
     itemId: string,
-    write: { tags: string } | { extensions: string; namespace: string },
-  ): Promise<void> {
+    write: { tags: string } | { extensions: string; namespaces: string[] },
+  ): Promise<string | null> {
     // **The item is written first, and the order is load-bearing.** It
     // reads backwards — this method is about the sidecar, and the item is
     // the afterthought — so it invites being swapped back.
@@ -127,10 +133,16 @@ export class PgMetadataStore implements MetadataStore {
     // resolve it by aborting one after `deadlock_timeout` — an
     // intermittent 500 on a write that is otherwise fine. Writing the
     // item first means every path takes the two rows in one order.
-    if ("tags" in write || announcesMetadataChange(write.namespace)) {
+    // One bump for the whole write, however many namespaces it carries.
+    // Any announcing namespace in the set makes the item's change visible,
+    // and a caller writing several together means one change rather than
+    // one per namespace.
+    let bumpedAt: string | null = null;
+    if ("tags" in write || write.namespaces.some(announcesMetadataChange)) {
+      bumpedAt = new Date().toISOString();
       await tx
         .update(items)
-        .set({ updated_at: new Date().toISOString() })
+        .set({ updated_at: bumpedAt })
         .where(eq(items.id, itemId));
     }
     await tx
@@ -141,6 +153,7 @@ export class PgMetadataStore implements MetadataStore {
           : { extensions: write.extensions },
       )
       .where(eq(metadata.item_id, itemId));
+    return bumpedAt;
   }
 
   async getMany(itemIds: string[]): Promise<Metadata[]> {
@@ -267,9 +280,55 @@ export class PgMetadataStore implements MetadataStore {
       const extensions = { ...current.extensions, [namespace]: data };
       await this.writeSidecar(tx, itemId, {
         extensions: JSON.stringify(extensions),
-        namespace,
+        namespaces: [namespace],
       });
       return extensions;
+    });
+  }
+
+  /**
+   * Several namespaces of one item in a single write. The extensions of an
+   * item are one JSON column, so writing them one at a time rewrites that
+   * column once per namespace and bumps the item's modification time
+   * again beside each announcing one. The archive restore holds the whole
+   * set before it writes any of it, and that is the caller this exists
+   * for: its cost was namespaces times items on the one path whose
+   * purpose is moving many rows at once.
+   *
+   * Replaces each named namespace and leaves the rest of the map alone,
+   * which is `setExtension` applied to a set rather than a different
+   * merge rule. It carries `setExtension`'s hazard too: a value derived
+   * from an earlier read still belongs in `mutateExtension`.
+   *
+   * Answers the modification time the write left on the item alongside
+   * the map, so the caller announcing the item does not publish the value
+   * the row held before the bump.
+   */
+  async setExtensions(
+    itemId: string,
+    entries: Record<string, Record<string, unknown>>,
+  ): Promise<SetExtensionsResult> {
+    const namespaces = Object.keys(entries);
+    if (namespaces.length === 0) {
+      // Nothing written, so nothing moved: the null says "no new
+      // modification time", which is different from "the row's current
+      // one" and is what a caller announcing the item has to distinguish.
+      return { extensions: await this.getExtensions(itemId), updated_at: null };
+    }
+    return this.db.transaction(async (tx) => {
+      const [row] = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId));
+      const current: Metadata = row
+        ? rowToMetadata(row)
+        : { item_id: itemId, tags: [], extensions: {} };
+      const extensions = { ...current.extensions, ...entries };
+      const updated_at = await this.writeSidecar(tx, itemId, {
+        extensions: JSON.stringify(extensions),
+        namespaces,
+      });
+      return { extensions, updated_at };
     });
   }
 
@@ -310,7 +369,7 @@ export class PgMetadataStore implements MetadataStore {
       const extensions = { ...current.extensions, [namespace]: next };
       await this.writeSidecar(tx, itemId, {
         extensions: JSON.stringify(extensions),
-        namespace,
+        namespaces: [namespace],
       });
       return next;
     });
@@ -333,7 +392,7 @@ export class PgMetadataStore implements MetadataStore {
       );
       await this.writeSidecar(tx, itemId, {
         extensions: JSON.stringify(rest),
-        namespace,
+        namespaces: [namespace],
       });
       return rest;
     });

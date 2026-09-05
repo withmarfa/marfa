@@ -420,6 +420,150 @@ describe("GET /items/:id/edges + /backrefs", () => {
     expect(backData.data.length).toBe(1);
   });
 
+  /**
+   * The anchor lookup decides whether the whole call answers, and the two
+   * outcomes below share one line of code — a genuinely absent item and a
+   * trashed one both used to resolve to nothing, and only one of them was
+   * meant to.
+   *
+   * Edges carry no lifecycle column, and `GET /edges` returns an edge
+   * whether or not either endpoint is in the bin. Answering not-found here
+   * made the same edge reachable through one door and invisible through
+   * another, decided by the state of a row the edge does not belong to. A
+   * client reconciling its copy needs the edges of a trashed item: that is
+   * how it learns the item went to the bin with its relationships intact.
+   */
+  it("lists a trashed item's edges rather than answering not-found", async () => {
+    const a = await createItem();
+    const b = await createItem();
+    const c = await createItem();
+    // One edge out of `a` and one into it, so both doors are asked about
+    // the trashed item as their own anchor rather than about a live
+    // neighbor — which is the only way each door's own lookup is exercised.
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: a, target_id: b, edge_type: "about" },
+    });
+    await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: { source_id: c, target_id: a, edge_type: "about" },
+    });
+    const trashed = await request(ctx.app, "DELETE", `/items/${a}`, {
+      key: ctx.adminKey,
+    });
+    expect(trashed.status).toBe(200);
+
+    const out = await request(ctx.app, "GET", `/items/${a}/edges`, {
+      key: ctx.adminKey,
+    });
+    expect(out.status).toBe(200);
+    const outData = (await out.json()) as { data: { target_id: string }[] };
+    expect(outData.data.map((e) => e.target_id)).toEqual([b]);
+
+    const back = await request(ctx.app, "GET", `/items/${a}/backrefs`, {
+      key: ctx.adminKey,
+    });
+    expect(back.status).toBe(200);
+    const backData = (await back.json()) as { data: { source_id: string }[] };
+    expect(backData.data.map((e) => e.source_id)).toEqual([c]);
+  });
+
+  it("still answers not-found for an item that does not exist", async () => {
+    const absent = "019537a0-7b80-7000-8000-00000000ab5e";
+    for (const path of [
+      `/items/${absent}/edges`,
+      `/items/${absent}/backrefs`,
+    ]) {
+      const res = await request(ctx.app, "GET", path, { key: ctx.adminKey });
+      expect(res.status).toBe(404);
+    }
+  });
+
+  /**
+   * The anchor decides what these two doors return, so reading it is a
+   * read of the anchor. Every write door in this file checks its source
+   * item's type and both item read doors check theirs; these two asked
+   * only whether the caller was authenticated, and the space fence is a
+   * different question — a credential can be inside the space and hold no
+   * grant on the type.
+   *
+   * The anchor is trashed in both halves deliberately. A trashed anchor
+   * used to answer not-found, so the door that now serves its edges is
+   * the one that widened the gap: without the check, a key with no read
+   * grant on the type could newly enumerate the relationships of
+   * soft-deleted rows of that type.
+   *
+   * Refused and admitted together, because either alone is passed by a
+   * door that has no check at all or by one that refuses everything.
+   */
+  describe("the anchor's type is read-gated", () => {
+    async function memberKey(
+      typePermissions: Record<string, string>,
+    ): Promise<string> {
+      const suffix = String(Math.random());
+      const res = await request(ctx.app, "POST", "/keys", {
+        key: ctx.adminKey,
+        body: {
+          label: `edge-read-${suffix}`,
+          source: `edge-read-${suffix}`,
+          role: "member",
+          default_tier: "library",
+          type_permissions: typePermissions,
+          edge_permissions: { "*": "write" },
+        },
+      });
+      expect(res.status).toBe(201);
+      return ((await res.json()) as { key: string }).key;
+    }
+
+    /** A trashed `core.note` with one edge out of it and one into it. */
+    async function trashedAnchor(): Promise<string> {
+      const anchor = await createItem();
+      const other = await createItem();
+      await request(ctx.app, "POST", "/edges", {
+        key: ctx.adminKey,
+        body: { source_id: anchor, target_id: other, edge_type: "about" },
+      });
+      await request(ctx.app, "POST", "/edges", {
+        key: ctx.adminKey,
+        body: { source_id: other, target_id: anchor, edge_type: "about" },
+      });
+      const trashed = await request(ctx.app, "DELETE", `/items/${anchor}`, {
+        key: ctx.adminKey,
+      });
+      expect(trashed.status).toBe(200);
+      return anchor;
+    }
+
+    for (const door of ["edges", "backrefs"]) {
+      it(`${door} refuses a key with no read grant on the anchor's type`, async () => {
+        const anchor = await trashedAnchor();
+        // Granted on a different type, so the refusal is the type map
+        // answering rather than an empty permission set answering.
+        const key = await memberKey({ "core.task": "read" });
+
+        const res = await request(ctx.app, "GET", `/items/${anchor}/${door}`, {
+          key,
+        });
+        expect(res.status).toBe(403);
+        const err = (await res.json()) as { error: { code: string } };
+        expect(err.error.code).toBe("type_not_permitted");
+      });
+
+      it(`${door} still serves a key that holds the grant`, async () => {
+        const anchor = await trashedAnchor();
+        const key = await memberKey({ "core.note": "read" });
+
+        const res = await request(ctx.app, "GET", `/items/${anchor}/${door}`, {
+          key,
+        });
+        expect(res.status).toBe(200);
+        const body = (await res.json()) as { data: unknown[] };
+        expect(body.data).toHaveLength(1);
+      });
+    }
+  });
+
   it("filters by comma-separated edge_type", async () => {
     const a = await createItem();
     const b = await createItem();

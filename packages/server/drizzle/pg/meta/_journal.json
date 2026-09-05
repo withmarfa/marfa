@@ -703,6 +703,13 @@
       "breakpoints": true
     },
     {
+      "idx": 100,
+      "version": "7",
+      "when": 1788598400000,
+      "tag": "0100_items_trashed_at",
+      "breakpoints": true
+    },
+    {
       "idx": 101,
       "version": "7",
       "when": 1788598401000,

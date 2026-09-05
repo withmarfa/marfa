@@ -25,8 +25,8 @@ import { Readable } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import * as tar from "tar-stream";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
-import { publishEdge } from "../pubsub.js";
-import type { Edge } from "@withmarfa/shared";
+import { publish, publishEdge } from "../pubsub.js";
+import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAdmin } from "../middleware/auth.js";
@@ -529,6 +529,7 @@ export function adminArchiveRoutes(
     );
 
     // Filled inside the transaction, announced after it commits.
+    const restoredItems: { item: Item; metadata: Metadata }[] = [];
     const restoredEdges: Edge[] = [];
     let result;
     try {
@@ -579,11 +580,36 @@ export function adminArchiveRoutes(
             imported++;
             resolvableIds.add(created.id);
 
-            for (const [namespace, data] of Object.entries(
-              archiveExtensions(meta),
-            )) {
-              await storage.metadata.setExtension(created.id, namespace, data);
-            }
+            // One write for the whole set, not one per namespace. Each
+            // `setExtension` rewrites the same JSON column and bumps the
+            // item's modification time beside it, so writing them
+            // separately cost namespaces times items on the one path
+            // whose purpose is moving a lot of rows at once. What is
+            // stored is identical either way.
+            const extensions = archiveExtensions(meta);
+            const { extensions: stored, updated_at } =
+              await storage.metadata.setExtensions(created.id, extensions);
+            // Collected, not announced — for the same reason as the edges
+            // below. A rollback would take the row away and the
+            // `event_log` append with it, leaving a live subscriber
+            // holding a frame no replay can repair.
+            restoredItems.push({
+              // The extensions write bumps the item's modification time,
+              // and `created` was read before it ran. Announcing that
+              // frame would publish an `updated_at` the row does not
+              // carry: a client watermarking on it re-fetches on its next
+              // catch-up, and one comparing it against a later read sees
+              // a change nothing told it about.
+              item: updated_at ? { ...created, updated_at } : created,
+              metadata: {
+                item_id: created.id,
+                // `archiveTags` answers `undefined` for "the archive named
+                // none", which is what `create` wants and what a `Metadata`
+                // cannot hold — an item with no tags carries an empty list.
+                tags: archiveTags(meta) ?? [],
+                extensions: stored,
+              },
+            });
           } catch (err) {
             if (
               err instanceof MarfaError &&
@@ -708,10 +734,40 @@ export function adminArchiveRoutes(
 
     // After the transaction committed. A restore is a write like any
     // other from a subscriber's side: a client connected while an archive
-    // is restored would otherwise receive the items and none of the graph
-    // between them, and nothing later repairs it.
+    // is restored has to learn about the rows it wrote, and nothing later
+    // repairs a gap here — the event log is the only catch-up there is.
+    //
+    // Items before edges, because an edge names two endpoints and a client
+    // receiving one for a row it has never heard of has no way to resolve
+    // it. Announcing only the edges was worse than announcing neither for
+    // exactly that reason.
+    //
+    // Fan-out is declined, as it is on every other door that writes in
+    // bulk. A restore carries up to `MAX_ARCHIVE_ITEMS` rows, and driving
+    // outbound work per row per subscribed connection would push an
+    // archive's worth of writes back out to whatever an installed
+    // bidirectional connection is joined to — work nobody asked for, and
+    // work a restore is the least likely write to want. The flag governs
+    // only the outbound side effects: the log row and the stream frame
+    // land either way, which is the whole point of announcing these at
+    // all. It rides the persisted row too, so a drainer elected in
+    // another process reaches the same answer.
+    for (const { item, metadata } of restoredItems) {
+      await publish({
+        type: "created",
+        item,
+        metadata,
+        spaceId,
+        enableFanout: false,
+      });
+    }
     for (const edge of restoredEdges) {
-      await publishEdge({ type: "edge_created", edge, spaceId });
+      await publishEdge({
+        type: "edge_created",
+        edge,
+        spaceId,
+        enableFanout: false,
+      });
     }
 
     await storage.audit.log({

@@ -6,6 +6,7 @@ import type { EmailTransport } from "./email/transport.js";
 import type { DeadLetterOps } from "./integrations/local-runtime/dead-letters.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
 import { createPgStorage } from "./storage/pg/index.js";
+import { pgApplicationName } from "./storage/pg/connection.js";
 import { cloneTemplate } from "./storage/pg/test-template.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
@@ -95,10 +96,18 @@ export interface TestContext {
  * afterAll hooks of long-running files can sit behind a multi-second
  * queue. Awaiting cleanup bounds per-file work.
  */
+/**
+ * Connections a test file's pool may open. Named because the config a test
+ * app is built with has to state the same number: `/health` reports the pool
+ * against `dbPoolSize`, so a config that omits it describes a pool ten wide
+ * that is actually three, and the figure reads as permanently roomy.
+ */
+export const TEST_POOL_SIZE = 3;
+
 export async function createPgTestStorage(options?: {
   authMode?: "hosted" | "keys";
-  /** Override the default pool-size cap. Default is 3 — see comment
-   *  inside this function for the rationale. */
+  /** Override the default pool-size cap. Default is `TEST_POOL_SIZE` — see
+   *  the comment inside this function for the rationale. */
   maxPoolSize?: number;
 }): Promise<{ storage: Storage; cleanup: () => Promise<void> }> {
   const clone = await cloneTemplate();
@@ -108,7 +117,14 @@ export async function createPgTestStorage(options?: {
   // template, saving hundreds of ms per storage creation under parallel load.
   const storage = await createPgStorage(clone.url, {
     ...options,
-    maxPoolSize: options?.maxPoolSize ?? 3,
+    maxPoolSize: options?.maxPoolSize ?? TEST_POOL_SIZE,
+    // Named rather than left to default, because this pool stands in for a
+    // server's own and `/health` finds that pool by its label. Unnamed it
+    // would carry `PG_UNNAMED_APPLICATION_NAME`, which is deliberately not a
+    // label any role produces, and the endpoint would report a pool it never
+    // found as an idle one. `buildTestContext` builds its `AppConfig` with no
+    // `processRole`, so this is the same expression the endpoint evaluates.
+    applicationName: pgApplicationName(undefined),
     skipBootstrap: true,
   });
   return {
@@ -581,7 +597,16 @@ async function buildTestContext(
   let storage: Storage;
   let pgCleanup: (() => Promise<void>) | undefined;
   if (dialect === "pg") {
-    const clone = await createPgTestStorage({ authMode: storageAuthMode });
+    // `dbPoolSize` is a real config field, so a test that sets it means
+    // it: a suite about what a request does to the pool needs the pool it
+    // asked for, and the default of three hides an exhaustion the code
+    // would reach at one. Absent, the default stands.
+    const clone = await createPgTestStorage({
+      authMode: storageAuthMode,
+      ...(overrides?.dbPoolSize !== undefined && {
+        maxPoolSize: overrides.dbPoolSize,
+      }),
+    });
     storage = clone.storage;
     pgCleanup = clone.cleanup;
   } else {
@@ -592,6 +617,9 @@ async function buildTestContext(
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const config: AppConfig = {
     port: 0,
+    // What `createPgTestStorage` actually builds. Unset, `/health` would
+    // report this pool against the production default instead.
+    dbPoolSize: TEST_POOL_SIZE,
     storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
     databaseUrl: "",

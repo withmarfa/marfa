@@ -69,6 +69,22 @@
  * the account whose rows these are is going, so there is no client left to
  * tell and no credential left to read the stream with. `TrashPurger`
  * carries the general argument.
+ *
+ * **`pgDeleteSpace` below is silent for a different reason, and the one
+ * above does not reach it.** No account is going there — it removes a
+ * space that never had one — so "the owner is leaving" is simply not the
+ * argument. What holds instead is that the space's `api_keys` go in the
+ * same transaction, so no credential scoped to that space survives the
+ * commit to reconcile against; and that `TrashPurger`'s general point
+ * applies unchanged, since a whole-space teardown is not a set of row
+ * edits any replica repairs from.
+ *
+ * The one subscriber that does survive is a platform credential, which
+ * carries no `space_id` and therefore streams unfiltered. It would see
+ * these rows go if they were published. It is deliberately not told: it
+ * holds no per-space replica to repair, and the alternative is thousands
+ * of per-row frames announcing the disappearance of a space the same
+ * request has already removed.
  */
 import { eq, sql } from "drizzle-orm";
 import type { Storage } from "../interface.js";
