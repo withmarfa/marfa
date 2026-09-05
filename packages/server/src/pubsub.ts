@@ -470,7 +470,54 @@ async function resolveFanout(
   return fansOut(event) && within;
 }
 
-export async function publish(event: ItemEvent): Promise<bigint | undefined> {
+/**
+ * The space an event belongs to: the row's own, falling back to the caller's.
+ *
+ * **A caller's space and its rows' space are the same thing right up until
+ * they are not.** Storage is space-scoped at the SQL layer, so for an ordinary
+ * space-bound credential a row it read is already in its own space and this
+ * changes nothing. A platform admin is not space-bound: its `space_id` is
+ * null, so every door that took the space from the credential published
+ * unscoped whenever an admin wrote to somebody else's rows.
+ *
+ * An unscoped event is not a broadly-delivered one. `subscribeItems` drops an
+ * event whose space does not match a space-bound subscriber's, so the account
+ * whose rows were written was the one account not told — while the unscoped
+ * admin, matching nothing, received everything. The event log is worse than
+ * the stream: its read is `space_id = ?`, which SQL never matches against
+ * NULL, so a frame written unscoped can never be replayed to the owner's
+ * cursor and no gap signal reports it.
+ *
+ * Deriving here rather than at each door is what closes the class. The
+ * fallback direction is what makes it safe: a genuinely space-less row keeps
+ * the caller's space, so this can only ever widen correctness and never
+ * narrow an event that is delivered correctly today.
+ */
+function spaceForEvent(
+  row: { space_id?: string | null },
+  declared: string | undefined,
+): string | undefined {
+  const own = row.space_id ?? undefined;
+  if (own !== undefined && declared !== undefined && own !== declared) {
+    // Neither is null, and they disagree. That is a door addressing an event
+    // somewhere its row does not live, which is always a bug — reported
+    // rather than thrown, because this runs after the write has committed and
+    // a throw would turn a mis-addressed event into a failed write.
+    log("warn", "Event addressed to a space its row does not belong to", {
+      item_id: (row as { id?: string }).id,
+      row_space: own,
+      declared_space: declared,
+    });
+  }
+  return own ?? declared;
+}
+
+export async function publish(input: ItemEvent): Promise<bigint | undefined> {
+  const spaceId = spaceForEvent(input.item, input.spaceId);
+  const event: ItemEvent = {
+    ...input,
+    ...(spaceId !== undefined && { spaceId }),
+  };
   const cycle = resolveCycleForPublish(event);
   const enableFanout = await resolveFanout(event, cycle);
 
@@ -519,8 +566,13 @@ export async function publish(event: ItemEvent): Promise<bigint | undefined> {
  * re-read and leaves no tombstone when it goes.
  */
 export async function publishEdge(
-  event: EdgeEvent,
+  input: EdgeEvent,
 ): Promise<bigint | undefined> {
+  const spaceId = spaceForEvent(input.edge, input.spaceId);
+  const event: EdgeEvent = {
+    ...input,
+    ...(spaceId !== undefined && { spaceId }),
+  };
   const cycle = resolveCycleForPublish(event);
   const enableFanout = await resolveFanout(event, cycle);
 
