@@ -3,8 +3,9 @@
  *
  *   POST /items/bulk-get — id-list-in: caller provides explicit item ids and
  *                          gets back the items in one round-trip. Optional
- *                          `include` hydrates edges / metadata / extensions /
- *                          system the same way GET /items does.
+ *                          `include` takes the same tokens as GET /items:
+ *                          edges / metadata / extensions hydrate an extra,
+ *                          and system widens which items come back.
  *
  * Read-only counterpart to POST /items/bulk (the upsert path). Every id is
  * resolved through the SAME space-scoped store method the single-item GET
@@ -53,7 +54,9 @@ const BulkGetRequestSchema = z.object({
     .array(z.enum(INCLUDE_TOKENS))
     .optional()
     .describe(
-      "Extras to hydrate inline: edges, metadata, extensions, system. " +
+      "`edges`, `metadata` and `extensions` hydrate those extras inline on the " +
+        "items already being returned. `system` is different in kind: it widens " +
+        "the result to include `system.*` items, which are omitted by default. " +
         "Mirrors the GET /items `include` tokens.",
     ),
 });
@@ -87,7 +90,9 @@ const bulkGetRoute = createRoute({
     "permission-filtered exactly like the single-item GET: ids the caller " +
     "cannot read (other space, type not permitted, trashed, or missing) " +
     "are silently omitted rather than erroring the whole request. Optional " +
-    "`include` hydrates edges, metadata, extensions, or system items inline.",
+    "`include` takes the same tokens as GET /items: `edges`, `metadata` and " +
+    "`extensions` hydrate an extra inline, while `system` widens the result " +
+    "to include `system.*` items, which are omitted by default.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {

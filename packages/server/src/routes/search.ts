@@ -64,12 +64,20 @@ const searchRoute = createRoute({
         .enum(["library", "feed", "all"])
         .describe("Filter by tier; `all` or absent means unfiltered.")
         .optional(),
-      /** Opt-in inclusions, comma-separated. `system` includes
-       *  `system.*` records, which are excluded from search results by
-       *  default (operational items are not part of the user data tier). */
+      /** What the token does is in the published description rather than
+       *  restated here. The reason `system.*` is excluded by default is not
+       *  recorded anywhere in this repository — `storage/interface.ts` gives
+       *  the mechanism and no rationale — so nothing is asserted about it
+       *  here. An earlier draft of this comment invented one. */
       include: z
         .string()
-        .describe("Comma-separated opt-in inclusions, e.g. `system`.")
+        .describe(
+          "Comma-separated opt-in inclusions. `system` widens the row set to " +
+            "include `system.*` items, which are excluded by default. A `type` " +
+            "filter in the `system.` namespace, concrete or wildcard, opts in " +
+            "on its own without the token. " +
+            "It is the only token this route reads.",
+        )
         .optional(),
       /** Comma-separated tag list. Items must have ALL specified tags. */
       tags: z

@@ -201,9 +201,11 @@ export interface ListFilters {
   limit?: number;
   cursor?: string;
   /**
-   * Opt-in hydrations on the list response. Comma-separated values; each
-   * value widens the per-item shape. Prefer the typed helpers
-   * (`listWithMetadata`, `listWithExtensions`) over raw strings.
+   * Opt-in tokens on the list response, comma-separated. Three hydrate an
+   * extra onto the rows already being returned; `system` widens the row set
+   * instead, so they are not all one kind of thing and the difference is the
+   * one worth reading below. The typed helpers `listWithMetadata` and
+   * `listWithExtensions` cover the first kind; `system` has no helper.
    *
    * - `system` — also returns `system.*` rows, which are omitted by
    *   default. A read that prunes against its result needs this, or every
@@ -1017,9 +1019,14 @@ export class MarfaClient {
      * shorter than `ids` and is in no guaranteed order. Capped at 100 ids
      * server-side — an over-cap request throws a `validation_error`.
      *
-     * `opts.include` hydrates extras inline (edges / metadata / extensions /
-     * system) the same way the list endpoint does, collapsing what would
-     * otherwise be one request per id.
+     * `opts.include` takes the same tokens as the list endpoint, and they are
+     * not all the same kind of thing. `edges`, `metadata` and `extensions`
+     * hydrate an extra inline, collapsing what would otherwise be one request
+     * per id. `system` does not: it widens which items come back, and without
+     * it a `system.*` id you asked for by name is dropped from the array
+     * silently, the same way an unreadable id is. The `system` bullet on
+     * {@link ListFilters.include} says what that costs a client reconciling a
+     * local store.
      */
     getMany: async (
       ids: string[],
