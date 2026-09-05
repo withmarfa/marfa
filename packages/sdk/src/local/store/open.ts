@@ -105,6 +105,24 @@ async function openConnection(path: string): Promise<OpenDbResult> {
   // a writer locks every reader out for the length of its transaction.
   await raw.execute("PRAGMA journal_mode = WAL");
   await raw.execute("PRAGMA foreign_keys = ON");
+  // A plain statement on this connection can meet the write lock held by
+  // an interactive transaction, which libsql runs on a connection of its
+  // own, and WAL admits one writer. Without a timeout the statement is
+  // refused outright rather than waiting for a lock it would get in
+  // microseconds.
+  //
+  // It cannot help the other direction — a `BEGIN` refused because this
+  // connection is mid-transaction — because the timeout is a property of
+  // the connection being refused, and that one is libsql's rather than
+  // ours. Serializing transactions per store handle is what covers that,
+  // and the two together are what "one writer per store" means inside a
+  // process.
+  //
+  // Five seconds is a ceiling on a legitimate write rather than a guess:
+  // the longest lock this engine takes is one transaction — a hydration
+  // page, or the drain settling one response — which is milliseconds.
+  // Reaching this is a writer that has stopped rather than a busy one.
+  await raw.execute("PRAGMA busy_timeout = 5000");
 
   const db = drizzle(raw, { schema: localSchema });
 

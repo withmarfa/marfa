@@ -3,6 +3,9 @@ import type { MarfaClient } from "../client.js";
 import { putEdgeIfNotOlder, putItemIfNotOlder } from "./apply.js";
 import { classifyFailure, type Verdict } from "./classify.js";
 import type { LocalStore } from "./store/index.js";
+import type { BlobRefusal, LocalBlobs } from "./blobs.js";
+import type { LocalTypeGraph } from "./type-graph.js";
+import { localRefusalFor } from "./validate.js";
 import type {
   LocalEngineEvent,
   LocalEngineEventListener,
@@ -22,6 +25,25 @@ export const DEFAULT_RETRY_CEILING = 5;
 export interface DrainOptions {
   store: LocalStore;
   client: MarfaClient;
+  /**
+   * The local type graph, for the one refresh a schema refusal buys.
+   *
+   * Optional, and its absence is a real configuration rather than an
+   * oversight: an engine wired without it treats a schema refusal as
+   * final on the first answer, which is the older behavior and the right
+   * one when there is no graph to be stale.
+   */
+  types?: LocalTypeGraph;
+  /**
+   * The blob queue, for the uploads that go in front of the writes that
+   * name them.
+   *
+   * Optional in the same way `types` is. Without it nothing uploads, and
+   * a write naming a blob this store staged is held rather than sent —
+   * which is the honest answer, because sending it would put a reference
+   * on the server to bytes the server does not have.
+   */
+  blobs?: LocalBlobs;
   /** Transient attempts a mutation gets before it parks. */
   retryCeiling?: number;
   /**
@@ -328,6 +350,123 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
     return { events, removed };
   };
 
+  /**
+   * The type and the whole property bag this mutation would present to the
+   * server, for revalidating against a refreshed graph.
+   *
+   * Undefined for anything that has no item type to validate against: an
+   * edge write, a delete, or an update whose row this store no longer
+   * holds. The caller sends again rather than guessing, which is the
+   * conservative direction — the server is the authority and a second
+   * refusal costs one request.
+   */
+  const validatable = async (
+    entry: OutboxEntry,
+  ): Promise<
+    { type: string; properties: Record<string, unknown> } | undefined
+  > => {
+    if (entry.kind === "item.create") {
+      const payload = entry.payload as {
+        type?: string;
+        properties?: Record<string, unknown>;
+      };
+      if (payload.type === undefined) return undefined;
+      return { type: payload.type, properties: payload.properties ?? {} };
+    }
+    if (entry.kind !== "item.update") return undefined;
+    // The visible row, which is server state with this very update already
+    // replayed over it — so it is the merged bag the server will validate,
+    // not the patch.
+    const held = await store.visible.getItem(entry.targetId);
+    if (held === undefined) return undefined;
+    return { type: held.type, properties: held.properties };
+  };
+
+  /**
+   * Dead-letter every queued mutation that names one of these blobs.
+   *
+   * A create the server refused cascades through `deadLetter`, which walks
+   * the queue for dependants. A refused *upload* is the same shape from
+   * the other end: nothing that references those bytes can ever succeed,
+   * because the reference would resolve to nothing on the server. The
+   * bytes stay on disk either way — that is the half of rule 14 the person
+   * cares about.
+   */
+  const cascadeRefusedBlobs = async (
+    refusals: BlobRefusal[],
+  ): Promise<{ events: LocalEngineEvent[]; removed: number[] }> => {
+    const events: LocalEngineEvent[] = [];
+    const removed: number[] = [];
+    if (refusals.length === 0) return { events, removed };
+    const at = now();
+    const byHash = new Map(refusals.map((refusal) => [refusal.hash, refusal]));
+
+    await store.transaction(async (tx) => {
+      const queued = await tx.outbox.list();
+
+      // The writes that name the refused bytes directly, and then
+      // everything that waits on those — an edit to the item the
+      // attachment was on, an edge pointing at it. The closure is the same
+      // one a refused create takes, and for the same reason: the row those
+      // dependants name is never going to exist on the server, so sending
+      // them produces a 404 apiece and a dead letter that says the wrong
+      // thing about why.
+      const cause = new Map<string, BlobRefusal>();
+      for (const candidate of queued) {
+        const refusal = candidate.dependsOn
+          .map((id) => byHash.get(id))
+          .find((found) => found !== undefined);
+        if (refusal !== undefined) cause.set(candidate.targetId, refusal);
+      }
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const candidate of queued) {
+          if (cause.has(candidate.targetId)) continue;
+          const inherited = heldIds(candidate)
+            .map((id) => cause.get(id))
+            .find((found) => found !== undefined);
+          if (inherited === undefined) continue;
+          cause.set(candidate.targetId, inherited);
+          grew = true;
+        }
+      }
+
+      for (const candidate of queued) {
+        const refusal = heldIds(candidate)
+          .map((id) => cause.get(id))
+          .find((found) => found !== undefined);
+        if (refusal === undefined) continue;
+        const message = `Waiting on the upload of ${refusal.hash}, which the server refused: ${refusal.message}. The bytes are kept.`;
+        await tx.deadLetters.record({
+          id: candidate.id,
+          seq: candidate.seq,
+          kind: candidate.kind,
+          targetKind: candidate.targetKind,
+          targetId: candidate.targetId,
+          payload: candidate.payload,
+          reason: "cascaded",
+          code: refusal.code,
+          message,
+          httpStatus: refusal.httpStatus,
+          failedAt: at,
+        });
+        await tx.outbox.remove(candidate.seq);
+        removed.push(candidate.seq);
+        events.push({
+          type: "mutation.dead_lettered",
+          seq: candidate.seq,
+          id: candidate.id,
+          reason: "cascaded",
+          code: refusal.code,
+          message,
+        });
+      }
+    });
+
+    return { events, removed };
+  };
+
   const finish = async (
     sent: number,
     parked: boolean,
@@ -343,7 +482,6 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
 
   return {
     drain: async () => {
-      const queued = await store.outbox.list();
       /** Ids with unsent work in front of them on this pass. */
       const waiting = new Set<string>();
       // A cascade takes rows out of the queue that this pass is still
@@ -351,6 +489,32 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
       // already given up on, against a row the server refused to create.
       const gone = new Set<number>();
       let sent = 0;
+
+      // Uploads first, and the whole of rule 14's ordering is in that one
+      // word. A write that names a blob is sent only after the bytes are
+      // on the server, so a reference on the server never points at
+      // nothing — and this is the only place that ordering is enforced,
+      // because the queue's own ordering is by when a mutation was made
+      // rather than by what it depends on.
+      if (options.blobs !== undefined) {
+        const flushed = await options.blobs.flush();
+        const cascade = await cascadeRefusedBlobs(flushed.refused);
+        for (const seq of cascade.removed) gone.add(seq);
+        for (const event of cascade.events) emit(event);
+        if (flushed.auth !== undefined) {
+          const parked = await store.outbox.blockAll("auth", now());
+          emit({
+            type: "queue.parked",
+            reason: "auth",
+            parked,
+            message: flushed.auth,
+          });
+          return finish(0, true, false);
+        }
+        if (flushed.offline) return finish(0, false, true);
+      }
+
+      const queued = await store.outbox.list();
 
       for (const entry of queued) {
         if (gone.has(entry.seq)) continue;
@@ -368,6 +532,40 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
         // with its own `heldIds` against everything already waiting.
         const held = heldIds(entry).some((id) => waiting.has(id));
         if (entry.state === "blocked" || held) {
+          waiting.add(entry.targetId);
+          continue;
+        }
+
+        // Blobs this store staged and has not landed. `pending` holds the
+        // write; `failed` ends it, because the reference would resolve to
+        // nothing on the server and no amount of waiting changes that.
+        // Holding it instead would leave a write skipped on every pass with
+        // no reason attached, which is the shape of a queue entry nobody
+        // can act on.
+        let blobRefusal: BlobRefusal | undefined;
+        let awaitingUpload = false;
+        for (const dependency of entry.dependsOn) {
+          const blob = await store.blobs.get(dependency);
+          if (blob === undefined) continue;
+          if (blob.state === "failed") {
+            blobRefusal = {
+              hash: blob.hash,
+              code: blob.code,
+              httpStatus: null,
+              message: blob.lastError ?? "the upload was refused",
+            };
+            break;
+          }
+          awaitingUpload = true;
+        }
+        if (blobRefusal !== undefined) {
+          const cascade = await cascadeRefusedBlobs([blobRefusal]);
+          for (const seq of cascade.removed) gone.add(seq);
+          for (const event of cascade.events) emit(event);
+          waiting.add(entry.targetId);
+          continue;
+        }
+        if (awaitingUpload) {
           waiting.add(entry.targetId);
           continue;
         }
@@ -427,6 +625,75 @@ export function createOutboxDrain(options: DrainOptions): OutboxDrain {
               reason: "needs_review",
               message: verdict.message,
             });
+            waiting.add(entry.targetId);
+            break;
+          }
+
+          case "schema": {
+            const asPermanent = {
+              class: "permanent" as const,
+              code: verdict.code,
+              httpStatus: verdict.httpStatus,
+              message: verdict.message,
+            };
+
+            // The refresh has already been spent on this mutation, or
+            // there is no graph to refresh. Either way the server's answer
+            // is the last word.
+            if (
+              entry.schemaRefreshedAt !== null ||
+              options.types === undefined
+            ) {
+              const cascade = await deadLetter(entry, asPermanent);
+              for (const seq of cascade.removed) gone.add(seq);
+              for (const event of cascade.events) emit(event);
+              break;
+            }
+
+            try {
+              await options.types.refresh();
+            } catch (refreshError) {
+              // The graph could not be read, so nothing has been learned
+              // and nothing is recorded against the mutation. An
+              // unreachable server ends the pass exactly as an unreachable
+              // write does; anything else leaves the write pending to be
+              // tried again, because a refusal this engine has not
+              // finished thinking about must not become a dead letter.
+              const why = classifyFailure(refreshError, entry.kind);
+              if (why.class === "offline") return finish(sent, false, true);
+              waiting.add(entry.targetId);
+              break;
+            }
+            await store.outbox.markSchemaRefreshed(entry.seq, now());
+
+            // Revalidation, the second half of the allowance. A write the
+            // refreshed graph still refuses is refused for good, and
+            // sending it again would spend a request to be told what this
+            // client now knows.
+            const subject = await validatable(entry);
+            const stillRefused =
+              subject === undefined
+                ? undefined
+                : localRefusalFor(
+                    subject.type,
+                    subject.properties,
+                    store.identity.spaceId,
+                  );
+            if (stillRefused !== undefined) {
+              const cascade = await deadLetter(entry, {
+                ...asPermanent,
+                message: `${verdict.message} — and the refreshed type graph refuses it too: ${stillRefused.message}`,
+              });
+              for (const seq of cascade.removed) gone.add(seq);
+              for (const event of cascade.events) emit(event);
+              break;
+            }
+
+            // The graph moved and the write now looks valid, so it is
+            // owed another send — on the next pass rather than this one.
+            // This drain is one pass by design, and a mutation that
+            // re-sent itself here would be a retry loop the caller never
+            // asked for.
             waiting.add(entry.targetId);
             break;
           }

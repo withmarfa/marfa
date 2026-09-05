@@ -4,7 +4,7 @@
  * A write lands on disk first and reaches the server afterwards, so an app
  * built on this keeps working with no network and opens with what it had
  * last time. What the engine keeps is the published sync contract, which is
- * behaviour rather than code: any engine holding to it is correct, whatever
+ * behavior rather than code: any engine holding to it is correct, whatever
  * language it is written in.
  *
  * Three layers, not one. Server state is what the server last said; the
@@ -35,7 +35,14 @@ export type {
   OutboxLayer,
   DeadLetterLayer,
   ServerStateLayer,
+  BlobLayer,
+  CachedBlob,
+  PendingBlob,
+  LocalSearchFilters,
+  LocalSearchResult,
+  SearchLayer,
   SyncStateLayer,
+  TypeCacheLayer,
   VisibleLayer,
   EnqueueInput,
   StoreRecovery,
@@ -73,6 +80,25 @@ export type { ImportOptions, ImportResult } from "./import.js";
 
 export { classifyFailure } from "./classify.js";
 export type { Verdict } from "./classify.js";
+
+export {
+  collectBlobHashes,
+  createBlobStore,
+  defaultBlobDir,
+  hashBlob,
+  DEFAULT_BLOB_CACHE_BYTES,
+} from "./blobs.js";
+export type {
+  BlobFlushResult,
+  BlobRefusal,
+  BlobStoreOptions,
+  LocalBlobs,
+} from "./blobs.js";
+
+export { createTypeGraph } from "./type-graph.js";
+export type { LocalTypeGraph, TypeGraphOptions } from "./type-graph.js";
+
+export { LocalSchemaRefusal } from "./validate.js";
 
 export { SINGLE_ACCOUNT, SINGLE_SPACE } from "./types.js";
 export type {

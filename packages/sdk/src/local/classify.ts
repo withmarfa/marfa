@@ -40,6 +40,19 @@ export type Verdict =
    * compare against and the two versions have to be shown side by side.
    */
   | { class: "conflict"; code: string; httpStatus: number; message: string }
+  /**
+   * The server refused the write because the properties do not match the
+   * type.
+   *
+   * Its own member rather than a `permanent`, because the client's copy of
+   * the type graph may simply be older than the server's — a type
+   * registered or widened on another device is one this store has never
+   * read. So the first such refusal buys one `GET /types` and one local
+   * revalidation, and only the refusal after that is final. Without the
+   * distinction a client with a stale graph dead-letters writes that the
+   * server would accept as soon as it knew what the server knows.
+   */
+  | { class: "schema"; code: string; httpStatus: number; message: string }
   /** Refused for good. The mutation dead-letters, and a refused create
    *  takes its dependants with it. */
   | {
@@ -89,6 +102,32 @@ const KEY_IN_FLIGHT = "idempotency_key_in_flight";
  * against: the server cannot tell you, and you must not guess.
  */
 const RESULT_NOT_RETAINED = "idempotency_result_not_retained";
+
+/**
+ * The codes the server answers when an item's properties do not match its
+ * type. Two of them, for one refusal.
+ *
+ * Both doors run the same validation over the same schema and wrap the
+ * same error list; they differ only in which layer raises it. Creating an
+ * item raises the storage layer's generic validation code; updating,
+ * upserting, bulk-writing and the strict-mode pre-check raise the route
+ * layer's specific invalid-properties code. The specific one is what the
+ * contract means and what the server is settling on, and the create path
+ * is the odd one out.
+ *
+ * Both are accepted here rather than only the specific one, because a
+ * classification that recognized one and not the other would be wrong in
+ * both directions at once: a create refused on schema grounds would fall
+ * through to the generic 400 arm and be dead-lettered without the registry
+ * refresh it is owed, while a client taught only the generic code would
+ * read unrelated validation failures as schema ones. Accepting both costs
+ * nothing once the split closes — the generic code stops arriving from
+ * this door, and this set stops needing its second member.
+ */
+const SCHEMA_REFUSAL_CODES = new Set([
+  "validation_error",
+  "invalid_properties",
+]);
 
 /**
  * Decide what becomes of a write the server did not accept.
@@ -153,10 +192,19 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
     return { class: "conflict", code, httpStatus: status, message };
   }
 
-  // 400 covers validation and the schema refusals. The contract's one
-  // registry refresh and revalidation before a schema refusal counts as
-  // permanent needs a local type registry, which this engine does not carry
-  // yet; until it does, a schema refusal is treated like any other 400.
+  // A schema refusal, on either of the two codes the server answers it
+  // with. Not permanent yet: the local graph gets one refresh and one
+  // revalidation first, and the drain is what spends it.
+  if (status === 400 && SCHEMA_REFUSAL_CODES.has(code)) {
+    return { class: "schema", code, httpStatus: status, message };
+  }
+
+  // Every other 400, including `unknown_type`. A refresh does nothing for
+  // that one: it says the *server* has no such type, and reading the
+  // server's vocabulary again cannot change the server's answer. Only a
+  // refusal about properties against a type is worth a second look, and it
+  // is handled above.
+  //
   // 403 and 404 are the caller's authority and the row's existence, neither
   // of which a retry changes. A 409 that got this far is on a create or a
   // delete, where it means the id is held by something this client did not

@@ -35,6 +35,7 @@ interface OutboxRow {
   blockedReason: string | null;
   attempts: number;
   lastError: string | null;
+  schemaRefreshedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -54,6 +55,7 @@ function toEntry(row: OutboxRow): OutboxEntry {
     blockedReason: row.blockedReason as BlockedReason | null,
     attempts: row.attempts,
     lastError: row.lastError,
+    schemaRefreshedAt: row.schemaRefreshedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -72,6 +74,18 @@ export interface OutboxLayer {
   count(): Promise<number>;
   remove(seq: number): Promise<void>;
   recordAttempt(seq: number, error: string, now: string): Promise<void>;
+  /**
+   * Record that this mutation's schema refusal has been answered with a
+   * registry refresh.
+   *
+   * Written rather than counted, and written on the row rather than kept
+   * by the drain, because the contract's allowance is one refresh per
+   * refusal for the life of the mutation. A count in memory would start
+   * again after a restart, and a queue of writes refused on the same
+   * grounds would each ask the server for the vocabulary it has already
+   * given.
+   */
+  markSchemaRefreshed(seq: number, now: string): Promise<void>;
   block(seq: number, reason: BlockedReason, now: string): Promise<void>;
   /** Park every unsent mutation. Used when the credential is spent: the
    *  refusal belongs to the queue, not to the one write that met it. */
@@ -111,6 +125,7 @@ export function createOutboxLayer(exec: Executor): OutboxLayer {
         blockedReason: outbox.blockedReason,
         attempts: outbox.attempts,
         lastError: outbox.lastError,
+        schemaRefreshedAt: outbox.schemaRefreshedAt,
         createdAt: outbox.createdAt,
         updatedAt: outbox.updatedAt,
       })
@@ -153,6 +168,7 @@ export function createOutboxLayer(exec: Executor): OutboxLayer {
         blockedReason: null,
         attempts: 0,
         lastError: null,
+        schemaRefreshedAt: null,
         createdAt: input.now,
         updatedAt: input.now,
       };
@@ -192,6 +208,13 @@ export function createOutboxLayer(exec: Executor): OutboxLayer {
           lastError: error,
           updatedAt: now,
         })
+        .where(eq(outbox.seq, seq));
+    },
+
+    markSchemaRefreshed: async (seq, now) => {
+      await exec
+        .update(outbox)
+        .set({ schemaRefreshedAt: now, updatedAt: now })
         .where(eq(outbox.seq, seq));
     },
 

@@ -107,6 +107,17 @@ export const outbox = sqliteTable(
     blockedReason: text("blocked_reason"),
     attempts: integer("attempts").notNull().default(0),
     lastError: text("last_error"),
+    /**
+     * When this mutation's schema refusal was answered with a registry
+     * refresh, or null when none has been.
+     *
+     * On the row rather than in the drain, because the drain is one pass
+     * and the guarantee is "once, ever" rather than "once per pass". A
+     * counter held in memory would let a restart spend a second refresh on
+     * the same refusal, and a queue of a hundred refused writes would spend
+     * a hundred — against a server that has already given its answer.
+     */
+    schemaRefreshedAt: text("schema_refreshed_at"),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
   },
@@ -168,6 +179,89 @@ export const syncState = sqliteTable(
   ],
 );
 
+/**
+ * The custom types this store has seen the server hold.
+ *
+ * Platform types ship with `@withmarfa/shared` and are never written here:
+ * caching a type the build already compiles in would let a stale row
+ * shadow the shipped one, and `hydrateTypeRegistry` skips them for the
+ * same reason.
+ *
+ * No space column. A store belongs to one origin, space and account — that
+ * is what `sync_state` records and what `openLocalStore` refuses to open
+ * against a mismatch — so every row here belongs to that space and a
+ * column saying so could only ever disagree with it.
+ *
+ * The whole table is replaced on a refresh rather than merged, because
+ * `GET /types` answers with the whole vocabulary. Merging would keep a
+ * type the server has since deleted, and the client would go on validating
+ * writes against a type nothing will accept.
+ */
+export const cachedTypes = sqliteTable("cached_types", {
+  id: text("id").primaryKey().notNull(),
+  payload: text("payload").notNull(),
+  cachedAt: text("cached_at").notNull(),
+});
+
+/**
+ * Blobs this client has staged and not yet uploaded.
+ *
+ * The row is the queue; the bytes are on disk beside the store. Rule 14
+ * puts the upload in front of the write that names it, so a row here is
+ * what a queued mutation waits behind, and it survives a restart for the
+ * same reason the outbox does.
+ *
+ * A row that has failed for good keeps its bytes. That is the whole point
+ * of the rule: an upload the server refused is a photograph a person took,
+ * and dropping it because a request failed is the outcome the rule exists
+ * to prevent. It leaves only when the app says so.
+ */
+export const pendingBlobs = sqliteTable(
+  "pending_blobs",
+  {
+    /** `sha256:<hex>`, computed over the bytes, which is the same
+     *  content-addressed name the server gives them. */
+    hash: text("hash").primaryKey().notNull(),
+    mimeType: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    /** `pending` until it lands, then the row leaves; `failed` when the
+     *  server refused it for good and the bytes are being kept. */
+    state: text("state").notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    code: text("code"),
+    lastError: text("last_error"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("pending_blobs_state_idx").on(table.state, table.createdAt),
+  ],
+);
+
+/**
+ * Blobs downloaded for offline reading, with their bytes on disk beside
+ * the store.
+ *
+ * Separate from {@link pendingBlobs} because the two answer different
+ * questions and have opposite lifetimes. A pending blob's bytes are the
+ * only copy anywhere and must not be evicted; a cached blob's bytes are a
+ * copy of something the server holds and can always be fetched again.
+ * Folding them into one table would put a person's unsent attachment one
+ * eviction away from being gone.
+ */
+export const blobCache = sqliteTable(
+  "blob_cache",
+  {
+    hash: text("hash").primaryKey().notNull(),
+    mimeType: text("mime_type").notNull(),
+    size: integer("size").notNull(),
+    /** What the eviction rule orders by. */
+    lastReadAt: text("last_read_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [index("blob_cache_last_read_idx").on(table.lastReadAt)],
+);
+
 export const localSchema = {
   serverItems,
   serverEdges,
@@ -175,4 +269,7 @@ export const localSchema = {
   outbox,
   deadLetters,
   syncState,
+  cachedTypes,
+  pendingBlobs,
+  blobCache,
 };

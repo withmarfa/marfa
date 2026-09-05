@@ -11,6 +11,18 @@ TypeScript HTTP client for the Marfa API. Public package, published to npm via O
 - `src/errors.ts` — typed `MarfaError` subclasses (`NotFoundError`, `ValidationError`, `UnauthorizedError`, `ForbiddenError`, `ConflictError`).
 - `src/define-type.ts` — `defineType()` authoring helper. No-op at runtime; constrains the input to a structurally-valid `TypeSchema` at compile time.
 - `src/webhooks.ts` — inbound webhook signature verification (`verifyWebhookSignature`).
+- `src/local/` — the durable local engine, published as `@withmarfa/sdk/local`. Its own tsup entry, with `@libsql/client` and `drizzle-orm` as optional peers, so a consumer that does not want a local store does not pay for one. `store/` is the SQLite half (server state in three layers, the outbox, dead letters, sync state, the cached type graph, the blob queue and cache, the search index); `drain.ts`, `sync.ts`, `apply.ts` and `import.ts` are the sending, streaming and hydrating halves; `projection.ts` feeds a TanStack DB collection. Store migrations are hand-written under `drizzle/local/` — SQL plus a journal entry, the same shape the server uses, with no generator.
+
+## The local engine: types, blobs, search
+
+Three behaviors that only exist on the local engine, and each of them changes what a caller sees.
+
+- **A write is validated before it is queued.** `store.mutations.createItem` and `updateItem` run `validateProperties` against the process registry, scoped to the store's own space, and throw `LocalSchemaRefusal` rather than enqueuing. An update is validated as the merged row, not as the patch. **A type the client has never heard of is not refused** — the server is the authority on what types exist, and a store whose cache is cold has to be able to write.
+- **The type graph is cached.** `createTypeGraph({ store, client })` reads `GET /types`, registers the payload through `hydrateTypeRegistry` and writes it to `cached_types`; `load()` registers what the store already holds, with no network. Pass the graph to `createOutboxDrain` or `createLocalEngine` and a schema refusal from the server buys one refresh and one revalidation before it is treated as permanent, recorded on the outbox row so the allowance is once per mutation rather than once per pass. **Two server codes mean the same refusal** (`validation_error` from the create door, `invalid_properties` from the rest), and the classification accepts both.
+- **Blobs queue with their bytes.** `createBlobStore({ store, client })` hashes locally, writes the bytes beside the store, and queues the upload; the reference can go on an item immediately. Pass it to the drain and every upload lands before any write that names it. On replay a `HEAD /blobs/:hash` probe tells an upload that landed from one that was lost. An upload refused for good dead-letters the writes waiting on it and **keeps the bytes**, which leave only through `discard`. The read-through cache is bounded by total bytes and evicts the least recently read; staged bytes are never candidates.
+- **Search is offline.** `store.search.find(query, filters)` runs FTS5 over the same fields server search indexes — the four core fields plus every other searchable string field the type declares — so the same term finds the same items. **Ranking may differ**: both order by bm25, and bm25 is relative to the documents in the index. Results resolve through visible state, so an unsent write is findable and a queued delete is not returned.
+
+**Two properties are easy to break silently.** The search index is created on the raw libsql client at open, because drizzle cannot express a virtual table; an index found absent is refilled from the store, since an empty one answers every search with nothing and looks exactly like a search that matched nothing. And transactions are serialized per store handle, because libsql runs an interactive transaction on a connection of its own and a second `BEGIN` is refused outright rather than waiting — a busy timeout cannot help there, since the connection being refused is libsql's.
 
 ## Subpaths with optional peers
 
@@ -59,6 +71,8 @@ pnpm exec vitest run --project @withmarfa/sdk
 ```
 
 The replica tests need the optional `@tanstack/db` peer installed. When a test depends on a server-side change, rebuild `@withmarfa/shared` and `@withmarfa/server` first (`pnpm --filter @withmarfa/shared build`) so the SDK picks up the new dist.
+
+`src/local/scenarios.test.ts` carries the sync contract's scenario list, each test naming the offline-seam mode it uses in its title. **A local scenario that asserts on a custom type hydrates into a space of its own.** `@withmarfa/shared` is external to the server's bundle, so the in-process server and the test share one module-level type registry: a type registered over `POST /types` is already in the registry a local validation would read, and hydrating into the same space would prove nothing about the hydration.
 
 ## Build
 

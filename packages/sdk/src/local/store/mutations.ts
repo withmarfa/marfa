@@ -1,5 +1,7 @@
 import { generateId } from "@withmarfa/shared";
 import type { Edge, Item } from "@withmarfa/shared";
+import { collectBlobHashes } from "../blobs.js";
+import type { BlobLayer } from "./blobs.js";
 import type { OutboxLayer } from "./outbox.js";
 import type { ServerStateLayer } from "./server-state.js";
 import type { VisibleLayer } from "./visible.js";
@@ -46,6 +48,16 @@ export interface MutationDeps {
   outbox: OutboxLayer;
   visible: VisibleLayer;
   now: () => string;
+  /**
+   * Refuse a write the type forbids, before anything is queued.
+   *
+   * A hook rather than a direct call so the store keeps no opinion about
+   * where the type graph comes from — and so a caller that has a reason to
+   * queue an unvalidated write has somewhere to say so, rather than
+   * reaching around the mutation layer entirely.
+   */
+  refuse: (type: string, properties: Record<string, unknown>) => void;
+  blobs: BlobLayer;
 }
 
 function missing(kind: string, id: string): Error {
@@ -55,10 +67,37 @@ function missing(kind: string, id: string): Error {
 }
 
 export function createMutationLayer(deps: MutationDeps): MutationLayer {
-  const { server, outbox, visible, now } = deps;
+  const { server, outbox, visible, now, refuse, blobs } = deps;
+
+  /**
+   * The blob hashes in this write that the store is still holding bytes
+   * for, recorded so the write waits behind their upload (rule 4).
+   *
+   * Narrowed to hashes this store staged, and that is the whole of the
+   * question: a hash with no row here names bytes the client never held,
+   * which is either already on the server or a reference to something
+   * that was never this client's to upload. Holding a write behind one of
+   * those would park it for ever behind an upload nothing is going to
+   * make.
+   */
+  const stagedRefs = async (
+    properties: Record<string, unknown>,
+  ): Promise<string[]> => {
+    const found = new Set<string>();
+    collectBlobHashes(properties, found);
+    const held: string[] = [];
+    for (const hash of found) {
+      if ((await blobs.get(hash)) !== undefined) held.push(hash);
+    }
+    return held;
+  };
 
   return {
     createItem: async (input) => {
+      // Before the id is minted and before anything is written. A refusal
+      // that arrives after the row exists locally has already put a ghost
+      // on screen that has to be taken away again.
+      refuse(input.type, input.properties);
       const id = input.id ?? generateId();
       const at = now();
       const payload: Record<string, unknown> = {
@@ -78,6 +117,7 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         kind: "item.create",
         targetKind: "item",
         targetId: id,
+        dependsOn: await stagedRefs(input.properties),
         payload,
         baseVersion: null,
         idempotencyKey: generateId(),
@@ -91,6 +131,19 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
     updateItem: async (id, properties) => {
       const held = await visible.getItem(id);
       if (held === undefined) throw missing("item", id);
+      // Validated as the merged row rather than as the patch, which is
+      // what the server does on this door too: an update carries only what
+      // changed, so validating the patch alone would fail every required
+      // field the edit did not touch and refuse writes the server accepts.
+      //
+      // A shallow merge is the whole of it, because the reading of a null
+      // is already inside the validator both sides call: on an optional
+      // field a null means "leave unset" and validates, so nothing has to
+      // be coerced here to keep this from being stricter than the server.
+      // That direction is the one that must never be wrong — a local
+      // validator stricter than the server refuses work a person would
+      // have kept.
+      refuse(held.type, { ...held.properties, ...properties });
       // The version the row was read at, from server state. Null while the
       // row's own create is still queued: there is no server version to
       // name yet, and the drain resolves one from the create's response.
@@ -100,6 +153,7 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         kind: "item.update",
         targetKind: "item",
         targetId: id,
+        dependsOn: await stagedRefs(properties),
         // Only what changed. An update carrying the whole property bag
         // turns every field into a candidate for conflict.
         payload: { properties, ...(known ? { type: known.type } : {}) },
@@ -136,8 +190,13 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         targetId: id,
         // Both endpoints, so the edge waits behind either one's unsent
         // create. An edge sent against a row the server does not have is
-        // refused, and the person loses a relationship they made.
-        dependsOn: [input.source_id, input.target_id],
+        // refused, and the person loses a relationship they made. Any blob
+        // its properties name joins them, on the same rule.
+        dependsOn: [
+          input.source_id,
+          input.target_id,
+          ...(await stagedRefs(input.properties ?? {})),
+        ],
         payload: {
           id,
           edge_type: input.edge_type,
@@ -163,7 +222,11 @@ export function createMutationLayer(deps: MutationDeps): MutationLayer {
         kind: "edge.update",
         targetKind: "edge",
         targetId: id,
-        dependsOn: [held.source_id, held.target_id],
+        dependsOn: [
+          held.source_id,
+          held.target_id,
+          ...(await stagedRefs(properties)),
+        ],
         payload: { properties },
         baseVersion: known?.version ?? null,
         idempotencyKey: generateId(),
