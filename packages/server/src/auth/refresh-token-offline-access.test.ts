@@ -213,24 +213,37 @@ async function authorizationCodeGrant(
   );
   expect(authorizeRes.status).toBe(302);
   const location = authorizeRes.headers.get("location") ?? "";
-  if (!location.includes("/auth/authorize?")) {
-    throw new Error(`authorize did not reach consent: ${location}`);
+  let code: string | null;
+  if (location.startsWith(CALLBACK)) {
+    // The plugin answered without asking: a standing consent row already
+    // covers the request. The device approval a case makes first now writes
+    // that row, so the browser flow that follows it is a silent skip rather
+    // than a consent screen, and the code is on the callback already.
+    code = new URL(location).searchParams.get("code");
+  } else {
+    if (!location.includes("/auth/authorize?")) {
+      throw new Error(`authorize did not reach consent: ${location}`);
+    }
+    const signedQuery = location.slice(location.indexOf("?") + 1);
+    const decisionRes = await request(
+      c.app,
+      "POST",
+      "/auth/authorize/decision",
+      {
+        form: {
+          accept: "true",
+          oauth_query: signedQuery,
+          scopes: scope.split(" ").filter(Boolean),
+        },
+        headers: { cookie, origin: ORIGIN },
+      },
+    );
+    expect(decisionRes.status).toBe(302);
+    code = new URL(
+      decisionRes.headers.get("location") ?? "",
+      ORIGIN,
+    ).searchParams.get("code");
   }
-  const signedQuery = location.slice(location.indexOf("?") + 1);
-
-  const decisionRes = await request(c.app, "POST", "/auth/authorize/decision", {
-    form: {
-      accept: "true",
-      oauth_query: signedQuery,
-      scopes: scope.split(" ").filter(Boolean),
-    },
-    headers: { cookie, origin: ORIGIN },
-  });
-  expect(decisionRes.status).toBe(302);
-  const code = new URL(
-    decisionRes.headers.get("location") ?? "",
-    ORIGIN,
-  ).searchParams.get("code");
   if (!code) throw new Error("no code on callback redirect");
 
   const tokenRes = await request(c.app, "POST", "/auth/oauth2/token", {

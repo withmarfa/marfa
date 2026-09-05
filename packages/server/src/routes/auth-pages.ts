@@ -299,7 +299,12 @@ async function createUserAppGrant(
   clientId: string,
   scopes: string[],
   source: "marfa/oauth/device",
-): Promise<{ id: string; created: boolean; scopes: string[] }> {
+): Promise<{
+  id: string;
+  created: boolean;
+  scopes: string[];
+  spaceId: string | undefined;
+}> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
   let spaceId: string | undefined;
@@ -406,7 +411,12 @@ async function createUserAppGrant(
           metadata,
           spaceId,
         });
-        return { id: updated.id, created: false, scopes: mergedScopes };
+        return {
+          id: updated.id,
+          created: false,
+          scopes: mergedScopes,
+          spaceId,
+        };
       }
     }
   }
@@ -435,7 +445,7 @@ async function createUserAppGrant(
   );
   const metadata = await storage.metadata.get(item.id);
   await publish({ type: "created", item, metadata, spaceId });
-  return { id: item.id, created: true, scopes };
+  return { id: item.id, created: true, scopes, spaceId };
 }
 
 /**
@@ -2731,6 +2741,22 @@ export function authRoutes(
           row.scopes,
           "marfa/oauth/device",
         );
+        // The plugin's half of the grant. This surface never passes through
+        // the plugin's consent endpoint, so without this write a device
+        // grant had a projection and no consent row, and every reader of
+        // the plugin's tables treated it as no grant at all: the next
+        // code-flow authorize for the same app rendered consent afresh, and
+        // the revoke cascade had one record to drop where the code flow has
+        // two. Written with the merged set so the two halves agree, and
+        // inside the lock so a revoke cannot land between them.
+        if (typeof storage.oauthProvider?.upsertConsent === "function") {
+          await storage.oauthProvider.upsertConsent({
+            clientId: row.client_id,
+            authUserId: sessionResult.session.user.id,
+            referenceId: created.spaceId ?? null,
+            scopes: created.scopes,
+          });
+        }
         const bound = await storage.oauth.approveDeviceCode(row.id, created.id);
         return { grant: created, ok: bound };
       },
@@ -2742,18 +2768,8 @@ export function authRoutes(
         302,
       );
     }
-    // Resolve space_id for the audit row. Duplicates the users-table
-    // lookup createUserAppGrant already did — kept to avoid changing the
-    // helper's signature.
-    let auditSpaceId: string | null = null;
-    if (storage.users) {
-      const userRow = await storage.users.getByAuthUserId(
-        sessionResult.session.user.id,
-      );
-      auditSpaceId = userRow?.space_id ?? null;
-    }
     void storage.audit.log({
-      space_id: auditSpaceId,
+      space_id: grant.spaceId ?? null,
       action: "auth.grant.created",
       resource_type: "oauth_grant",
       resource_id: row.client_id,

@@ -568,4 +568,41 @@ export class PgOauthProviderStore implements OauthProviderStore {
       .returning({ id: auth_oauth_consent.id });
     return updated.length > 0;
   }
+
+  async upsertConsent(input: {
+    clientId: string;
+    authUserId: string;
+    referenceId: string | null;
+    scopes: readonly string[];
+  }): Promise<void> {
+    const now = new Date();
+    const existing = await this.db
+      .select({ id: auth_oauth_consent.id })
+      .from(auth_oauth_consent)
+      .where(
+        and(
+          eq(auth_oauth_consent.clientId, input.clientId),
+          eq(auth_oauth_consent.userId, input.authUserId),
+        ),
+      )
+      .orderBy(desc(auth_oauth_consent.updatedAt))
+      .limit(1);
+    const row = existing[0];
+    if (row) {
+      await this.db
+        .update(auth_oauth_consent)
+        .set({ scopes: [...input.scopes], updatedAt: now })
+        .where(eq(auth_oauth_consent.id, row.id));
+      return;
+    }
+    await this.db.insert(auth_oauth_consent).values({
+      id: generateId(),
+      clientId: input.clientId,
+      userId: input.authUserId,
+      referenceId: input.referenceId,
+      scopes: [...input.scopes],
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
 }

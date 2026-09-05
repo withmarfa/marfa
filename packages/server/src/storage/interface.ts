@@ -2106,6 +2106,31 @@ export interface OauthProviderStore {
     scopes: readonly string[],
     expectedScopes: readonly string[],
   ): Promise<boolean>;
+  /**
+   * Write the `auth_oauth_consent` row a grant carries, creating it or
+   * replacing its scopes, keyed on `(clientId, authUserId)` exactly as the
+   * plugin's own consent endpoint resolves a prior grant.
+   *
+   * Exists for the device-flow approval. That surface writes the
+   * `system.connection` projection itself and issues tokens from Marfa's own
+   * table, so it never passed through the plugin's consent endpoint and
+   * never left a consent row behind. A grant is two records, and every
+   * reader of the plugin's half — the consent skip, `getPriorConsent`, the
+   * plugin's own authorize — treated a device grant as no grant at all: the
+   * next code-flow authorize for the same app rendered a consent screen as
+   * if the person had never approved it, and the revoke cascade had one
+   * record to drop where the code flow had two. `scopes` is the merged set
+   * the approval wrote to the projection, so the two halves agree.
+   *
+   * Replace rather than merge, because the caller has already merged: the
+   * projection is the standing grant and this row mirrors it.
+   */
+  upsertConsent(input: {
+    clientId: string;
+    authUserId: string;
+    referenceId: string | null;
+    scopes: readonly string[];
+  }): Promise<void>;
   /** Bearer-middleware lookup over `auth_oauth_access_token`. Returns the
    *  row keyed by the hashed token output of `storeTokens.hash` (which is
    *  `hashApiKey(token, salt)`), or null if the token isn't recognized or
