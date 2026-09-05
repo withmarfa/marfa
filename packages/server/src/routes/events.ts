@@ -824,9 +824,8 @@ export function eventRoutes(
            * killed by edge events, and a credential scoped to one type by
            * events of another. Narrowing the subscription made it worse
            * rather than better, which is the opposite of what a filter is
-           * for — and the first-party replica subscribes with
-           * `edges: "none"` by design, so it sat in exactly that
-           * configuration. Both questions are the ones the release path
+           * for, and a subscriber that wants items only asks for exactly
+           * that configuration. Both questions are the ones the release path
            * asks, asked here through the same two predicates so they
            * cannot drift, and both are stable for the life of the
            * connection so asking early cannot answer differently.

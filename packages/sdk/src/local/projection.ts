@@ -25,10 +25,11 @@ import type { LocalStore } from "./store/index.js";
  * Default ceiling on one projection.
  *
  * A collection is held in memory and rendered, so this is the size of the
- * thing being put into a view rather than the size of the store. Matches
- * the replica's ceiling deliberately: the two answer the same question
- * about the same kind of object, and two different numbers would only ever
- * be a surprise.
+ * thing being put into a view rather than the size of the store. Far above
+ * any single-player type and far below what wedges a tab: a type that
+ * outgrows it reports through `onError` rather than filling the page, so it
+ * is found where it stopped fitting instead of in a report about a frozen
+ * tab.
  */
 export const DEFAULT_PROJECTION_MAX_ITEMS = 50_000;
 

@@ -1,5 +1,84 @@
 # @withmarfa/sdk
 
+## 5.0.0
+
+### `@withmarfa/sdk/replica` is removed
+
+The in-memory mirror is gone: the subpath, its exports-map entry and its build
+entry. Nothing is aliased and there is no shim. An import of
+`@withmarfa/sdk/replica` now fails to resolve, which is the intended way to find
+out.
+
+**It holds items and never the metadata sidecar, and that is what decides it.**
+Tags and favorites do not live on the item, so a `metadata.changed` frame passes
+the mirror's filter on the strength of the item it carries, and only that item is
+written: `event.metadata` is dropped on the floor, and no row the mirror holds
+ever had a tag on it to begin with. A surface that filters by tag cannot be
+backed by the mirror at all, and a table view over it renders an empty tag
+column, which is an answer rather than an absence. No amount of work in the consumer closes that;
+it would need a second, non-mirror source beside it, at which point the mirror
+is not the reactive layer.
+
+It was also measured behind one real screen in a web client, against the pattern
+that client already used — a server-backed query cache kept honest by the change
+stream — and it lost the claim it existed to make. On a first frame with data
+already held it was about 2.5 times slower, in its best available form: one
+collection per type for the session's lifetime, with filtering and ordering
+inside the live query rather than over its result. Neither arm goes to the
+network on that measurement, and neither moves when latency is emulated, so what
+separates them is the cost of materializing a live query rather than a round
+trip. Its cold start grows with the size of the type, which is structural: it
+reads the whole type at 200 rows per request and commits nothing until the walk
+finishes, where a paged read answers from the first page.
+
+**It won one measurement.** After a bulk write upstream it made no requests where
+the query arm made hundreds, because it applies each change frame to what it
+holds. Those hundreds are a defect in that client's invalidation strategy, filed
+against it and owned there — a reason to fix one cache, not to publish a second
+reactive system. Applying frames without re-reading also means treating the
+change stream as a source of truth. That is a design position rather than a
+defect, and it is not the one taken here: the stream is an invalidation signal,
+and a client re-reads after a gap. The mirror handled the terminal
+`catchup_too_old` frame correctly and discarded everything to re-read, so this is
+a disagreement about what a stream is for, not a bug it had.
+
+**Nothing consumed it.** No repository in the organization imported the subpath at
+any point.
+
+### What to use instead
+
+An ordinary query cache over `client.items.*`, invalidated by
+`client.events.subscribe`. That is what every client here already did:
+
+```ts
+const subscription = client.events.subscribe({
+  type: "core.note",
+  onEvent: () => {
+    // Mark stale and let the cache re-read. The frame is the signal that
+    // something changed, not the new value.
+    queryClient.invalidateQueries({ queryKey: ["items", "core.note"] });
+  },
+  // A gap has been reported; the held data may be wrong in ways no frame
+  // will describe, so discard rather than resume.
+  onCatchupTooOld: () => {
+    queryClient.invalidateQueries({ queryKey: ["items"] });
+  },
+});
+```
+
+Writes stay optimistic the same way they were, through the cache's own
+`onMutate`/rollback rather than through the mirror, and carry `expectedVersion`
+and a conflict strategy exactly as a direct `client.items.update` does.
+
+If you want a local copy that survives a restart, queues writes made with no
+network and holds its own type registry, that is `@withmarfa/sdk/local` — a
+different thing, and the one the design keeps.
+
+### Unchanged
+
+`@tanstack/db` stays an optional peer at `>=0.6.17 <0.9.0`. The local engine's
+projection binds the same shape the replica did, so the floor did not move.
+
 ## 4.0.0
 
 ### Conflict resolution moved to the server

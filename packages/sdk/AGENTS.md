@@ -26,7 +26,7 @@ Three behaviors that only exist on the local engine, and each of them changes wh
 
 ## Subpaths with optional peers
 
-`./auth`, `./auth/node`, `./replica`, `./local`, `./electron`,
+`./auth`, `./auth/node`, `./local`, `./electron`,
 `./electron/preload` and `./electron/renderer` each have their own tsup entry,
 so a consumer pays only for what it imports. `@tanstack/db`, `@libsql/client`, `drizzle-orm` and
 `electron` are optional peers and externalized in the bundle.
@@ -62,7 +62,7 @@ way across, so the class survives only in the message.
 
 ## Testing
 
-The suite runs against an in-process Hono server (uses `@withmarfa/server`'s `createApp` directly), not a mock: bootstrap admin keys are created over the `/keys` HTTP path so tests exercise the full server. It spans the client surface, the auth helpers, and the local replica.
+The suite runs against an in-process Hono server (uses `@withmarfa/server`'s `createApp` directly), not a mock: bootstrap admin keys are created over the `/keys` HTTP path so tests exercise the full server. It spans the client surface, the auth helpers, and the local engine.
 
 Run it from the repository root, which resolves the workspace project correctly:
 
@@ -70,7 +70,7 @@ Run it from the repository root, which resolves the workspace project correctly:
 pnpm exec vitest run --project @withmarfa/sdk
 ```
 
-The replica tests need the optional `@tanstack/db` peer installed. When a test depends on a server-side change, rebuild `@withmarfa/shared` and `@withmarfa/server` first (`pnpm --filter @withmarfa/shared build`) so the SDK picks up the new dist.
+The local engine's projection tests need the optional `@tanstack/db` peer installed. When a test depends on a server-side change, rebuild `@withmarfa/shared` and `@withmarfa/server` first (`pnpm --filter @withmarfa/shared build`) so the SDK picks up the new dist.
 
 `src/local/scenarios.test.ts` carries the sync contract's scenario list, each test naming the offline-seam mode it uses in its title. **A local scenario that asserts on a custom type hydrates into a space of its own.** `@withmarfa/shared` is external to the server's bundle, so the in-process server and the test share one module-level type registry: a type registered over `POST /types` is already in the registry a local validation would read, and hydrating into the same space would prove nothing about the hydration.
 
@@ -102,18 +102,17 @@ it.
 
 ## Versioning
 
-Major bumps when `@withmarfa/shared` major-bumps (every wire-shape change cascades). Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) trigger the publish workflow; the workflow skips packages whose version is already on npm so unbumped packages are no-ops.
+Major bumps when `@withmarfa/shared` major-bumps (every wire-shape change cascades), **and when a published surface is removed** — a subpath, an exported name — which the surface lock enforces rather than trusts. Minor bumps for additive SDK features. Patch for bug fixes. Tag pushes (`v*`) trigger the publish workflow; the workflow skips packages whose version is already on npm so unbumped packages are no-ops.
 
 **`@tanstack/db` is a `>=0.6.17 <0.9.0` range and not a caret, deliberately.** On a 0.x package a
 caret admits only the same minor, so `^0.8.0` and `^0.6.17` are disjoint: narrowing one to the other
-strands every consumer on the older line, and it did, in 2.3.0. **Two subpaths hold this floor down,
-not one.** That matters because retiring the replica is a live ticket, and a rationale naming one
-constraint would let a reader conclude the floor was then free. It is not. Both `src/replica/collection.ts` and
-`src/local/projection.ts` touch the same two symbols, `createCollection` and the `Collection` type,
-and both bind three type parameters — `Collection<Item, string, ReplicaUtils>` and
-`Collection<Item, string, ProjectionUtils>` — which is what an older release fails to satisfy.
-Whether the projection alone would hold the floor at exactly `0.6.17` has not been measured; what is
-established from the code is that the two bindings are the same shape, so **removing the replica does
-not free the floor.** The surface typechecks against 0.4.20 through 0.8.4 and fails on 0.2.5, so the
-range is narrower than what works rather than a guess. Widening it further is safe; narrowing it is
-a breaking change to an optional peer and wants a major.
+strands every consumer on the older line, and it did, in 2.3.0. **The floor survived the replica's
+retirement**, which is the thing a reader is most likely to get wrong here. Two subpaths held it and
+one still does: `src/local/projection.ts` touches `createCollection` and the `Collection` type and
+binds three type parameters — `Collection<Item, string, ProjectionUtils>` — which is what an older
+release fails to satisfy. The retired replica bound the identical shape, so removing it changed
+nothing about what the range has to admit. Whether the projection alone holds the floor at exactly
+`0.6.17` has not been measured, and the range is not narrowed on an assumption that it does. The
+surface typechecks against 0.4.20 through 0.8.4 and fails on 0.2.5, so it is narrower than what works
+rather than a guess. Widening it further is safe; narrowing it is a breaking change to an optional
+peer and wants a major.

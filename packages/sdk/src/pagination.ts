@@ -3,8 +3,8 @@
  *
  * Every paginated endpoint answers with the same three fields, so the loop
  * that drains one is the same loop every time. It had been hand-written in
- * five places across the consumer apps and a sixth inside this package's own
- * replica, each copy differing only in what it accumulated into. They agreed
+ * five places across the consumer apps and once inside this package, in code
+ * since removed, each copy differing only in what it accumulated into. They agreed
  * on the terminal condition, which is the good case: the copy that did not
  * agree stopped at a fixed page count and returned a truncated set that read
  * exactly like a complete one.
