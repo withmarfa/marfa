@@ -218,6 +218,14 @@ export interface SearchFilters {
   /** Items must have ALL specified tags. Mirrors `/items?tags=` semantics. */
   tags?: string[];
   filter?: string;
+  /** Lower bound on the item's own time — `timestamp`, falling back to
+   *  `created_at` — inclusive, exactly as `ItemFilters` reads it. Search
+   *  advertises parity with `GET /items` in its own description and took
+   *  neither bound, so a date-narrowed search was not expressible and a
+   *  caller who sent one got a successful response over the whole corpus. */
+  timestamp_after?: string;
+  /** Upper bound on the same expression, inclusive. */
+  timestamp_before?: string;
   allowed_types?: string[];
   /** Mirrors `ItemFilters.excluded_types`. */
   excluded_types?: string[];
@@ -362,14 +370,64 @@ export function decodeCursorNullable(cursor: string): NullableCursorPayload {
  * the same cursor handed to the new ordering is refused rather than
  * silently honoured.
  *
- * The key names the catch-up ordering against everything else, rather
- * than naming each of the item listing's several sorts. That is the split
- * worth drawing, because it is the one a caller can cross without meaning
- * to: `sort` is set explicitly, so dropping it between pages is a visible
- * caller error, while `updated_after` is a filter and dropping a filter
- * while keeping the cursor is the ordinary client mistake.
+ * **The key names the ordering the request actually resolved to**, column
+ * and direction, rather than only naming the catch-up ordering against
+ * everything else. An earlier version drew that narrower split on the
+ * argument that `sort` is set explicitly, so dropping it between pages is
+ * a visible caller error while dropping a filter is the ordinary one. The
+ * argument holds for a hand-written client and not for one assembling a
+ * request from parts, which is the case this exists for; and under the
+ * narrow key every one of the item listing's orderings was tagged
+ * `created_at`, so a cursor taken under `?sort=updated_at` replayed under
+ * `?sort=timestamp` passed the check and bounded the page against the
+ * wrong column — the exact failure, reached through the guard against it.
+ *
+ * Direction is part of the key for the same reason the column is. The
+ * comparison flips with it, so the same cursor replayed under the
+ * opposite direction re-serves rows already delivered, silently and with
+ * no more signal than the column case has.
+ *
+ * The key is computed from the *resolved* ordering, never from the raw
+ * parameters, so a caller who omits `sort` on one page and spells out the
+ * default on the next is not refused: both resolve to the same ordering
+ * and therefore to the same key.
  */
-export type CursorSortKey = "created_at" | "updated_at";
+export type CursorSortKey = string;
+
+/**
+ * The ordering identity a cursor carries. Every construction goes through
+ * here so the spelling cannot drift between the encode side and the
+ * expectation the decode side checks against.
+ */
+export function cursorSortKey(
+  sort:
+    | { kind: "system"; column: SystemSortField }
+    | { kind: "property"; field: string },
+  direction: SortDirection,
+): CursorSortKey {
+  const column =
+    sort.kind === "system" ? sort.column : `properties.${sort.field}`;
+  return `${column}:${direction}`;
+}
+
+/**
+ * How a cursor issued before the key named the resolved ordering is read.
+ *
+ * Those carry a bare `created_at` or `updated_at`, or no key at all, and
+ * each of those spellings meant exactly one ordering when it was written:
+ * the default listing, newest-created first, and the catch-up, oldest
+ * modification first. Mapping them keeps a page that is in flight across
+ * a deploy working, which is the same courtesy the absent key already
+ * had. Anything else a legacy cursor was tagged with is refused rather
+ * than guessed at, which is the safe direction.
+ */
+const LEGACY_CURSOR_KEYS: Readonly<Record<string, CursorSortKey>> = {
+  created_at: "created_at:desc",
+  updated_at: "updated_at:asc",
+};
+
+/** The ordering an unkeyed cursor came from — the only one there was. */
+const UNKEYED_CURSOR_ORDERING: CursorSortKey = "created_at:desc";
 
 export function encodeKeyedCursor(
   sortValue: string | null,
@@ -394,10 +452,21 @@ function assertCursorKey(cursor: string, expected: CursorSortKey): void {
       "Invalid pagination cursor",
     );
   }
-  const key =
+  const carried =
     typeof parsed === "object" && parsed !== null && "k" in parsed
       ? parsed.k
-      : "created_at";
+      : UNKEYED_CURSOR_ORDERING;
+  // `hasOwnProperty` rather than `in`, which walks the prototype chain: a
+  // cursor tagged `"toString"` would otherwise be looked up and answered
+  // with a function. Harmless today, because the result is compared for
+  // equality against a string and a function is not one, but the safety
+  // is in the comparison rather than in the lookup, which is the wrong
+  // place for it to live.
+  const key =
+    typeof carried === "string" &&
+    Object.prototype.hasOwnProperty.call(LEGACY_CURSOR_KEYS, carried)
+      ? LEGACY_CURSOR_KEYS[carried]
+      : carried;
   if (key !== expected) {
     throw new MarfaError(
       ErrorCode.VALIDATION_ERROR,

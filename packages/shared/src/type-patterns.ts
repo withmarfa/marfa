@@ -48,9 +48,14 @@ export function subtreeWildcardRoot(pattern: string): string | null {
 }
 /**
  * Confusable pair: this takes ONE pattern; `matchesTypePattern` in
- * validation.ts takes a LIST. Both read (type, pattern-or-patterns), so a
- * wrong-function call typechecks while meaning something else. See T-738
- * for the incident that cost.
+ * validation.ts takes a LIST. The names are near-reversals of each other and
+ * both read (type, pattern-or-patterns), so the two are easy to swap while
+ * refactoring and the swap does not look wrong on the page.
+ *
+ * What makes it worth a warning rather than a naming tidy-up is what the
+ * answer is used for: both return a plausible boolean, and the callers are
+ * permission checks. A call that reaches the wrong one does not fail, it
+ * quietly answers a different question about who may read what.
  */
 
 /**

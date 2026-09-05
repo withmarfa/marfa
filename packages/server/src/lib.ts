@@ -16,3 +16,11 @@ export {
   BulkActionJobGcSweeper,
   type BulkActionWorkerOptions,
 } from "./bulk-actions/index.js";
+// Exposed for the same reason as the worker above. `createApp` does not
+// wire the event log — the server's own bootstrap does — so an app built
+// from `createApp` alone assigns no event ids, replays nothing from a
+// `Last-Event-ID`, and can never refuse a cursor as too old. A harness
+// that needs any of those turns the log on itself, and resets it
+// afterwards: the wiring is module-global, so it outlives the app it was
+// turned on for.
+export { initEventLog, __resetCycleDetectionForTests } from "./pubsub.js";

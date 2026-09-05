@@ -456,14 +456,29 @@ export interface BulkEdgeResult {
   results: BulkEdgeResultEntry[];
 }
 
-/** Filter shape for `POST /items/bulk-actions`. Mirrors the `GET /items`
- *  query grammar — every field is AND-composed, `filter` accepts the
- *  full filter-SQL DSL. */
+/** Filter shape for `POST /items/bulk-actions`. Close to the `GET /items`
+ *  query grammar — every field is AND-composed and `filter` accepts the
+ *  full filter-SQL DSL — but narrower on one axis: this route has no
+ *  `"any"` / `"all"` catch-all on `tier`, and refuses it with a 400
+ *  rather than ignoring it. Widen it only if the route does.
+ *
+ *  `state` takes every lifecycle value, `revoked` included, because the
+ *  route's filter does. That is not incidental: the reserved namespace's
+ *  lifecycle is exactly `active` and `revoked`, so a filter offering
+ *  three states put every reserved row beyond the reach of any bulk
+ *  action. Narrowing this field here would rebuild that wall one layer
+ *  up, where it would be harder to see.
+ *
+ *  **The filter's `state` and an action's own `state` are different
+ *  sets and the difference is deliberate.** This one selects rows and
+ *  takes four; `transition`'s target takes three, because a bulk action
+ *  may not move a row into `revoked`. Reading one from the other is the
+ *  mistake this note exists to stop. */
 export interface BulkActionFilter {
   type?: string;
   state?: ItemState;
   source?: string;
-  tier?: Tier | "all";
+  tier?: Tier;
   tags?: string[];
   timestamp_after?: string;
   timestamp_before?: string;

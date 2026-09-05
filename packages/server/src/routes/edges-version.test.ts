@@ -127,9 +127,10 @@ describe("an edge carries a version", () => {
       edge: WireEdge;
     };
     expect(refusal.error.code).toBe("version_conflict");
-    // The current edge, whole. There is no route that reads one edge by
-    // its id, so this body is the client's only way back to a version it
-    // can retry against.
+    // The current edge, whole, rather than a version number. `GET
+    // /edges/{id}` would answer the same question, so what this pins is
+    // that a refused client does not have to ask it: the refusal already
+    // holds what the retry needs.
     expect(refusal.edge.id).toBe(created.id);
     expect(refusal.edge.version).toBe(2);
     expect(refusal.edge.properties).toEqual({ note: "winner" });

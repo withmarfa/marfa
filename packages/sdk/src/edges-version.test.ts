@@ -13,8 +13,8 @@ import { EdgeConflictError } from "./errors.js";
  * makes the server's refusal unreachable. A 409 that surfaces as the
  * transport's generic error is worse than useless here: it says the write
  * failed and discards the current edge, which is the only thing in the body
- * and the only route back to a version worth retrying with, since no
- * endpoint reads a single edge by its id.
+ * and the cheapest route back to a version worth retrying with — `GET
+ * /edges/{id}` is the other, and paying for it is the cost of losing this.
  */
 
 let fx: KeysModeFixture;

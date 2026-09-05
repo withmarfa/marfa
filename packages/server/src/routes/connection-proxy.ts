@@ -7,12 +7,17 @@ import {
   actsAsConnection,
   hasSpaceAdminAuthority,
 } from "../middleware/auth.js";
-import type { Storage } from "../storage/interface.js";
+import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import {
   encryptSecret,
   decryptSecret,
   SECRET_INFO,
 } from "../crypto/secret-encryption.js";
+import {
+  createRlsFence,
+  type RlsFence,
+} from "../middleware/rls-space-context.js";
+import type { PgDb } from "../storage/pg/connection.js";
 
 // ---------------------------------------------------------------------------
 // Connection OAuth proxy
@@ -37,7 +42,60 @@ import {
 // All HTTP verbs route through here — proxies have to be method-agnostic.
 // The OpenAPI spec deliberately omits this route; the upstream's schema
 // is unknown at our layer, so a placeholder doc would be misleading.
+//
+// **This route fences its own database work, one phase at a time.** It is
+// exempt from the request-wide RLS transaction (`UPSTREAM_CALL_PATH_PATTERNS`
+// in `middleware/rls-space-context.ts`) because that wrapper would hold a
+// pooled connection for the length of somebody else's API call, and a pool
+// of three then caps the whole web tier at three concurrent proxied calls.
+//
+// The exemption is only safe alongside the fence. Every access below goes
+// through `RlsFence`, which is the middleware's own decision applied per
+// phase; an access that escapes it runs as the connection owner with no
+// `marfa.space_id` set and is therefore filtered by nothing. Two rules keep
+// the phases honest:
+//
+//   1. **No fence spans a `fetch`.** That is the defect being fixed, and it
+//      returns the moment a fence is widened to cover an upstream call.
+//   2. **No fence encloses `withRefreshLock`.** That lock reserves from the
+//      session pool and its holder runs work needing an app connection; a
+//      caller holding an app connection while waiting for the lock closes
+//      that into a cycle. Taking the lock first and fencing inside it is
+//      what keeps the wait one-directional.
+//
+// Rule 1 has a test; rule 2 does not, and cannot have the obvious one. A
+// fence opened inside an enclosing fence resolves its transaction off the
+// request context and issues a SAVEPOINT on the connection already held,
+// so it asks the app pool for nothing and the pool-of-one test stays
+// green through the violation. Reversing the order is caught by review or
+// not at all.
 // ---------------------------------------------------------------------------
+
+/**
+ * Fire-and-forget an audit write, fenced.
+ *
+ * `audit.log` never rejects, which is the whole reason `void`-ing it is
+ * safe. A transaction wrapped around it can: opening one takes a
+ * connection, and taking a connection can fail. Detached, that rejection
+ * has nothing waiting on it and takes the process down rather than the one
+ * write it belongs to, so the catch here restores the property the bare
+ * call already had — and logs, because the failure it catches is the one
+ * the layer below never sees.
+ */
+function auditFenced(
+  fence: RlsFence,
+  storage: Storage,
+  entry: AuditLogEntry,
+): void {
+  void fence(() => storage.audit.log(entry)).catch((err: unknown) => {
+    // The layer below logs a write that fails on its way to the table.
+    // Nothing logs a transaction that never opened — a connection the
+    // pool could not give out, a BEGIN that was refused — so without this
+    // an audit row lost to pool exhaustion leaves no trace at all, which
+    // is the one circumstance in which somebody would go looking for it.
+    console.warn("[connection-proxy] fenced audit write failed", err);
+  });
+}
 
 interface OAuthConfig {
   kind: "oauth_token";
@@ -332,8 +390,23 @@ async function refreshAccessToken(
   storage: Storage,
   connectionId: string,
   config: OAuthConfig,
+  /**
+   * Two database phases with a token exchange between them, so the fence
+   * is applied to each rather than to the function. The read carries no
+   * space argument of its own — it never has — so the statement itself
+   * has no space predicate and the fence is what supplies one.
+   *
+   * That is defense in depth rather than the only protection: nothing
+   * reaches here until `requireConnectionProxyAccess` has resolved the
+   * connection through `items.get(id, spaceId)`, so a caller asking for
+   * another space's connection has already been answered 404. The fence
+   * is what holds if that gate is ever moved or widened.
+   */
+  fence: RlsFence,
 ): Promise<RefreshAttemptResult | RefreshAttemptFailed> {
-  const row = await storage.connectionOauthTokens.get(connectionId);
+  const row = await fence(() =>
+    storage.connectionOauthTokens.get(connectionId),
+  );
   if (!row) {
     return {
       ok: false,
@@ -465,18 +538,20 @@ async function refreshAccessToken(
     // Keep the existing refresh token; don't touch previous_refresh_hash.
   }
 
-  await storage.connectionOauthTokens.upsert({
-    connection_id: connectionId,
-    space_id: row.space_id ?? undefined,
-    access_token_encrypted: encryptSecret(
-      newAccess,
-      SECRET_INFO.connectionOauthToken,
-    ),
-    refresh_token_encrypted: nextRefreshEncrypted,
-    expires_at: expiresAt,
-    scopes,
-    previous_refresh_hash: previousHash,
-  });
+  await fence(() =>
+    storage.connectionOauthTokens.upsert({
+      connection_id: connectionId,
+      space_id: row.space_id ?? undefined,
+      access_token_encrypted: encryptSecret(
+        newAccess,
+        SECRET_INFO.connectionOauthToken,
+      ),
+      refresh_token_encrypted: nextRefreshEncrypted,
+      expires_at: expiresAt,
+      scopes,
+      previous_refresh_hash: previousHash,
+    }),
+  );
 
   return { ok: true, access_token: newAccess };
 }
@@ -540,6 +615,13 @@ async function markReauthRequired(
   /** Resolved client IP for the audit trail. Threaded from the route
    *  handler that owns the Hono context. */
   clientIp: string | null,
+  /**
+   * Each write here gets its own fence rather than the function getting
+   * one, because the audit rows are written from `catch` blocks: a fence
+   * around the whole thing would have rolled back before the row
+   * explaining why could be inserted into it.
+   */
+  fence: RlsFence,
   /** Optional remediation hint surfaced as a structured field on the
    *  activity row's `detail` — e.g. operator reinstall instructions.
    *  Kept out of `reason` so the human-readable cause stays a clean
@@ -548,28 +630,30 @@ async function markReauthRequired(
   remediation?: string,
 ): Promise<void> {
   try {
-    const updated = await storage.items.update(
-      connection.id,
-      {
-        properties: {
-          ...connection.properties,
-          // Never overwrite an operator's pause: a retrying dispatch that
-          // takes a terminal 401 during the pause window would otherwise
-          // rewrite the field and the connection would resume scheduling
-          // on the next tick. If the credentials are really dead, the
-          // first dispatch after resume re-stamps this immediately.
-          runtime_status:
-            connection.properties.runtime_status === "paused"
-              ? "paused"
-              : "reauth_required",
-          last_error_at: new Date().toISOString(),
+    const updated = await fence(() =>
+      storage.items.update(
+        connection.id,
+        {
+          properties: {
+            ...connection.properties,
+            // Never overwrite an operator's pause: a retrying dispatch that
+            // takes a terminal 401 during the pause window would otherwise
+            // rewrite the field and the connection would resume scheduling
+            // on the next tick. If the credentials are really dead, the
+            // first dispatch after resume re-stamps this immediately.
+            runtime_status:
+              connection.properties.runtime_status === "paused"
+                ? "paused"
+                : "reauth_required",
+            last_error_at: new Date().toISOString(),
+          },
         },
-      },
-      spaceId,
+        spaceId,
+      ),
     );
     // items.update returns a ConflictResponse instead of throwing on version mismatch.
     if ("conflict" in updated) {
-      void storage.audit.log({
+      auditFenced(fence, storage, {
         client_ip: clientIp,
         space_id: spaceId ?? null,
         action: "connection_proxy.runtime_status_flip_conflict",
@@ -581,7 +665,7 @@ async function markReauthRequired(
     // Best-effort — runtime_status is server-stamped so any failure
     // here is a storage-level fault, not a caller fault. Surface in
     // audit log so operators can investigate.
-    void storage.audit.log({
+    auditFenced(fence, storage, {
       client_ip: clientIp,
       space_id: spaceId ?? null,
       action: "connection_proxy.runtime_status_flip_failed",
@@ -598,24 +682,26 @@ async function markReauthRequired(
       ? connection.properties.integration_ref
       : "(unknown integration)";
   try {
-    await storage.items.create(
-      {
-        type: "system.activity",
-        properties: {
-          severity: "action_required",
-          summary: `OAuth re-authorization needed for ${integration}`,
-          connection_id: connection.id,
-          // system.activity.detail requires an object, not a bare string.
-          detail: { reason, ...(remediation ? { remediation } : {}) },
+    await fence(() =>
+      storage.items.create(
+        {
+          type: "system.activity",
+          properties: {
+            severity: "action_required",
+            summary: `OAuth re-authorization needed for ${integration}`,
+            connection_id: connection.id,
+            // system.activity.detail requires an object, not a bare string.
+            detail: { reason, ...(remediation ? { remediation } : {}) },
+          },
+          ...(connection.properties.feed_activity === true
+            ? { tier: "feed" as const }
+            : {}),
         },
-        ...(connection.properties.feed_activity === true
-          ? { tier: "feed" as const }
-          : {}),
-      },
-      spaceId,
+        spaceId,
+      ),
     );
   } catch (err) {
-    void storage.audit.log({
+    auditFenced(fence, storage, {
       client_ip: clientIp,
       space_id: spaceId ?? null,
       action: "connection_proxy.activity_emit_failed",
@@ -703,18 +789,51 @@ async function performUpstreamCall(
 /** Number of seconds before expiry to trigger a proactive refresh. */
 const PROACTIVE_REFRESH_LEEWAY_SEC = 60;
 
-export function connectionProxyRoutes(storage: Storage) {
+export interface ConnectionProxyRoutesOptions {
+  /** `config.rlsEnforce`. */
+  rlsEnforce: boolean;
+  /**
+   * `storage.pgDb`, or null on SQLite.
+   *
+   * Required rather than optional, and that is deliberate. This route is
+   * exempt from the request-wide RLS transaction, so a caller that says
+   * nothing would get a handler running unfenced against every space —
+   * a regression reachable by omission. Required, it cannot be omitted.
+   */
+  pgDb: PgDb | null;
+}
+
+export function connectionProxyRoutes(
+  storage: Storage,
+  options: ConnectionProxyRoutesOptions,
+) {
   const r = new Hono<AppEnv>();
 
   r.all("/:id/proxy/*", async (c) => {
     const connectionId = c.req.param("id");
-    const { spaceId, connection } = await requireConnectionProxyAccess(
-      c,
-      storage,
-      connectionId,
+    // Built before the first read, from the same api key the middleware
+    // would have read. `requireAuth` throws for an unauthenticated caller
+    // exactly as it does one line later inside the access check.
+    const fence = createRlsFence(
+      options.pgDb,
+      options.rlsEnforce,
+      requireAuth(c).space_id ?? undefined,
     );
 
-    const config = await readCredentialConfig(storage, connection);
+    // Phase: the two reads that decide whether this call may happen at
+    // all. One transaction, because nothing between them waits on
+    // anything outside the database.
+    const { spaceId, connection, config } = await fence(async () => {
+      const access = await requireConnectionProxyAccess(
+        c,
+        storage,
+        connectionId,
+      );
+      return {
+        ...access,
+        config: await readCredentialConfig(storage, access.connection),
+      };
+    });
 
     const effectiveBaseUrl = resolveUpstreamBaseUrl(connection, config);
 
@@ -756,9 +875,10 @@ export function connectionProxyRoutes(storage: Storage) {
           spaceId,
           reason,
           c.get("clientIp") ?? null,
+          fence,
           "Reinstall the connection with a fresh token via POST /credentials/api-token + POST /connections/install.",
         );
-        void storage.audit.log({
+        auditFenced(fence, storage, {
           client_ip: c.get("clientIp") ?? null,
           space_id: c.get("apiKey")?.space_id ?? null,
           key_id: c.get("apiKey")?.id,
@@ -782,9 +902,11 @@ export function connectionProxyRoutes(storage: Storage) {
       // on 401 + retry once.
       // -----------------------------------------------------------------
 
-      let row = await storage.connectionOauthTokens.get(connectionId, spaceId);
+      let row = await fence(() =>
+        storage.connectionOauthTokens.get(connectionId, spaceId),
+      );
       if (!row) {
-        void storage.audit.log({
+        auditFenced(fence, storage, {
           client_ip: c.get("clientIp") ?? null,
           space_id: c.get("apiKey")?.space_id ?? null,
           key_id: c.get("apiKey")?.id,
@@ -804,8 +926,12 @@ export function connectionProxyRoutes(storage: Storage) {
         expiresAtMs - Date.now() < PROACTIVE_REFRESH_LEEWAY_SEC * 1000;
 
       if (proactiveDue) {
+        // Deliberately not inside a fence: the lock reserves from the
+        // session pool and the work it brackets needs an app connection,
+        // so holding one here while waiting for it closes the wait into a
+        // cycle. `refreshAccessToken` fences its own phases instead.
         const result = await withRefreshLock(storage, connectionId, () =>
-          refreshAccessToken(storage, connectionId, config),
+          refreshAccessToken(storage, connectionId, config, fence),
         );
         if (!result.ok) {
           if (result.invalidGrant) {
@@ -815,9 +941,10 @@ export function connectionProxyRoutes(storage: Storage) {
               spaceId,
               result.reason,
               c.get("clientIp") ?? null,
+              fence,
             );
           }
-          void storage.audit.log({
+          auditFenced(fence, storage, {
             client_ip: c.get("clientIp") ?? null,
             space_id: c.get("apiKey")?.space_id ?? null,
             key_id: c.get("apiKey")?.id,
@@ -834,7 +961,9 @@ export function connectionProxyRoutes(storage: Storage) {
             `Refresh failed: ${result.reason}`,
           );
         }
-        row = await storage.connectionOauthTokens.get(connectionId, spaceId); // re-read to pick up rotated token
+        row = await fence(() =>
+          storage.connectionOauthTokens.get(connectionId, spaceId),
+        ); // re-read to pick up rotated token
         if (!row) {
           // Should be impossible — refresh just wrote.
           throw new MarfaError(
@@ -866,9 +995,10 @@ export function connectionProxyRoutes(storage: Storage) {
       );
 
       if (outcome.status === 401) {
-        // reactive refresh — single retry
+        // reactive refresh — single retry. Outside a fence for the same
+        // reason as the proactive path above.
         const result = await withRefreshLock(storage, connectionId, () =>
-          refreshAccessToken(storage, connectionId, config),
+          refreshAccessToken(storage, connectionId, config, fence),
         );
         if (!result.ok) {
           if (result.invalidGrant) {
@@ -878,9 +1008,10 @@ export function connectionProxyRoutes(storage: Storage) {
               spaceId,
               result.reason,
               c.get("clientIp") ?? null,
+              fence,
             );
           }
-          void storage.audit.log({
+          auditFenced(fence, storage, {
             client_ip: c.get("clientIp") ?? null,
             space_id: c.get("apiKey")?.space_id ?? null,
             key_id: c.get("apiKey")?.id,
@@ -907,7 +1038,7 @@ export function connectionProxyRoutes(storage: Storage) {
       }
     }
 
-    void storage.audit.log({
+    auditFenced(fence, storage, {
       client_ip: c.get("clientIp") ?? null,
       space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
@@ -931,10 +1062,3 @@ export function connectionProxyRoutes(storage: Storage) {
 
   return r;
 }
-
-// Re-exported for tests; direct mutation of inFlightRefresh is forbidden.
-export const __internals = {
-  refreshAccessToken,
-  sha256Hex,
-  PROACTIVE_REFRESH_LEEWAY_SEC,
-};

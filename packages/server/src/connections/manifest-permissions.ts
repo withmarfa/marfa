@@ -10,6 +10,7 @@
  */
 import { ConnectionMappingSchema } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
+import { RUNTIME_NAMESPACE } from "../metadata-namespaces.js";
 
 /** Translate manifest.target_types into a `type_permissions` map: `write`
  *  on each declared target type. The narrowing that matters is the set of
@@ -86,8 +87,10 @@ export function buildExtensionPermissions(
   }
   // This is a substrate grant, not a manifest option. A manifest that names
   // the reserved namespace cannot accidentally downgrade the credential and
-  // make cursor persistence fail at runtime.
-  out["connection.runtime"] = "write";
+  // make cursor persistence fail at runtime. The namespace is imported
+  // rather than spelled here so this grant cannot name something the
+  // predicate that silences those writes no longer recognizes.
+  out[RUNTIME_NAMESPACE] = "write";
   return out;
 }
 

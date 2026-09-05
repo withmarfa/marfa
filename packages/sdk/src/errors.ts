@@ -154,8 +154,10 @@ export class AncestorUnavailableError extends MarfaError {
  * conflict has exactly one useful fact in it, which is the current row.
  *
  * Resolution is to re-apply the change over `current` and send again with
- * `current.version` — there is no route that reads a single edge by id, so
- * this error is the client's only way back to a version it can retry with.
+ * `current.version`. `GET /edges/{id}` reads a single edge by its id, so
+ * this is no longer the only way back to a usable version — it is the one
+ * that costs nothing, because the refusal already carries the row a second
+ * request would go and fetch.
  */
 export class EdgeConflictError extends MarfaError {
   readonly current: Edge;

@@ -8,6 +8,7 @@ import {
 } from "@withmarfa/shared";
 import { sql } from "drizzle-orm";
 import type { SearchStore, SearchFilters } from "../interface.js";
+import { normalizeTimeBound } from "../interface.js";
 import { filterToRawSql, sourceFilterToRawSql } from "../filter-sql.js";
 import type { PgClient, PgDb } from "./connection.js";
 import { rowToItem } from "./helpers.js";
@@ -166,6 +167,34 @@ export class PgSearchStore implements SearchStore {
 
     if (filters.exclude_system_types) {
       conditions.push(`AND i.type NOT LIKE 'system.%'`);
+    }
+
+    // The same expression and the same inclusivity the item listing gives
+    // these bounds — `COALESCE(timestamp, created_at)` — because search
+    // says in its own description that it takes the listing's filters, and
+    // a bound that answered a different question would be worse than the
+    // absence it replaces. Normalized to the stored width first: the
+    // columns are text and the comparison is lexical, so a valid RFC 3339
+    // instant at the wrong width silently answers a different question.
+    const timestampAfter = normalizeTimeBound(
+      filters.timestamp_after,
+      "timestamp_after",
+    );
+    if (timestampAfter !== undefined) {
+      params.push(timestampAfter);
+      conditions.push(
+        `AND COALESCE(i.timestamp, i.created_at) >= $${String(paramIdx++)}`,
+      );
+    }
+    const timestampBefore = normalizeTimeBound(
+      filters.timestamp_before,
+      "timestamp_before",
+    );
+    if (timestampBefore !== undefined) {
+      params.push(timestampBefore);
+      conditions.push(
+        `AND COALESCE(i.timestamp, i.created_at) <= $${String(paramIdx++)}`,
+      );
     }
 
     if (filters.tags && filters.tags.length > 0) {

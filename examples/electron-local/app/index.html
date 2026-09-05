@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      No remote anything. The page is local, the engine is in another process,
+      and a sandboxed renderer that never loads a remote script is one fewer
+      way for a page to reach the bridge with something the app did not write.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'"
+    />
+    <title>Marfa local engine</title>
+    <style>
+      body {
+        font:
+          14px/1.5 system-ui,
+          sans-serif;
+        margin: 0;
+        padding: 24px;
+        color: #1a1a1a;
+        background: #fbfbfa;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+      p.lede {
+        margin: 0 0 20px;
+        color: #666;
+      }
+      form {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+      }
+      input {
+        flex: 1;
+        padding: 8px 10px;
+        border: 1px solid #d5d5d0;
+        border-radius: 6px;
+        font: inherit;
+      }
+      button {
+        padding: 8px 14px;
+        border: 1px solid #d5d5d0;
+        border-radius: 6px;
+        background: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+      ul {
+        margin: 0 0 20px;
+        padding-left: 20px;
+      }
+      #status {
+        color: #666;
+        margin: 0 0 20px;
+      }
+      h2 {
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #888;
+        margin: 0 0 6px;
+      }
+      #events li {
+        font-family: ui-monospace, monospace;
+        font-size: 12px;
+        color: #555;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Marfa local engine</h1>
+    <p class="lede">
+      Write with no network. Quit and reopen: what you wrote is still here.
+    </p>
+
+    <form id="compose">
+      <input id="title" placeholder="A note" autocomplete="off" />
+      <button type="submit">Write</button>
+    </form>
+
+    <ul id="notes"></ul>
+    <p id="status"></p>
+
+    <h2>Engine events</h2>
+    <ul id="events"></ul>
+
+    <!--
+      A classic script, not a module. A `<script type="module">` is fetched
+      under CORS, and a `file://` page has an opaque origin, so it never
+      loads — silently, with or without the policy above. `loadFile` gives a
+      file URL, so this page has to be served by one or the other.
+    -->
+    <script src="../dist/renderer.js"></script>
+  </body>
+</html>

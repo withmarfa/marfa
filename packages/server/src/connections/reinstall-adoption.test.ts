@@ -241,12 +241,15 @@ describe("reinstall adopts what the integration already synced", () => {
       ),
     ).toBe(secondConnection);
 
-    const list = await request(
-      ctx.app,
-      "GET",
-      "/items?source_id=upstream-rec-1",
-      { key: secondKey },
-    );
+    // No `source_id=` here, and its absence is the point. This read used to
+    // send one, which the item listing does not declare and has never
+    // filtered on — `source_id` is a create-time natural key, not a listing
+    // filter. It was stripped in silence, so this assertion has always been
+    // about everything the scoped key can see rather than about one
+    // upstream record, and it passed because those happen to be the same
+    // set. That is the defect the unknown-parameter refusal exists for,
+    // sitting in the suite that would have to catch it.
+    const list = await request(ctx.app, "GET", "/items", { key: secondKey });
     const listBody = (await list.json()) as { data: { id: string }[] };
     const matches = listBody.data.filter(
       (i) => i.id === createdBody.item.id,

@@ -13,24 +13,18 @@ import {
   OkResponseSchema,
   makeErrorResponseSchema,
 } from "../openapi.js";
+import { EdgeSchema } from "./_schemas.js";
 import { assertEdgeCanBeCreated } from "../storage/edge-constraints.js";
 import { publishEdge } from "../pubsub.js";
+import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
+import {
+  refuseUnknownQueryParams,
+  UNKNOWN_PARAM_NOTE,
+} from "./_unknown-query-keys.js";
 
 // ---------------------------------------------------------------------------
 // Schemas
 // ---------------------------------------------------------------------------
-
-const EdgeSchema = z.object({
-  id: z.string(),
-  space_id: z.string().nullable().optional(),
-  source_id: z.string(),
-  target_id: z.string(),
-  edge_type: z.string(),
-  properties: z.record(z.string(), z.unknown()),
-  created_at: z.string(),
-  updated_at: z.string(),
-  version: z.number(),
-});
 
 /**
  * A refused update hands back the edge as it now stands.
@@ -42,9 +36,11 @@ const EdgeSchema = z.object({
  * is the current row and a version to retry against.
  *
  * Keyed `edge`, the same as the 200 body, so `res.edge` reads the same
- * either way — and so that nothing parses it as an item's snapshot. It
- * matters more than usual because there is no route that reads a single
- * edge by its id: this body is the only way back to a usable version.
+ * either way — and so that nothing parses it as an item's snapshot. The
+ * body still carries the whole edge rather than a version number now that
+ * `GET /edges/{id}` exists: a refused client can retry from what it was
+ * handed instead of spending a round trip re-reading what the refusal
+ * already knew.
  */
 const EdgeConflictSchema = z.object({
   error: z.object({
@@ -103,7 +99,9 @@ const listEdgesRoute = createRoute({
   description:
     "Returns a paginated list of edges across the space, optionally filtered by edge type. Pass `edge_type` as a comma-separated list (up to 10 entries) to scope, or omit it to list every edge.\n\n" +
     "Edges carry no lifecycle state of their own and are never hidden by the state of the items they join, so this listing has no `state` parameter and needs none: an edge whose endpoints are in the bin is returned like any other. That is deliberate — a client reconciling its copy has to see those edges rather than watch them disappear.\n\n" +
-    "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.",
+    "Removals are a different question and this read cannot answer it. A deleted edge leaves no row and no tombstone, so nothing here distinguishes one that was removed from one that never existed. The event stream carries the deletions; a client that reconciles completely needs both channels.\n\n" +
+    UNKNOWN_PARAM_NOTE +
+    " The two retired time-filter names are refused here too, naming their replacements, even though this door never carried them — the published rename says it covers this listing, and an absence discovered at `200` over the whole corpus is the failure that refusal exists to prevent.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -147,7 +145,11 @@ const listEdgesRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Validation error (e.g. too many edge types in filter)",
+      description:
+        "Too many edge types in the filter, an unrecognized query " +
+        "parameter, or one of the two retired time-filter names. This " +
+        "door already answered the first; the change that made it answer " +
+        "the other two is the reason the sentence names all three.",
     },
     401: {
       content: {
@@ -253,6 +255,34 @@ const createEdgeRoute = createRoute({
   },
 });
 
+const getEdgeRoute = createRoute({
+  method: "get",
+  path: "/{id}",
+  operationId: "getEdge",
+  tags: ["Edges"],
+  summary: "Get an edge",
+  description:
+    "Returns one edge by its id. The other ways to read an edge all need something the caller may not have: the whole space filtered by type, or the outbound and inbound listings on an item, which require knowing an endpoint. A client holding only an edge id -- one whose queued update was refused, or whose event arrived before its endpoints did -- could otherwise only scan. Cloaked as 404 across a space boundary, exactly as update and delete are.",
+  security: [{ bearerAuth: [] }],
+  request: { params: z.object({ id: z.string().describe("Edge id.") }) },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: z.object({ edge: EdgeSchema }) },
+      },
+      description: "The edge",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["edge_not_found"]),
+        },
+      },
+      description: "Edge not found",
+    },
+  },
+});
+
 const updateEdgeRoute = createRoute({
   method: "patch",
   path: "/{id}",
@@ -353,6 +383,17 @@ export function edgeRoutes(storage: Storage) {
 
   router.openapi(listEdgesRoute, async (c) => {
     requireAuth(c);
+
+    // The edge listing never carried the retired names, so there was
+    // nothing to refuse and no refusal was written. The published
+    // rename says otherwise: it describes the rename as covering this
+    // door, so a client migrating exactly as instructed writes
+    // `timestamp_after` here and, unrefused, receives a silently
+    // unfiltered page at 200 with a well-formed cursor.
+    refuseRenamedTimeQueryParams(c.req.raw.url, {
+      catchUpFilter: "updated_after",
+    });
+    refuseUnknownQueryParams(c.req.raw.url, listEdgesRoute.request.query);
     const spaceId = c.get("apiKey")?.space_id;
     const q = c.req.valid("query");
     const result = await storage.edges.list({
@@ -497,6 +538,36 @@ export function edgeRoutes(storage: Storage) {
     return c.json({ edge }, 201);
   });
 
+  router.openapi(getEdgeRoute, async (c) => {
+    requireAuth(c);
+    const { id } = c.req.valid("param");
+    const spaceId = c.get("apiKey")?.space_id;
+    const existing = await storage.edges.get(id);
+    // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
+    // space: a space-scoped caller must never learn another space's edge
+    // exists. Platform-admin / single-space keys carry no space_id and skip
+    // the check.
+    if (!existing || (spaceId && existing.space_id !== spaceId)) {
+      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+    }
+    // The same two gates update and delete apply, at `read` rather than
+    // `write`. Reading an edge discloses both endpoints and the properties
+    // on it, so a caller who may not read the source's type may not learn
+    // the relationship either.
+    //
+    // getIncludingTrashed for the reason the write paths use it: a plain
+    // `items.get` returns null for a trashed source, and a null source
+    // skips the type gate entirely rather than failing it. Trashing the
+    // source item would otherwise turn a refusal into a disclosure.
+    const srcItem = await storage.items.getIncludingTrashed(
+      existing.source_id,
+      spaceId,
+    );
+    if (srcItem) requireTypeAccess(c, srcItem.type, "read");
+    requireEdgePermission(c, existing.edge_type, "read");
+    return c.json({ edge: existing }, 200);
+  });
+
   router.openapi(updateEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
@@ -547,9 +618,9 @@ export function edgeRoutes(storage: Storage) {
     );
     if (!result.ok) {
       // The edit was computed from a state the server has left. Hand back
-      // the whole current edge: there is no route that reads one edge by
-      // id, so a client refused here has nowhere else to go for the
-      // version it needs to retry against.
+      // the whole current edge so the client can re-apply over it without
+      // a second round trip to `GET /edges/{id}`.
+      //
       // Returned rather than thrown, so the error handler that normally sets
       // this never runs. Same rule as the item door: a fresh refusal and its
       // idempotent replay must not describe one conflict differently.
@@ -645,8 +716,7 @@ const listFromSourceRoute = createRoute({
   operationId: "listItemEdges",
   tags: ["Edges"],
   summary: "List outbound edges from an item",
-  description:
-    "Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type.",
+  description: `Returns the edges where this item is the source, paginated and optionally filtered by edge type. Use the backrefs endpoint for edges pointing at the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -672,6 +742,17 @@ const listFromSourceRoute = createRoute({
     200: {
       content: { "application/json": { schema: EdgeListSchema } },
       description: "Outbound edges",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "An unrecognized query parameter. Declared because this door " +
+        "answers it: a refusal a caller cannot find in the reference is " +
+        "the same silence in a different place.",
     },
     401: {
       content: {
@@ -706,8 +787,7 @@ const listBackrefsRoute = createRoute({
   operationId: "listItemBackrefs",
   tags: ["Edges"],
   summary: "List inbound edges to an item",
-  description:
-    "Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type.",
+  description: `Returns the edges where this item is the target (backrefs), paginated and optionally filtered by edge type. Use the edges endpoint for edges pointing away from the item. An item in the trash still answers with its edges, because an edge carries no lifecycle of its own: a 404 here means no such item, not a deleted one. Requires read access to the item's type. ${UNKNOWN_PARAM_NOTE}`,
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Item id.") }),
@@ -733,6 +813,17 @@ const listBackrefsRoute = createRoute({
     200: {
       content: { "application/json": { schema: EdgeListSchema } },
       description: "Inbound edges",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "An unrecognized query parameter. Declared because this door " +
+        "answers it: a refusal a caller cannot find in the reference is " +
+        "the same silence in a different place.",
     },
     401: {
       content: {
@@ -766,6 +857,11 @@ export function itemEdgeListingRoutes(storage: Storage) {
 
   router.openapi(listFromSourceRoute, async (c) => {
     requireAuth(c);
+
+    // The listing's twin. A misspelled `edge_type` here widens the
+    // page from one type to every edge on the item, which is the
+    // same silence on a smaller set.
+    refuseUnknownQueryParams(c.req.raw.url, listFromSourceRoute.request.query);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
@@ -817,6 +913,11 @@ export function itemEdgeListingRoutes(storage: Storage) {
 
   router.openapi(listBackrefsRoute, async (c) => {
     requireAuth(c);
+
+    // The listing's twin. A misspelled `edge_type` here widens the
+    // page from one type to every edge on the item, which is the
+    // same silence on a smaller set.
+    refuseUnknownQueryParams(c.req.raw.url, listBackrefsRoute.request.query);
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");

@@ -29,6 +29,7 @@ import {
  * stays on the kit's surface because an integration reads it from here.
  */
 import { CYCLE_HEADERS } from "@withmarfa/shared";
+import type { Edge } from "@withmarfa/shared";
 export { CYCLE_HEADERS };
 
 /** Per-call overrides for an outbound provider request. */
@@ -415,17 +416,19 @@ export class ConnectionClient {
 
   /** POST /edges — create a typed edge between two items. Direction
    *  is edge-type-specific — e.g. for `parent-of` the source is parent
-   *  and the target is child. Returns the server-assigned edge id.
-   *  The substrate enforces edge_permissions; the runtime credential
-   *  needs the edge_type in its `edge_permissions` map (see
-   *  manifest.permissions.edge). */
+   *  and the target is child. Returns the created edge, unwrapped from
+   *  the `{ edge }` envelope the route answers with, as `createItem` and
+   *  `transitionItem` unwrap theirs. The substrate enforces
+   *  edge_permissions; the runtime credential needs the edge_type in its
+   *  `edge_permissions` map (see manifest.permissions.edge). */
   async createEdge(input: {
     source_id: string;
     target_id: string;
     edge_type: string;
     properties?: Record<string, unknown>;
-  }): Promise<{ id: string }> {
-    return this.request<{ id: string }>("POST", "/edges", input);
+  }): Promise<Edge> {
+    const wrapper = await this.request<{ edge: Edge }>("POST", "/edges", input);
+    return wrapper.edge;
   }
 
   /** Create an edge, treating "already exists" as success. Returns

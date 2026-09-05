@@ -41,7 +41,8 @@ export type PgClient = ReturnType<typeof postgres>;
  */
 /**
  * Hard ceiling on the session-mode pool, and a ceiling rather than a
- * default: the pool is built as `Math.min(maxPoolSize ?? 10, this)`, so
+ * default: it is `Math.min(maxPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS,
+ * this)`, so
  * `MARFA_DB_POOL_SIZE` can only ever lower it. Nothing raises it.
  *
  * Exported because more than one thing has to be sized against it, and a
@@ -52,6 +53,83 @@ export type PgClient = ReturnType<typeof postgres>;
  * holds one.
  */
 export const SESSION_POOL_MAX_CONNECTIONS = 5;
+
+/**
+ * The main pool's size when `MARFA_DB_POOL_SIZE` is unset.
+ *
+ * Exported because `/health` has to know it to say whether the database's
+ * connection ceiling still has room for this process's pool to fill, and a
+ * second copy of the number would drift from this one.
+ */
+export const DEFAULT_POOL_MAX_CONNECTIONS = 10;
+
+/**
+ * The label this process's connections carry into `pg_stat_activity`.
+ *
+ * Three places need it and none of them may spell it independently: the
+ * pools built below stamp it, and `/health` has to find this process's own
+ * app-pool row among every other client's to report how much of the pool is
+ * held. A second spelling would not fail — it would attribute this server's
+ * own connections to `other` and report a pool that is never in use.
+ */
+export function pgApplicationName(processRole: string | undefined): string {
+  return `marfa-${processRole ?? "both"}`;
+}
+
+/**
+ * The label a pool carries when whoever built it did not say who it is.
+ *
+ * **Deliberately outside the space `pgApplicationName` can produce**, which
+ * always appends a role. That keeps two things apart that a shared label
+ * would merge. `/health` reports `database_connections.pool` by finding this
+ * process's own app-pool label among every client in `pg_stat_activity`, so
+ * whatever an unnamed pool stamps is what the endpoint counts as its own.
+ *
+ * Defaulting this through `pgApplicationName` instead reads as the tidier
+ * option and is the wrong trade. The callers that pass no label are one-shot
+ * admin scripts — seeding, the retired migrations — and each opens a pool of
+ * its own. Run co-resident with a server that has no `MARFA_PROCESS_ROLE`,
+ * which is the single-container self-host, both would stamp `marfa-both:app`
+ * and the script's ten connections would be reported as the server's pool
+ * filling up. Production sets `web` and `worker` explicitly and would not
+ * have seen it, which is what makes it worth stating rather than assuming.
+ *
+ * Under this label the same script is reported honestly: it still matches the
+ * shape `/health` publishes under its own name, so it appears as its own
+ * client rather than folded in with everything else, and it cannot be
+ * mistaken for a pool a request competes for. Anything that genuinely is one
+ * of the server's own pools passes `applicationName`; the test harness does.
+ */
+export const PG_UNNAMED_APPLICATION_NAME = "marfa";
+
+/**
+ * Every pool this server opens, which is the second half of every
+ * `application_name` it stamps.
+ *
+ * A list rather than five string literals at five call sites, because
+ * `/health` has to recognize the labels these produce in order to attribute a
+ * connection to the pool that opened it — and a suffix spelled independently
+ * at both ends can be renamed at one of them. Renaming `app` here is a type
+ * error at every site instead, which is the property the endpoint's
+ * attribution depends on and cannot check for itself.
+ */
+export const PG_POOLS = [
+  "app",
+  "session",
+  "lock",
+  "exclusive",
+  "consent",
+] as const;
+
+export type PgPool = (typeof PG_POOLS)[number];
+
+/**
+ * The `application_name` one pool stamps: this process's label, then the pool
+ * that opened the connection. The single spelling of that join.
+ */
+export function pgPoolClient(applicationName: string, pool: PgPool): string {
+  return `${applicationName}:${pool}`;
+}
 
 const POOL_IDLE_TIMEOUT_SECONDS = 30;
 
@@ -239,10 +317,35 @@ export async function createConnection(
     );
   }
 
-  const appName = options?.applicationName ?? "marfa";
+  const appName = options?.applicationName ?? PG_UNNAMED_APPLICATION_NAME;
   const client = postgres(connectionString, {
-    max: options?.maxPoolSize ?? 10,
-    connection: { application_name: `${appName}:app` },
+    // **This is also the ceiling on concurrent space-scoped requests**, which
+    // the name does not say and which is the number a deployment actually
+    // runs out of. With RLS enforced, `rlsSpaceContextMiddleware` wraps every
+    // request carrying a space in a transaction, and a transaction owns one
+    // of these connections until the response is finished. So a process
+    // serves at most this many such requests at once and the rest queue —
+    // nothing errors, nothing deadlocks, the server simply reads as slow.
+    // Production sets three on the web container, so three concurrent
+    // space-scoped requests is that tier's entire capacity.
+    //
+    // Which makes the budget sensitive to how long a handler runs rather than
+    // to how much work it does: a handler that waits on something outside
+    // this deployment holds its slot for the whole wait, and spends the
+    // budget on latency nobody here controls. The streaming routes are
+    // exempted from the wrapper for exactly that reason and take their own
+    // session-level context instead (`storage/pg/streaming-rls.ts`). Any
+    // other handler that waits on a third party inside the wrapper is
+    // spending this budget while it waits, and `POST /connections/{id}/
+    // proxy/*` is the one that does.
+    //
+    // So sizing this pool against the database's connection ceiling answers
+    // only half the question. The count is what competes for `max_connections`
+    // and is the number to hold under the tier's limit; how long each slot is
+    // held is what decides whether the pool is a pool or a queue, and no
+    // connection budget can see that.
+    max: options?.maxPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS,
+    connection: { application_name: pgPoolClient(appName, "app") },
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
     max_lifetime: POOL_MAX_LIFETIME_SECONDS,
     // Named prepared statements live on the backend that saw the PREPARE.
@@ -294,8 +397,11 @@ export async function createConnection(
     // carries the mechanism and the second ask that answers it. Raising
     // `max` does nothing for that one, and it reaches every client here,
     // including the single-connection one below.
-    max: Math.min(options?.maxPoolSize ?? 10, SESSION_POOL_MAX_CONNECTIONS),
-    connection: { application_name: `${appName}:session` },
+    max: Math.min(
+      options?.maxPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS,
+      SESSION_POOL_MAX_CONNECTIONS,
+    ),
+    connection: { application_name: pgPoolClient(appName, "session") },
     // Same reasoning as the app pool. This one matters more per socket:
     // between streams it holds its slots open with nothing to show for it.
     idle_timeout: POOL_IDLE_TIMEOUT_SECONDS,
@@ -305,7 +411,7 @@ export async function createConnection(
   });
   const jobHolderClient = postgres(sessionModeUrl, {
     max: 1,
-    connection: { application_name: `${appName}:lock` },
+    connection: { application_name: pgPoolClient(appName, "lock") },
     // The idle timeout only ever fires on a process that lost the
     // election and released its reservation — a held reservation is
     // exempt by construction — so the loser's probe connection closes
@@ -349,7 +455,7 @@ export async function createConnection(
   // lifecycle never opens it.
   const lockClient = postgres(connectionString, {
     max: LOCK_POOL_MAX_CONNECTIONS,
-    connection: { application_name: `${appName}:exclusive` },
+    connection: { application_name: pgPoolClient(appName, "exclusive") },
     idle_timeout: LOCK_POOL_IDLE_TIMEOUT_SECONDS,
     max_lifetime: POOL_MAX_LIFETIME_SECONDS,
     // Same reasoning as the app client, and it applies here for the same

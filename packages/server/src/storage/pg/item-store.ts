@@ -66,6 +66,7 @@ import type {
 } from "../interface.js";
 import {
   encodeKeyedCursor,
+  cursorSortKey,
   decodeKeyedCursorNullable,
   normalizeTimeBound,
   parseSortField,
@@ -570,11 +571,12 @@ export class PgItemStore implements ItemStore {
       ? ({ kind: "system", column: "updated_at" } as const)
       : parseSortField(filters.sort);
     const dir: SortDirection = catchUp ? "asc" : (filters.direction ?? "desc");
-    // The cursor records which of the two orderings issued it, so one
-    // taken from a catch-up cannot be replayed against the default —
-    // both compare ISO timestamps, so the wrong column compares cleanly
-    // and returns a page that is simply not the next page.
-    const cursorKey: CursorSortKey = catchUp ? "updated_at" : "created_at";
+    // The cursor records the ordering that issued it — column and
+    // direction, taken from the resolved values above rather than from
+    // the raw parameters. Every ordering this listing offers compares
+    // ISO timestamps or a JSON-extracted value, so the wrong one compares
+    // cleanly and returns a page that is simply not the next page.
+    const cursorKey: CursorSortKey = cursorSortKey(sort, dir);
     const limit = Math.min(filters.limit ?? 50, 200);
 
     // For a property sort, the ORDER BY / cursor comparison runs against a

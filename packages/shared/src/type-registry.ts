@@ -481,6 +481,44 @@ export function classifyNamespace(id: string): NamespaceTier {
   return "publisher";
 }
 
+/**
+ * Which tiers the platform owns outright. Exhaustive over
+ * {@link NamespaceTier} rather than a list of the three that answer `true`,
+ * so a tier added to the union stops the package compiling here until
+ * somebody has said which side it falls on. {@link seedPlatformTypes} makes
+ * the same trade with a `switch` over the family union, for the same reason:
+ * a value reaching neither branch is not inert.
+ */
+const PLATFORM_TIER_MEMBERSHIP: Readonly<Record<NamespaceTier, boolean>> = {
+  core: true,
+  system: true,
+  marfa: true,
+  app: false,
+  user: false,
+  publisher: false,
+};
+
+/**
+ * The tiers the platform owns outright — exactly the three that `POST /types`
+ * and an archive restore refuse for every credential, platform included. An
+ * id under one of them can only have arrived by being seeded, never by being
+ * registered, which is what lets a caller classify one by name alone.
+ *
+ * Exported for the reason {@link isReservedRoot} gives about its own set, and
+ * the reason binds harder here because there is no second grammar to fall
+ * back on. Three sites decided this independently — the registration door,
+ * the archive-restore door, and the hydration helper — and a tier present in
+ * one copy and absent from another is a namespace one door refuses while
+ * another treats it as somebody's custom type, which is a security question
+ * rather than a tidiness one. Adding a member to {@link NamespaceTier} is the
+ * move that would have done it silently in every copy at once.
+ */
+export const PLATFORM_TIERS: ReadonlySet<NamespaceTier> = new Set(
+  (Object.keys(PLATFORM_TIER_MEMBERSHIP) as NamespaceTier[]).filter(
+    (tier) => PLATFORM_TIER_MEMBERSHIP[tier],
+  ),
+);
+
 /** Returns true if the type identifier belongs to the core namespace. */
 export function isCoreType(id: string): boolean {
   return classifyNamespace(id) === "core";
@@ -511,9 +549,20 @@ export function isPublisherType(id: string): boolean {
  * compiled schemas it invalidates: this id always, and every descendant when
  * an existing registration is being replaced.
  *
- * Core/system types are never registered here (they live in the global map);
- * callers filter them out before calling. `spaceId` is the owning space —
- * omit it only for the null-space bucket (single-space self-host / platform).
+ * **What callers filter out is what the platform map already holds, not what
+ * the namespace looks like.** A type that map has is never registered here:
+ * it resolves globally, and an overlay entry under its id is unreachable
+ * rather than authoritative. A reserved-namespace type the build does NOT
+ * hold is a different case and belongs here. An instance's shipped
+ * vocabulary is seeded data, so a client can meet a `system.*` type its own
+ * build never compiled in, and the overlay is the only place a client may
+ * put one — the platform map is global, so writing a space's listing into it
+ * would hand that listing to every other space. The lifecycle rules key on
+ * the identifier rather than on which map holds the schema, so they answer
+ * for such a type identically wherever it sits.
+ *
+ * `spaceId` is the owning space — omit it only for the null-space bucket
+ * (single-space self-host / platform).
  */
 export function registerTypeSchema(
   schema: TypeSchema,
@@ -1161,6 +1210,41 @@ export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
   };
 
 /**
+ * Whether a type follows the bounded `active | revoked` lifecycle rather than
+ * the canonical three-state one. The question both rules below ask, asked
+ * once so the two cannot answer it differently.
+ *
+ * **`SYSTEM_TYPE_IDS` is the authority and stays it.** A server fills it at
+ * boot from the stored `family` column, so it answers correctly for a type
+ * the build has retired and for a row a newer build wrote — neither of which
+ * a name test can do, and both of which a name test would get wrong in the
+ * permissive direction.
+ *
+ * **The namespace is a belt, and on a client it is the half that catches
+ * something.** There is no boot outside a server, so the set holds the
+ * compiled shipped ids and nothing else. An instance's vocabulary is seeded
+ * data, so a listing can carry a `system.*` type this build never compiled
+ * in; its id is absent from the set, and without this test both rules would
+ * hand it the three-state lifecycle the server does not give it — a client
+ * accepting a transition the server refuses, and a delete aiming at a state
+ * the type has no transition to.
+ *
+ * The belt is sound because `POST /types` refuses a reserved root for every
+ * credential, platform included: a `system.*` id can only have been seeded,
+ * so it is platform vocabulary whether or not this build carries it. That is
+ * a different question from whether the type is already resolvable, which is
+ * why the hydration helper still asks the platform map rather than the name.
+ *
+ * `contentCategoryPermissions` in `scopes.ts` pairs the same two tests for
+ * the same reason, and the warning there applies here: dropping the set and
+ * keeping the name test looks equivalent only because every system type
+ * ships under `system.` today, and stops being so the moment one does not.
+ */
+export function hasBoundedLifecycle(typeId: string): boolean {
+  return SYSTEM_TYPE_IDS.has(typeId) || isSystemType(typeId);
+}
+
+/**
  * The state a soft delete puts an item in, which is not the same state for
  * every type. `DELETE /items/:id` is a soft delete, and for most types that
  * means `trashed` — but `trashed` is not in the `system.*` lifecycle at all,
@@ -1173,7 +1257,7 @@ export const SYSTEM_TYPE_TRANSITIONS: Readonly<Record<ItemState, ItemState[]>> =
  * type classification the transition graph keys on, so the two cannot drift.
  */
 export function softDeleteState(typeId: string): ItemState {
-  return SYSTEM_TYPE_IDS.has(typeId) ? "revoked" : "trashed";
+  return hasBoundedLifecycle(typeId) ? "revoked" : "trashed";
 }
 
 const SYSTEM_STATES: ReadonlySet<ItemState> = new Set([
@@ -1207,7 +1291,7 @@ export function validateTransition(
 
   // `system.*` items use the bounded active → revoked lifecycle. All other
   // types follow the canonical three-state graph.
-  const transitions = SYSTEM_TYPE_IDS.has(typeId)
+  const transitions = hasBoundedLifecycle(typeId)
     ? SYSTEM_TYPE_TRANSITIONS
     : SYSTEM_TRANSITIONS;
   const allowed = transitions[currentState];
