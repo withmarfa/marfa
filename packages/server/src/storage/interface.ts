@@ -127,9 +127,17 @@ export interface ItemFilters {
   /** Restrict to a specific tier. Omit for the default unfiltered scope. */
   tier?: "library" | "feed";
   /** When true, items whose type starts with `system.` are excluded from
-   *  the result set. The route layer flips this on by default; callers
-   *  opt back in by listing `?include=system` or filtering on a specific
-   *  `system.*` type. */
+   *  the result set.
+   *
+   *  `GET /items` and `GET /search` flip this on by default; a caller opts
+   *  back in with `?include=system`, or with a `type` filter in the
+   *  `system.` namespace — the test is `startsWith("system.")`, so the
+   *  `system.*` wildcard opts in as much as a concrete type does.
+   *
+   *  **Not every route flips it.** `GET /export` never sets it, so an export
+   *  carries `system.*` rows by default and takes no `include` — it refuses
+   *  one as an unknown parameter. Naming the two routes rather than "the
+   *  route layer", because the layer is not what decides. */
   exclude_system_types?: boolean;
   tags?: string[];
   filter?: string;

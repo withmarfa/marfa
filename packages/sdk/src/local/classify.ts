@@ -192,6 +192,19 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
 
   if (code === KEY_IN_FLIGHT) return { class: "transient", message };
 
+  // A body no API can edit is permanent on its first refusal: nothing about
+  // resending it can change the answer, so a ceiling would report "ran out of
+  // retries" for a write refused for a reason a person could act on.
+  //
+  // Keyed on the code and not the status. Every 413 the server sends is one of
+  // these two, so the band would answer correctly here — it is 422 that holds
+  // both permanent refusals and retryable ones, and a rule that keys on the
+  // code for one status and the band for another is the arrangement that let
+  // this be missed in the first place.
+  if (TOO_LARGE.has(code)) {
+    return { class: "permanent", code, httpStatus: status, message };
+  }
+
   // The key is spent, not the write.
   //
   // The engine can send a different body under one key: the drain reads
@@ -218,10 +231,6 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
   // remove this refusal by guaranteeing a version conflict instead.
   // Whether a rebased mutation should carry a new key is open, with a
   // ticket and a measurement against it.
-  if (TOO_LARGE.has(code)) {
-    return { class: "permanent", code, httpStatus: status, message };
-  }
-
   if (code === KEY_REUSED) {
     return { class: "blocked", reason: "needs_review", message };
   }

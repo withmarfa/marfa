@@ -849,6 +849,16 @@ export function scopesToTypePermissions(
  * first, on the strength of this being the neighbouring helper with the right
  * shape and a careful docblock, and was fail-open for exactly the grant above
  * until a review caught it.
+ *
+ * **It has no production caller anywhere, and is kept for its tests rather
+ * than as API.** Its one irreplaceable role is the differential check at
+ * `scopes.test.ts:895`, where it is the independent second opinion on
+ * {@link scopesToTypePermissions}, which is live. The fourteen cases above
+ * that check test this function for its own sake and would go with it. It is
+ * exported because this package has a single entrypoint and no way to publish
+ * a symbol to its own tests alone, not because a consumer is meant to reach
+ * for it — and the sentence below about exports with no production caller is
+ * about this one.
  */
 export function scopeCovers(
   held: readonly string[],
