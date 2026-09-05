@@ -2172,14 +2172,17 @@ export interface OauthProviderStore {
   /**
    * Look up a refresh-token row by its hashed `token` column value. Returns
    * the (clientId, userId, revoked) tuple needed to decide whether the
-   * request is a replay attempt and whose access tokens to revoke. Returns
-   * null if the token doesn't exist (e.g. already deleted by a prior
-   * chain-revocation pass).
+   * request is a replay attempt and whose access tokens to revoke, plus the
+   * row's `reference_id`, which is the space the token was minted in and
+   * what the client-side revoke needs to find the grant's projection
+   * without a second read. Returns null if the token doesn't exist (e.g.
+   * already deleted by a prior chain-revocation pass).
    */
   findRefreshTokenGrantKey(tokenHash: string): Promise<{
     clientId: string;
     userId: string;
     revoked: boolean;
+    referenceId: string | null;
   } | null>;
   /** Insert an access + refresh token pair from the device-flow terminal
    *  step. Writes into `auth_oauth_access_token` + `auth_oauth_refresh_token`

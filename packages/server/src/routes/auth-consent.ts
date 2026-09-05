@@ -108,6 +108,7 @@ import type { AuthorizeFailure } from "./authorize-expired-page.js";
 import { setNoStore, withNoStore } from "./no-store.js";
 import { forwardHeaders } from "./forward-headers.js";
 import { withConsentLock } from "../auth/consent-lock.js";
+import { auditGrantReused } from "../auth/grant-lifecycle.js";
 import { buildAllowedOrigins, isCrossOriginPost } from "./_space-caller.js";
 import {
   findRegisteredResponseRedirect,
@@ -1198,58 +1199,6 @@ async function preserveBroaderGrant(
     }
   } catch (err) {
     log("warn", "consent skip: restoring the prior consent scopes failed", {
-      client_id: opts.clientId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-/**
- * Emit the `auth.grant.reused` audit row for a silent re-authorization
- * (consent skipped because the prior grant already covers the request).
- * Distinct from `auth.grant.created` so the operator trail separates
- * "user clicked Approve" from "server reused an existing grant". The
- * lookups here are read-only — reuse never rewrites the projection.
- * Best-effort: a failure logs and never blocks the redirect.
- */
-async function auditGrantReused(
-  storage: Storage,
-  opts: {
-    authUserId: string;
-    clientId: string;
-    scopes: string[];
-    clientIp: string | null;
-  },
-): Promise<void> {
-  try {
-    let spaceId: string | undefined;
-    if (storage.users) {
-      const userRow = await storage.users.getByAuthUserId(opts.authUserId);
-      spaceId = userRow?.space_id ?? undefined;
-    }
-    let grantItemId: string | null = null;
-    if (typeof storage.oauthProvider?.findGrantItemId === "function") {
-      grantItemId = await storage.oauthProvider.findGrantItemId({
-        spaceId: spaceId ?? null,
-        clientId: opts.clientId,
-        authUserId: opts.authUserId,
-      });
-    }
-    await storage.audit.log({
-      space_id: spaceId ?? null,
-      action: "auth.grant.reused",
-      resource_type: "oauth_grant",
-      resource_id: opts.clientId,
-      client_ip: opts.clientIp,
-      details: {
-        client_id: opts.clientId,
-        user_id: opts.authUserId,
-        scopes: opts.scopes,
-        grant_item_id: grantItemId,
-      },
-    });
-  } catch (err) {
-    log("warn", "consent skip: auth.grant.reused audit emit failed", {
       client_id: opts.clientId,
       error: err instanceof Error ? err.message : String(err),
     });

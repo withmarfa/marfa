@@ -69,6 +69,10 @@ import { PerEmailThrottle } from "../auth/per-email-throttle.js";
 import { isWithheldFromAllowlist } from "../auth/allowlist-withholding.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import {
+  auditGrantRevoked,
+  revokeProjectedGrant,
+} from "../auth/grant-lifecycle.js";
+import {
   renderDevicePage,
   renderDeviceConsentScreen,
   renderDeviceDecisionPage,
@@ -79,96 +83,6 @@ import { publish } from "../pubsub.js";
 import { log } from "../middleware/logger.js";
 import type { OidcSigner } from "../auth/oidc-signing.js";
 import type { EvaluatePendingDeletion } from "../middleware/account-deletion-guard.js";
-
-/**
- * Flip a projected `system.connection { kind: "app" }` grant to revoked
- * and cascade through the OAuth Provider plugin's tables (access tokens,
- * refresh tokens, and the consent row itself).
- *
- * **The cascade runs first, and a failure aborts the whole thing.** A
- * revocation that cannot drop the tokens is a revocation that did not
- * happen — the app keeps working for the rest of every token's lifetime.
- * Writing "revoked" onto the record first would leave `/auth/security`
- * describing access the user no longer has while that access still
- * works: a comforting record of a change nobody made. Leaving the record
- * alone keeps it true, and the caller turns the throw into a visible
- * failure the user can retry.
- *
- * Runs under the consent lock for the (client, user) pair. The silent
- * re-authorization path on `GET /auth/authorize` reads the standing
- * scopes, lets the plugin rewrite them, then writes the read-back set;
- * a revocation landing inside that window would be undone by a
- * restoration computed before the user asked for it, and the app would
- * keep a fully-scoped consent row for a grant they revoked.
- */
-async function revokeProjectedGrant(
-  storage: Storage,
-  opts: {
-    itemId: string;
-    properties: Record<string, unknown>;
-    spaceId: string | undefined;
-    clientId: string | undefined;
-    authUserId: string | undefined;
-  },
-): Promise<void> {
-  const cascade = async (): Promise<void> => {
-    if (
-      opts.clientId &&
-      opts.authUserId &&
-      typeof storage.oauthProvider?.revokeTokensForGrant === "function"
-    ) {
-      await storage.oauthProvider.revokeTokensForGrant(
-        opts.clientId,
-        opts.authUserId,
-      );
-    }
-    // Device codes after the tokens, and before the record. An outstanding
-    // approved device code is another thing that still mints access, since
-    // a poll inside its remaining TTL is a token mint and with
-    // `offline_access` the pair it hands back carries a refresh token
-    // nothing later invalidates, so a revocation that leaves one behind is
-    // a revocation that did not happen.
-    //
-    // **After the tokens, because this cascade aborts on a throw.** That is
-    // the same position `revokeTokensForGrant` gives its own sibling sweep:
-    // `revokeAuthorizationCodesForGrant` runs last, once the access tokens,
-    // the refresh tokens and the consent row are already gone. The ordering
-    // argument in the docstring above is about the record, not about which
-    // sweep goes first, and running this one first inverts what a fault on
-    // `oauth_device_codes` costs. A lock, a permissions change or a corrupt
-    // index there would abort before `revokeTokensForGrant` had run, so the
-    // grant would stay active, every bearer and refresh token would survive,
-    // and Disconnect would be permanently non-functional while the app kept
-    // full access. Sweeping last, the same fault still kills every token and
-    // still leaves the record honestly reading active.
-    //
-    // Called here rather than from `revokeTokensForGrant` because
-    // `oauth_device_codes` is Marfa's table and the provider store owns the
-    // plugin's. This function is already the single writer for both revoke
-    // doors and already holds the consent lock, so keeping the sweep here
-    // means one writer rather than two that can drift apart.
-    await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
-    await storage.items.update(
-      opts.itemId,
-      {
-        properties: {
-          ...opts.properties,
-          status: "revoked",
-          revoked_at: new Date().toISOString(),
-        },
-      },
-      opts.spaceId,
-    );
-  };
-  // Without both ids there is no consent row and nothing to race over,
-  // and no key to lock on either. The state flip still stands as the
-  // user-facing signal.
-  if (!opts.clientId || !opts.authUserId) {
-    await cascade();
-    return;
-  }
-  await withConsentLock(opts.clientId, opts.authUserId, cascade);
-}
 
 const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const REFRESH_TOKEN_PREFIX = "marfa_rt_";
@@ -656,20 +570,12 @@ export function authRoutes(
       clientId,
       authUserId,
     });
-    // Emit the audit row. Fire-and-forget — audit failures must never
-    // break the user-facing revoke flow. Emitted here rather than from
-    // the plugin hook, which fires without `client_id`.
-    void storage.audit.log({
-      space_id: spaceId ?? null,
-      action: "auth.grant.revoked",
-      resource_type: "oauth_grant",
-      resource_id: clientId ?? id,
-      client_ip: c.var.clientIp ?? null,
-      details: {
-        client_id: clientId,
-        user_id: authUserId,
-        grant_item_id: id,
-      },
+    auditGrantRevoked(storage, {
+      spaceId,
+      clientId,
+      authUserId,
+      grantItemId: id,
+      clientIp: c.var.clientIp ?? null,
     });
     return c.body(null, 204);
   });
@@ -2160,18 +2066,12 @@ export function authRoutes(
       });
       return c.redirect("/auth/security?notice=grant_revoke_failed", 302);
     }
-    // Emit the audit row (same shape as DELETE /grants/:id).
-    void storage.audit.log({
-      space_id: spaceId ?? null,
-      action: "auth.grant.revoked",
-      resource_type: "oauth_grant",
-      resource_id: clientId ?? id,
-      client_ip: c.var.clientIp ?? null,
-      details: {
-        client_id: clientId,
-        user_id: authUserId,
-        grant_item_id: id,
-      },
+    auditGrantRevoked(storage, {
+      spaceId,
+      clientId,
+      authUserId,
+      grantItemId: id,
+      clientIp: c.var.clientIp ?? null,
     });
     return c.redirect("/auth/security?notice=grant_revoked", 302);
   });

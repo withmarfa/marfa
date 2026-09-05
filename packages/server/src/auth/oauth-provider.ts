@@ -24,6 +24,8 @@
 
 import { oauthProvider } from "@better-auth/oauth-provider";
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import { withConsentLock } from "./consent-lock.js";
+import { auditGrantRevoked, revokeProjectedGrant } from "./grant-lifecycle.js";
 import { createHmac } from "node:crypto";
 import {
   profilePermissionCovers,
@@ -77,6 +79,9 @@ interface HookCtxLite {
    * comment.
    */
   authorizeSettings?: { isAuthorize?: boolean };
+  /** The request headers; read for a client that authenticates with HTTP
+   *  Basic rather than a `client_id` in the body. */
+  headers?: Headers | null;
   context?: {
     session?: { user?: { id?: string } } | null;
     /** What the endpoint produced. On a redirect this is the thrown
@@ -561,12 +566,12 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
 }
 
 // ---------------------------------------------------------------------------
-// Projection plugin shell (refresh-replay before-hook only)
+// Projection plugin shell
 // ---------------------------------------------------------------------------
 
 /**
- * Tiny BetterAuthPlugin shell hosting a single `hooks.before` matcher
- * for refresh-replay access-token cleanup.
+ * Tiny BetterAuthPlugin shell hosting the per-path hooks Marfa wraps
+ * around the provider's own endpoints.
  *
  * **Why a plugin shell rather than top-level `hooks`?** Top-level `hooks`
  * on the betterAuth instance only accepts a single before/after callable;
@@ -576,22 +581,22 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
  * future plugin-level hooks (additional path matchers) without touching
  * the instance.ts wiring.
  *
- * **Why no after-hooks for projection / cascade / last_used_at?** Every
- * one of those flows is already owned by an explicit Marfa-side handler
- * that does the work deterministically:
+ * **Why projection and the person's own revoke stay in explicit routes
+ * rather than hooks.** Each is owned by a Marfa-side handler that has the
+ * verified context in scope and does the work deterministically:
  *   - consent projection + audit: `POST /auth/authorize/decision`
  *     (`routes/auth-consent.ts`) verifies the signed query, proxies to
  *     `/auth/oauth2/consent`, and projects only after the plugin returns a
  *     code-bearing registered callback. The explicit handler retains the
  *     verified client context needed to gate those side effects.
- *   - revoke cascade + audit: `DELETE /auth/grants/:id` and
- *     `POST /auth/grants/:id/revoke` (`routes/auth-pages.ts`) call
- *     `storage.oauthProvider.revokeTokensForGrant` and emit
- *     `auth.grant.revoked`. The plugin's `/oauth2/revoke` takes a
- *     token-in-hand, not a (client, user) pair, so resolving the right
- *     grant in a hook would require a before-hook table read pre-deletion
- *     — wasted effort when the user-facing revoke path already has the
- *     resolved client + user in scope.
+ *   - revoke cascade + audit for the person's Disconnect:
+ *     `DELETE /auth/grants/:id` and `POST /auth/grants/:id/revoke`
+ *     (`routes/auth-pages.ts`) run `revokeProjectedGrant` with the client
+ *     and user already resolved from the grant record. The one revoke hook
+ *     here, `cascadeClientRevoke`, is the client's side of the same
+ *     transition: `/oauth2/revoke` takes a token in hand, and a refresh
+ *     token resolves to its (client, user) row once the plugin has marked
+ *     it, so the same cascade runs off that row.
  *   - `last_used_at` stamping: the bearer middleware stamps on every
  *     authenticated request via `stampOAuthGrantLastUsedByGrantKey`. A
  *     token-issuance after-hook would be redundant in the typical case
@@ -646,6 +651,18 @@ export function buildOauthProjectionPlugin(opts: {
             return Promise.resolve();
           }),
         },
+        ...(refreshHasher
+          ? [
+              {
+                // A refresh token revoked by its client ends the grant it
+                // belongs to. See `cascadeClientRevoke`.
+                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/revoke",
+                handler: createAuthMiddleware((ctx: HookCtxLite) =>
+                  cascadeClientRevoke(ctx, storage, refreshHasher),
+                ),
+              },
+            ]
+          : []),
       ],
       before: [
         {
@@ -732,6 +749,162 @@ export function buildOauthProjectionPlugin(opts: {
       ],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// Client-side revoke (after-hook)
+// ---------------------------------------------------------------------------
+
+const REFRESH_TOKEN_PREFIX = "marfa_rt_";
+
+/**
+ * After-hook for `/oauth2/revoke`: a refresh token revoked by its client
+ * ends the grant it belongs to.
+ *
+ * The plugin's own handling stops at the token. It marks the presented
+ * refresh row revoked and deletes the access tokens under it, and nothing
+ * more: the consent row stands, so the next authorize is answered silently
+ * with a fresh code, and the `system.connection` projection stands, so the
+ * security page keeps listing an app that has asked to be forgotten. RFC
+ * 7009 is the one thing a client can do to say "disconnect me", and an app
+ * that did it correctly was still connected.
+ *
+ * **Keyed on the row, never on the response.** The endpoint answers 200
+ * with an empty body whether or not it did anything, per RFC 7009 §2.2, and
+ * the plugin follows it: an unknown token, a token presented under another
+ * client's id and a replayed token all come back identical to a success,
+ * and `ctx.context.returned` separates only the endpoint's own refusals
+ * (a client that failed to authenticate, an unsupported token type). So the
+ * hook resolves the presented token to its refresh row after the plugin
+ * has run. A row still present and marked revoked was revoked by this
+ * call: a replay deletes the whole family before the hook sees it, and a
+ * client mismatch leaves the row unmarked. The client check is repeated
+ * here regardless, because a stolen refresh token presented under another
+ * registration must not become a way to disconnect somebody else's app.
+ *
+ * **Best-effort past the plugin's own work.** The tokens under the
+ * presented refresh token are already gone when this runs, and the two
+ * grant records still agree with each other if the cascade fails, so a
+ * failure is logged at error rather than turned into a 500 on a
+ * revocation the plugin has completed. The person's own Disconnect makes
+ * the opposite call, and rightly: there the cascade is the whole of the
+ * work, and a 5xx is what stops the record overstating it.
+ *
+ * Only a token carrying the refresh prefix is looked up. The plugin's
+ * `decodeRefreshToken` refuses anything else before it reaches the table,
+ * so an access token, hinted or not, never had a refresh row to resolve.
+ */
+async function cascadeClientRevoke(
+  ctx: HookCtxLite,
+  storage: Storage,
+  hasher: (token: string) => string,
+): Promise<void> {
+  try {
+    // Anything other than the endpoint's empty success is a refusal the
+    // plugin made before touching a row.
+    if (ctx.context?.returned !== null && ctx.context?.returned !== undefined)
+      return;
+    const body = ctx.body;
+    if (!body || typeof body !== "object") return;
+    if (body.token_type_hint === "access_token") return;
+    const token = body.token;
+    if (typeof token !== "string" || !token.startsWith(REFRESH_TOKEN_PREFIX))
+      return;
+    const provider = storage.oauthProvider;
+    if (
+      typeof provider?.findRefreshTokenGrantKey !== "function" ||
+      typeof provider.findGrantItemId !== "function" ||
+      typeof provider.revokeTokensForGrant !== "function"
+    )
+      return;
+
+    const row = await provider.findRefreshTokenGrantKey(
+      hasher(token.slice(REFRESH_TOKEN_PREFIX.length)),
+    );
+    if (!row) return;
+    const presentedClientId = clientIdOf(ctx);
+    if (presentedClientId !== row.clientId) {
+      log("warn", "oauth client revoke: token belongs to another client", {
+        presented_client_id: presentedClientId,
+        token_client_id: row.clientId,
+      });
+      return;
+    }
+    if (!row.revoked) {
+      // The plugin answered success without marking the row it would have
+      // marked, which no path it has today produces. Say so rather than
+      // cascade on a revocation that did not happen.
+      log("warn", "oauth client revoke: row unmarked after a 200", {
+        client_id: row.clientId,
+      });
+      return;
+    }
+
+    const spaceId = row.referenceId ?? undefined;
+    const grantItemId = await provider.findGrantItemId({
+      spaceId: row.referenceId,
+      clientId: row.clientId,
+      authUserId: row.userId,
+    });
+    const item = grantItemId
+      ? await storage.items.get(grantItemId, spaceId)
+      : null;
+    if (grantItemId && item) {
+      await revokeProjectedGrant(storage, {
+        itemId: grantItemId,
+        properties: item.properties,
+        spaceId,
+        clientId: row.clientId,
+        authUserId: row.userId,
+      });
+    } else {
+      // No live projection to flip, so only the plugin's records remain.
+      // They go anyway: a consent row must not outlive the grant it
+      // belongs to, and the same lock the projected path takes keeps the
+      // silent re-authorization's scope restore from putting it back.
+      const { clientId, userId } = row;
+      await withConsentLock(clientId, userId, () =>
+        provider.revokeTokensForGrant(clientId, userId),
+      );
+    }
+    auditGrantRevoked(storage, {
+      spaceId,
+      clientId: row.clientId,
+      authUserId: row.userId,
+      grantItemId,
+      clientIp: null,
+      source: "client",
+    });
+    log("info", "oauth client revoke: grant ended", {
+      client_id: row.clientId,
+      user_id: row.userId,
+      grant_item_id: grantItemId,
+    });
+  } catch (err) {
+    log("error", "oauth client revoke: grant cascade failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/** The client id the request authenticated as: the body field for a public
+ *  client, the HTTP Basic user for a confidential one. */
+function clientIdOf(ctx: HookCtxLite): string | undefined {
+  const fromBody = ctx.body?.client_id;
+  if (typeof fromBody === "string" && fromBody.length > 0) return fromBody;
+  const authorization = ctx.headers?.get("authorization");
+  if (!authorization?.toLowerCase().startsWith("basic ")) return undefined;
+  try {
+    const decoded = Buffer.from(
+      authorization.slice(6).trim(),
+      "base64",
+    ).toString("utf8");
+    const separator = decoded.indexOf(":");
+    if (separator <= 0) return undefined;
+    return decodeURIComponent(decoded.slice(0, separator));
+  } catch {
+    return undefined;
+  }
 }
 
 // ---------------------------------------------------------------------------

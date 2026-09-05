@@ -127,6 +127,8 @@ const WRITERS: Record<string, string> = {
   "routes/auth-consent.ts":
     "projects an OAuth grant onto a system.connection; the consent decision is already serialized by withConsentLock and is a browser form rather than a retried API write",
   "routes/auth-pages.ts": "the device-flow and grant surfaces, as above",
+  "auth/grant-lifecycle.ts":
+    "the revoke cascade's projection flip, moved out of auth-pages so the grant routes and the client-revoke hook share one writer; serialized by withConsentLock, and a retried revoke finds the grant already revoked rather than a second write to dedupe",
   "routes/credentials.ts":
     "credential registration under /credentials, outside the item and edge write surface this covers",
   "routes/connection-proxy.ts":
