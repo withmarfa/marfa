@@ -26,6 +26,7 @@ import {
   createTestContext,
   markEmailVerified,
   request,
+  waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
@@ -381,5 +382,70 @@ describe("authorize failures are observable", () => {
     const byLevel = new Map(logged.map((l) => [l.data?.error_code, l.level]));
     expect(byLevel.get("invalid_scope")).toBe("warn");
     expect(byLevel.get("login_required")).toBe("info");
+  });
+});
+
+describe("the provider's own consent skip is audited", () => {
+  it("writes one auth.grant.reused row for a covered request answered off the wire, and none for the decision or for prompt=consent", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClientWithRedirect(c, CALLBACK, null);
+    const cookie = await signInUser(c, "provider-skip@example.com");
+    const scope = "core.note:read";
+
+    // First consent through Marfa's decision route: one `created`, and the
+    // re-entry the decision makes into the plugin's authorize is not a
+    // `reused`.
+    await grantConsent(c, clientId, cookie, CALLBACK, scope);
+    const created = await waitForAudit(
+      () => c.storage.audit.list({ action: "auth.grant.created", limit: 10 }),
+      (r) => r.data.length >= 1,
+    );
+    expect(created.data.length).toBe(1);
+    const reusedBefore = await c.storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 10,
+    });
+    expect(reusedBefore.data).toEqual([]);
+
+    // The second authorize is answered by the plugin itself: a standing
+    // consent row covers it, so the redirect goes straight to the callback
+    // with a code and Marfa's consent route never runs.
+    const skipped = await request(c.app, "GET", authorizeUrl(clientId, scope), {
+      headers: { cookie },
+    });
+    expect(skipped.status).toBe(302);
+    const location = skipped.headers.get("location") ?? "";
+    expect(location.startsWith(CALLBACK)).toBe(true);
+    expect(new URL(location).searchParams.get("code")).toBeTruthy();
+
+    const reused = await waitForAudit(
+      () => c.storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
+      (r) => r.data.length >= 1,
+    );
+    expect(reused.data.length).toBe(1);
+    const row = reused.data[0]!;
+    expect(row.resource_id).toBe(clientId);
+    expect(row.details.client_id).toBe(clientId);
+    expect(typeof row.details.user_id).toBe("string");
+    expect(row.details.scopes).toEqual([scope]);
+    expect(created.data[0]!.details.user_id).toBe(row.details.user_id);
+
+    // The client asked to be asked: the plugin renders consent, nothing is
+    // reused, and no row is written.
+    const asked = await request(
+      c.app,
+      "GET",
+      authorizeUrl(clientId, scope, "&prompt=consent"),
+      { headers: { cookie } },
+    );
+    expect(asked.status).toBe(302);
+    expect(asked.headers.get("location") ?? "").toContain("/auth/authorize?");
+    await new Promise((r) => setTimeout(r, 100));
+    const reusedAfter = await c.storage.audit.list({
+      action: "auth.grant.reused",
+      limit: 10,
+    });
+    expect(reusedAfter.data.length).toBe(1);
   });
 });

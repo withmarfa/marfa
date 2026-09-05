@@ -28,7 +28,11 @@ import {
   decodeBasicCredentials,
   stripAccessTokenAuthorizationScheme,
 } from "better-auth/oauth2";
-import { auditGrantRevoked, revokeProjectedGrant } from "./grant-lifecycle.js";
+import {
+  auditGrantReused,
+  auditGrantRevoked,
+  revokeProjectedGrant,
+} from "./grant-lifecycle.js";
 import { createHmac } from "node:crypto";
 import {
   profilePermissionCovers,
@@ -653,11 +657,15 @@ export function buildOauthProjectionPlugin(opts: {
     hooks: {
       after: [
         {
-          // Gives the authorize endpoint's failures a signal. See
-          // `logAuthorizeOutcome` for why nothing else produces one.
+          // Gives the authorize endpoint's failures a signal, and its own
+          // consent skip an audit row. See `logAuthorizeOutcome` and
+          // `auditProviderConsentSkip`.
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
           handler: createAuthMiddleware((ctx: HookCtxLite) => {
             logAuthorizeOutcome(ctx);
+            if (refreshHasher) {
+              auditProviderConsentSkip(ctx, storage, refreshHasher);
+            }
             return Promise.resolve();
           }),
         },
@@ -769,6 +777,100 @@ export function buildOauthProjectionPlugin(opts: {
       ],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// The provider's own consent skip (after-hook)
+// ---------------------------------------------------------------------------
+
+/**
+ * After-hook for `/oauth2/authorize`: when the plugin answers a request with
+ * a code without showing the consent screen, write the `auth.grant.reused`
+ * row Marfa's own skip writes.
+ *
+ * Two paths skip consent. Marfa's, on `GET /auth/authorize`, is reached when
+ * the plugin has already redirected the browser to the consent page; it
+ * emits `auth.grant.reused` itself. The plugin's own, inside its authorize
+ * endpoint, finds a standing consent row covering the request and redirects
+ * straight to the callback with a code, and Marfa's route never runs. Every
+ * re-authorization by an app whose grant covers what it asks for takes the
+ * second path, so the operator trail showed a grant being created once and
+ * never used again, while the tokens kept being minted.
+ *
+ * **A request off the wire, that succeeded, without the person asking to be
+ * asked.** The plugin re-enters its own authorize endpoint from the consent
+ * and continue endpoints through `runOAuth2Authorize`, which sets
+ * `authorizeSettings` on the context; a request that arrived over HTTP has
+ * the field undefined, and that is the whole of how the two are told apart.
+ * A re-entry after a consent decision is a `created`, written by the
+ * decision route, and must not also be a `reused`. `prompt=consent` means
+ * the client asked for a fresh decision, and the plugin honors it by
+ * rendering; if a code came back regardless, nothing was reused. Success is
+ * a server-added `code` on the client's own `redirect_uri`, judged by
+ * `serverAddedResponseParam` for the reason `logAuthorizeOutcome` gives.
+ *
+ * **Who and what, read from the code itself.** The hook context carries no
+ * session, and the query names the client but not the person. The
+ * authorization code the plugin just minted does: its verification row
+ * carries `client_id` and `userId`, and Marfa's store resolves it through
+ * the same hash the plugin stored it under. That is one read of a row the
+ * plugin wrote a moment ago, and it means the audit row names the person
+ * the code was minted for rather than whoever the hook guessed.
+ *
+ * Fire-and-forget, like the route's own emit: a reporting path must never
+ * fail an authorization.
+ */
+function auditProviderConsentSkip(
+  ctx: HookCtxLite,
+  storage: Storage,
+  hasher: (token: string) => string,
+): void {
+  try {
+    if (ctx.authorizeSettings !== undefined) return;
+    const prompt =
+      typeof ctx.query?.prompt === "string" ? ctx.query.prompt : "";
+    if (prompt.split(" ").includes("consent")) return;
+    const location = redirectLocationOf(ctx.context?.returned);
+    if (!location) return;
+    const redirectUri =
+      typeof ctx.query?.redirect_uri === "string"
+        ? ctx.query.redirect_uri
+        : null;
+    if (!serverAddedResponseParam(redirectUri, location, "code")) return;
+    const code = new URL(location, "http://localhost").searchParams.get("code");
+    if (!code) return;
+    if (
+      typeof storage.oauthProvider?.findAuthorizationCodeGrantKey !== "function"
+    )
+      return;
+    const scopes =
+      typeof ctx.query?.scope === "string"
+        ? ctx.query.scope.split(" ").filter(Boolean)
+        : [];
+    const provider = storage.oauthProvider;
+    void provider
+      .findAuthorizationCodeGrantKey(hasher(code))
+      .then((row) => {
+        if (!row) return;
+        return auditGrantReused(storage, {
+          authUserId: row.userId,
+          clientId: row.clientId,
+          scopes,
+          clientIp: null,
+        });
+      })
+      .catch((err: unknown) => {
+        log(
+          "warn",
+          "provider consent skip: auth.grant.reused audit emit failed",
+          {
+            error: err instanceof Error ? err.message : String(err),
+          },
+        );
+      });
+  } catch {
+    // A reporting path must never fail a request.
+  }
 }
 
 // ---------------------------------------------------------------------------
