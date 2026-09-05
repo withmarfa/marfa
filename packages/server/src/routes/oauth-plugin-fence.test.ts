@@ -173,12 +173,13 @@ async function seedConsent(
   c: TestContext,
   clientId: string,
   authUserId: string,
-): Promise<void> {
+): Promise<string> {
   const schema = await betterAuthSchema(c);
   const db = c.storage.betterAuthDb as InsertingDb;
   const now = new Date();
+  const id = `cons_${Math.random().toString(36).slice(2)}`;
   const op = db.insert(schema.auth_oauth_consent).values({
-    id: `cons_${Math.random().toString(36).slice(2)}`,
+    id,
     clientId,
     userId: authUserId,
     scopes:
@@ -190,6 +191,7 @@ async function seedConsent(
     updatedAt: now,
   });
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
+  return id;
 }
 
 /** The consent rows for a (client, user) pair, scopes normalized across the
@@ -253,17 +255,38 @@ async function isFenced(res: Response): Promise<boolean> {
   return body?.error?.code === "not_found";
 }
 
-/** A body a real caller of the management API would send, so the fence is
- *  shown to win before any handler could read it. */
-const MANAGEMENT_BODY = {
-  id: "x",
-  client_id: "some-client",
-  client_name: "Fenced",
-  redirect_uris: ["https://example.com/cb"],
-  update: { scopes: ["core.note:read"] },
-  accept: true,
-  oauth_query: "client_id=some-client&sig=nope",
-};
+/** The body a real caller of each endpoint would send, aimed at the seeded
+ *  rows, so a handler that ran would visibly move one of them: the consent
+ *  endpoints resolve the row by `id` and refuse a miss before touching
+ *  anything, an update to the scopes the row already holds would read back
+ *  unchanged, and `oauth_query` goes only where the plugin expects it,
+ *  because its signed-query check refuses any body carrying one. */
+function managementBody(
+  path: string,
+  consentId: string,
+  clientId: string,
+): Record<string, unknown> {
+  if (path === "/oauth2/consent") {
+    return { accept: true, oauth_query: `client_id=${clientId}&sig=nope` };
+  }
+  if (path === "/oauth2/update-consent") {
+    return { id: consentId, update: { scopes: ["core.note:write"] } };
+  }
+  if (path === "/oauth2/delete-consent") return { id: consentId };
+  if (path.endsWith("create-client")) {
+    return {
+      client_name: "Fenced",
+      redirect_uris: ["https://example.com/cb"],
+    };
+  }
+  return {
+    id: consentId,
+    client_id: clientId,
+    client_name: "Fenced",
+    redirect_uris: ["https://example.com/cb"],
+    update: { scopes: ["core.note:write"] },
+  };
+}
 
 describe("the plugin's management endpoints are fenced", () => {
   it("the reachable and fenced lists between them decide every path the plugin routes, and name nothing else", () => {
@@ -321,7 +344,7 @@ describe("the plugin's management endpoints are fenced", () => {
     const cookie = await signInUser(ctx, "fence@example.com");
     const authUserId = await authUserIdFor(ctx, "fence@example.com");
     const clientId = await seedClient(ctx);
-    await seedConsent(ctx, clientId, authUserId);
+    const consentId = await seedConsent(ctx, clientId, authUserId);
     const clientsBefore = await countClients(ctx);
 
     for (const path of FENCED_PLUGIN_ENDPOINTS) {
@@ -330,7 +353,7 @@ describe("the plugin's management endpoints are fenced", () => {
           const res = await request(ctx.app, method, `/auth${spelling}`, {
             headers: { cookie, origin: ORIGIN },
             ...(method === "POST" && {
-              body: { ...MANAGEMENT_BODY, client_id: clientId },
+              body: managementBody(path, consentId, clientId),
             }),
           });
           expect.soft(await isFenced(res), `${method} ${spelling}`).toBe(true);
@@ -360,9 +383,12 @@ describe("the plugin's management endpoints are fenced", () => {
     expect(unknown.status).toBe(404);
     expect(unknown.headers.get("x-error-code")).toBeNull();
 
-    // Nothing declared reachable carries the fence's signature. Moving a
-    // path from the fenced list to this one is therefore a change the suite
-    // sees, not a one-line way to reopen a door.
+    // Nothing declared reachable carries the fence's signature. That is all
+    // this loop proves: a path the plugin does not serve for a method also
+    // passes, since the catch-all's bare 404 is not the signature. "Answers
+    // as itself" is carried by the enumeration case's routable check and the
+    // three explicit refusals below; the pin there is what makes moving a
+    // path between the lists a change the suite sees.
     for (const path of REACHABLE_PLUGIN_ENDPOINTS) {
       for (const method of ["GET", "POST"]) {
         const res = await request(ctx.app, method, `/auth${concrete(path)}`, {
