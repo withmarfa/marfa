@@ -1,5 +1,32 @@
 # @withmarfa/sdk
 
+## 5.2.0
+
+### The paging helpers can be asked for `system.*` rows
+
+`include` on the list endpoint is one parameter doing two jobs. Three of its
+tokens hydrate an extra onto the rows already coming back; `system` widens
+which rows those are, opting back in to the reserved namespace a listing omits
+by default. The helpers that hydrate spend the parameter on their own token
+before a caller sees it, so the second job had nowhere to go on any of them
+except `listWithMetadata`.
+
+That left the walk-everything helpers unable to ask for what they exist to
+walk. A caller reaching for `items.listAllWithMetadata` to read everything got
+everything except the reserved namespace, silently — and a client pruning a
+local copy against such a walk deletes every reserved row it holds, because
+they are absent from the read and indistinguishable from rows the server no
+longer has. Two client kits had already lost data to this shape.
+
+`items.listAllWithMetadata`, `items.listWithExtensions` and
+`items.listAllWithExtensions` now take `includeSystemTypes`, matching
+`items.listWithMetadata`, and the walk helpers forward it on every page rather
+than only the first. The option is declared once as the exported
+`SystemTypesOptIn` instead of being restated per helper.
+
+`items.listAll` is unchanged: it does not hydrate, so it never spent
+`include` and could always be passed `include: "system"` directly.
+
 ## 5.1.0
 
 ### A slow status poll no longer reports a failure for a bulk action that is succeeding

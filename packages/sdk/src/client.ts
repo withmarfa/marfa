@@ -205,7 +205,9 @@ export interface ListFilters {
    * extra onto the rows already being returned; `system` widens the row set
    * instead, so they are not all one kind of thing and the difference is the
    * one worth reading below. The typed helpers `listWithMetadata` and
-   * `listWithExtensions` cover the first kind; `system` has no helper.
+   * `listWithExtensions` cover the first kind, and take the second as
+   * {@link SystemTypesOptIn.includeSystemTypes} because they have already
+   * spent this parameter on their own token.
    *
    * - `system` — also returns `system.*` rows, which are omitted by
    *   default. A read that prunes against its result needs this, or every
@@ -219,6 +221,32 @@ export interface ListFilters {
    * to avoid N+1 per-item round trips.
    */
   include?: string;
+}
+
+/**
+ * The `system` opt-in, for the list helpers that spend `include` themselves.
+ *
+ * `include` is one parameter doing two jobs: three of its tokens hydrate an
+ * extra onto the rows already coming back, and `system` widens which rows
+ * those are. A helper that hydrates has spent the parameter on the first job
+ * before the caller sees it, so the second arrives as a named option instead
+ * of being unreachable.
+ *
+ * Declared once and referenced, rather than restated on each helper. The two
+ * halves that have to agree are this flag and the token the helper appends,
+ * and a second copy of the flag is a second thing to forget when a helper is
+ * added.
+ */
+export interface SystemTypesOptIn {
+  /**
+   * Also return `system.*` rows, which the route omits by default.
+   *
+   * A read that wants to know what the server holds — rather than what a
+   * person would browse — needs this. A client pruning against a walk
+   * without it removes every reserved row it holds, because they are absent
+   * from the read and indistinguishable from rows the server no longer has.
+   */
+  includeSystemTypes?: boolean;
 }
 
 /** Item paired with its hydrated extension namespaces. */
@@ -1100,18 +1128,7 @@ export class MarfaClient {
     },
 
     listWithMetadata: async (
-      filters?: Omit<ListFilters, "include"> & {
-        /**
-         * Also return `system.*` rows, which the route omits by default.
-         *
-         * A read that wants to know what the server holds — rather than
-         * what a person would browse — needs this. A client pruning
-         * against a walk without it removes every reserved row it holds,
-         * because they are absent from the read and indistinguishable
-         * from rows the server no longer has.
-         */
-        includeSystemTypes?: boolean;
-      },
+      filters?: Omit<ListFilters, "include"> & SystemTypesOptIn,
     ): Promise<PaginatedResult<ItemWithMetadata>> => {
       const { includeSystemTypes, ...rest } = filters ?? {};
       return this.transport.request<PaginatedResult<ItemWithMetadata>>(
@@ -1135,15 +1152,17 @@ export class MarfaClient {
      * write.
      */
     listWithExtensions: async (
-      filters?: Omit<ListFilters, "include">,
+      filters?: Omit<ListFilters, "include"> & SystemTypesOptIn,
     ): Promise<PaginatedResult<ItemWithExtensions>> => {
+      const { includeSystemTypes, ...rest } = filters ?? {};
       return this.transport.request<PaginatedResult<ItemWithExtensions>>(
         "GET",
         "/items",
         {
           query: {
-            ...filters,
-            include: "extensions",
+            ...rest,
+            include:
+              includeSystemTypes === true ? "extensions,system" : "extensions",
           },
         },
       );
@@ -1162,9 +1181,16 @@ export class MarfaClient {
         this.items.list({ ...filters, ...(cursor ? { cursor } : {}) }),
       ),
 
-    /** `listAll` with metadata hydrated inline. */
+    /**
+     * `listAll` with metadata hydrated inline.
+     *
+     * Carries {@link SystemTypesOptIn} because this is the helper a caller
+     * that wants everything reaches for, and without it the walk returned
+     * everything except the reserved namespace — with nothing at the call
+     * site to say so.
+     */
     listAllWithMetadata: (
-      filters?: Omit<ListFilters, "include" | "cursor">,
+      filters?: Omit<ListFilters, "include" | "cursor"> & SystemTypesOptIn,
     ): AsyncIterable<ItemWithMetadata> =>
       paginate((cursor) =>
         this.items.listWithMetadata({
@@ -1175,7 +1201,7 @@ export class MarfaClient {
 
     /** `listAll` with extension namespaces hydrated inline. */
     listAllWithExtensions: (
-      filters?: Omit<ListFilters, "include" | "cursor">,
+      filters?: Omit<ListFilters, "include" | "cursor"> & SystemTypesOptIn,
     ): AsyncIterable<ItemWithExtensions> =>
       paginate((cursor) =>
         this.items.listWithExtensions({

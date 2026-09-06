@@ -9,6 +9,7 @@ import {
   BulkActionWorker,
 } from "@withmarfa/server";
 import { MarfaClient } from "./client.js";
+import { collect } from "./pagination.js";
 import type { BulkActionFilter, BulkActionInput } from "./client.js";
 import {
   ConflictError,
@@ -2134,5 +2135,147 @@ describe("edges.bulk", () => {
     expect(result.counts.errored).toBe(1);
     expect(result.results[1]?.outcome).toBe("errored");
     expect(result.results[1]?.error?.code).toBe("invalid_id");
+  });
+});
+
+/**
+ * The opt-in that widens the row set, on the helper that walks every page.
+ *
+ * The hydrating list helpers spend `include` on their own token, so the
+ * `system` opt-in reaches them as a named option instead. The walk helpers
+ * delegate to those, and until they carried the option a caller asking the
+ * kit for everything got everything except the reserved namespace — silently,
+ * and on the API a re-import reaches for first.
+ *
+ * Every case asserts the request that left as well as the rows that came
+ * back, and pages deliberately: forwarding that works on page one and stops
+ * on page two returns a set that reads exactly like a complete one. Each
+ * absence is paired with a presence, because an assertion that only checks
+ * the system row is missing passes against a walk that returned nothing.
+ */
+describe("the paging helpers and the system opt-in", () => {
+  /** A client whose every outgoing URL is recorded, over the same server. */
+  function recordingClient(): { client: MarfaClient; urls: URL[] } {
+    const urls: URL[] = [];
+    return {
+      urls,
+      client: new MarfaClient({
+        url: "http://localhost",
+        apiKey: adminKey,
+        fetch: (input, init) => {
+          urls.push(
+            new URL(
+              typeof input === "string"
+                ? input
+                : input instanceof URL
+                  ? input.href
+                  : input.url,
+            ),
+          );
+          return testFetchFn(input, init);
+        },
+      }),
+    };
+  }
+
+  async function seedPair(
+    marker: string,
+  ): Promise<{ noteId: string; deviceId: string }> {
+    const note = await client.items.create({
+      type: "core.note",
+      properties: { body: marker },
+      tags: [marker],
+    });
+    const device = await client.items.create({
+      type: "system.device",
+      properties: { name: marker, kind: "laptop" },
+      tags: [marker],
+    });
+    return { noteId: note.id, deviceId: device.id };
+  }
+
+  /** The `include` token set on every request the walk made. */
+  function includesSent(urls: URL[]): (string | null)[] {
+    return urls.map((url) => url.searchParams.get("include"));
+  }
+
+  it("omits system.* rows from a metadata walk that does not ask for them", async () => {
+    const marker = "walk-metadata-absent";
+    const { noteId, deviceId } = await seedPair(marker);
+    const { client: recorded, urls } = recordingClient();
+
+    const ids = await collect(
+      recorded.items.listAllWithMetadata({ tags: [marker], limit: 1 }),
+      { maxItems: 50 },
+    ).then((rows) => rows.map((row) => row.item.id));
+
+    expect(ids).toContain(noteId);
+    expect(ids).not.toContain(deviceId);
+    expect(includesSent(urls)).toEqual(
+      Array.from({ length: urls.length }, () => "metadata"),
+    );
+  });
+
+  it("carries the system opt-in on every page of a metadata walk", async () => {
+    const marker = "walk-metadata-present";
+    const { noteId, deviceId } = await seedPair(marker);
+    const { client: recorded, urls } = recordingClient();
+
+    // `limit: 1` against two matching rows, so the walk pages and the
+    // assertion below covers a request the first page did not make.
+    const ids = await collect(
+      recorded.items.listAllWithMetadata({
+        tags: [marker],
+        limit: 1,
+        includeSystemTypes: true,
+      }),
+      { maxItems: 50 },
+    ).then((rows) => rows.map((row) => row.item.id));
+
+    expect(ids).toContain(noteId);
+    expect(ids).toContain(deviceId);
+    expect(urls.length).toBeGreaterThan(1);
+    expect(includesSent(urls)).toEqual(
+      Array.from({ length: urls.length }, () => "metadata,system"),
+    );
+  });
+
+  it("carries the system opt-in on every page of an extensions walk", async () => {
+    const marker = "walk-extensions-present";
+    const { noteId, deviceId } = await seedPair(marker);
+    const { client: recorded, urls } = recordingClient();
+
+    const ids = await collect(
+      recorded.items.listAllWithExtensions({
+        tags: [marker],
+        limit: 1,
+        includeSystemTypes: true,
+      }),
+      { maxItems: 50 },
+    ).then((rows) => rows.map((row) => row.id));
+
+    expect(ids).toContain(noteId);
+    expect(ids).toContain(deviceId);
+    expect(urls.length).toBeGreaterThan(1);
+    expect(includesSent(urls)).toEqual(
+      Array.from({ length: urls.length }, () => "extensions,system"),
+    );
+  });
+
+  it("omits system.* rows from an extensions walk that does not ask for them", async () => {
+    const marker = "walk-extensions-absent";
+    const { noteId, deviceId } = await seedPair(marker);
+    const { client: recorded, urls } = recordingClient();
+
+    const ids = await collect(
+      recorded.items.listAllWithExtensions({ tags: [marker], limit: 1 }),
+      { maxItems: 50 },
+    ).then((rows) => rows.map((row) => row.id));
+
+    expect(ids).toContain(noteId);
+    expect(ids).not.toContain(deviceId);
+    expect(includesSent(urls)).toEqual(
+      Array.from({ length: urls.length }, () => "extensions"),
+    );
   });
 });
