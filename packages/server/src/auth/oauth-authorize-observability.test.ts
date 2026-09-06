@@ -425,14 +425,64 @@ describe("the provider's own consent skip is audited", () => {
     );
     expect(reused.data.length).toBe(1);
     const row = reused.data[0]!;
+    // The same shape Marfa's own skip writes, field for field: a reader of
+    // the trail cannot tell the two doors apart, which is the point.
+    expect(row.resource_type).toBe("oauth_grant");
     expect(row.resource_id).toBe(clientId);
+    expect(row.client_ip).toBeNull();
     expect(row.details.client_id).toBe(clientId);
     expect(typeof row.details.user_id).toBe("string");
     expect(row.details.scopes).toEqual([scope]);
+    expect(typeof row.details.grant_item_id).toBe("string");
+    expect(row.details.grant_item_id).toBe(
+      created.data[0]!.details.grant_item_id,
+    );
     expect(created.data[0]!.details.user_id).toBe(row.details.user_id);
 
-    // The client asked to be asked: the plugin renders consent, nothing is
-    // reused, and no row is written.
+    // A repeated literal is one scope, as Marfa's door writes it; the
+    // plugin's coverage check admits the repeat, so the dedupe is here.
+    const repeated = await request(
+      c.app,
+      "GET",
+      authorizeUrl(clientId, `${scope} ${scope}`),
+      { headers: { cookie } },
+    );
+    expect(repeated.status).toBe(302);
+    const reusedTwice = await waitForAudit(
+      () => c.storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
+      (r) => r.data.length >= 2,
+    );
+    expect(reusedTwice.data[0]!.details.scopes).toEqual([scope]);
+
+    // The plugin reads a POST's request from the form body. The hook has to
+    // read the same source: a form-post skip is audited, and a query string
+    // riding on the POST does not choose the scopes the row records.
+    const posted = await request(
+      c.app,
+      "POST",
+      "/auth/oauth2/authorize?scope=forged:scope",
+      {
+        form: Object.fromEntries(
+          new URL(authorizeUrl(clientId, scope), "http://localhost")
+            .searchParams,
+        ),
+        headers: { cookie, origin: "http://localhost:0" },
+      },
+    );
+    expect(posted.status).toBe(302);
+    expect((posted.headers.get("location") ?? "").startsWith(CALLBACK)).toBe(
+      true,
+    );
+    const reusedThrice = await waitForAudit(
+      () => c.storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
+      (r) => r.data.length >= 3,
+    );
+    expect(reusedThrice.data[0]!.details.scopes).toEqual([scope]);
+
+    // The client asked to be asked: the plugin renders consent, so the
+    // Location carries no code and the code check alone already answers
+    // this; the prompt guard in the hook is defence in depth for a plugin
+    // that one day skips under `prompt=consent`.
     const asked = await request(
       c.app,
       "GET",
@@ -446,6 +496,6 @@ describe("the provider's own consent skip is audited", () => {
       action: "auth.grant.reused",
       limit: 10,
     });
-    expect(reusedAfter.data.length).toBe(1);
+    expect(reusedAfter.data.length).toBe(3);
   });
 });

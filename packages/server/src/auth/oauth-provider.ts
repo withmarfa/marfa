@@ -69,8 +69,9 @@ import { serverAddedResponseParam } from "./redirect-params.js";
  * Minimal context shape we read off the `hooks.before` and `hooks.after`
  * matchers + handlers. Mirrors the slice of Better Auth's
  * `HookEndpointContext` we touch — `path` is widened to `string | undefined`
- * to match the library's type (some internal paths leave it unset), and
- * `method` and `authorizeSettings` are read only on the before side.
+ * to match the library's type (some internal paths leave it unset).
+ * `method` is read only on the before side; `authorizeSettings` on both,
+ * since the consent-skip audit after the authorize endpoint keys on it.
  */
 interface HookCtxLite {
   path?: string;
@@ -616,11 +617,12 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
  * `apiKeySalt` is threaded in so the hooks that look a token up can
  * compute the same hash format the plugin uses (`hashApiKey(token, salt)`
  * via the custom `storeTokens.hash`): the refresh-replay guard, the code
- * guard, and the client-revoke pair. Without it every one of them is
- * omitted and the plugin still constructs, so an instance with no salt
- * keeps the plugin's own behavior on all three surfaces; the salt is
- * required in production, so that shape is a test fixture's, not a
- * deployment's.
+ * guard, the client-revoke pair and the consent-skip audit. Without it
+ * every one of them is omitted and the plugin still constructs, so an
+ * instance with no salt keeps the plugin's own behavior on all four
+ * surfaces, and the fourth's absence is the silent one: the audit row
+ * simply stops being written. The salt is required in production, so that
+ * shape is a test fixture's, not a deployment's.
  */
 export function buildOauthProjectionPlugin(opts: {
   storage: Storage;
@@ -799,9 +801,15 @@ export function buildOauthProjectionPlugin(opts: {
  *
  * **A request off the wire, that succeeded, without the person asking to be
  * asked.** The plugin re-enters its own authorize endpoint from the consent
- * and continue endpoints through `runOAuth2Authorize`, which sets
- * `authorizeSettings` on the context; a request that arrived over HTTP has
- * the field undefined, and that is the whole of how the two are told apart.
+ * and continue endpoints, and from its sign-in resume, through
+ * `runOAuth2Authorize`, which sets `authorizeSettings` on the context; a
+ * request that arrived over HTTP has the field undefined, and that is the
+ * whole of how the two are told apart. The sign-in resume is a wire-shaped
+ * re-authorization this therefore skips, and that is safe only because of
+ * two facts of this deployment: Marfa's sign-in returns to its own
+ * `/auth/authorize` rather than posting the plugin's `oauth_query`, and no
+ * `selectAccount` page is configured so `/oauth2/continue` is unreachable.
+ * Adopting either reopens the gap.
  * A re-entry after a consent decision is a `created`, written by the
  * decision route, and must not also be a `reused`. `prompt=consent` means
  * the client asked for a fresh decision, and the plugin honors it by
@@ -809,13 +817,19 @@ export function buildOauthProjectionPlugin(opts: {
  * a server-added `code` on the client's own `redirect_uri`, judged by
  * `serverAddedResponseParam` for the reason `logAuthorizeOutcome` gives.
  *
- * **Who and what, read from the code itself.** The hook context carries no
- * session, and the query names the client but not the person. The
- * authorization code the plugin just minted does: its verification row
- * carries `client_id` and `userId`, and Marfa's store resolves it through
- * the same hash the plugin stored it under. That is one read of a row the
- * plugin wrote a moment ago, and it means the audit row names the person
- * the code was minted for rather than whoever the hook guessed.
+ * **Who, read from the code itself; what, from the request as the plugin
+ * answered it.** The hook context carries no session, and the query names
+ * the client but not the person. The authorization code the plugin just
+ * minted does: its verification row carries `client_id` and `userId`, and
+ * Marfa's store resolves it through the same hash the plugin stored it
+ * under. That is one read of a row the plugin wrote a moment ago, and it
+ * means the audit row names the person the code was minted for rather than
+ * whoever the hook guessed. The scopes come from `ctx.query.scope`, which
+ * is the value the plugin minted for: the ceiling default when the request
+ * named none, and the narrowing hook's rewrite when it dropped literals.
+ * Marfa's own skip reads the same post-narrowing value, and deduplicates
+ * it, so the two doors write one shape for one request. No request IP: the
+ * hook context does not carry one, the same as the client-revoke cascade.
  *
  * Fire-and-forget, like the route's own emit: a reporting path must never
  * fail an authorization.
@@ -827,15 +841,19 @@ function auditProviderConsentSkip(
 ): void {
   try {
     if (ctx.authorizeSettings !== undefined) return;
-    const prompt =
-      typeof ctx.query?.prompt === "string" ? ctx.query.prompt : "";
+    // The request as the plugin read it: the form body on a POST, the query
+    // on a GET, through the same selection the narrowing hook uses. Reading
+    // the query alone would miss a form-post skip entirely and let a caller
+    // put its own `scope` on the row through the URL.
+    const request = findAuthorizeRequest(ctx);
+    if (!request) return;
+    const params = request.params;
+    const prompt = typeof params.prompt === "string" ? params.prompt : "";
     if (prompt.split(" ").includes("consent")) return;
     const location = redirectLocationOf(ctx.context?.returned);
     if (!location) return;
     const redirectUri =
-      typeof ctx.query?.redirect_uri === "string"
-        ? ctx.query.redirect_uri
-        : null;
+      typeof params.redirect_uri === "string" ? params.redirect_uri : null;
     if (!serverAddedResponseParam(redirectUri, location, "code")) return;
     const code = new URL(location, "http://localhost").searchParams.get("code");
     if (!code) return;
@@ -844,14 +862,25 @@ function auditProviderConsentSkip(
     )
       return;
     const scopes =
-      typeof ctx.query?.scope === "string"
-        ? ctx.query.scope.split(" ").filter(Boolean)
+      typeof params.scope === "string"
+        ? [...new Set(params.scope.split(/\s+/).filter(Boolean))]
         : [];
     const provider = storage.oauthProvider;
     void provider
       .findAuthorizationCodeGrantKey(hasher(code))
       .then((row) => {
-        if (!row) return;
+        if (!row) {
+          // Not a race in practice (the code is stored before the redirect
+          // is returned), so a miss is worth a line rather than silence.
+          log("info", "provider consent skip: code not found, no audit row", {
+            client_id: request.clientId,
+          });
+          return;
+        }
+        // A code minted with no consent row behind it is the plugin's
+        // `skipConsent` path, not a reuse; nothing registers that field
+        // today, so this is the guard for the day something does.
+        if (!row.hasConsent) return;
         return auditGrantReused(storage, {
           authUserId: row.userId,
           clientId: row.clientId,

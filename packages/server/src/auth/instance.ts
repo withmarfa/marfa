@@ -654,9 +654,11 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               apiKeySalt: options.apiKeySalt,
               baseURL: options.baseURL,
             }),
-            // Sibling shell plugin hosting the refresh-replay before-hook.
-            // Consent projection and grant revocation remain in the Marfa
-            // route handlers that hold the verified client/user context.
+            // Sibling shell plugin hosting the refresh-replay before-hook,
+            // the client-revoke pair and the consent-skip audit. Consent
+            // projection and grant revocation remain in the Marfa route
+            // handlers that hold the verified client/user context; the two
+            // audit emits in the shell read theirs off the plugin's own rows.
             buildOauthProjectionPlugin({
               storage: options.storage,
               apiKeySalt: options.apiKeySalt,
