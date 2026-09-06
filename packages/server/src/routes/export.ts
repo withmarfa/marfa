@@ -192,7 +192,7 @@ const exportRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema(["validation_error", "unknown_type"]),
         },
       },
       description: "Validation error",
@@ -294,7 +294,9 @@ export function exportRoutes(
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    assertTypeFilter(type, c.get("apiKey")?.space_id);
+    // The space resolved once above, as the archive path passes it: a
+    // platform admin exporting another space names that space's types.
+    assertTypeFilter(type, spaceId);
 
     // Same resolution as `GET /items`, sentinel included. Export shares the
     // storage filter with the listing, so a door that could not name every

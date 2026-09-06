@@ -1568,7 +1568,8 @@
                           "type": "string",
                           "enum": [
                             "validation_error",
-                            "missing_required_field"
+                            "missing_required_field",
+                            "unknown_type"
                           ]
                         },
                         "message": {
@@ -17680,7 +17681,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "validation_error"
+                            "validation_error",
+                            "unknown_type"
                           ]
                         },
                         "message": {
@@ -26739,7 +26741,8 @@
                         "code": {
                           "type": "string",
                           "enum": [
-                            "validation_error"
+                            "validation_error",
+                            "unknown_type"
                           ]
                         },
                         "message": {

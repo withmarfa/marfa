@@ -601,6 +601,7 @@ const listItemsRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "unknown_type",
           ]),
         },
       },

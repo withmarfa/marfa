@@ -26,12 +26,19 @@ import {
  * carries on believing a filter it is not actually applying. A wildcard is
  * different in kind: `acme.*` names whatever is under `acme` today, which
  * may be nothing, and nothing is a correct answer to it. And a registered
- * type the credential cannot read still answers an empty page, because the
+ * type the credential cannot read is not this refusal's business: the
+ * listing and the export keep answering an empty page for it, because the
  * scope list on the token response is the client's signal for that, and
- * refusing would tell a caller which types exist beyond its grant.
+ * refusing would tell a caller which types exist beyond its grant. Search
+ * already answers 403 there through `requireTypeAccess`, a permission
+ * answer about a type the caller named, and keeps doing so.
  *
  * Resolved in the caller's space, so a custom type registered in one space
  * is unknown in another, exactly as the registry resolves it for a write.
+ * That includes a type removed with `DELETE /types/{id}?force=true`: the
+ * rows it kept stay reachable by id and under a wildcard, and a listing
+ * that names a type nobody has registered is the case this exists to
+ * refuse, until the type is registered again.
  */
 export function assertTypeFilter(
   type: string | undefined,
