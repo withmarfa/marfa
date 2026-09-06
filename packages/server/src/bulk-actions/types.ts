@@ -28,7 +28,14 @@ import type { DeclaresKeys } from "../routes/_unknown-query-keys.js";
  */
 export const BulkActionFilterShape = z.object({
   type: z.string().optional(),
-  state: ItemStateEnum.optional(),
+  // The default was discoverable only by reading the handler, which is the
+  // shape that made anyone ask whether the two doors agreed. They do: this
+  // filter's `state` goes straight to the same item query `GET /items` uses,
+  // and neither door sets the widening flag, so an omitted value excludes
+  // trashed rows on both. Said here so the answer no longer needs the source.
+  state: ItemStateEnum.optional().describe(
+    "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts.",
+  ),
   source: z.string().optional(),
   tier: z.enum(["library", "feed"]).optional(),
   tags: z.array(z.string()).optional(),

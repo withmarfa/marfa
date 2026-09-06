@@ -8094,7 +8094,8 @@
                               "archived",
                               "trashed",
                               "revoked"
-                            ]
+                            ],
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
                           },
                           "source": {
                             "type": "string"
@@ -8170,7 +8171,8 @@
                               "archived",
                               "trashed",
                               "revoked"
-                            ]
+                            ],
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
                           },
                           "source": {
                             "type": "string"
@@ -8243,7 +8245,8 @@
                               "archived",
                               "trashed",
                               "revoked"
-                            ]
+                            ],
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
                           },
                           "source": {
                             "type": "string"
@@ -8322,7 +8325,8 @@
                               "archived",
                               "trashed",
                               "revoked"
-                            ]
+                            ],
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
                           },
                           "source": {
                             "type": "string"
@@ -8397,7 +8401,8 @@
                               "archived",
                               "trashed",
                               "revoked"
-                            ]
+                            ],
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
                           },
                           "source": {
                             "type": "string"
@@ -8471,7 +8476,8 @@
                               "archived",
                               "trashed",
                               "revoked"
-                            ]
+                            ],
+                            "description": "Filter by lifecycle state. Omitting it applies the same default as `GET /items`: trashed rows are excluded. There is no `any` sentinel on this door — these four states are the whole structured vocabulary it accepts."
                           },
                           "source": {
                             "type": "string"
