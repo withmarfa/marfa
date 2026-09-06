@@ -62,6 +62,7 @@ import {
   hasPlatformAuthority,
   INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
+import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
 import { createOwnershipGuard, liveConnectionIds } from "./_orphaned.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
@@ -639,6 +640,28 @@ async function processBulkItem(
     }
     throw err;
   }
+
+  // What a caller may *send*, which is this door's question rather than the
+  // store's: a hundred and one copies of one tag projects to a single tag, so
+  // the store would accept it and should. The same check the single-item
+  // create runs, and it has to be here because the create arm below writes
+  // tags through `storage.items.create` — the archive restore's writer, left
+  // unbounded on purpose so an archive of rows written before this rule
+  // existed stays restorable.
+  if (raw.tags && raw.tags.length > MAX_TAGS_PER_ITEM) {
+    return {
+      result: {
+        index,
+        outcome: "errored",
+        ...(raw.id !== undefined && { id: raw.id }),
+        error: {
+          code: ErrorCode.VALIDATION_ERROR,
+          message: `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
+        },
+      },
+    };
+  }
+
   const sourceId = raw.source_id;
 
   let existing: Item | null = null;
@@ -1307,6 +1330,17 @@ export function bulkRoutes(storage: Storage) {
         throw new MarfaError(
           ErrorCode.VALIDATION_ERROR,
           "update_tags requires at least one of `add` or `remove`",
+        );
+      }
+      // The same bound the single-item tag doors put on a body, and the same
+      // reason: an `add` array over it cannot land on any row the action
+      // matches, so accepting the request only defers a refusal into a job's
+      // error list, once per matched item. The store still bounds what the
+      // merged set may reach; this bounds what may be asked for.
+      if (addCount > MAX_TAGS_PER_ITEM) {
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item`,
         );
       }
     }
