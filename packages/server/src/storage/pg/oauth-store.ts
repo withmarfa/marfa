@@ -137,6 +137,14 @@ export class PgOAuthStore implements OAuthStore {
       .where(eq(oauthDeviceCodes.connection_item_id, connectionItemId));
   }
 
+  async deleteDeviceCodesForClient(clientId: string): Promise<number> {
+    const result = await this.db
+      .delete(oauthDeviceCodes)
+      .where(eq(oauthDeviceCodes.client_id, clientId))
+      .returning({ id: oauthDeviceCodes.id });
+    return result.length;
+  }
+
   /**
    * DB-side debounce for OAuth-grant `last_used_at`. Mirrors
    * `KeyStore.updateLastUsed` in shape — the conditional WHERE makes the

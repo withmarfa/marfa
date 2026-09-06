@@ -1792,6 +1792,15 @@ export interface OAuthStore {
   deleteDeviceCodesForGrant(connectionItemId: string): Promise<void>;
 
   /**
+   * Delete every device code for a client, pending ones included. Only the
+   * client delete calls this: the client is going, so a pending code for it
+   * can never be approved, and keeping the per-grant sweep keyed on the
+   * projection is what stops any other path reaching other users' codes.
+   * Returns the number of rows deleted.
+   */
+  deleteDeviceCodesForClient(clientId: string): Promise<number>;
+
+  /**
    * Conditional `last_used_at` stamp on the underlying `system.connection`
    * (kind: app) for an OAuth grant. Mirrors `KeyStore.updateLastUsed` in
    * shape: the WHERE clause only writes when the existing
@@ -2232,6 +2241,46 @@ export interface OauthProviderStore {
   /** Existence check on `(clientId)` for the registration route to surface
    *  a clean 409 instead of a Postgres unique-violation. */
   clientExists(clientId: string): Promise<boolean>;
+  /**
+   * Every `system.connection { kind: "app" }` projection carrying this
+   * client id, in every space and whatever either lifecycle axis says. The
+   * platform-admin client delete walks this list, so it has to see the
+   * tombstones `findGrantItemId` deliberately hides: a projection left
+   * behind by a hand-deleted client row is exactly what that route exists
+   * to remove.
+   */
+  listGrantItemsForClient(clientId: string): Promise<
+    {
+      id: string;
+      spaceId: string | null;
+      authUserId: string | null;
+      state: string;
+    }[]
+  >;
+  /**
+   * Delete every authorization code minted for this client, for every user.
+   * Codes are `auth_verification` rows rather than plugin tables, so the
+   * per-client sweep of tokens and consents does not reach them; the grant
+   * cascade reaches them per (client, user), and a user whose projection is
+   * already gone has no cascade. Returns the number of rows deleted.
+   */
+  revokeAuthorizationCodesForClient(clientId: string): Promise<number>;
+  /**
+   * Delete every plugin record keyed on this client id: access tokens,
+   * refresh tokens and consent rows, across every user. The per-grant
+   * cascade reaches the rows a projection names; this reaches the rest,
+   * which is what a client whose projections were removed by hand leaves
+   * behind. Returns the counts, for the audit row.
+   */
+  deleteClientRecords(clientId: string): Promise<{
+    accessTokens: number;
+    refreshTokens: number;
+    consents: number;
+  }>;
+  /** Delete the `auth_oauth_client` row. Returns false when there was none,
+   *  which is what makes the admin delete idempotent and the orphan repair
+   *  the same call. */
+  deleteClient(clientId: string): Promise<boolean>;
   /**
    * Resolve the projected `system.connection { kind: "app" }` item id for a
    * (spaceId, clientId, authUserId) tuple. Returns the `items.id` value or

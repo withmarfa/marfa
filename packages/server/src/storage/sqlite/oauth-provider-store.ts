@@ -291,6 +291,19 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     };
   }
 
+  async revokeAuthorizationCodesForClient(clientId: string): Promise<number> {
+    // No `RETURNING` here, deliberately, where the Postgres twin needs one:
+    // libsql reports zero rows affected for any statement that returns data,
+    // so making the two symmetric would restore the always-zero count in the
+    // direction nothing fails on.
+    const result = await this.db.run(sql`
+      DELETE FROM auth_verification
+      WHERE json_extract(value, '$.type') = 'authorization_code'
+        AND json_extract(value, '$.query.client_id') = ${clientId}
+    `);
+    return result.rowsAffected;
+  }
+
   async revokeAuthorizationCodesForGrant(
     clientId: string,
     authUserId: string,
@@ -399,6 +412,69 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       .where(eq(auth_oauth_client.clientId, clientId))
       .limit(1);
     return rows.length > 0;
+  }
+
+  async listGrantItemsForClient(clientId: string): Promise<
+    {
+      id: string;
+      spaceId: string | null;
+      authUserId: string | null;
+      state: string;
+    }[]
+  > {
+    const rows = await this.db
+      .select({
+        id: items.id,
+        spaceId: items.space_id,
+        state: items.state,
+        authUserId: sql`json_extract(${items.properties}, '$.user_id')`,
+      })
+      .from(items)
+      .where(
+        and(
+          eq(items.type, "system.connection"),
+          sql`json_extract(${items.properties}, '$.kind') = 'app'`,
+          sql`json_extract(${items.properties}, '$.client_id') = ${clientId}`,
+        ),
+      );
+    return rows.map((row) => ({
+      id: row.id,
+      spaceId: row.spaceId ?? null,
+      authUserId: typeof row.authUserId === "string" ? row.authUserId : null,
+      state: row.state,
+    }));
+  }
+
+  async deleteClientRecords(clientId: string): Promise<{
+    accessTokens: number;
+    refreshTokens: number;
+    consents: number;
+  }> {
+    const access = await this.db
+      .delete(auth_oauth_access_token)
+      .where(eq(auth_oauth_access_token.clientId, clientId))
+      .run();
+    const refresh = await this.db
+      .delete(auth_oauth_refresh_token)
+      .where(eq(auth_oauth_refresh_token.clientId, clientId))
+      .run();
+    const consents = await this.db
+      .delete(auth_oauth_consent)
+      .where(eq(auth_oauth_consent.clientId, clientId))
+      .run();
+    return {
+      accessTokens: access.rowsAffected,
+      refreshTokens: refresh.rowsAffected,
+      consents: consents.rowsAffected,
+    };
+  }
+
+  async deleteClient(clientId: string): Promise<boolean> {
+    const deleted = await this.db
+      .delete(auth_oauth_client)
+      .where(eq(auth_oauth_client.clientId, clientId))
+      .run();
+    return deleted.rowsAffected > 0;
   }
 
   async createClient(input: CreateClientInput): Promise<CreateClientResult> {
