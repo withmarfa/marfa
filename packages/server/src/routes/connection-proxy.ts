@@ -354,6 +354,21 @@ function filterResponseHeaders(headers: Headers): Record<string, string> {
   return out;
 }
 
+/**
+ * One path segment in the spelling the router hands parameters over in.
+ *
+ * A segment that does not decode has no decoded form, so it is compared
+ * as written rather than throwing: this runs on a caller-supplied path
+ * and `decodeURIComponent` throws on a malformed escape.
+ */
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 function sha256Hex(input: string): string {
   return createHash("sha256").update(input, "utf8").digest("hex");
 }
@@ -838,11 +853,44 @@ export function connectionProxyRoutes(
     const effectiveBaseUrl = resolveUpstreamBaseUrl(connection, config);
 
     // Strip the route prefix and append the upstream sub-path.
-    const prefix = `/connections/${connectionId}/proxy`;
+    //
+    // Both sides in the same spelling. `connectionId` arrives decoded from
+    // the router and the pathname does not, so building the prefix from
+    // the decoded id and testing it against the raw path asked two
+    // different questions: a percent-encoded id failed the match, and the
+    // old fallback then forwarded the router's own path — prefix included
+    // — to a third party. Split into segments instead, so the sub-path is
+    // taken by position and forwarded in the caller's own encoding.
     const reqUrl = new URL(c.req.url);
-    const upstreamPath = reqUrl.pathname.startsWith(prefix)
-      ? reqUrl.pathname.slice(prefix.length)
-      : reqUrl.pathname;
+    const segments = reqUrl.pathname.split("/");
+    // "" / "connections" / "<id>" / "proxy" / ...the caller's sub-path
+    const shaped =
+      segments.length >= 4 &&
+      segments[1] === "connections" &&
+      segments[3] === "proxy" &&
+      decodeSegment(segments[2] ?? "") === connectionId;
+    if (!shaped) {
+      // Fails closed, and it is unreachable as this router is mounted
+      // today: `app.ts` routes it once, under `/connections`, so Hono has
+      // already matched the two literal segments, and the id has been
+      // resolved to a stored row by the access check above, which makes
+      // it a UUIDv7 whose every spelling decodes alike. The one thing
+      // that would fire it is a second mount at another prefix — cheap
+      // insurance, named so the next reader does not take it for a
+      // protection something relies on today. Sending an unrecognized
+      // path to somebody else's service is not a safe default.
+      throw new MarfaError(
+        ErrorCode.INVALID_REQUEST,
+        "Proxy path did not resolve to a connection sub-path",
+      );
+    }
+    // `> 4` rather than `>= 4`, so that `POST /connections/<id>/proxy`
+    // with no sub-path forwards an empty path as it always did. Hono
+    // matches that against `/:id/proxy/*`, so it reaches here with four
+    // segments, and a naive rejoin would send `/` to an upstream that
+    // may well distinguish the two.
+    const upstreamPath =
+      segments.length > 4 ? "/" + segments.slice(4).join("/") : "";
     const upstreamUrl =
       effectiveBaseUrl.replace(/\/+$/, "") + upstreamPath + reqUrl.search;
 

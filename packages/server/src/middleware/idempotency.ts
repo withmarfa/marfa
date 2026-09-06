@@ -47,6 +47,23 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  * are in `WRITES_WITHOUT_A_DOOR` in the sibling coverage test, each with
  * the reason it carries no key. `routes/idempotent-write-doors.test.ts`
  * holds both halves against the app's own route table.
+ *
+ * **A door over a free-text PATH segment is safe here; the query is not
+ * covered.** Every entry below carries a UUIDv7, which percent-encodes to
+ * itself, so for a long time the fingerprint could hash the raw path and
+ * nothing showed. It no longer does: `canonicalPath` re-spells each path
+ * segment before the digest, so two encodings of one request are one
+ * fingerprint and a retry that re-encodes is replayed rather than
+ * refused. That is what lets a tag, an extension namespace or any other
+ * free-text path segment join this list.
+ *
+ * **The query string is hashed as written**, so a door taking a free-text
+ * query value reopens the same bug on that axis. It is safe today because
+ * no door here takes one: nine carry no query parameter and the tenth
+ * carries `conflict`, a closed enum. Both halves are stated because the
+ * alternative was two lists that happened not to overlap, with nothing
+ * recording the relationship — which is how this went unnoticed the first
+ * time.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
@@ -185,11 +202,55 @@ function credentialHandle(c: Context<AppEnv>): string {
   return c.get("authType") === "oauth" ? apiKey.source : apiKey.id;
 }
 
+/**
+ * The path in one spelling, so two encodings of the same request digest
+ * the same.
+ *
+ * Percent-encoding is not canonical: `/items/abc` and `/items/%61bc` name
+ * one resource and used to produce two fingerprints, and a fingerprint
+ * that does not match the stored one is read as the same key being reused
+ * for a *different* request. So a retry that re-encoded a single
+ * character was refused `idempotency_key_reused` rather than replayed —
+ * and a key cannot be un-spent by trying again, so the write could never
+ * complete under it.
+ *
+ * Segment by segment, and re-encoded rather than left decoded. Decoding
+ * the pathname whole would turn `%2F` into a separator and collapse
+ * `/items/a%2Fb` onto `/items/a/b`, which are two different resources;
+ * that is the same class of bug in the opposite direction, and the one
+ * that matters more, because it would serve one route's response for
+ * another's request.
+ *
+ * A segment that does not decode has no canonical form but itself, so it
+ * is kept verbatim. `decodeURIComponent` throws on a malformed escape,
+ * and this runs on every keyed request.
+ */
+function canonicalPath(pathname: string): string {
+  return pathname
+    .split("/")
+    .map((segment) => {
+      try {
+        return encodeURIComponent(decodeURIComponent(segment));
+      } catch {
+        return segment;
+      }
+    })
+    .join("/");
+}
+
 async function fingerprint(c: Context<AppEnv>, body: string): Promise<string> {
   const url = new URL(c.req.url);
   const material = [
     c.req.method,
-    url.pathname,
+    canonicalPath(url.pathname),
+    // The query is left as written, and the reason is checkable rather
+    // than a judgement: no door in IDEMPOTENT_WRITE_DOORS carries a query
+    // value whose spelling can vary. Nine take no query parameter at all,
+    // and the tenth takes `conflict` on PATCH /items/{id}, a closed enum
+    // of ASCII words. A door that later accepts a free-text query value
+    // reopens exactly this bug on that axis, and canonicalizing the query
+    // then also means deciding whether parameter order is part of the
+    // request, which is a wider question than the path's.
     url.search,
     credentialHandle(c),
     body,

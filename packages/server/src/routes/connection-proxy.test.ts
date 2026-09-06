@@ -264,6 +264,66 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
     expect(fetchState.calls).toBe(1);
   });
 
+  it("forwards the sub-path alone when the id arrives percent-encoded", async () => {
+    // The prefix used to be built from the decoded id and tested against
+    // the raw pathname, so two spellings of one id never matched and the
+    // fallback forwarded the whole path — `/connections/<id>/proxy`
+    // included — to somebody else's service. Latent only because a
+    // connection id is a UUIDv7, whose every character encodes to itself:
+    // nothing enforces the spelling, and the route parameter carries no
+    // pattern, so an encoded id reaches the handler intact.
+    const connectionId = await createConnection();
+    await seedToken(connectionId);
+
+    const code = connectionId.charCodeAt(0).toString(16).padStart(2, "0");
+    const spelled = `%${code}${connectionId.slice(1)}`;
+    expect(spelled).not.toBe(connectionId);
+
+    const fetchState = installFetchScript([
+      ({ url }) => {
+        expect(url).toBe("https://upstream.test/api/v1/widgets");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${spelled}/proxy/api/v1/widgets`,
+      { key: ctx.adminKey, body: { hello: "world" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
+
+  it("forwards an empty upstream path when no sub-path is given", async () => {
+    // Hono matches `/connections/<id>/proxy` against `/:id/proxy/*`, so
+    // the handler is reached with no sub-path at all. The prefix used to
+    // be sliced off the raw pathname and left `""`; rebuilding from
+    // segments would give `/` instead, and an upstream is entitled to
+    // treat those as different. Pinned because nothing else does.
+    const connectionId = await createConnection();
+    await seedToken(connectionId);
+
+    const fetchState = installFetchScript([
+      ({ url }) => {
+        expect(url).toBe("https://upstream.test");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/proxy`,
+      { key: ctx.adminKey, body: { hello: "world" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
+
   it("returns 401 when the caller is unauthenticated", async () => {
     const connectionId = await createConnection();
     await seedToken(connectionId);

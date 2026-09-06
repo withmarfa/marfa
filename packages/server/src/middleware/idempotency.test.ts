@@ -350,6 +350,121 @@ describe("the key names one request in every dimension, not just the body", () =
   });
 });
 
+/**
+ * One request spelled two ways is one request.
+ *
+ * Percent-encoding is not canonical, and the digest used to be taken over
+ * the raw pathname — so `/items/abc` and `/items/%61bc` were two
+ * fingerprints for one resource. A fingerprint that disagrees with the
+ * stored one is read as the key being reused for a *different* request,
+ * so a client that changed its encoding between attempts was refused
+ * rather than replayed. That is not a transient refusal: a spent key
+ * cannot be un-spent by trying again, so the write could never complete
+ * under it.
+ *
+ * The negative underneath it is the one that matters more, and it is why
+ * the path is re-encoded segment by segment rather than simply decoded:
+ * `%2F` is not a separator, and collapsing it would make two different
+ * resources one fingerprint and serve one route's response for another's
+ * request.
+ */
+describe("the digest reads the path, not its spelling", () => {
+  /** The same id with its first character written as a percent-escape. */
+  function reEncodeFirst(id: string): string {
+    const code = id.charCodeAt(0).toString(16).padStart(2, "0");
+    return `%${code}${id.slice(1)}`;
+  }
+
+  it("replays a retry that re-encoded a character", async () => {
+    const k = key();
+    const create = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: { type: "core.note", properties: { body: "seed" } },
+    });
+    expect(create.status).toBe(201);
+    const id = ((await create.json()) as ItemBody).item.id;
+    const patch = { properties: { body: "changed" } };
+
+    const a = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.adminKey,
+      headers: { "Idempotency-Key": k },
+      body: patch,
+    });
+    expect(a.status).toBe(200);
+
+    const spelled = reEncodeFirst(id);
+    expect(spelled).not.toBe(id);
+
+    const mark = await eventHighWater();
+    const b = await request(ctx.app, "PATCH", `/items/${spelled}`, {
+      key: ctx.adminKey,
+      headers: { "Idempotency-Key": k },
+      body: patch,
+    });
+
+    // Replayed rather than refused, and the replay wrote nothing.
+    expect(b.status).toBe(200);
+    expect(b.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(await eventsSince(mark)).toBe(0);
+  });
+
+  it("keeps an escaped separator out of the separator's job", async () => {
+    // Driven against the middleware with a stand-in store, because no real
+    // route pair differs by exactly one `%2F`: the two paths below are
+    // different resources, and what is asserted is that the digest still
+    // says so. A decode of the whole pathname would make them equal.
+    const digests: string[] = [];
+    const storage = {
+      idempotency: {
+        claim: (input: { fingerprint: string }) => {
+          digests.push(input.fingerprint);
+          return Promise.resolve({ claimed: true, held: null });
+        },
+        takeOverExpiredClaim: () => Promise.resolve(true),
+        complete: () => Promise.resolve(true),
+        release: () => Promise.resolve(),
+        cleanup: () => Promise.resolve(0),
+      },
+    } as unknown as Storage;
+
+    const errorHandler = createErrorHandler({ errorWebhookUrl: "" });
+    const app = new Hono<AppEnv>();
+    app.onError(errorHandler);
+    app.use("/w/*", async (c, next) => {
+      c.set("apiKey", {
+        id: "cred-1",
+        source: "fixture",
+        role: "admin",
+      } as unknown as ApiKey);
+      c.set("authType", "api_key");
+      await next();
+    });
+    app.use("/w/*", idempotencyMiddleware({ storage, errorHandler }));
+    app.post("/w/*", (c) => c.json({ ok: true }, 201));
+
+    const send = (path: string) =>
+      app.request(path, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": "k",
+        },
+        body: JSON.stringify({ body: "one write" }),
+      });
+
+    await send("/w/a%2Fb");
+    await send("/w/a/b");
+    await send("/w/%61%2Fb");
+
+    expect(digests).toHaveLength(3);
+    // The escaped separator is a segment holding a slash; the bare one is
+    // two segments. Different resources, different digests.
+    expect(digests[0]).not.toBe(digests[1]);
+    // And two spellings of the first are one digest.
+    expect(digests[2]).toBe(digests[0]);
+  });
+});
+
 describe("a retried update never conflicts with itself", () => {
   it("replays the first attempt rather than refusing the version it already moved", async () => {
     // Rule 2's third clause, and the one the other update case here cannot

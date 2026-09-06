@@ -51,9 +51,28 @@ import type { Storage } from "../storage/interface.js";
 import type { EmailTransport as MarfaEmailTransport } from "../email/transport.js";
 import { renderAccountDeleteCancelEmail } from "../auth/email-templates/account-delete-cancel.js";
 
+/**
+ * The paths this guard decides on, in every spelling that reaches the
+ * same handler.
+ *
+ * Both with and without a trailing slash, for the reason
+ * `routes/oauth-plugin-fence.ts` gives about the endpoints it fences: the
+ * catch-all `/auth/*` mount is a wildcard, so `/auth/sign-in/email/` skips
+ * an exact-string set and is then closed only by Better Auth's own
+ * default of refusing a trailing slash. A guard that depends on a library
+ * default nobody here is watching is not a guard, and dropping the entry
+ * turns the case in `routes/auth-account.test.ts` from a 401 into a 404.
+ *
+ * A percent-escaped spelling needs no entry, and that is measured rather
+ * than assumed: the handler behind the catch-all routes no sign-in for
+ * one, so the request that skips this set reaches nothing. The same case
+ * is what notices if that ever changes.
+ */
 const TARGET_PATHS = new Set([
   "/auth/sign-in/email",
+  "/auth/sign-in/email/",
   "/auth/sign-in/magic-link",
+  "/auth/sign-in/magic-link/",
 ]);
 
 /**
