@@ -177,36 +177,6 @@ async function deleteClient(
 /** The consent row a code-flow grant carries. A device approval writes its
  *  own only from the change that lands beside this one, so the row is
  *  seeded here so the cascade has one to delete. */
-async function seedConsent(
-  c: TestContext,
-  clientId: string,
-  authUserId: string,
-): Promise<void> {
-  const schema = await betterAuthSchema(c);
-  const db = c.storage.betterAuthDb as {
-    insert: (table: unknown) => {
-      values: (v: Record<string, unknown>) => {
-        run?: () => Promise<unknown>;
-        execute?: () => Promise<unknown>;
-      };
-    };
-  };
-  const now = new Date();
-  const op = db.insert(schema.auth_oauth_consent).values({
-    id: `cons_${randomBytes(5).toString("hex")}`,
-    clientId,
-    userId: authUserId,
-    scopes:
-      c.storage.betterAuthDialect === "pg"
-        ? ["core.note:read"]
-        : JSON.stringify(["core.note:read"]),
-    consentGiven: true,
-    createdAt: now,
-    updatedAt: now,
-  });
-  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
-}
-
 /** An authorization code the plugin would have minted: a verification row
  *  whose value names the client and the user, never exchanged. */
 async function seedAuthorizationCode(
@@ -335,11 +305,6 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       cookie,
       "core.note:read offline_access",
     );
-    await seedConsent(
-      ctx,
-      clientId,
-      await authUserIdFor(ctx, "delete-client@example.com"),
-    );
     const live = await request(ctx.app, "GET", "/items?type=core.note", {
       headers: { authorization: `Bearer ${accessToken}` },
     });
@@ -438,12 +403,11 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "stray@example.com");
     await deviceGrant(ctx, clientId, cookie, "core.note:read offline_access");
-    // The consent row a browser approval leaves, and an authorization code
-    // never exchanged, seeded directly: this branch's device flow writes
-    // only the projection, and a code is a verification row the per-grant
-    // cascade reaches only through one.
+    // The device approval wrote the consent row itself; an authorization
+    // code never exchanged is seeded directly, since a code is a
+    // verification row the per-grant cascade reaches only through a
+    // projection.
     const strayUser = await authUserIdFor(ctx, "stray@example.com");
-    await seedConsent(ctx, clientId, strayUser);
     await seedAuthorizationCode(ctx, clientId, strayUser);
     const [projection] =
       await ctx.storage.oauthProvider!.listGrantItemsForClient(clientId);
