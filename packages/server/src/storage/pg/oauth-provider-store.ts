@@ -253,12 +253,16 @@ export class PgOauthProviderStore implements OauthProviderStore {
   }
 
   async revokeAuthorizationCodesForClient(clientId: string): Promise<number> {
-    const result = await this.db.execute(sql`
+    // `RETURNING` and a length, as the device-code sweep counts: the
+    // driver's result carries no row count under the name the other driver
+    // uses, and a cast that names the wrong one reads as zero forever.
+    const deleted = await this.db.execute(sql`
       DELETE FROM auth_verification
       WHERE value::jsonb->>'type' = 'authorization_code'
         AND value::jsonb->'query'->>'client_id' = ${clientId}
+      RETURNING id
     `);
-    return (result as { rowCount?: number | null }).rowCount ?? 0;
+    return (deleted as unknown as { length: number }).length;
   }
 
   async revokeAuthorizationCodesForGrant(

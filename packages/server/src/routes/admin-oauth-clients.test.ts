@@ -207,6 +207,38 @@ async function seedConsent(
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 }
 
+/** An authorization code the plugin would have minted: a verification row
+ *  whose value names the client and the user, never exchanged. */
+async function seedAuthorizationCode(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+): Promise<void> {
+  const schema = await betterAuthSchema(c);
+  const db = c.storage.betterAuthDb as {
+    insert: (table: unknown) => {
+      values: (v: Record<string, unknown>) => {
+        run?: () => Promise<unknown>;
+        execute?: () => Promise<unknown>;
+      };
+    };
+  };
+  const now = new Date();
+  const op = db.insert(schema.auth_verification).values({
+    id: `ver_${randomBytes(5).toString("hex")}`,
+    identifier: `code_${randomBytes(8).toString("hex")}`,
+    value: JSON.stringify({
+      type: "authorization_code",
+      query: { client_id: clientId, scope: "core.note:read" },
+      userId: authUserId,
+    }),
+    expiresAt: new Date(now.getTime() + 600_000),
+    createdAt: now,
+    updatedAt: now,
+  });
+  await (op.run ? op.run() : op.execute!());
+}
+
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
   const schema = await betterAuthSchema(c);
   const { eq } = await import("drizzle-orm");
@@ -406,13 +438,13 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "stray@example.com");
     await deviceGrant(ctx, clientId, cookie, "core.note:read offline_access");
-    // The consent row a browser approval leaves, seeded directly: this
-    // branch's device flow writes only the projection.
-    await seedConsent(
-      ctx,
-      clientId,
-      await authUserIdFor(ctx, "stray@example.com"),
-    );
+    // The consent row a browser approval leaves, and an authorization code
+    // never exchanged, seeded directly: this branch's device flow writes
+    // only the projection, and a code is a verification row the per-grant
+    // cascade reaches only through one.
+    const strayUser = await authUserIdFor(ctx, "stray@example.com");
+    await seedConsent(ctx, clientId, strayUser);
+    await seedAuthorizationCode(ctx, clientId, strayUser);
     const [projection] =
       await ctx.storage.oauthProvider!.listGrantItemsForClient(clientId);
     await ctx.storage.items.transition(
@@ -444,11 +476,17 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       stray_records_deleted: number;
     };
     expect(body.grants_removed).toBe(0);
-    // An access token, a refresh token, a consent row, and two device codes:
-    // the approved one, which the per-grant sweep would have taken had the
-    // projection still been there to name it, and the pending one, which is
-    // bound to no grant and only the client-wide sweep reaches.
-    expect(body.stray_records_deleted).toBe(5);
+    // An access token, a refresh token, a consent row, an authorization code,
+    // and two device codes: the approved one, which the per-grant sweep would
+    // have taken had the projection still been there to name it, and the
+    // pending one, which is bound to no grant and only the client-wide sweep
+    // reaches.
+    expect(body.stray_records_deleted).toBe(6);
+    const audit = await ctx.storage.audit.list({
+      action: "auth.client.deleted",
+      limit: 10,
+    });
+    expect(audit.data[0]!.details.stray_authorization_codes_deleted).toBe(1);
     expect(await clientRows(ctx, clientId)).toEqual({
       clients: 0,
       accessTokens: 0,
@@ -494,10 +532,13 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     ).toBeNull();
     // The grant's own space hears the revoke, the same row every other door
     // writes, and the platform row names the operator's key.
-    const revoked = await ctx.storage.audit.list({
-      action: "auth.grant.revoked",
-      limit: 10,
-    });
+    // The revoke row is fire-and-forget by contract, so it is awaited into
+    // view rather than read once.
+    const revoked = await waitForAudit(
+      () =>
+        ctx!.storage.audit.list({ action: "auth.grant.revoked", limit: 10 }),
+      (r) => r.data.some((row) => row.details.grant_item_id === projection!.id),
+    );
     const mine = revoked.data.filter(
       (r) => r.details.grant_item_id === projection!.id,
     );
@@ -514,6 +555,8 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     );
     expect(operator).toBeDefined();
     expect(row?.key_id).toBe(operator!.id);
+    // The space's own row names the operator too, not only the surface.
+    expect(mine[0]!.key_id).toBe(operator!.id);
   });
 
   it("a client id nothing carries answers 404 and writes no audit row", async () => {

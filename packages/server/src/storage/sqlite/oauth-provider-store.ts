@@ -297,7 +297,7 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       WHERE json_extract(value, '$.type') = 'authorization_code'
         AND json_extract(value, '$.query.client_id') = ${clientId}
     `);
-    return (result as { changes?: number }).changes ?? 0;
+    return result.rowsAffected;
   }
 
   async revokeAuthorizationCodesForGrant(

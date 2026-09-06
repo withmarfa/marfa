@@ -828,7 +828,6 @@ const deleteOAuthClientRoute = createRoute({
       description:
         "Nothing carries this client id: no client row, no grant record, no token, consent or code. Nothing was deleted and no audit row is written, so a mistyped id is not recorded as a removal.",
     },
-
     401: {
       content: {
         "application/json": {
@@ -1373,6 +1372,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
             grantItemId: item.id,
             clientIp,
             source: "admin",
+            keyId: key.id,
           });
           // Purge is the hard delete behind a soft one, and the soft-deleted
           // state for a `system.*` row is `revoked`, so a live projection is

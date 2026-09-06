@@ -186,6 +186,9 @@ export function auditGrantRevoked(
     /** Set when the revocation came from the client presenting a refresh
      *  token at the RFC 7009 endpoint rather than from the person. */
     source?: "client" | "admin";
+    /** The operator's key when an operator acted, so the space's own trail
+     *  names who, not only which surface. */
+    keyId?: string;
   },
 ): void {
   void storage.audit.log({
@@ -194,6 +197,7 @@ export function auditGrantRevoked(
     resource_type: "oauth_grant",
     resource_id: opts.clientId ?? opts.grantItemId ?? "unknown",
     client_ip: opts.clientIp,
+    ...(opts.keyId === undefined ? {} : { key_id: opts.keyId }),
     details: {
       client_id: opts.clientId,
       user_id: opts.authUserId,
