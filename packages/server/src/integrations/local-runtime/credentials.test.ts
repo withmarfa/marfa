@@ -64,7 +64,6 @@ function makeManifest(direction: "read" | "write" | "both" = "read") {
     webhook_verification: { method: "hmac-sha256" as const },
     permissions: {
       extension: { "connection.runtime": "write" as const },
-      edge: {},
     },
   };
 }

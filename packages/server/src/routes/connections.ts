@@ -215,7 +215,7 @@ const pauseResponses = {
       },
     },
     description:
-      "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
+      "Connection kind is not `integration`, is revoked, is already in the requested state, or (for resume) is not paused.",
   },
   401: {
     content: {
@@ -462,7 +462,7 @@ const approveUpgradeRoute = createRoute({
         },
       },
       description:
-        "A malformed body, or a connection that is not an integration, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
+        "A malformed body, or a connection whose kind is not `integration`, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
     },
     401: {
       content: {
@@ -542,7 +542,7 @@ const upgradeRoute = createRoute({
         },
       },
       description:
-        "Not an integration connection, revoked, already current, carrying no integration reference, or its settings do not satisfy the newer manifest.",
+        "Connection kind is not `integration`, revoked, already current, carrying no integration reference, or its settings do not satisfy the newer manifest.",
     },
     401: {
       content: {
@@ -582,9 +582,9 @@ const runRoute = createRoute({
   method: "post",
   path: "/{id}/run",
   tags: ["Connections"],
-  summary: "Run an integration connection now",
+  summary: "Run a connection now",
   description:
-    "Dispatches the connection's sweep immediately instead of waiting for its next scheduled tick. Only connections whose manifest declares the `manual` trigger may be run this way, and only where this deployment can actually dispatch the integration: an integration whose code runs somewhere else is refused rather than silently accepted. A paused connection is refused. The run is queued the same way a cron tick is, so it takes the same per-connection lock and cannot overlap a run already in flight.",
+    "Dispatches the connection's sweep immediately instead of waiting for its next scheduled tick. Only connections whose manifest declares the `manual` trigger may be run this way, and only where this deployment can actually dispatch the integration: a manifest declaring `runs_on: client` is refused, because its code runs on a machine Marfa does not have, and so is one this deployment does not install. A paused connection is refused. The run is queued the same way a cron tick is, so it takes the same per-connection lock and cannot overlap a run already in flight.",
   security: [{ bearerAuth: [] }],
   request: { params: connectionIdParam("Id of the connection to run now.") },
   responses: {
@@ -607,7 +607,7 @@ const runRoute = createRoute({
         },
       },
       description:
-        "Not an integration connection, revoked, paused, the manifest does not declare `manual`, or this deployment does not run the integration.",
+        "Connection kind is not `integration`, revoked, paused, the manifest declares `runs_on: client` or no `manual` trigger, or this deployment does not install it.",
     },
     401: {
       content: {
@@ -666,7 +666,7 @@ const uninstallRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Connection is not an integration, or already revoked.",
+      description: "Connection kind is not `integration`, or already revoked.",
     },
     401: {
       content: {
@@ -1191,7 +1191,23 @@ export function connectionRoutes(
     }
 
     const resolved = await resolveConnectionManifest(storage, id, spaceId);
-    const declaresManual = resolved.manifest.triggers.some(
+
+    // The first gate, and it is a declaration rather than an inference.
+    // A client-run integration's code runs on a machine this deployment
+    // does not have, so there is nothing here to dispatch — and asking
+    // the manifest is what makes that answer true of every client rather
+    // than of whichever one this build happens to ship. It sits ahead of
+    // the trigger check because "no trigger declared" would otherwise be
+    // the reported reason, which is a consequence of running elsewhere
+    // rather than the reason for the refusal.
+    if (resolved.manifest.runs_on === "client") {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `${resolved.manifest.name} declares runs_on "client", so its code runs on your own machine and the program that owns it starts the run. Marfa has nothing to dispatch.`,
+      );
+    }
+
+    const declaresManual = (resolved.manifest.triggers ?? []).some(
       (trigger) => trigger.type === "manual",
     );
     if (!declaresManual) {
@@ -1201,17 +1217,18 @@ export function connectionRoutes(
       );
     }
 
-    // The second gate, and the one that stops a silent no-op. An
-    // integration Marfa's runtime does not carry cannot be dispatched
+    // The last gate, and the one that stops a silent no-op. A server-run
+    // integration this deployment does not carry cannot be dispatched
     // here at all: the supervisor acks an envelope naming an unknown
     // integration and skips it, so accepting the request would report a
-    // queued run that never happens. A client like sync is the standing
-    // case, and its code runs on the user's machine by design.
+    // queued run that never happens. This is now only about what the
+    // image installs — where the code runs is settled above, by the
+    // manifest, rather than being read off a registration miss.
     const registration = localRuntime.getRegistration(resolved.manifest.name);
     if (!registration) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        `${resolved.manifest.name} does not run on this deployment, so it cannot be run from here. An integration whose code runs on your own machine is started by that program, not by Marfa.`,
+        `${resolved.manifest.name} runs on a Marfa deployment, but this one does not install it, so there is nothing here to run.`,
       );
     }
     if (!registration.triggerKinds.has("manual")) {

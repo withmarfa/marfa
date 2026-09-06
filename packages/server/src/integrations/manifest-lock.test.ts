@@ -35,6 +35,7 @@ function manifest(
     publisher: "acme",
     description: "A thing.",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
     target_types: ["core.note"],
     bidirectional_handling: {

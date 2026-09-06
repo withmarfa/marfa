@@ -17,12 +17,12 @@
  *     resolve to a `system.integration` item.
  */
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 
 export interface ResolvedManifest {
-  manifest: IntegrationManifest;
+  manifest: ParsedIntegrationManifest;
   /** Item id of the resolved `system.integration` item. */
   integration_item_id: string;
 }

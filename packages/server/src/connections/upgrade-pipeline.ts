@@ -39,7 +39,7 @@ import {
   applyConfigurationDefaults,
   validateConnectionConfiguration,
 } from "@withmarfa/shared";
-import type { IntegrationManifest, Item } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest, Item } from "@withmarfa/shared";
 import { ConnectionMappingSchema } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";
@@ -197,7 +197,7 @@ export async function previewUpgrade(
     };
   }
   const candidate = (candidateRow.properties as CatalogProperties)
-    .manifest as IntegrationManifest;
+    .manifest as ParsedIntegrationManifest;
   const delta = diffManifestGrants(current, candidate, connection.properties);
   return {
     connection_id: input.connectionId,
@@ -219,7 +219,7 @@ async function pickCandidateRow(
     "spaceId" | "connectionId" | "targetIntegrationItemId"
   >,
   resolved: { integration_item_id: string },
-  current: IntegrationManifest,
+  current: ParsedIntegrationManifest,
 ): Promise<Item | undefined> {
   if (input.targetIntegrationItemId !== undefined) {
     const row = await storage.items.get(
@@ -278,7 +278,7 @@ export function performUpgrade(
  */
 export function wouldStrandMapping(
   connection: Item,
-  candidateManifest: IntegrationManifest | undefined,
+  candidateManifest: ParsedIntegrationManifest | undefined,
 ): boolean {
   if (candidateManifest === undefined) return false;
   if (candidateManifest.supports_user_mappings === true) return false;
@@ -292,13 +292,13 @@ export async function manifestOfCatalogRow(
   storage: Storage,
   integrationItemId: string | null,
   spaceId: string | undefined,
-): Promise<IntegrationManifest | undefined> {
+): Promise<ParsedIntegrationManifest | undefined> {
   if (integrationItemId === null) return undefined;
   const row = await storage.items.get(integrationItemId, spaceId, {
     includePlatformScoped: true,
   });
   if (row?.type !== "system.integration") return undefined;
-  return (row.properties as { manifest?: IntegrationManifest }).manifest;
+  return (row.properties as { manifest?: ParsedIntegrationManifest }).manifest;
 }
 
 async function applyUpgrade(
@@ -388,7 +388,7 @@ async function applyUpgrade(
     { includePlatformScoped: true },
   );
   const candidate = (candidateRow?.properties as CatalogProperties)
-    .manifest as IntegrationManifest;
+    .manifest as ParsedIntegrationManifest;
 
   // Re-validate the stored configuration against the new contract before
   // anything is written. A configuration that no longer satisfies the
@@ -426,20 +426,33 @@ async function applyUpgrade(
     manifest_version: candidate.version,
   };
 
+  // The second frozen copy. Install stamps these onto the connection and the
+  // console reads them, so leaving them behind would produce a connection
+  // whose own row disagrees with the manifest it now resolves.
+  //
+  // **A merge naming four keys, not a whole property set.** The row was read
+  // several awaits ago — a preview, a lock, a credential sweep — and the
+  // dispatch side writes `runtime_status` on it with a merge and no lock, so
+  // anything landing in that window is concurrent by design. A write built
+  // from the earlier snapshot reverts it: a token that died mid-upgrade goes
+  // back to `healthy` and dispatch resumes against a credential that no
+  // longer works.
+  //
+  // `triggers` is the one key that has to be *removed* rather than
+  // overwritten, because a candidate may declare none. An explicit null
+  // under `null_clears` is the mechanism that already exists for exactly
+  // that, and the store applies it against the row's current properties
+  // inside the transaction rather than against anything read out here.
   await storage.items.update(
     input.connectionId,
     {
       properties: {
-        ...connection.properties,
         integration_ref: preview.candidate_integration_ref,
         configuration: nextConfiguration,
-        // The second frozen copy. Install stamps these onto the connection
-        // and the console reads them, so leaving them behind would produce
-        // a connection whose own row disagrees with the manifest it now
-        // resolves.
         direction: candidate.direction,
-        triggers: candidate.triggers,
+        triggers: candidate.triggers ?? null,
       },
+      null_clears: true,
     },
     input.spaceId,
   );

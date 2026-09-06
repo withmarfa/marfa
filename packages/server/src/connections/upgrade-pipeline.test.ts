@@ -45,6 +45,7 @@ function manifest(
     publisher: "acme",
     description: "upgrade test",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
     target_types: ["core.note"],
     bidirectional_handling: {
@@ -136,6 +137,73 @@ describe("performUpgrade", () => {
       consentedToWidening: true,
     });
     expect(result.to.manifest_version).toBe("2.0.0");
+  });
+
+  it("drops a triggers array the candidate no longer declares", async () => {
+    // The connection carries its own frozen copy of `triggers`, and the
+    // update spreads the existing properties as its base. A candidate that
+    // declares none writes nothing, so the old array survived and the row
+    // claimed a trigger the manifest had dropped — the exact case of the
+    // sync client moving from a vestigial `manual` to none at all, on a
+    // connection the run route now refuses on `runs_on`. Install builds a
+    // fresh object and never met this; upgrade spreads the old one.
+    const s = await scenario({ runs_on: "client", triggers: undefined });
+    const before = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(before?.properties.triggers).toBeDefined();
+
+    const result = await performUpgrade(ctx.storage, {
+      ...caller,
+      connectionId: s.connection.id,
+      consentedToWidening: true,
+    });
+    expect(result.to.manifest_version).toBe("2.0.0");
+
+    const after = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(after?.properties.triggers).toBeUndefined();
+  });
+
+  it("leaves a property written between the read and the write alone", async () => {
+    // The pipeline reads the connection, then does several awaits — a
+    // preview, a lock, a credential sweep — before writing. The dispatch
+    // side writes `runtime_status` on that same row with a merge and no
+    // lock, so anything that lands in that window is concurrent by design
+    // rather than by accident.
+    //
+    // A whole-property-set write from the earlier snapshot silently reverts
+    // it: a token that died mid-upgrade goes back to `healthy` and dispatch
+    // resumes against a credential that no longer works. The write has to
+    // name the keys it means and leave the rest to the row.
+    const s = await scenario({ target_types: ["core.note", "core.bookmark"] });
+    const realGet = ctx.storage.items.get.bind(ctx.storage.items);
+    let injected = false;
+    ctx.storage.items.get = async (id: string, spaceId?: string) => {
+      const item = await realGet(id, spaceId);
+      if (!injected && id === s.connection.id) {
+        injected = true;
+        // The concurrent writer: a merge on one key, which is what the
+        // dispatch side does when an upstream token stops working.
+        await ctx.storage.items.update(
+          s.connection.id,
+          { properties: { runtime_status: "reauth_required" } },
+          undefined,
+        );
+      }
+      return item;
+    };
+
+    try {
+      await performUpgrade(ctx.storage, {
+        ...caller,
+        connectionId: s.connection.id,
+        consentedToWidening: true,
+      });
+    } finally {
+      ctx.storage.items.get = realGet;
+    }
+
+    const after = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(after?.properties.runtime_status).toBe("reauth_required");
+    expect(after?.properties.integration_ref).toBe(s.v2.id);
   });
 
   it("applies the pinned version rather than the newest registered one", async () => {

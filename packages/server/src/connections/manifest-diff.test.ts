@@ -7,12 +7,13 @@
  * takes less than the connection already has.
  */
 import { describe, it, expect } from "vitest";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
+import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { diffManifestGrants, describeGrantDelta } from "./manifest-diff.js";
 
 function manifest(
-  over: Partial<IntegrationManifest> = {},
-): IntegrationManifest {
+  over: Partial<ParsedIntegrationManifest> = {},
+): ParsedIntegrationManifest {
   return {
     name: "acme/thing",
     version: "1.0.0",
@@ -20,6 +21,7 @@ function manifest(
     publisher: "acme",
     description: "diff test",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
     target_types: ["core.note"],
     bidirectional_handling: {
@@ -275,5 +277,47 @@ describe("diffManifestGrants — triggers grant nothing", () => {
     );
     expect(d.widens).toBe(true);
     expect(d.types).toEqual([{ name: "core.bookmark", to: "write" }]);
+  });
+});
+
+describe("diffManifestGrants — where the code runs", () => {
+  it("treats a move to client as widening, so no timer applies it", () => {
+    // Not a grant, and blocking anyway. The background pass moves a
+    // connection whenever nothing widens, and a version that relocates the
+    // code changes what the connection is rather than what it may reach.
+    const delta = diffManifestGrants(
+      manifest({ runs_on: "server" }),
+      manifest({ runs_on: "client" }),
+    );
+    expect(delta.widens).toBe(true);
+    expect(delta.runsOn).toEqual({ from: "server", to: "client" });
+    expect(describeGrantDelta(delta).join(" ")).toContain("your own machine");
+  });
+
+  it("treats a move to server as widening too", () => {
+    // The reverse starts a deployment running code the space never agreed
+    // it would run, which is the more consequential direction of the two.
+    const delta = diffManifestGrants(
+      manifest({ runs_on: "client" }),
+      manifest({ runs_on: "server" }),
+    );
+    expect(delta.widens).toBe(true);
+    expect(delta.runsOn).toEqual({ from: "client", to: "server" });
+  });
+
+  it("takes the default from the parse, not from a fallback here", () => {
+    // Post-parse a manifest always carries `runs_on`, so the diff needs no
+    // fallback of its own — and must not grow one, because a second place
+    // deciding what absence means is how the two come to disagree. Parsed
+    // rather than hand-deleted: the state this asserts is the one a reader
+    // downstream of `validateManifest` can actually meet.
+    const withoutField = { ...manifest() } as Record<string, unknown>;
+    delete withoutField.runs_on;
+    const parsed = IntegrationManifestSchema.parse(withoutField);
+    expect(parsed.runs_on).toBe("server");
+
+    const delta = diffManifestGrants(parsed, manifest({ runs_on: "server" }));
+    expect(delta.runsOn).toBeUndefined();
+    expect(delta.widens).toBe(false);
   });
 });

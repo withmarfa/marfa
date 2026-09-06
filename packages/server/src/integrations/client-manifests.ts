@@ -1,9 +1,12 @@
 /**
  * The manifests this build ships rather than discovers.
  *
- * **An integration is something a deployment installs; a client is
- * something the platform knows about.** That distinction is the whole
- * reason this file exists. Integrations arrive as directories under
+ * **Where the code runs is a field on the manifest; this file is only
+ * about where the manifest comes from.** An integration is anything that
+ * ships a manifest and installs as a connection, whatever its upstream, so
+ * the client is not a different kind of thing — it is one that declares
+ * `runs_on: "client"`. What that costs a deployment is discoverability:
+ * integrations arrive as directories under
  * `MARFA_INTEGRATIONS_ROOT`, and the loader finds them by reading that
  * directory. A client's code has to run somewhere else: sync watches a
  * filesystem, so it can only run on the machine holding the files. There
@@ -28,10 +31,32 @@ import { SYNC_MANIFEST } from "@withmarfa/sync-manifest";
 export interface ClientManifest {
   /** Manifest `name`, `<namespace>/<name>`. */
   name: string;
-  manifest: IntegrationManifest;
+  /**
+   * Narrowed to a client-run manifest at the type, so a member that forgot
+   * the field is a build error rather than a boot-time throw. The throw
+   * below stays for the case the type cannot reach — a manifest widened to
+   * `IntegrationManifest` somewhere upstream and handed in — but nothing
+   * that compiles here should ever reach it.
+   */
+  manifest: IntegrationManifest & { runs_on: "client" };
 }
 
 /** Every client manifest this build ships. */
 export const CLIENT_MANIFESTS: readonly ClientManifest[] = [
   { name: SYNC_MANIFEST.name, manifest: SYNC_MANIFEST },
 ];
+
+/**
+ * This list is a shipping mechanism, not a definition. What makes a manifest
+ * a client is its own `runs_on` declaration, which the run route and the
+ * catalog reconcile both read; membership here only says the server carries
+ * the manifest as a workspace dependency instead of finding it on a disk.
+ *
+ * **The two are held together by the type rather than by a check.**
+ * `ClientManifest.manifest` is narrowed to `runs_on: "client"`, so a member
+ * that forgot the field does not compile. A runtime guard here would be
+ * unreachable, and unreachable enforcement is worse than none: it reads as
+ * protection to everyone after you and defends nothing. `client-manifests.test.ts`
+ * asserts the same invariant, which is what reddens if the narrowing is ever
+ * widened.
+ */

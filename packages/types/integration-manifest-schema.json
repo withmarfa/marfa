@@ -29,8 +29,15 @@
         "both"
       ]
     },
+    "runs_on": {
+      "default": "server",
+      "type": "string",
+      "enum": [
+        "server",
+        "client"
+      ]
+    },
     "triggers": {
-      "minItems": 1,
       "type": "array",
       "items": {
         "oneOf": [
@@ -142,8 +149,6 @@
         }
       },
       "required": [
-        "echo_ttl_seconds",
-        "lag_window_seconds",
         "tombstone_mapping",
         "partial_write_mode"
       ],
@@ -424,11 +429,7 @@
     "publisher",
     "description",
     "direction",
-    "triggers",
     "target_types",
-    "bidirectional_handling",
-    "oauth_requirements",
-    "webhook_verification",
     "manifest_schema_version"
   ],
   "additionalProperties": false

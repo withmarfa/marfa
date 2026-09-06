@@ -179,6 +179,23 @@ export async function performInstall(
         { credential_ref: input.credentialRef, kind: credProps.kind },
       );
     }
+    // The credential and the manifest have to agree about what this
+    // integration authenticates with. `oauth_requirements` is what the
+    // proxy reads to decide which capability a call spends and whether it
+    // is proxied or leased, so binding an OAuth credential to a manifest
+    // that declares none installs a connection whose grant nothing can
+    // project — and the failure would arrive later, at the first mint,
+    // rather than here where the two are being joined.
+    if (
+      credProps.kind === "oauth_token" &&
+      Object.keys(manifest.oauth_requirements ?? {}).length === 0
+    ) {
+      throw new MarfaError(
+        ErrorCode.INVALID_REQUEST,
+        `credential_ref ${input.credentialRef} is an OAuth credential, but ${manifest.name} declares no oauth_requirements, so nothing says which capability the grant covers or how it is spent.`,
+        { credential_ref: input.credentialRef, kind: credProps.kind },
+      );
+    }
   }
 
   // The configuration seed is judged against the manifest's declared
@@ -247,10 +264,16 @@ export async function performInstall(
       input.configuration ?? {},
     ),
     direction: manifest.direction,
-    triggers: manifest.triggers,
     runtime_status: "healthy" as const,
     feed_activity: false,
   };
+  // Absent rather than `undefined`: a client-run manifest declares no
+  // triggers, and stamping the key with nothing in it would put a field on
+  // the connection that reads as "declared, empty" instead of "not
+  // declared".
+  if (manifest.triggers !== undefined) {
+    connectionProperties.triggers = manifest.triggers;
+  }
   if (input.credentialRef !== undefined) {
     connectionProperties.credential_ref = input.credentialRef;
   }

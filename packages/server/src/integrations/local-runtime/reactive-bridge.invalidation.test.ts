@@ -35,6 +35,7 @@ function manifest(): IntegrationManifest {
     publisher: "acme",
     description: "bridge invalidation fixture",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "item-event" }],
     target_types: ["core.note"],
     bidirectional_handling: {

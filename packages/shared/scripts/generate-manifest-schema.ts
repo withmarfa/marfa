@@ -4,7 +4,7 @@
  *
  * Reads the canonical Zod schema from
  * `packages/shared/src/integration-manifest.ts`, runs it through Zod 4's
- * built-in `z.toJSONSchema`, and writes the result to
+ * built-in `z.toJSONSchema` in its input view, and writes the result to
  * `packages/types/integration-manifest-schema.json`.
  *
  * Wired into `packages/shared/package.json`'s `prebuild` so a fresh
@@ -29,7 +29,22 @@ import { IntegrationManifestSchema } from "../src/integration-manifest.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const json = z.toJSONSchema(IntegrationManifestSchema);
+// The INPUT view, which is what a manifest author writes.
+//
+// Zod's default is the output view, where a field carrying `.default()` is
+// required because the parsed value always has it. That is true of the
+// parse result and false of the document: the platform accepts a manifest
+// with no `runs_on` and resolves it to "server", while an output-view
+// artifact tells a third party the field is mandatory. The two published
+// surfaces then disagree about the same contract.
+//
+// This was already wrong before `runs_on` existed — `echo_ttl_seconds` and
+// `lag_window_seconds` have carried `.default(60)` and been listed as
+// required since the block was written, so the artifact has always
+// over-stated what an author must supply. Fixing it here rather than
+// leaving one more instance of it is the same correction the rest of this
+// change is making: a published surface states what is true.
+const json = z.toJSONSchema(IntegrationManifestSchema, { io: "input" });
 
 const outputPath = resolve(
   __dirname,

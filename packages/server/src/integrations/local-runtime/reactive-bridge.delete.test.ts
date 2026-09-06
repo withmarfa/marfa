@@ -38,6 +38,7 @@ function manifest(): IntegrationManifest {
     publisher: "acme",
     description: "bridge delete fixture",
     direction: "both",
+    runs_on: "server" as const,
     triggers: [{ type: "item-event" }],
     target_types: ["core.note"],
     bidirectional_handling: {

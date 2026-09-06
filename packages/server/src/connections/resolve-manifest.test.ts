@@ -31,6 +31,7 @@ function makeManifest(
     publisher: "acme",
     description: "manifest resolution test",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
     bidirectional_handling: {

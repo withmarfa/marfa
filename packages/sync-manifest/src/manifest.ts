@@ -15,45 +15,41 @@
  * API key in `~/.marfa/sync.json`.
  *
  * **Where the code has to run is what decides what something is**, which
- * is why this lives in `packages/` rather than beside the integrations. An
- * integration is something a deployment installs into the runtime's
- * directory; a client is something the platform knows about. So this
- * manifest ships with the server build, as an ordinary workspace
- * dependency handed to the boot-time catalog reconcile, rather than being
- * discovered under `MARFA_INTEGRATIONS_ROOT`.
+ * is why this lives in `packages/` rather than beside the integrations. It
+ * ships with the server build, as an ordinary workspace dependency handed
+ * to the boot-time catalog reconcile, rather than being discovered under
+ * `MARFA_INTEGRATIONS_ROOT` — a deployment can add an integration without
+ * rebuilding and cannot add a client at all.
  *
- * Triggers: `manual` only, and it is vestigial. Marfa's runtime dispatches
- * sync never; the daemon's own filesystem watchers and debounced sweeps
- * drive it. `POST /connections/{id}/run` refuses it for exactly that
- * reason, naming where it actually runs. The trigger survives only because
- * the manifest schema requires at least one and no trigger kind honestly
- * describes "started by a program somewhere else".
- *
- * `webhook_verification` is required by the schema and unused here —
- * declared as hmac-sha256 by convention.
+ * The manifest says so itself now. `runs_on: "client"` is what the run
+ * route reads before it looks at anything else, so a refusal names where
+ * the code runs rather than inferring it from a missing registration. A
+ * client-run manifest declares no triggers, because nothing on this side
+ * fires one.
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
-export const SYNC_MANIFEST: IntegrationManifest = {
+// Annotated with the literal rather than the bare type, because
+// `CLIENT_MANIFESTS` accepts only a client-run manifest. The narrowing is
+// the whole point: a client manifest that forgot the field should not
+// compile.
+export const SYNC_MANIFEST: IntegrationManifest & { runs_on: "client" } = {
   name: "marfa/sync",
-  version: "0.3.0",
-  manifest_schema_version: "2.0.0",
+  version: "0.4.0",
+  manifest_schema_version: "2.2.0",
   publisher: "marfa",
   description:
     "Local file-sync client. Watches configured roots on disk; the items it writes belong to you and are editable like anything you create. Installs as a connection so it gets credentials, configuration, and observability the same way integrations do.",
   direction: "both",
+  runs_on: "client",
   target_types: ["core.note", "core.file"],
-  triggers: [{ type: "manual" }],
   bidirectional_handling: {
     echo_ttl_seconds: 30,
     lag_window_seconds: 30,
     tombstone_mapping: "state-trashed",
     partial_write_mode: "accept-partial",
   },
-  oauth_requirements: {},
-  webhook_verification: { method: "hmac-sha256" },
   permissions: {
     extension: { "connection.runtime": "write" },
-    edge: {},
   },
 };

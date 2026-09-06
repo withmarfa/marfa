@@ -15,6 +15,7 @@
  * exercised separately by the supervisor tests.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DEFAULT_ECHO_TTL_SECONDS } from "@withmarfa/shared";
 import { resolve, dirname } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { createTestContext, TEST_API_KEY_SALT } from "../../test-utils.js";
@@ -62,7 +63,11 @@ afterAll(async () => {
 interface LoadedIntegration {
   manifest: {
     name: string;
-    bidirectional_handling: {
+    // Optional, as it is on the real manifest. This local shape is a
+    // restatement rather than a reference, so it went on claiming the
+    // field was mandatory after the schema stopped requiring it, and the
+    // only thing that noticed was a TypeError at dispatch.
+    bidirectional_handling?: {
       echo_ttl_seconds: number;
       lag_window_seconds?: number;
     };
@@ -260,8 +265,9 @@ function makeRegistration(
     directDispatch: makeDirectDispatch(integration, registerOptions),
     echo: {
       echo_ttl_seconds:
-        integration.manifest.bidirectional_handling.echo_ttl_seconds,
-      ...(integration.manifest.bidirectional_handling.lag_window_seconds !==
+        integration.manifest.bidirectional_handling?.echo_ttl_seconds ??
+        DEFAULT_ECHO_TTL_SECONDS,
+      ...(integration.manifest.bidirectional_handling?.lag_window_seconds !==
       undefined
         ? {
             lag_window_seconds:

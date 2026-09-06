@@ -173,7 +173,7 @@ describe("a name that reaches the catalog from both sources", () => {
 
       expect(outcome.result.failed.map((f) => f.name)).toContain("marfa/sync");
       expect(outcome.result.failed[0]?.reason).toContain(
-        "from the manifests this build ships",
+        'while declaring runs_on "client"',
       );
       // Neither side wins, which is the point: a deployment told what is
       // missing can fix it, one silently running the other cannot.
@@ -185,6 +185,56 @@ describe("a name that reaches the catalog from both sources", () => {
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a discovered manifest declaring runs_on client, whatever its name", async () => {
+    // The rule is the manifest's own declaration rather than a name this
+    // build happens to ship. Keying on membership of CLIENT_MANIFESTS was
+    // correct while there was one client and would have been silently wrong
+    // the moment there were two — an enumeration standing in for a question
+    // the payload can answer.
+    const root = mkdtempSync(join(tmpdir(), "reconcile-client-"));
+    try {
+      const dist = join(root, "acme", "elsewhere", "dist");
+      mkdirSync(dist, { recursive: true });
+      const stranger = {
+        ...CLIENT_MANIFESTS[0]?.manifest,
+        name: "acme/elsewhere",
+      };
+      writeFileSync(
+        join(dist, "manifest.js"),
+        `export const MANIFEST = ${JSON.stringify(stranger)};\n`,
+      );
+
+      const outcome = await reconcileShippedCatalog(ctx.storage, {
+        integrationsRoot: root,
+      });
+
+      const reason = outcome.result.failed.find(
+        (f) => f.name === "acme/elsewhere",
+      )?.reason;
+      expect(reason).toContain('while declaring runs_on "client"');
+      // One cause per message: this build ships no client of that name, so
+      // the collision sentence must not appear.
+      expect(reason).not.toContain("already ships a client manifest");
+      expect(outcome.result.registered.map((r) => r.name)).not.toContain(
+        "acme/elsewhere",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("every shipped client manifest declares that it runs on a client", () => {
+    // The type narrows `ClientManifest.manifest` to `runs_on: "client"`, so
+    // a member that forgot the field does not compile. This asserts the same
+    // invariant at runtime, which is what the module's own throw defends for
+    // a value widened somewhere upstream and handed in.
+    expect(CLIENT_MANIFESTS.length).toBeGreaterThan(0);
+    for (const entry of CLIENT_MANIFESTS) {
+      expect(entry.manifest.runs_on).toBe("client");
+      expect(entry.manifest.triggers).toBeUndefined();
     }
   });
 });

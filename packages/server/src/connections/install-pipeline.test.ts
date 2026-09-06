@@ -30,6 +30,7 @@ function manifest(): IntegrationManifest {
     publisher: "acme",
     description: "direct install test",
     direction: "both",
+    runs_on: "server" as const,
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
     bidirectional_handling: {
@@ -38,7 +39,11 @@ function manifest(): IntegrationManifest {
       tombstone_mapping: "prompt-user",
       partial_write_mode: "all-or-nothing",
     },
-    oauth_requirements: {},
+    // Declares what an OAuth grant on this connection would cover. The
+    // fixture used to bind an oauth_token credential to a manifest saying
+    // it needed no OAuth at all, which install now refuses: nothing in
+    // that pairing said which capability the grant was for.
+    oauth_requirements: { upstream: "proxy" as const },
     webhook_verification: { method: "hmac-sha256" },
     manifest_schema_version: "2.0.0",
   };
@@ -514,6 +519,56 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     );
     return credential.id;
   }
+
+  it("refuses an OAuth credential against a manifest declaring no oauth_requirements", async () => {
+    // The credential and the manifest have to agree about what this
+    // integration authenticates with. `oauth_requirements` is what the proxy
+    // reads to decide which capability a call spends and whether it is
+    // proxied or leased, so binding an OAuth credential to a manifest that
+    // declares none installs a connection whose grant nothing can project —
+    // and the failure would otherwise arrive at the first mint rather than
+    // here, where the two are being joined.
+    //
+    // Its own credential rather than `setupOauthCredential()`: that helper
+    // hardcodes the `shared-client` id the reuse case below counts, so
+    // borrowing it would make this test change that one's arithmetic.
+    const adminKey = await ctx.storage.keys
+      .list()
+      .then((keys) => keys.find((k) => k.role === "instance_admin"));
+    if (!adminKey) throw new Error("admin key not found in test ctx");
+    const integrationId = await setupIntegrationItem();
+    const credential = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "no-requirements-oauth-provider",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            oauth_authorize_url: "https://example.com/oauth/authorize",
+            oauth_token_url: "https://example.com/oauth/token",
+            oauth_client_id: "no-requirements-client",
+            upstream_base_url: "https://api.example.com",
+          },
+          secret_encrypted:
+            "test-encrypted-placeholder|test-encrypted-placeholder|tag",
+        },
+      },
+      undefined,
+    );
+    const noOauth = manifest();
+    delete (noOauth as { oauth_requirements?: unknown }).oauth_requirements;
+
+    await expect(
+      performInstall(ctx.storage, {
+        apiKeyId: adminKey.id,
+        spaceId: undefined,
+        authMode: "keys",
+        integrationItemId: integrationId,
+        manifest: noOauth,
+        credentialRef: credential.id,
+      }),
+    ).rejects.toThrow(/declares no oauth_requirements/);
+  });
 
   it("stamps credential_ref onto the connection when supplied", async () => {
     const adminKey = await ctx.storage.keys

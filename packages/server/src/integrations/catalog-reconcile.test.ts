@@ -11,7 +11,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
+
 import { reconcileIntegrationCatalog } from "./catalog-reconcile.js";
 import { findCatalogRow } from "./register-manifest.js";
 import type { InTreeManifest } from "./load-manifests.js";
@@ -28,8 +29,8 @@ afterAll(async () => {
 
 let seq = 0;
 function makeManifest(
-  overrides?: Partial<IntegrationManifest>,
-): IntegrationManifest {
+  overrides?: Partial<ParsedIntegrationManifest>,
+): ParsedIntegrationManifest {
   seq += 1;
   return {
     name: `acme/reconcile-${String(seq)}`,
@@ -37,6 +38,7 @@ function makeManifest(
     publisher: "acme",
     description: "catalog reconcile test",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "schedule", config: { cron: "0 * * * *" } }],
     target_types: ["core.note"],
     bidirectional_handling: {
@@ -52,7 +54,7 @@ function makeManifest(
   };
 }
 
-function entry(manifest: IntegrationManifest): InTreeManifest {
+function entry(manifest: ParsedIntegrationManifest): InTreeManifest {
   return {
     name: manifest.name,
     // The directory mirrors the identifier, so the two are one string.
@@ -73,7 +75,8 @@ describe("reconcileIntegrationCatalog", () => {
     const row = await findCatalogRow(ctx.storage, m.name, "1.0.0", undefined);
     expect(row).toBeDefined();
     expect(
-      (row?.properties as { manifest: IntegrationManifest }).manifest.name,
+      (row?.properties as { manifest: ParsedIntegrationManifest }).manifest
+        .name,
     ).toBe(m.name);
   });
 
@@ -119,7 +122,7 @@ describe("reconcileIntegrationCatalog", () => {
       undefined,
     );
     expect(
-      (after?.properties as { manifest: IntegrationManifest }).manifest
+      (after?.properties as { manifest: ParsedIntegrationManifest }).manifest
         .target_types,
     ).toEqual(["core.note"]);
     expect(after?.id).toBe(before?.id);

@@ -94,6 +94,7 @@ function manifest(name: string): IntegrationManifest {
     publisher: "acme",
     description: "orphaned-state fixture",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "manual" }],
     target_types: ["core.note", "core.event"],
     bidirectional_handling: {

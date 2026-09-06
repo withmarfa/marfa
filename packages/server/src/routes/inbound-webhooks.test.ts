@@ -55,7 +55,6 @@ const VALID_MANIFEST = {
     tombstone_mapping: "prompt-user" as const,
     partial_write_mode: "all-or-nothing" as const,
   },
-  oauth_requirements: {},
   webhook_verification: { method: "hmac-sha256" as const },
   manifest_schema_version: "2.0.0",
 };
@@ -141,6 +140,43 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     expect(typeof created.secret).toBe("string");
     expect(created.secret.length).toBeGreaterThanOrEqual(32);
     expect(created.secret_redacted.startsWith("****")).toBe(true);
+  });
+
+  it("rejects when the manifest declares no webhook_verification", async () => {
+    // The route used to read `webhook_verification.method` unconditionally,
+    // and every manifest supplied one because the schema demanded it. So a
+    // subscription could be registered against an integration with no webhook
+    // trigger at all, verified by a method its author never chose, for
+    // deliveries that would never arrive. A manifest that declares none is
+    // now told so rather than handed a convention.
+    const bare = { ...VALID_MANIFEST, name: "acme/no-verification" } as Record<
+      string,
+      unknown
+    >;
+    delete bare.webhook_verification;
+    delete bare.triggers;
+    bare.runs_on = "client";
+    const regRes = await request(ctx.app, "POST", "/integrations", {
+      key: ctx.adminKey,
+      body: { manifest: bare },
+    });
+    expect(regRes.status).toBe(201);
+    const reg = (await regRes.json()) as { id: string };
+
+    const connectionId = await createConnection(reg.id);
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      { key: ctx.adminKey, body: { events: ["thing.created"] } },
+    );
+
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.message).toContain("declares no webhook_verification");
   });
 
   it("rejects when the connection has no integration_ref", async () => {

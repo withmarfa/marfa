@@ -9,6 +9,8 @@ import {
   IntegrationManifestSchema,
   parseManifestSchemaMajor,
   resolveWriteFamily,
+  validateManifestAuthoring,
+  validateManifestCoherence,
   validateWriteFamilies,
 } from "./integration-manifest.js";
 
@@ -65,8 +67,8 @@ describe("IntegrationManifestSchema — happy path", () => {
     const result = IntegrationManifestSchema.safeParse(minimal);
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.bidirectional_handling.echo_ttl_seconds).toBe(60);
-      expect(result.data.bidirectional_handling.lag_window_seconds).toBe(60);
+      expect(result.data.bidirectional_handling?.echo_ttl_seconds).toBe(60);
+      expect(result.data.bidirectional_handling?.lag_window_seconds).toBe(60);
     }
   });
 });
@@ -78,11 +80,7 @@ describe("IntegrationManifestSchema — required-field rejects", () => {
     "publisher",
     "description",
     "direction",
-    "triggers",
     "target_types",
-    "bidirectional_handling",
-    "oauth_requirements",
-    "webhook_verification",
     "manifest_schema_version",
   ] as const;
 
@@ -281,7 +279,11 @@ describe("Integration manifest JSON Schema artifact", () => {
     // When this fails after a schema edit, run:
     //   pnpm --filter @withmarfa/shared run generate:manifest-schema
     const expected =
-      JSON.stringify(z.toJSONSchema(IntegrationManifestSchema), null, 2) + "\n";
+      JSON.stringify(
+        z.toJSONSchema(IntegrationManifestSchema, { io: "input" }),
+        null,
+        2,
+      ) + "\n";
     const actual = readFileSync(COMMITTED_JSON_SCHEMA_PATH, "utf8");
     expect(actual).toBe(expected);
   });
@@ -660,5 +662,211 @@ describe("IntegrationManifestSchema — publisher", () => {
     const without: Record<string, unknown> = { ...VALID_MANIFEST };
     delete without.publisher;
     expect(IntegrationManifestSchema.safeParse(without).success).toBe(false);
+  });
+});
+
+describe("IntegrationManifestSchema — a manifest declares only what is true of it", () => {
+  // The three fields every manifest had to supply a value for, and which
+  // most had no honest value for. A field with nothing to say is absent.
+  const {
+    webhook_verification: _wv,
+    bidirectional_handling: _bh,
+    oauth_requirements: _oa,
+    ...SPARSE
+  } = { ...VALID_MANIFEST, direction: "read" as const };
+  void _wv;
+  void _bh;
+  void _oa;
+
+  it("accepts a manifest declaring none of the three optional fields", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...SPARSE,
+      triggers: [{ type: "schedule" as const, config: { cron: "0 * * * *" } }],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a manifest that omits triggers when it runs on the client", () => {
+    const { triggers: _t, ...noTriggers } = SPARSE;
+    void _t;
+    const result = IntegrationManifestSchema.safeParse({
+      ...noTriggers,
+      runs_on: "client",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("defaults runs_on to server when the manifest does not declare it", () => {
+    const result = IntegrationManifestSchema.safeParse(VALID_MANIFEST);
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.runs_on).toBe("server");
+  });
+
+  it("carries a declared runs_on through the parse", () => {
+    const { triggers: _t, ...noTriggers } = SPARSE;
+    void _t;
+    const result = IntegrationManifestSchema.safeParse({
+      ...noTriggers,
+      runs_on: "client",
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.runs_on).toBe("client");
+  });
+
+  it("refuses a runs_on value outside the pair", () => {
+    const result = IntegrationManifestSchema.safeParse({
+      ...VALID_MANIFEST,
+      runs_on: "worker",
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("validateManifestCoherence — every refusal branch", () => {
+  const READ_ONLY = {
+    direction: "read" as const,
+    runs_on: "server" as const,
+    triggers: [{ type: "schedule" as const, config: { cron: "0 * * * *" } }],
+  };
+
+  it("accepts a manifest that declares none of the optional fields", () => {
+    expect(validateManifestCoherence(READ_ONLY)).toEqual([]);
+  });
+
+  it("refuses a webhook trigger with no verification method", () => {
+    const issues = validateManifestCoherence({
+      ...READ_ONLY,
+      triggers: [{ type: "webhook" }],
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("webhook trigger needs webhook_verification");
+  });
+
+  it("accepts a webhook trigger that names its method", () => {
+    expect(
+      validateManifestCoherence({
+        ...READ_ONLY,
+        triggers: [{ type: "webhook" }],
+        webhook_verification: { method: "github" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not refuse a verification method without a webhook trigger", () => {
+    // One-directional on purpose: this rule runs against every stored
+    // manifest on every resolution, and the converse would refuse rows
+    // registered before the sweep. `validateManifestAuthoring` owns it.
+    expect(
+      validateManifestCoherence({
+        ...READ_ONLY,
+        webhook_verification: { method: "hmac-sha256" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("refuses direction both with no bidirectional handling", () => {
+    const issues = validateManifestCoherence({
+      ...READ_ONLY,
+      direction: "both",
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("bidirectional_handling");
+  });
+
+  it("refuses a server-run manifest with no triggers", () => {
+    const { triggers: _t, ...noTriggers } = READ_ONLY;
+    void _t;
+    const issues = validateManifestCoherence(noTriggers);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("at least one trigger");
+  });
+
+  it("refuses a server-run manifest whose trigger array is empty", () => {
+    expect(
+      validateManifestCoherence({ ...READ_ONLY, triggers: [] }),
+    ).toHaveLength(1);
+  });
+
+  it("refuses a client-run manifest that declares a trigger", () => {
+    const issues = validateManifestCoherence({
+      ...READ_ONLY,
+      runs_on: "client",
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("client-run integration declares no triggers");
+  });
+
+  it("accepts a client-run manifest that declares none", () => {
+    const { triggers: _t, ...noTriggers } = READ_ONLY;
+    void _t;
+    expect(
+      validateManifestCoherence({ ...noTriggers, runs_on: "client" }),
+    ).toEqual([]);
+  });
+});
+
+describe("validateManifestAuthoring — the rules a stored row is not held to", () => {
+  const READ_ONLY = {
+    direction: "read" as const,
+    runs_on: "server" as const,
+    triggers: [{ type: "schedule" as const, config: { cron: "0 * * * *" } }],
+  };
+
+  it("carries every coherence rule as well as its own", () => {
+    const issues = validateManifestAuthoring({
+      ...READ_ONLY,
+      triggers: [{ type: "webhook" }],
+    });
+    expect(issues[0]).toContain("webhook trigger needs webhook_verification");
+  });
+
+  it("refuses a verification method with no webhook trigger", () => {
+    const issues = validateManifestAuthoring({
+      ...READ_ONLY,
+      webhook_verification: { method: "hmac-sha256" },
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("without a webhook trigger");
+  });
+
+  it("refuses bidirectional handling on a one-directional manifest", () => {
+    const issues = validateManifestAuthoring({
+      ...READ_ONLY,
+      bidirectional_handling: {
+        echo_ttl_seconds: 60,
+        lag_window_seconds: 60,
+        tombstone_mapping: "state-trashed",
+        partial_write_mode: "all-or-nothing",
+      },
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("partial_write_mode describes a write path");
+  });
+
+  it("refuses an empty oauth_requirements", () => {
+    const issues = validateManifestAuthoring({
+      ...READ_ONLY,
+      oauth_requirements: {},
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("oauth_requirements is declared and empty");
+  });
+
+  it("refuses an empty token_requirements for the same reason", () => {
+    const issues = validateManifestAuthoring({
+      ...READ_ONLY,
+      token_requirements: {},
+    });
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("token_requirements is declared and empty");
+  });
+
+  it("accepts a populated oauth_requirements", () => {
+    expect(
+      validateManifestAuthoring({
+        ...READ_ONLY,
+        oauth_requirements: { calendar: "proxy" },
+      }),
+    ).toEqual([]);
   });
 });

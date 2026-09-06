@@ -22,7 +22,7 @@
  * manifest grants a runtime credential, so the diff is computed from those
  * rather than from a second reading of the manifest.
  */
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
 import {
   buildEdgePermissions,
   buildExtensionPermissions,
@@ -49,6 +49,16 @@ export interface ManifestGrantDelta {
   tokens: { name: string; to: string }[];
   /** Configuration fields that are required now and were not before. */
   configurationRequired: string[];
+  /**
+   * Set when the candidate runs somewhere else than the consented manifest
+   * did. Not a grant, and reported here anyway: the background pass moves a
+   * connection whenever nothing widens, and a version that relocates the
+   * code changes what the connection *is* — a server-run integration
+   * becoming client-run stops being dispatched at all, and the reverse
+   * starts a deployment running code the space never agreed it would.
+   * Neither is something to apply on a timer.
+   */
+  runsOn?: { from: "server" | "client"; to: "server" | "client" };
 }
 
 function diffPermissionMap(
@@ -79,8 +89,8 @@ function diffPermissionMap(
  * something the new manifest is asking for.
  */
 export function diffManifestGrants(
-  consented: IntegrationManifest,
-  candidate: IntegrationManifest,
+  consented: ParsedIntegrationManifest,
+  candidate: ParsedIntegrationManifest,
   connectionProperties?: Record<string, unknown>,
 ): ManifestGrantDelta {
   const types = diffPermissionMap(
@@ -102,8 +112,8 @@ export function diffManifestGrants(
   // other error is an integration holding a credential shape nobody
   // approved. A key that disappears is a narrowing and is not reported.
   const oauth: ManifestGrantDelta["oauth"] = [];
-  for (const [name, to] of Object.entries(candidate.oauth_requirements)) {
-    const from = consented.oauth_requirements[name];
+  for (const [name, to] of Object.entries(candidate.oauth_requirements ?? {})) {
+    const from = consented.oauth_requirements?.[name];
     if (from === undefined) oauth.push({ name, to });
     else if (from !== to) oauth.push({ name, from, to });
   }
@@ -127,6 +137,15 @@ export function diffManifestGrants(
     if (beforeFields[name]?.required !== true) configurationRequired.push(name);
   }
 
+  // No fallback: both sides come from `validateManifest`, which applies the
+  // default. Spelling `?? "server"` here would be a second place deciding
+  // what absence means, and the day the two disagree is the day nothing
+  // reports it.
+  const runsOn =
+    consented.runs_on === candidate.runs_on
+      ? undefined
+      : { from: consented.runs_on, to: candidate.runs_on };
+
   return {
     widens:
       types.length > 0 ||
@@ -134,13 +153,15 @@ export function diffManifestGrants(
       edges.length > 0 ||
       oauth.length > 0 ||
       tokens.length > 0 ||
-      configurationRequired.length > 0,
+      configurationRequired.length > 0 ||
+      runsOn !== undefined,
     types,
     extensions,
     edges,
     oauth,
     tokens,
     configurationRequired,
+    ...(runsOn ? { runsOn } : {}),
   };
 }
 
@@ -160,6 +181,13 @@ export function describeGrantDelta(delta: ManifestGrantDelta): string[] {
       e.from
         ? `Writes to the ${e.name} extension instead of only reading it`
         : `Reaches a new extension: ${e.name}`,
+    );
+  }
+  if (delta.runsOn) {
+    lines.push(
+      delta.runsOn.to === "client"
+        ? "Stops being run by Marfa: this version's code runs on your own machine"
+        : "Starts being run by Marfa's own runtime, where the previous version ran on your machine",
     );
   }
   for (const e of delta.edges) {

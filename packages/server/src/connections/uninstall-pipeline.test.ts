@@ -34,6 +34,7 @@ function manifest(): IntegrationManifest {
     publisher: "acme",
     description: "uninstall test",
     direction: "both",
+    runs_on: "server" as const,
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
     bidirectional_handling: {
@@ -42,7 +43,11 @@ function manifest(): IntegrationManifest {
       tombstone_mapping: "prompt-user",
       partial_write_mode: "all-or-nothing",
     },
-    oauth_requirements: {},
+    // Declares what an OAuth grant on this connection would cover. The
+    // fixture used to bind an oauth_token credential to a manifest saying
+    // it needed no OAuth at all, which install now refuses: nothing in
+    // that pairing said which capability the grant was for.
+    oauth_requirements: { upstream: "proxy" as const },
     webhook_verification: { method: "hmac-sha256" },
     manifest_schema_version: "2.0.0",
   };

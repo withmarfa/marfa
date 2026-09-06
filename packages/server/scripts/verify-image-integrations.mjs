@@ -529,6 +529,25 @@ if (loaded.skipped.length > 0) {
   );
 }
 
+// A manifest that says its code runs on somebody else's machine, staged
+// into the directory this deployment dispatches from. The Dockerfile's
+// staging step says in a comment that nothing a client needs is staged
+// here; this is the same statement as a check. Without it the comment is
+// the only thing enforcing it, and a client staged by mistake would
+// register in the catalog as installable and dispatch nothing.
+const clientRun = loaded.manifests.filter(
+  (entry) => entry.manifest?.runs_on === "client",
+);
+if (clientRun.length > 0) {
+  fail(
+    `staged into the integrations root while declaring runs_on "client": ` +
+      clientRun.map((entry) => entry.name).join(", ") +
+      `. A client's code runs on the user's machine, so there is nothing ` +
+      `here to dispatch and nothing for a deployment to install; its ` +
+      `manifest ships compiled into the server bundle instead.`,
+  );
+}
+
 // A manifest naming an integration other than the directory it was staged
 // into. The loader tolerates it, because a deployment may install into
 // whatever directory it likes; the image may not. Everything that stages,
