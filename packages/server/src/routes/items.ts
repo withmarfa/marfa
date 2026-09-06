@@ -3356,7 +3356,13 @@ export function itemRoutes(storage: Storage) {
   });
 
   router.openapi(removeTagRoute, async (c) => {
-    const { id, tag: rawTag } = c.req.valid("param");
+    // The tag is used as the router hands it over. Hono decodes a path
+    // parameter exactly once, so decoding it again is not defensive: it
+    // corrupts a value that was already correct. This handler used to,
+    // and a tag holding a literal percent threw on the second decode and
+    // answered 500, while one whose text happened to look like an escape
+    // decoded into a different tag and removed nothing, silently.
+    const { id, tag } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
@@ -3370,7 +3376,6 @@ export function itemRoutes(storage: Storage) {
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
     requireRowWritable(c.get("apiKey"), item);
-    const tag = decodeURIComponent(rawTag);
     const metadata = await storage.metadata.removeTag(id, tag);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

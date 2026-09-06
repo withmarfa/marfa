@@ -573,6 +573,55 @@ describe("sign-in guard cancel-token reuse + audit hygiene", () => {
     expect(count).toBe(1);
   });
 
+  it("cannot be walked around by re-spelling the sign-in path", async () => {
+    // The guard decides on the raw pathname against a set of two literal
+    // strings, which is an enumeration over a value whose spelling is not
+    // canonical: `/auth/sign-%69n/email` is the same path and is not in
+    // the set. The catch-all `/auth/*` mount is a wildcard, so the request
+    // does reach the auth handler rather than stopping at the router.
+    //
+    // It is safe, and this pins why rather than asserting that it is. The
+    // handler behind the catch-all does not route a re-encoded spelling
+    // either, so the path that skips the guard reaches no sign-in at all.
+    // Both halves are asserted, because the guard opens silently if the
+    // second one ever changes.
+    ctx = await createTestContext({ authAllowSignup: true });
+    await signUpAndVerify(ctx, "guard-encoded@example.com");
+    const { cookie } = await signIn(ctx, "guard-encoded@example.com");
+    await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: cookie ? { origin: ORIGIN, cookie } : { origin: ORIGIN },
+    });
+    const confirmToken = await readLatestVerification(
+      ctx.storage,
+      "account-delete:",
+    );
+    await request(
+      ctx.app,
+      "GET",
+      `/auth/account/delete/confirm?token=${encodeURIComponent(confirmToken ?? "")}`,
+      { headers: { origin: ORIGIN } },
+    );
+
+    const credentials = {
+      email: "guard-encoded@example.com",
+      password: "correct horse",
+    };
+    // The control: the account really is blocked on the spelling the
+    // guard knows, so a 401 below is the guard and not a bad password.
+    const plain = await request(ctx.app, "POST", "/auth/sign-in/email", {
+      body: credentials,
+      headers: { origin: ORIGIN },
+    });
+    expect(plain.status).toBe(401);
+
+    const encoded = await request(ctx.app, "POST", "/auth/sign-%69n/email", {
+      body: credentials,
+      headers: { origin: ORIGIN },
+    });
+    expect(encoded.status).toBe(404);
+    expect(encoded.headers.get("set-cookie")).toBeNull();
+  });
+
   it("audit row for sign_in_blocked carries no plaintext email", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     await signUpAndVerify(ctx, "guard-pii@example.com");
