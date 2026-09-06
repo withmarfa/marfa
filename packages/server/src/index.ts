@@ -551,7 +551,9 @@ async function main() {
         runOnce: () => revokedGrantPurger.runScheduled(),
       },
       () => {
-        revokedGrantPurger.stop();
+        // `start()`, not `stop()`: this hook is what runs the job when
+        // pg-boss is absent, so on SQLite the purge never began.
+        revokedGrantPurger.start();
       },
     );
   }
@@ -559,13 +561,17 @@ async function main() {
   // a Disconnect runs, with an audit row saying why. The tombstone it leaves
   // then falls to the revoked-grant purge above, and a client left with no
   // grant to the DCR reaper. `0` disables.
+  // Daily, and deliberately not configurable: the window is measured in
+  // days, so a finer cadence changes nothing but load, and the DCR reaper's
+  // interval is that job's setting rather than this one's.
+  const grantInactivityIntervalMs = 86_400_000;
   const grantInactivityDays = config.grantInactivityDays ?? 365;
   const grantInactivityRetirer =
     grantInactivityDays > 0
       ? new GrantInactivityRetirer(
           storage,
           grantInactivityDays,
-          config.dcrClientCleanupIntervalMs ?? 86_400_000,
+          grantInactivityIntervalMs,
           undefined,
           storage.coordination,
         )
@@ -575,7 +581,7 @@ async function main() {
       {
         name: "grant-inactivity-retire",
         logName: "Inactive grant retirement",
-        intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
+        intervalMs: grantInactivityIntervalMs,
         firstRunDelaySeconds: 40,
         runOnce: () => grantInactivityRetirer.runScheduled(),
       },
@@ -1182,6 +1188,8 @@ async function main() {
     pendingDeletePurger?.stop();
     rateLimitCleaner.stop();
     dcrClientCleaner?.stop();
+    revokedGrantPurger?.stop();
+    grantInactivityRetirer?.stop();
     runtimeCredentialReaper?.stop();
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();

@@ -114,13 +114,39 @@ async function onlyGrant(c: TestContext) {
   return items.data[0]!;
 }
 
+/** The app grant projected for one client, when the space holds others. */
+async function grantOf(c: TestContext, clientId: string) {
+  const items = await c.storage.items.list({ type: "system.connection" });
+  const own = items.data.filter(
+    (i) => i.properties.kind === "app" && i.properties.client_id === clientId,
+  );
+  expect(own.length).toBe(1);
+  return own[0]!;
+}
+
+async function consentRows(c: TestContext, clientId: string): Promise<number> {
+  const schema = await betterAuthSchema(c);
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    select: () => {
+      from: (t: unknown) => { where: (w: unknown) => Promise<unknown[]> };
+    };
+  };
+  const rows = await db
+    .select()
+    .from(schema.auth_oauth_consent)
+    .where(eq(schema.auth_oauth_consent.clientId, clientId));
+  return rows.length;
+}
+
 /** Move the grant's clocks back, the way time would have. */
 async function backdate(
   c: TestContext,
+  clientId: string,
   daysAgo: number,
   fields: ("granted_at" | "last_used_at")[],
 ): Promise<void> {
-  const grant = await onlyGrant(c);
+  const grant = await grantOf(c, clientId);
   const then = new Date(Date.now() - daysAgo * DAY_MS).toISOString();
   const props = { ...grant.properties };
   for (const f of fields) props[f] = then;
@@ -151,24 +177,52 @@ async function tokenRows(c: TestContext, clientId: string): Promise<number> {
 }
 
 describe("GrantInactivityRetirer.runOnce", () => {
-  it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one alone", async () => {
+  it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one and an integration alone", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "forgotten@example.com");
     const accessToken = await deviceGrant(ctx, clientId, cookie);
     expect(await tokenRows(ctx, clientId)).toBe(2);
+    expect(await consentRows(ctx, clientId)).toBe(1);
+
+    // Beside it: a grant used today, and a connection that is not a grant at
+    // all. The sweep's predicate is `kind = 'app'` and a window; both have to
+    // be there for a widened predicate to show.
+    const freshClientId = await seedClient(ctx);
+    const freshCookie = await signInUser(ctx, "present@example.com");
+    await deviceGrant(ctx, freshClientId, freshCookie);
+    const integration = await ctx.storage.items.create({
+      type: "system.connection",
+      tier: "library",
+      state: "active",
+      properties: {
+        kind: "integration",
+        integration_id: "int_dormant",
+        status: "active",
+        granted_at: new Date(Date.now() - 400 * DAY_MS).toISOString(),
+        last_used_at: new Date(Date.now() - 400 * DAY_MS).toISOString(),
+      },
+      source: "test/retirer",
+    });
 
     // Recent: nothing to retire.
     const retirer = new GrantInactivityRetirer(ctx.storage, 365, DAY_MS);
     expect(await retirer.runOnce()).toBe(0);
-    expect((await onlyGrant(ctx)).properties.status).toBe("active");
+    expect((await grantOf(ctx, clientId)).properties.status).toBe("active");
 
-    // Used long ago, approved longer ago: retired.
-    await backdate(ctx, 400, ["granted_at", "last_used_at"]);
+    // Used long ago, approved longer ago: retired, and only it.
+    await backdate(ctx, clientId, 400, ["granted_at", "last_used_at"]);
     expect(await retirer.runOnce()).toBe(1);
-    const grant = await onlyGrant(ctx);
+    const grant = await grantOf(ctx, clientId);
     expect(grant.properties.status).toBe("revoked");
+    expect((await grantOf(ctx, freshClientId)).properties.status).toBe(
+      "active",
+    );
+    expect(await tokenRows(ctx, freshClientId)).toBe(2);
+    const untouched = await ctx.storage.items.get(integration.id);
+    expect(untouched?.properties.status).toBe("active");
     expect(await tokenRows(ctx, clientId)).toBe(0);
+    expect(await consentRows(ctx, clientId)).toBe(0);
     const dead = await request(ctx.app, "GET", "/items?type=core.note", {
       headers: { authorization: `Bearer ${accessToken}` },
     });
@@ -182,6 +236,8 @@ describe("GrantInactivityRetirer.runOnce", () => {
     expect(audits.data.length).toBe(1);
     const row = audits.data[0]!;
     expect(row.resource_id).toBe(clientId);
+    expect(row.details.client_id).toBe(clientId);
+    expect(typeof row.details.user_id).toBe("string");
     expect(row.details.reason).toBe("inactive");
     expect(row.details.grant_item_id).toBe(grant.id);
     expect(row.details.inactivity_days).toBe(365);
@@ -202,7 +258,10 @@ describe("GrantInactivityRetirer.runOnce", () => {
     // null unless told to clear on it, so say so. Then move the approval
     // past the window.
     const grant = await onlyGrant(ctx);
-    const props = { ...grant.properties, last_used_at: null };
+    const props: Record<string, unknown> = {
+      ...grant.properties,
+      last_used_at: null,
+    };
     props.granted_at = new Date(Date.now() - 400 * DAY_MS).toISOString();
     await ctx.storage.items.update(
       grant.id,

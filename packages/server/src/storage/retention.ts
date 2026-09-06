@@ -307,6 +307,9 @@ export class RevokedGrantPurger {
  * space policy. Cluster-wide coordination lock keyed
  * `"grant-inactivity-retire"`.
  */
+/** Grants retired by one tick; the remainder wait for the next. */
+const RETIRE_PER_TICK = 500;
+
 export class GrantInactivityRetirer {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -347,15 +350,36 @@ export class GrantInactivityRetirer {
     ).toISOString();
     const inactive = await this.storage.items.listInactiveAppGrants(cutoff);
     let retired = 0;
-    for (const grant of inactive) {
+    // The first tick on a mature instance meets every dormant grant at once;
+    // the cap keeps one tick's cascade, and the lock it holds, bounded, and
+    // the rest go tomorrow. One grant that cannot be revoked is logged and
+    // passed over rather than costing every grant behind it: the cascade
+    // aborts on a fault by design, and a persistent fault on one row would
+    // otherwise stall the sweep at that row every day.
+    for (const grant of inactive.slice(0, RETIRE_PER_TICK)) {
       const spaceId = grant.spaceId ?? undefined;
-      await revokeProjectedGrant(this.storage, {
-        itemId: grant.id,
-        properties: grant.properties,
-        spaceId,
-        clientId: grant.clientId ?? undefined,
-        authUserId: grant.authUserId ?? undefined,
-      });
+      try {
+        await revokeProjectedGrant(this.storage, {
+          itemId: grant.id,
+          properties: grant.properties,
+          spaceId,
+          clientId: grant.clientId ?? undefined,
+          authUserId: grant.authUserId ?? undefined,
+        });
+      } catch (err) {
+        // Through the one classifier every job's failure takes, so a tick
+        // cut short by shutdown stands down at info here as everywhere.
+        logJobTickFailure(
+          `Inactive grant retirement (grant ${grant.id})`,
+          err,
+          this.stopped,
+        );
+        continue;
+      }
+      // Fire-and-forget like every other revoke door's row: the tracker
+      // drains it at close, and a retirement that cannot be audited is still
+      // a retirement the projection's own `revoked_at` records. This row is
+      // the only record of why, so it is written first of the two.
       void this.storage.audit.log({
         space_id: grant.spaceId,
         action: "auth.grant.retired",

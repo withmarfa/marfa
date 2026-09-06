@@ -6,7 +6,8 @@
  * reads here support the consent-page render and the projection after-hooks.
  */
 
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc, sql, notInArray } from "drizzle-orm";
+import { FIRST_PARTY_CLIENT_IDS } from "../../auth/first-party-clients.js";
 import { generateId } from "@withmarfa/shared";
 import type {
   CreateClientInput,
@@ -570,6 +571,8 @@ export class PgOauthProviderStore implements OauthProviderStore {
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_access_token} WHERE ${auth_oauth_access_token.clientId} = ${auth_oauth_client.clientId})`,
           sql`NOT EXISTS (SELECT 1 FROM ${auth_oauth_refresh_token} WHERE ${auth_oauth_refresh_token.clientId} = ${auth_oauth_client.clientId})`,
           sql`NOT EXISTS (SELECT 1 FROM ${items} WHERE ${items.type} = 'system.connection' AND ${items.properties}->>'kind' = 'app' AND ${items.properties}->>'client_id' = ${auth_oauth_client.clientId})`,
+          // A first-party client is seeded, not registered, and is never grantless in the sense this reaper means.
+          notInArray(auth_oauth_client.clientId, [...FIRST_PARTY_CLIENT_IDS]),
         ),
       )
       .returning({ id: auth_oauth_client.id });

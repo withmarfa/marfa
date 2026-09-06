@@ -535,6 +535,25 @@ export function parseEventLogRetentionHours(raw: string | undefined): number {
   return parsed;
 }
 
+const DEFAULT_GRANT_INACTIVITY_DAYS = 365;
+
+/** The inactivity window in days: `0` disables the retirement job; a value
+ *  that is not a non-negative integer is refused with a warning and the
+ *  default stands, because `Number("thirty")` is `NaN`, `NaN > 0` is false,
+ *  and the job would otherwise be silently never built for an operator who
+ *  believes it is running. */
+export function parseGrantInactivityDays(raw: string | undefined): number {
+  if (raw === undefined || raw === "") return DEFAULT_GRANT_INACTIVITY_DAYS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    console.warn(
+      `Invalid MARFA_GRANT_INACTIVITY_DAYS=${raw}, falling back to ${String(DEFAULT_GRANT_INACTIVITY_DAYS)}`,
+    );
+    return DEFAULT_GRANT_INACTIVITY_DAYS;
+  }
+  return parsed;
+}
+
 const DEFAULT_OTEL_SAMPLE_RATIO = 0.05;
 
 /**
@@ -912,9 +931,8 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_REVOKED_GRANT_RETENTION_DAYS,
       90,
     ),
-    grantInactivityDays: envNumber(
+    grantInactivityDays: parseGrantInactivityDays(
       process.env.MARFA_GRANT_INACTIVITY_DAYS,
-      365,
     ),
     activityRetentionDays: envNumber(
       process.env.MARFA_ACTIVITY_RETENTION_DAYS,

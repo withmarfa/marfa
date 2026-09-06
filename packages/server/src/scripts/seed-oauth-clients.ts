@@ -22,6 +22,10 @@
  * Idempotent: a client that already exists is reported and skipped.
  */
 import { createPgStorage } from "../storage/pg/index.js";
+import {
+  MARFA_TICKETS_CLIENT_ID,
+  MARFA_WEB_CLIENT_ID,
+} from "../auth/first-party-clients.js";
 
 interface SeedClient {
   clientId: string;
@@ -34,12 +38,12 @@ interface SeedClient {
 // origin (Vite on :5173) so the same fixed client works in development too.
 const CLIENTS: SeedClient[] = [
   {
-    clientId: "marfa-web",
+    clientId: MARFA_WEB_CLIENT_ID,
     name: "Marfa Web",
     origins: ["https://app.marfa.so", "http://localhost:5173"],
   },
   {
-    clientId: "marfa-tickets",
+    clientId: MARFA_TICKETS_CLIENT_ID,
     name: "Marfa Tickets",
     origins: ["https://tickets.marfa.so", "http://localhost:5173"],
   },

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   envNumber,
   parseDbPoolMode,
@@ -7,6 +7,7 @@ import {
   parseOtelSampleRatio,
   parseOtelHeaders,
   loadConfig,
+  parseGrantInactivityDays,
 } from "./config.js";
 
 /**
@@ -42,6 +43,27 @@ describe("envNumber (§3.16 zero-safe env reader)", () => {
   it("parses well-formed integers and floats", () => {
     expect(envNumber("42", 0)).toBe(42);
     expect(envNumber("3.14", 0)).toBeCloseTo(3.14);
+  });
+});
+
+describe("parseGrantInactivityDays", () => {
+  it("defaults to a year when unset or empty, and 0 disables", () => {
+    expect(parseGrantInactivityDays(undefined)).toBe(365);
+    expect(parseGrantInactivityDays("")).toBe(365);
+    expect(parseGrantInactivityDays("0")).toBe(0);
+    expect(parseGrantInactivityDays("30")).toBe(30);
+  });
+
+  it("refuses a value that is not a non-negative integer, with a warning, rather than silently disabling", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(parseGrantInactivityDays("thirty")).toBe(365);
+      expect(parseGrantInactivityDays("-5")).toBe(365);
+      expect(parseGrantInactivityDays("1.5")).toBe(365);
+      expect(warn).toHaveBeenCalledTimes(3);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
