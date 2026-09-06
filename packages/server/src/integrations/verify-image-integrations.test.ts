@@ -950,16 +950,23 @@ describe("the in-image integration verification", () => {
 
   it("fails a manifest declaring a field it has no honest value for", () => {
     // The authoring rules join the image build with the pin that satisfies
-    // them, and not before: on the previous pin every staged manifest
-    // declared something it had nothing to say about, so holding the build
-    // to the rule would have failed it on manifests the deployment was
-    // still meant to ship.
+    // them, and not before: on the previous pin thirteen of the fourteen
+    // staged manifests declared something they had nothing to say about, so
+    // holding the build to the rule would have failed it on manifests the
+    // deployment was still meant to ship.
     //
     // Its other half is the whole-image pass at the top of this file, which
     // asserts the same check reporting green. Without that, a check refusing
     // everything reads exactly like this one working.
+    // With the dispatch fixture, so the exit code says something: without
+    // it the run would fail check 6 too and a code of 1 would be satisfied
+    // by a check that had never fired.
     const run = verify(
-      image({ declared: ["acme/alpha"], installed: ["acme/alpha!dishonest"] }),
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!dishonest"],
+        fixture: true,
+      }),
     );
     expect(run.code).toBe(1);
     expect(run.output).toContain("declaring what it has no honest value for");

@@ -81,10 +81,11 @@
  *      Neither of those can reach what a pin ships, and this can.
  *
  *      **It could not join earlier, and the ordering is the whole
- *      reason.** On the pin before this one every staged manifest declared
- *      something it had nothing to say about, so holding the build to the
- *      rule would have failed it on manifests the deployment was still
- *      meant to ship. The rule arrives with the pin that satisfies it.
+ *      reason.** On the pin before this one, thirteen of the fourteen
+ *      staged manifests declared something they had nothing to say about,
+ *      so holding the build to the rule would have failed it on manifests
+ *      the deployment was still meant to ship. The rule arrives with the
+ *      pin that satisfies it.
  *
  *   5. The client manifests resolve from the image. A client's code runs
  *      on the user's machine, so nothing about it is installed into the
@@ -130,7 +131,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { Worker } from "node:worker_threads";
 import { readInstalledIntegrations } from "./read-installed-integrations.mjs";
-import { validateManifestAuthoring } from "@withmarfa/shared";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INTEGRATIONS_ROOT =
@@ -594,6 +594,24 @@ if (misfiled.length > 0) {
 // Imported from `@withmarfa/shared` rather than restated. The integrations
 // repository holds the same rule at the same function, and a second copy
 // here would agree with it by attention.
+// Imported here rather than at the top so a resolution failure arrives as
+// a named FAIL line like every other reach this script makes outside
+// itself, instead of as a bare ERR_MODULE_NOT_FOUND from the module loader
+// before any of it runs.
+let validateManifestAuthoring;
+try {
+  ({ validateManifestAuthoring } = await import("@withmarfa/shared"));
+} catch (err) {
+  fail(
+    `@withmarfa/shared could not be loaded: ${String(err)}. It is a ` +
+      `production dependency of the server, so the deploy prune keeps it ` +
+      `and dist/load-manifests.js resolves it from the same place.`,
+  );
+}
+if (typeof validateManifestAuthoring !== "function") {
+  fail(`@withmarfa/shared exports no validateManifestAuthoring function`);
+}
+
 const dishonest = loaded.manifests
   .map((entry) => ({
     name: entry.name,

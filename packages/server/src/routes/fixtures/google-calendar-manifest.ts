@@ -7,6 +7,14 @@
  * the OAuth requirements, so a fixture edited to suit a test stops standing
  * for the integration. Update it from the integration's own
  * `src/manifest.ts`.
+ *
+ * **A field this does not declare is part of the copy.** It carried
+ * `runs_on: "server"` while the integration declared none, which is a
+ * difference `check-manifest-fixture.mjs` refuses and did — the guard runs
+ * in the image build, so a fixture that gained a field failed a workflow
+ * rather than a test, and only when the pin next moved. The two mean the
+ * same thing to the parser, and the guard compares declarations rather than
+ * parse results, which is the stricter and more useful comparison.
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 
@@ -62,7 +70,6 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync between Google Calendar and Marfa. Reads events from calendars the user picks at install and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",
-  runs_on: "server" as const,
   // The runtime credential is granted write permission on both families'
   // types so either is reachable at handler time; the install-time picker
   // chooses which family a connection actually writes.
