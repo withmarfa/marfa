@@ -46,6 +46,7 @@ beforeAll(async () => {
     publisher: "acme",
     description: "State-door agreement fixture",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
     bidirectional_handling: {

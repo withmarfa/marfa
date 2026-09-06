@@ -41,6 +41,7 @@ function manifest(name: string): IntegrationManifest {
     publisher: "acme",
     description: "uninstall route test",
     direction: "both",
+    runs_on: "server" as const,
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
     bidirectional_handling: {
@@ -487,6 +488,7 @@ function manifestWithItemEventTrigger(name: string): IntegrationManifest {
     publisher: "acme",
     description: "preview-event route test",
     direction: "both",
+    runs_on: "server" as const,
     triggers: [{ type: "item-event" }], // buildEntryForConnection returns null without this trigger
     target_types: ["core.note"],
     bidirectional_handling: {

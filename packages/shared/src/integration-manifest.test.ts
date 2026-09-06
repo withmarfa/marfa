@@ -279,7 +279,11 @@ describe("Integration manifest JSON Schema artifact", () => {
     // When this fails after a schema edit, run:
     //   pnpm --filter @withmarfa/shared run generate:manifest-schema
     const expected =
-      JSON.stringify(z.toJSONSchema(IntegrationManifestSchema), null, 2) + "\n";
+      JSON.stringify(
+        z.toJSONSchema(IntegrationManifestSchema, { io: "input" }),
+        null,
+        2,
+      ) + "\n";
     const actual = readFileSync(COMMITTED_JSON_SCHEMA_PATH, "utf8");
     expect(actual).toBe(expected);
   });

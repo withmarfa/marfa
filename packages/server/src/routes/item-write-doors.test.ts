@@ -67,6 +67,7 @@ function manifest(name: string): IntegrationManifest {
     publisher: "acme",
     description: "Write-door agreement fixture",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
     bidirectional_handling: {

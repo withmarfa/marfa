@@ -26910,7 +26910,7 @@
           "Inbound Webhooks"
         ],
         "summary": "Register an inbound webhook subscription on a connection",
-        "description": "Registers an inbound-webhook subscription so the connection's upstream service can deliver events into Marfa. Signature verification uses the adapter named in the connection manifest's `webhook_verification.method`; the `secret` is returned only once, in this response.",
+        "description": "Registers an inbound-webhook subscription so the connection's upstream can deliver events into Marfa. Signature verification uses the adapter named in the connection manifest's `webhook_verification.method`; a manifest that declares none is refused, because nothing could verify the delivery. The `secret` is returned only once, in this response.",
         "security": [
           {
             "bearerAuth": []
@@ -31219,7 +31219,7 @@
             }
           },
           "400": {
-            "description": "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
+            "description": "Connection kind is not `integration`, is revoked, is already in the requested state, or (for resume) is not paused.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31584,7 +31584,7 @@
             }
           },
           "400": {
-            "description": "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
+            "description": "Connection kind is not `integration`, is revoked, is already in the requested state, or (for resume) is not paused.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32049,7 +32049,7 @@
             }
           },
           "400": {
-            "description": "Connection is not an integration, or already revoked.",
+            "description": "Connection kind is not `integration`, or already revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32349,8 +32349,8 @@
         "tags": [
           "Connections"
         ],
-        "summary": "Run an integration connection now",
-        "description": "Dispatches the connection's sweep immediately instead of waiting for its next scheduled tick. Only connections whose manifest declares the `manual` trigger may be run this way, and only where this deployment can actually dispatch the integration: an integration whose code runs somewhere else is refused rather than silently accepted. A paused connection is refused. The run is queued the same way a cron tick is, so it takes the same per-connection lock and cannot overlap a run already in flight.",
+        "summary": "Run a connection now",
+        "description": "Dispatches the connection's sweep immediately instead of waiting for its next scheduled tick. Only connections whose manifest declares the `manual` trigger may be run this way, and only where this deployment can actually dispatch the integration: a manifest declaring `runs_on: client` is refused, because its code runs on a machine Marfa does not have, and so is one this deployment does not install. A paused connection is refused. The run is queued the same way a cron tick is, so it takes the same per-connection lock and cannot overlap a run already in flight.",
         "security": [
           {
             "bearerAuth": []
@@ -32413,7 +32413,7 @@
             }
           },
           "400": {
-            "description": "Not an integration connection, revoked, paused, the manifest does not declare `manual`, or this deployment does not run the integration.",
+            "description": "Connection kind is not `integration`, revoked, paused, the manifest declares `runs_on: client` or no `manual` trigger, or this deployment does not install it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33417,7 +33417,7 @@
             }
           },
           "400": {
-            "description": "Not an integration connection, revoked, already current, carrying no integration reference, or its settings do not satisfy the newer manifest.",
+            "description": "Connection kind is not `integration`, revoked, already current, carrying no integration reference, or its settings do not satisfy the newer manifest.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34152,7 +34152,7 @@
             }
           },
           "400": {
-            "description": "A malformed body, or a connection that is not an integration, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
+            "description": "A malformed body, or a connection whose kind is not `integration`, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
             "content": {
               "application/json": {
                 "schema": {

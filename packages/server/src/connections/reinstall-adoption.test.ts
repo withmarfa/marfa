@@ -31,6 +31,7 @@ const MANIFEST: IntegrationManifest = {
   publisher: "acme",
   description: "reinstall adoption test",
   direction: "read",
+  runs_on: "server" as const,
   triggers: [{ type: "manual" }],
   target_types: ["core.note"],
   bidirectional_handling: {

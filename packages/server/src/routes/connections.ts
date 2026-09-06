@@ -215,7 +215,7 @@ const pauseResponses = {
       },
     },
     description:
-      "Connection is not an integration, is revoked, is already in the requested state, or (for resume) is not paused.",
+      "Connection kind is not `integration`, is revoked, is already in the requested state, or (for resume) is not paused.",
   },
   401: {
     content: {
@@ -462,7 +462,7 @@ const approveUpgradeRoute = createRoute({
         },
       },
       description:
-        "A malformed body, or a connection that is not an integration, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
+        "A malformed body, or a connection whose kind is not `integration`, is revoked, carries no integration reference, or whose settings do not satisfy the newer manifest. A connection found to be already current before the move starts answers 409; one that another caller moves first, while this one waits for the connection's lock, answers 400 because the approved version is no longer ahead of it.",
     },
     401: {
       content: {

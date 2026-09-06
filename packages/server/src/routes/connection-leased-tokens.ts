@@ -396,7 +396,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
       connectionId,
       spaceId,
     );
-    const declared = (manifest.oauth_requirements ?? {})[body.capability_id];
+    const declared = manifest.oauth_requirements?.[body.capability_id];
     if (declared !== "leased") {
       throw new MarfaError(
         ErrorCode.LEASE_CAPABILITY_NOT_DECLARED,

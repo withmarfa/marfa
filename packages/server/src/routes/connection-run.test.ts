@@ -180,7 +180,7 @@ describe("POST /connections/{id}/run", () => {
 
     expect(res.status).toBe(400);
     expect(JSON.stringify(await res.json())).toContain(
-      "does not run on this deployment",
+      "but this one does not install it",
     );
     expect(enqueued).toHaveLength(0);
   });

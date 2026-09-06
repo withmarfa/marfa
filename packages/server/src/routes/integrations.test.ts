@@ -49,6 +49,7 @@ function baseManifest(
     publisher: "acme",
     description: "Sync calendar events into Marfa",
     direction: "read",
+    runs_on: "server" as const,
     triggers: [
       { type: "schedule", config: { cron: "*/15 * * * *" } },
       { type: "webhook" },

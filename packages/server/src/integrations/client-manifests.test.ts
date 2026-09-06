@@ -173,7 +173,7 @@ describe("a name that reaches the catalog from both sources", () => {
 
       expect(outcome.result.failed.map((f) => f.name)).toContain("marfa/sync");
       expect(outcome.result.failed[0]?.reason).toContain(
-        "from the manifests this build ships",
+        "already ships a client of that name",
       );
       // Neither side wins, which is the point: a deployment told what is
       // missing can fix it, one silently running the other cannot.

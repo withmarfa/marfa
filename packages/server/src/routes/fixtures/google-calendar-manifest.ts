@@ -62,6 +62,7 @@ export const GOOGLE_CALENDAR_MANIFEST: IntegrationManifest = {
   description:
     "Bidirectional sync between Google Calendar and Marfa. Reads events from calendars the user picks at install and writes Marfa-side mutations back via OAuth proxy.",
   direction: "both",
+  runs_on: "server" as const,
   // The runtime credential is granted write permission on both families'
   // types so either is reachable at handler time; the install-time picker
   // chooses which family a connection actually writes.

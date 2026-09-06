@@ -15,9 +15,10 @@
  * dispatching into it.
  *
  * This reads the installed directory and nothing else. A manifest the
- * build ships rather than a deployment installs is not an integration and
- * belongs to no directory: `client-manifests.ts` carries those, and the
- * catalog reconcile takes the union.
+ * build ships rather than a deployment installs is still an integration —
+ * it declares `runs_on: "client"` — but it belongs to no directory:
+ * `client-manifests.ts` carries those, and the catalog reconcile takes
+ * the union.
  *
  * Manifests are read from built output rather than from `src/manifest.ts`
  * because this runs inside the server, which is compiled JavaScript with

@@ -657,7 +657,7 @@ export function validateManifestCoherence(
   if (manifest.runs_on === "client") {
     if (manifest.triggers !== undefined) {
       issues.push(
-        'a client-run integration declares no triggers: its code runs on a machine this deployment does not have, so nothing here can fire one',
+        "a client-run integration declares no triggers: its code runs on a machine this deployment does not have, so nothing here can fire one",
       );
     }
   } else if (triggers.length === 0) {
