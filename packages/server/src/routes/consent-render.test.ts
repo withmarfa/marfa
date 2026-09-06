@@ -402,6 +402,77 @@ describe("renderConsentScreen — re-consent diff", () => {
     expect(html).toMatch(/>Already allowed<[\s\S]*?value="core\.note:read"/);
   });
 
+  it("puts the profile read under New, ticked, for a grant that holds the old three-scope bundle", () => {
+    // The bundle gained `profile:read`; an app holding the earlier grant
+    // meets the re-consent screen rather than a silent widening, and the
+    // new row arrives ticked because its bundle is on by default.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [
+        {
+          kind: "oidc",
+          typePattern: "openid",
+          operation: "none",
+          oidcScope: "openid",
+        },
+        {
+          kind: "oidc",
+          typePattern: "profile",
+          operation: "none",
+          oidcScope: "profile",
+        },
+        {
+          kind: "oidc",
+          typePattern: "email",
+          operation: "none",
+          oidcScope: "email",
+        },
+        { kind: "profile", typePattern: "profile", operation: "read" },
+      ],
+      priorScopes: ["openid", "profile", "email"],
+    });
+    expect(html).toContain("One more thing");
+    expect(html).toMatch(/>New<[\s\S]*?value="profile:read"/);
+    const row = /<input[^>]*value="profile:read"[^>]*>/.exec(html)?.[0] ?? "";
+    expect(row).toContain("checked");
+    expect(html).not.toMatch(/>No longer needed</);
+  });
+
+  it("names a dropped profile read as the profile, not as the OIDC literal, under No longer needed", () => {
+    // `profile` is both the OIDC literal and the category's pattern, and the
+    // removed list resolved copy by pattern alone, so a dropped
+    // `profile:read` would have read as "Your name and picture".
+    const html = renderConsentScreen({
+      ...PARAMS,
+      scopes: [
+        {
+          kind: "oidc",
+          typePattern: "openid",
+          operation: "none",
+          oidcScope: "openid",
+        },
+        {
+          kind: "oidc",
+          typePattern: "profile",
+          operation: "none",
+          oidcScope: "profile",
+        },
+        {
+          kind: "oidc",
+          typePattern: "email",
+          operation: "none",
+          oidcScope: "email",
+        },
+      ],
+      priorScopes: ["openid", "profile", "email", "profile:read"],
+    });
+    const removed = html.slice(html.indexOf(">No longer needed<"));
+    expect(removed.length).toBeGreaterThan(0);
+    const firstBlock = removed.slice(0, removed.indexOf("</", 200) + 400);
+    expect(firstBlock).toContain("Profile (read only)");
+    expect(firstBlock).not.toContain("Your name");
+  });
+
   it("collapses the standing grant to one line, counting it", () => {
     const html = renderConsentScreen({
       ...PARAMS,

@@ -55,6 +55,11 @@ describe("default permission bundles derive from the registry", () => {
       "profile:read",
     ]);
     expect(bundle("profile").default_on).toBe(true);
+    // The description travels in the discovery document beside the scope
+    // list, so a client renders it verbatim; it names the whole read surface.
+    expect(bundle("profile").description).toBe(
+      "Your name, picture, email address, username, bio and timezone.",
+    );
   });
 
   it("admits exactly one system scope: the connections toggle, read-only", () => {

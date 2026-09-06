@@ -291,12 +291,14 @@ export function buildDefaultPermissionBundles(
     {
       id: "profile",
       label: "Your profile",
-      // Shown only when the group renders no rows of its own; `summarize`
-      // builds the sentence from the toggles otherwise. It still has to
-      // agree with them, and it did not: it said "name and email" while the
-      // toggles said name, picture and email. `profile` returns `name` and
-      // `picture`, `email` returns the address.
-      description: "Your name, picture and email address.",
+      // Shown when the group renders no rows of its own, and published as is
+      // in the discovery document beside the scope list, so it has to name
+      // what the four scopes read and nothing less: `profile` returns `name`
+      // and `picture`, `email` the address, and `profile:read` the rest of
+      // the record that `GET /profile/me` answers with. It fell behind the
+      // scopes once before, saying "name and email" beside three of them.
+      description:
+        "Your name, picture, email address, username, bio and timezone.",
       // **`profile:read` rides with the OIDC literals; `profile:write` stays
       // opt-in by name.** The read half of the profile category is what an
       // app needs to show the person to themselves, which is what every app
