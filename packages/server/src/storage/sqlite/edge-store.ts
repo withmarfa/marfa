@@ -251,7 +251,6 @@ export class SqliteEdgeStore implements EdgeStore {
     spaceId?: string,
     expectedVersion?: number,
   ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }> {
-    const now = new Date().toISOString();
     const identity =
       spaceId !== undefined
         ? and(eq(edges.id, id), eq(edges.space_id, spaceId))
@@ -277,11 +276,13 @@ export class SqliteEdgeStore implements EdgeStore {
       if (!row) {
         throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
       }
-      const merged = mergeUpdateProperties(
-        rowToEdge(row).properties,
-        properties,
-        false,
-      );
+      // Read inside the transaction, so a patch that waited for the write
+      // lock cannot stamp an `updated_at` taken before it started
+      // waiting. That column is the catch-up cursor's sort key and must
+      // not move backwards.
+      const now = new Date().toISOString();
+      const held = rowToEdge(row).properties;
+      const merged = mergeUpdateProperties(held, properties, false);
       const [written] = await tx
         .update(edges)
         .set({

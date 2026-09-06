@@ -82,7 +82,7 @@ describe("POST /edges/bulk", () => {
     }
   });
 
-  it("upsert mode replaces properties on existing (source, target, type) triples", async () => {
+  it("upsert mode merges properties over existing (source, target, type) triples", async () => {
     const { sourceId, targetId } = await makePair();
 
     const first = await request(ctx.app, "POST", "/edges/bulk", {
@@ -93,7 +93,7 @@ describe("POST /edges/bulk", () => {
             source_id: sourceId,
             target_id: targetId,
             edge_type: "about",
-            properties: { weight: 1 },
+            properties: { weight: 1, label: "kept" },
           },
         ],
       },
@@ -125,8 +125,12 @@ describe("POST /edges/bulk", () => {
     expect(body.counts.created).toBe(0);
     expect(body.results[0]!.id).toBe(originalId);
 
-    // Verify properties were replaced in place. No GET /edges/:id route,
-    // so hydrate via the source item's outbound edge listing.
+    // Verify the named property moved and the unnamed one survived. The
+    // second call names `weight` alone, so a replacing door would leave
+    // `label` gone — which is what this case looked like before the
+    // upsert started merging, and why it carries two properties now.
+    // No GET /edges/:id route on this listing path, so hydrate via the
+    // source item's outbound edge listing.
     const getRes = await request(
       ctx.app,
       "GET",
@@ -134,10 +138,11 @@ describe("POST /edges/bulk", () => {
       { key: ctx.adminKey },
     );
     const listBody = (await getRes.json()) as {
-      data: { id: string; properties: { weight?: number } }[];
+      data: { id: string; properties: { weight?: number; label?: string } }[];
     };
     const hit = listBody.data.find((e) => e.id === originalId);
     expect(hit?.properties.weight).toBe(42);
+    expect(hit?.properties.label).toBe("kept");
   });
 
   it("create_only mode surfaces duplicates as skipped", async () => {

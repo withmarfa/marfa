@@ -36,6 +36,7 @@ import {
 import type { CursorSortKey } from "../interface.js";
 import { rowToEdge } from "../edge-constraints.js";
 import { mergeUpdateProperties } from "../merge-properties.js";
+import { pgRequestContext } from "./request-context.js";
 import { edges } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -241,7 +242,6 @@ export class PgEdgeStore implements EdgeStore {
     spaceId?: string,
     expectedVersion?: number,
   ): Promise<{ ok: true; edge: Edge } | { ok: false; current: Edge }> {
-    const now = new Date().toISOString();
     const identity =
       spaceId !== undefined
         ? and(eq(edges.id, id), eq(edges.space_id, spaceId))
@@ -253,42 +253,60 @@ export class PgEdgeStore implements EdgeStore {
       expectedVersion !== undefined
         ? and(identity, eq(edges.version, expectedVersion))
         : identity;
-    return await this.db.transaction(async (tx) => {
-      // FOR UPDATE, because the merge below is computed from this read.
-      // Under READ COMMITTED an unlocked read lets a concurrent commit
-      // land between it and the write, and the write then reverts that
-      // commit's properties to the pre-change shape. The item store
-      // locks its row for exactly this reason; a replacing write did not
-      // have to, which is why this transaction is new.
-      const [row] = await tx.select().from(edges).where(identity).for("update");
-      // The row is gone. Typed, because this is a race a client hits
-      // legitimately: it held a version, somebody else moved the row on
-      // and then removed it. A bare Error fails the handler's duck-type
-      // and leaves for the caller a 500 and an operator alert, for an
-      // outcome that is simply the row being gone.
-      if (!row) {
-        throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
-      }
-      const merged = mergeUpdateProperties(
-        rowToEdge(row).properties,
-        properties,
-        false,
-      );
-      const [written] = await tx
-        .update(edges)
-        .set({
-          properties: JSON.stringify(merged),
-          updated_at: now,
-          version: sql`${edges.version} + 1`,
-        })
-        .where(where)
-        .returning();
-      if (written) return { ok: true as const, edge: rowToEdge(written) };
-      // The write matched nothing while the read found the row, so the
-      // precondition is what failed. The locked read is the current
-      // edge, so there is nothing to go back for.
-      return { ok: false as const, current: rowToEdge(row) };
-    });
+    return await this.db.transaction(async (tx) =>
+      // Through the request context, as the item store's transactions
+      // are. Without it a storage call inside this block falls through
+      // the proxy to the base pool and takes a second connection — which
+      // would then block on the row this transaction is holding, and the
+      // only thing that ends that is the pool timeout. Nothing in here
+      // calls storage today, which is exactly why it has to be set now
+      // rather than by whoever adds the first one.
+      pgRequestContext.run({ tx }, async () => {
+        // FOR UPDATE, because the merge below is computed from this read.
+        // Under READ COMMITTED an unlocked read lets a concurrent commit
+        // land between it and the write, and the write then reverts that
+        // commit's properties to the pre-change shape. The item store
+        // locks its row for exactly this reason; a replacing write did not
+        // have to, which is why this transaction is new.
+        const [row] = await tx
+          .select()
+          .from(edges)
+          .where(identity)
+          .for("update");
+        // The row is gone. Typed, because this is a race a client hits
+        // legitimately: it held a version, somebody else moved the row on
+        // and then removed it. A bare Error fails the handler's duck-type
+        // and leaves for the caller a 500 and an operator alert, for an
+        // outcome that is simply the row being gone.
+        if (!row) {
+          throw new MarfaError(
+            ErrorCode.EDGE_NOT_FOUND,
+            `Edge ${id} not found`,
+          );
+        }
+        // The lock is held, so the clock reads from inside the critical
+        // section: a patch that waited here would otherwise stamp an
+        // `updated_at` taken before it started waiting, and that column is
+        // the catch-up cursor's sort key, which must not move backwards.
+        const now = new Date().toISOString();
+        const held = rowToEdge(row).properties;
+        const merged = mergeUpdateProperties(held, properties, false);
+        const [written] = await tx
+          .update(edges)
+          .set({
+            properties: JSON.stringify(merged),
+            updated_at: now,
+            version: sql`${edges.version} + 1`,
+          })
+          .where(where)
+          .returning();
+        if (written) return { ok: true as const, edge: rowToEdge(written) };
+        // The write matched nothing while the read found the row, so the
+        // precondition is what failed. The locked read is the current
+        // edge, so there is nothing to go back for.
+        return { ok: false as const, current: rowToEdge(row) };
+      }),
+    );
   }
 
   async delete(id: string, spaceId?: string): Promise<void> {

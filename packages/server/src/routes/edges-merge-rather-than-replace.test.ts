@@ -16,9 +16,10 @@
  * per door could drift into two that each pass their own.
  *
  * There is no way to remove a single property from an edge afterwards:
- * these doors carry no replace mode and no null-clears. That is stated on
- * the route and in the store interface, and it is a consequence of this
- * change rather than something it introduced a mechanism for.
+ * these doors carry no replace mode and no null-clears, a `null` is
+ * stored rather than clearing the key, and recreating the edge restarts
+ * its version. The last case here pins that, so the limit is measured
+ * rather than only written down on the route and in the store interface.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -166,6 +167,25 @@ describe("an edge update merges over what the edge holds", () => {
     expect(await storedProperties(edge.id)).toEqual(AFTER);
   });
 
+  it("stores a null rather than clearing the key it names", async () => {
+    // The limit this change carries, measured rather than asserted in
+    // prose. A caller reaching for the obvious way to drop a property
+    // gets a stored null, and the key is then there for good: the merge
+    // is `{...current, ...incoming}` with nothing filtering it, and no
+    // door on an edge takes a replace mode or a null-clears flag.
+    const { edge } = await edgeWith(BOTH);
+
+    const res = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+      key: ctx.adminKey,
+      body: { properties: { label: null } },
+    });
+    expect(res.status).toBe(200);
+
+    const after = await storedProperties(edge.id);
+    expect(after).toHaveProperty("label");
+    expect(after.label).toBeNull();
+  });
+
   it("still refuses a stale version, and hands back the merged row", async () => {
     // The precondition is decided by the write statement, and the merge
     // put a read in front of it. A refusal has to stay a refusal, and the
@@ -189,5 +209,54 @@ describe("an edge update merges over what the edge holds", () => {
 
     // And the losing write changed nothing.
     expect(await storedProperties(edge.id)).toEqual(AFTER);
+  });
+  it("never loses a patch it accepted, which is what the row lock is for", async () => {
+    // The merge is computed from a read, so two patches interleaving
+    // between another's read and its write lose one of them silently.
+    // That is the entire reason this write took a transaction and, on
+    // Postgres, a row lock, and nothing else in this file exercises it:
+    // every other case is sequential and passes with both deleted.
+    //
+    // **The assertion is "no accepted write is lost", not "all eight
+    // succeed", and the difference is the dialect.** On Postgres the
+    // waiters block on the lock and all eight are accepted. On SQLite
+    // they do not: the driver opens each transaction with BEGIN
+    // IMMEDIATE and a second one meets `SQLITE_BUSY` rather than
+    // waiting, so seven of eight are refused with a 500. That is not
+    // introduced here — `PATCH /items/{id}` has done the same since it
+    // started merging under a transaction, measured on this build — and
+    // it is a defect in its own right, tracked separately. What must
+    // hold on both dialects is that a 200 means the write landed.
+    //
+    // Eight rather than two because a single pair may not interleave. A
+    // correct implementation passes every time and a loaded machine
+    // makes that more certain rather than less; an unlocked one drops an
+    // accepted key on almost any run.
+    // Last in the file deliberately. On SQLite the refused arrivals
+    // leave the write lock contended for a moment afterwards, and a
+    // case following this one saw its own first write answer 500. That
+    // is the same pre-existing behavior this case documents, showing up
+    // as flakiness in a neighbor rather than as a failure here.
+    const { edge } = await edgeWith({ base: "kept" });
+
+    const keys = ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"];
+    const responses = await Promise.all(
+      keys.map((k) =>
+        request(ctx.app, "PATCH", `/edges/${edge.id}`, {
+          key: ctx.adminKey,
+          body: { properties: { [k]: k } },
+        }),
+      ),
+    );
+    const accepted = keys.filter((_, i) => responses[i]?.status === 200);
+    // The control. Without it a build that refused all eight would pass
+    // this case having proved nothing.
+    expect(accepted.length).toBeGreaterThan(0);
+
+    const after = await storedProperties(edge.id);
+    expect(after.base).toBe("kept");
+    for (const k of accepted) {
+      expect(after, `a 200 was not durable: ${k}`).toHaveProperty(k);
+    }
   });
 });

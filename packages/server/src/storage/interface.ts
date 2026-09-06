@@ -2787,9 +2787,20 @@ export interface EdgeStore {
    * takes a transaction and locks the row on Postgres; a replacing write
    * had neither and needed neither.
    *
-   * There is no way to remove a single property from an edge, because
-   * these doors carry no `properties_mode` and no `null_clears`. Removing
-   * one means deleting the edge and creating it again.
+   * **There is no way to remove a single property from an edge**, and the
+   * two things that look like one are not. These doors carry no
+   * `properties_mode` and no `null_clears`, so a `null` is merged in and
+   * *stored* as a null rather than clearing the key — the shallow merge
+   * is `{...current, ...incoming}` and nothing filters it. And deleting
+   * the edge to recreate it restarts the version at 1 and puts a delete
+   * and a create on the wire where every other edit is an update. So an
+   * edge's property set can only grow. That is a real limit rather than
+   * an oversight in this doc, and it is narrower than what the replacing
+   * write allowed.
+   *
+   * Properties are parsed and re-serialized on every write now, so keys
+   * the caller never named are rewritten through `JSON.stringify` rather
+   * than kept as the bytes the last client sent.
    *
    * Returns the written edge, or the current one when the precondition did
    * not hold. A discriminated result rather than a thrown error so a new

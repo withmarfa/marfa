@@ -289,8 +289,10 @@ async function processBulkEdge(
         },
       };
     }
-    // upsert — replace properties in place. Matches PATCH /edges/:id
-    // semantics (properties overwrite; source/target/type immutable).
+    // upsert — merge properties over the row in place. Matches
+    // PATCH /edges/:id semantics, which merge shallowly rather than
+    // replacing, so an entry naming one property leaves the others
+    // standing (source/target/type stay immutable either way).
     // Space-fenced so a triple that collided with another space's edge
     // (defense-in-depth beyond the space-scoped duplicate lookup) cannot
     // be mutated here.
