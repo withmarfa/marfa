@@ -20,7 +20,6 @@ import {
   runBulkActionAsync,
   settle,
 } from "../test-utils.js";
-import { initEventLog } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
@@ -108,7 +107,6 @@ describe("bulk actions spare a live connection", () => {
     // list, which one skipped grant turned off for the whole chunk. Listen
     // for the frames rather than trusting the counts, which never consulted
     // the gate.
-    initEventLog(ctx.storage.eventLog);
     const items = new AbortController();
     const edges = new AbortController();
     const heardItems = collectItemEvents(items.signal);
@@ -123,6 +121,9 @@ describe("bulk actions spare a live connection", () => {
       },
       ctx.adminKey,
     );
+    // Longer than the house default because this only drains in-process
+    // delivery: every publish was awaited inside the chunk before the helper
+    // returned, so the frames exist and nothing here encodes a deadline.
     await settle(400);
     items.abort();
     edges.abort();
