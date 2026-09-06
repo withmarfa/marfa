@@ -2776,10 +2776,31 @@ export interface EdgeStore {
    * the invariant, while all of them still answer 2xx.
    *
    * `expectedVersion` makes the write conditional — it joins the id and
-   * the space fence in one WHERE, so the statement is atomic and needs no
-   * surrounding transaction. Edge properties replace rather than merge, so
-   * there is nothing computed from a prior read to protect and none of the
-   * lost-update hazard that forces the item store to lock its row.
+   * the space fence in one WHERE, so the precondition is still decided by
+   * the statement rather than by a comparison before it.
+   *
+   * **Properties merge shallowly over what the edge holds**, as the item
+   * doors do. They used to replace, so an update naming one property
+   * dropped every property it did not name — and a client that queues a
+   * patch, which is what the local engine does, lost the rest of the edge
+   * with nothing reporting it. The merge is computed from a read, so this
+   * takes a transaction and locks the row on Postgres; a replacing write
+   * had neither and needed neither.
+   *
+   * **There is no way to remove a single property from an edge**, and the
+   * two things that look like one are not. These doors carry no
+   * `properties_mode` and no `null_clears`, so a `null` is merged in and
+   * *stored* as a null rather than clearing the key — the shallow merge
+   * is `{...current, ...incoming}` and nothing filters it. And deleting
+   * the edge to recreate it restarts the version at 1 and puts a delete
+   * and a create on the wire where every other edit is an update. So an
+   * edge's property set can only grow. That is a real limit rather than
+   * an oversight in this doc, and it is narrower than what the replacing
+   * write allowed.
+   *
+   * Properties are parsed and re-serialized on every write now, so keys
+   * the caller never named are rewritten through `JSON.stringify` rather
+   * than kept as the bytes the last client sent.
    *
    * Returns the written edge, or the current one when the precondition did
    * not hold. A discriminated result rather than a thrown error so a new
