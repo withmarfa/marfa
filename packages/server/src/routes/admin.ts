@@ -828,14 +828,7 @@ const deleteOAuthClientRoute = createRoute({
       description:
         "Nothing carries this client id: no client row, no grant record, no token, consent or code. Nothing was deleted and no audit row is written, so a mistyped id is not recorded as a removal.",
     },
-    409: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["conflict"]),
-        },
-      },
-      description: "Another removal of this client is already running.",
-    },
+
     401: {
       content: {
         "application/json": {
@@ -1308,6 +1301,11 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     const key = requireAdmin(c);
     const { client_id: clientId } = c.req.valid("param");
     const { confirm } = c.req.valid("json");
+    // The id, not a name: the space delete confirms on the id for the same
+    // reason (a name is optional and not unique), and the main purpose here
+    // is a client whose row is already gone, which has no name left to
+    // confirm against. The 404 below is what stops a mistyped id from
+    // destroying anything.
     if (confirm !== clientId) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -1322,11 +1320,14 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       );
     }
     const clientIp = c.get("clientIp") ?? null;
-    // Under a lock keyed on the client, as the account delete is: a grant
-    // created between the listing below and the client-row delete at the end
-    // would otherwise be the orphan shape this route exists to repair, made
-    // by the route itself.
-    const outcome = await storage.coordination.withJobLock(
+    // Removals of one client are serialized against each other, on both
+    // dialects: the exclusive lock queues in process on SQLite and takes a
+    // named lock on Postgres, where the job lock is a pass-through on SQLite.
+    // A second removal therefore runs after the first and finds nothing.
+    // What this does not serialize is an authorize for the same client,
+    // which takes no lock here; a grant created after the listing below is
+    // left standing, and the next call, idempotent, takes it.
+    const outcome = await storage.coordination.withExclusiveLock(
       `oauth-client-delete:${clientId}`,
       async () => {
         // A grant is two records and the tokens hang off the pair, so each
@@ -1423,12 +1424,6 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
         };
       },
     );
-    if (outcome === undefined) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        "Another removal of this client is already in progress",
-      );
-    }
     const {
       grantsRemoved,
       records,

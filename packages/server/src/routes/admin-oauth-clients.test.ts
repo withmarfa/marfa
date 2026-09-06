@@ -226,6 +226,24 @@ async function authUserIdFor(c: TestContext, email: string): Promise<string> {
   return id;
 }
 
+/** A space admin: the credential every hosted sign-up is provisioned with,
+ *  and the one a widened gate would admit. */
+async function spaceAdminKey(c: TestContext): Promise<string> {
+  const suffix = randomBytes(5).toString("hex");
+  const raw = `marfa_k1_spaceadmin_${suffix}`;
+  await c.storage.keys.create(
+    {
+      label: `space-admin-${suffix}`,
+      source: `space-admin-${suffix}`,
+      role: "space_admin",
+      type_permissions: { "*": "write" },
+      default_tier: "library",
+    },
+    hashApiKey(raw, TEST_API_KEY_SALT),
+  );
+  return raw;
+}
+
 async function memberKey(c: TestContext): Promise<string> {
   const suffix = randomBytes(5).toString("hex");
   const raw = `marfa_k1_member_${suffix}`;
@@ -254,6 +272,16 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       await memberKey(ctx),
     );
     expect(forbidden.status).toBe(403);
+    // A space admin is the role every hosted sign-up holds, and the one a
+    // gate widened to `requireSpaceAdmin` would admit; this route walks
+    // every space, so it has to be refused too.
+    const asSpaceAdmin = await deleteClient(
+      ctx,
+      clientId,
+      clientId,
+      await spaceAdminKey(ctx),
+    );
+    expect(asSpaceAdmin.status).toBe(403);
 
     const mismatch = await deleteClient(
       ctx,
@@ -481,7 +509,11 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       limit: 10,
     });
     const row = deleted.data.find((r) => r.resource_id === clientId);
-    expect(row?.key_id).toBeTruthy();
+    const operator = (await ctx.storage.keys.list()).find(
+      (k) => k.role === "instance_admin" && !k.space_id,
+    );
+    expect(operator).toBeDefined();
+    expect(row?.key_id).toBe(operator!.id);
   });
 
   it("a client id nothing carries answers 404 and writes no audit row", async () => {
