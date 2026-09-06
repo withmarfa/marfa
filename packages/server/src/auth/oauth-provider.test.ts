@@ -4,6 +4,7 @@ import {
   isCapabilityScope,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
+  parseScope,
 } from "@withmarfa/shared";
 import { buildAllowedScopes, customTypeNamespaces } from "./oauth-provider.js";
 import {
@@ -205,6 +206,10 @@ describe("permission bundles bind to the type registry", () => {
       // would be reported here as a deleted type. Asked of the parser rather
       // than of the characters, like everything else that classifies a scope.
       if (isCapabilityScope(literal)) continue;
+      // The profile family names the account's own record, a reserved root
+      // no registered type can occupy, so the registry has nothing to say
+      // about it; the parser owns that family and is asked here as well.
+      if (parseScope(literal)?.kind === "profile") continue;
       const pattern = literal.split(":")[0] ?? "";
       // A wildcard names a namespace rather than a member, so it resolves
       // when anything in the registry sits under it — or when it is one of
