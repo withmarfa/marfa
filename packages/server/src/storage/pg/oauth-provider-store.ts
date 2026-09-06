@@ -252,6 +252,15 @@ export class PgOauthProviderStore implements OauthProviderStore {
     return { clientId, userId, hasConsent: row.consent_id != null };
   }
 
+  async revokeAuthorizationCodesForClient(clientId: string): Promise<number> {
+    const result = await this.db.execute(sql`
+      DELETE FROM auth_verification
+      WHERE value::jsonb->>'type' = 'authorization_code'
+        AND value::jsonb->'query'->>'client_id' = ${clientId}
+    `);
+    return (result as { rowCount?: number | null }).rowCount ?? 0;
+  }
+
   async revokeAuthorizationCodesForGrant(
     clientId: string,
     authUserId: string,
@@ -368,7 +377,6 @@ export class PgOauthProviderStore implements OauthProviderStore {
       spaceId: string | null;
       authUserId: string | null;
       state: string;
-      status: string | null;
     }[]
   > {
     const rows = await this.db
@@ -377,7 +385,6 @@ export class PgOauthProviderStore implements OauthProviderStore {
         spaceId: items.space_id,
         state: items.state,
         authUserId: sql`${items.properties}->>'user_id'`,
-        status: sql`${items.properties}->>'status'`,
       })
       .from(items)
       .where(
@@ -392,7 +399,6 @@ export class PgOauthProviderStore implements OauthProviderStore {
       spaceId: row.spaceId ?? null,
       authUserId: typeof row.authUserId === "string" ? row.authUserId : null,
       state: row.state,
-      status: typeof row.status === "string" ? row.status : null,
     }));
   }
 

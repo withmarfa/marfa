@@ -360,13 +360,143 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       projections: 0,
     });
 
+    // A second call finds nothing carrying the id: 404, and no second audit
+    // row, so a repeat or a typo is not recorded as a removal.
     const again = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
-    expect(again.status).toBe(200);
-    expect(await again.json()).toEqual({
-      deleted: true,
-      client_row_deleted: false,
-      grants_removed: 0,
-      stray_records_deleted: 0,
+    expect(again.status).toBe(404);
+    const rows = await ctx.storage.audit.list({
+      action: "auth.client.deleted",
+      limit: 10,
     });
+    expect(rows.data.filter((r) => r.resource_id === clientId)).toHaveLength(1);
+  });
+
+  it("sweeps what no projection named, and a pending device code", async () => {
+    // The orphan shape proper: plugin rows for a user whose projection is
+    // gone, and a device code nobody approved, which is bound to no grant.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "stray@example.com");
+    await deviceGrant(ctx, clientId, cookie, "core.note:read offline_access");
+    // The consent row a browser approval leaves, seeded directly: this
+    // branch's device flow writes only the projection.
+    await seedConsent(
+      ctx,
+      clientId,
+      await authUserIdFor(ctx, "stray@example.com"),
+    );
+    const [projection] =
+      await ctx.storage.oauthProvider!.listGrantItemsForClient(clientId);
+    await ctx.storage.items.transition(
+      projection!.id,
+      "revoked",
+      projection!.spaceId ?? undefined,
+    );
+    await ctx.storage.items.purge(
+      projection!.id,
+      projection!.spaceId ?? undefined,
+    );
+    const pending = await request(ctx.app, "POST", "/auth/device", {
+      body: { client_id: clientId, scope: "core.note:read" },
+      headers: { origin: ORIGIN },
+    });
+    expect(pending.status).toBe(200);
+    const before = await clientRows(ctx, clientId);
+    expect(before).toMatchObject({
+      accessTokens: 1,
+      refreshTokens: 1,
+      consents: 1,
+      projections: 0,
+    });
+
+    const res = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      grants_removed: number;
+      stray_records_deleted: number;
+    };
+    expect(body.grants_removed).toBe(0);
+    // An access token, a refresh token, a consent row, and two device codes:
+    // the approved one, which the per-grant sweep would have taken had the
+    // projection still been there to name it, and the pending one, which is
+    // bound to no grant and only the client-wide sweep reaches.
+    expect(body.stray_records_deleted).toBe(5);
+    expect(await clientRows(ctx, clientId)).toEqual({
+      clients: 0,
+      accessTokens: 0,
+      refreshTokens: 0,
+      consents: 0,
+      projections: 0,
+    });
+  });
+
+  it("takes a projection's edges with it, writes a revoke row per grant, and names the operator", async () => {
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx);
+    const cookie = await signInUser(ctx, "edges@example.com");
+    await deviceGrant(ctx, clientId, cookie, "core.note:read");
+    const [projection] =
+      await ctx.storage.oauthProvider!.listGrantItemsForClient(clientId);
+    const note = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { title: "points at the grant", body: "x" },
+      },
+    });
+    expect(note.status).toBe(201);
+    const noteId = ((await note.json()) as { item: { id: string } }).item.id;
+    const edge = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body: {
+        source_id: noteId,
+        target_id: projection!.id,
+        edge_type: "references",
+      },
+    });
+    expect(edge.status).toBe(201);
+    const edgeId = ((await edge.json()) as { edge: { id: string } }).edge.id;
+
+    const res = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
+    expect(res.status).toBe(200);
+    // Edges are not foreign keys to items; they go explicitly, with the row.
+    expect(await ctx.storage.edges.get(edgeId)).toBeNull();
+    expect(
+      await ctx.storage.items.getIncludingTrashed(projection!.id),
+    ).toBeNull();
+    // The grant's own space hears the revoke, the same row every other door
+    // writes, and the platform row names the operator's key.
+    const revoked = await ctx.storage.audit.list({
+      action: "auth.grant.revoked",
+      limit: 10,
+    });
+    const mine = revoked.data.filter(
+      (r) => r.details.grant_item_id === projection!.id,
+    );
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.details.source).toBe("admin");
+    expect(mine[0]!.space_id).toBe(projection!.spaceId);
+    const deleted = await ctx.storage.audit.list({
+      action: "auth.client.deleted",
+      limit: 10,
+    });
+    const row = deleted.data.find((r) => r.resource_id === clientId);
+    expect(row?.key_id).toBeTruthy();
+  });
+
+  it("a client id nothing carries answers 404 and writes no audit row", async () => {
+    ctx = await createTestContext();
+    const res = await deleteClient(
+      ctx,
+      "client_never_was",
+      "client_never_was",
+      ctx.adminKey,
+    );
+    expect(res.status).toBe(404);
+    const rows = await ctx.storage.audit.list({
+      action: "auth.client.deleted",
+      limit: 10,
+    });
+    expect(rows.data).toEqual([]);
   });
 });

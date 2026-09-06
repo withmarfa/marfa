@@ -291,6 +291,15 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     };
   }
 
+  async revokeAuthorizationCodesForClient(clientId: string): Promise<number> {
+    const result = await this.db.run(sql`
+      DELETE FROM auth_verification
+      WHERE json_extract(value, '$.type') = 'authorization_code'
+        AND json_extract(value, '$.query.client_id') = ${clientId}
+    `);
+    return (result as { changes?: number }).changes ?? 0;
+  }
+
   async revokeAuthorizationCodesForGrant(
     clientId: string,
     authUserId: string,
@@ -407,7 +416,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       spaceId: string | null;
       authUserId: string | null;
       state: string;
-      status: string | null;
     }[]
   > {
     const rows = await this.db
@@ -416,7 +424,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         spaceId: items.space_id,
         state: items.state,
         authUserId: sql`json_extract(${items.properties}, '$.user_id')`,
-        status: sql`json_extract(${items.properties}, '$.status')`,
       })
       .from(items)
       .where(
@@ -431,7 +438,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       spaceId: row.spaceId ?? null,
       authUserId: typeof row.authUserId === "string" ? row.authUserId : null,
       state: row.state,
-      status: typeof row.status === "string" ? row.status : null,
     }));
   }
 

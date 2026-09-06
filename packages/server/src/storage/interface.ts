@@ -2255,9 +2255,16 @@ export interface OauthProviderStore {
       spaceId: string | null;
       authUserId: string | null;
       state: string;
-      status: string | null;
     }[]
   >;
+  /**
+   * Delete every authorization code minted for this client, for every user.
+   * Codes are `auth_verification` rows rather than plugin tables, so the
+   * per-client sweep of tokens and consents does not reach them; the grant
+   * cascade reaches them per (client, user), and a user whose projection is
+   * already gone has no cascade. Returns the number of rows deleted.
+   */
+  revokeAuthorizationCodesForClient(clientId: string): Promise<number>;
   /**
    * Delete every plugin record keyed on this client id: access tokens,
    * refresh tokens and consent rows, across every user. The per-grant

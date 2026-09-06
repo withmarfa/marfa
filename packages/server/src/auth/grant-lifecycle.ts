@@ -185,7 +185,7 @@ export function auditGrantRevoked(
     clientIp: string | null;
     /** Set when the revocation came from the client presenting a refresh
      *  token at the RFC 7009 endpoint rather than from the person. */
-    source?: "client";
+    source?: "client" | "admin";
   },
 ): void {
   void storage.audit.log({
