@@ -44,7 +44,13 @@ import type { Item } from "@withmarfa/shared";
  *
  * Applied at every door: the item delete (the named row and every row its
  * cascade reaches), the purge, the lifecycle transition out of `active`,
- * and the bulk transition and purge, which narrow rather than fail.
+ * and the bulk transition and purge, which narrow rather than fail. The two
+ * transition doors are defence in depth: the lifecycle table admits only
+ * `active` to `revoked` for a `system.*` type and neither door can name
+ * `revoked`, so the store refuses them anyway; the refusal here decides
+ * which answer the caller reads. The properties door is not covered:
+ * `status` is an ordinary property a space admin can patch, which is the
+ * remaining way to make a live grant read as revoked, tracked separately.
  */
 export function liveConnectionRefusal(
   item: Pick<Item, "id" | "type" | "properties"> | null | undefined,
@@ -62,9 +68,16 @@ export function liveConnectionRefusal(
     );
   }
   // **`kind`, not just the type.** `system.connection` covers both kinds
-  // and only `integration` has a runtime credential minted for it.
-  if (props?.kind !== "integration") return undefined;
-  if (props.status === "revoked") return undefined;
+  // and only `integration` has a runtime credential minted for it. A row
+  // with neither kind cannot be written through a validating door; if one
+  // is here anyway, nothing knows what hangs off it, so it stays.
+  if (props?.status === "revoked") return undefined;
+  if (props?.kind !== "integration") {
+    return (
+      `Connection ${item.id} has no recognized kind and is not revoked; ` +
+      `nothing knows what credentials hang off it, so it stays.`
+    );
+  }
   return (
     `Connection ${item.id} is still live. Uninstall it first with ` +
     `POST /connections/${item.id}/uninstall, which revokes its runtime ` +

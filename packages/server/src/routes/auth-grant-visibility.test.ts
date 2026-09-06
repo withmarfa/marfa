@@ -319,7 +319,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
 });
 
 describe("an operator cannot strand a live grant through the item doors", () => {
-  it("DELETE /items/{id} refuses a grant live on both axes and names the grant routes", async () => {
+  it("DELETE /items/{id} refuses a live grant and names the grant routes", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const c = ctx;
     const clientId = await seedClient(c);
@@ -427,8 +427,9 @@ describe("an operator cannot strand a live grant through the item doors", () => 
   });
 
   it("POST /items/{id}/transition out of active refuses a live grant", async () => {
-    // The transition route reaches exactly the rows the delete does and
-    // would leave the same strand.
+    // Defence in depth: the lifecycle table refuses every state but
+    // `revoked` for a `system.*` type and this route cannot name it, so
+    // what is pinned is that the connection refusal answers first.
     ctx = await createTestContext({ authAllowSignup: true });
     const c = ctx;
     const clientId = await seedClient(c);

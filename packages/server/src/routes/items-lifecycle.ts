@@ -250,9 +250,12 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     requireRowWritable(c.get("apiKey"), item);
     await lifecycleGuard()(c.get("apiKey"), item);
-    // Moving a live connection out of `active` reaches exactly the rows
-    // `DELETE /items/{id}` does and leaves the same strand; guarding one
-    // door and not the other would move the gap rather than close it.
+    // A live connection does not leave `active` through this door: the
+    // lifecycle table admits only `revoked` for a `system.*` type and this
+    // route cannot name it, so the store would refuse in any case. The
+    // refusal here answers first, so the caller reads why a grant is not
+    // retired this way rather than a lifecycle complaint, and the door
+    // stays closed if the table ever widens.
     if (state !== "active") refuseUnlessUninstalled(item);
     const updated = await storage.items.transition(id, state, spaceId);
     const metadata = await storage.metadata.get(id);
