@@ -653,6 +653,14 @@ export function keyRoutes(storage: Storage, salt: string) {
         edge_permissions: updated.edge_permissions,
         metadata_permissions: updated.metadata_permissions,
         created_at: updated.created_at,
+        // Sent because it can be. Unlike the create routes, where the field
+        // was declared and no key a door mints could ever carry one, any key
+        // is patchable — a runtime credential included, and those always
+        // carry a hard lifetime bound. A caller updating a credential's
+        // permissions asked for the key, and when it stops working is part of
+        // the key, so the honest fix was to make the handler match the
+        // declaration rather than the other way round.
+        expires_at: updated.expires_at,
         last_used_at: updated.last_used_at,
       },
       200,

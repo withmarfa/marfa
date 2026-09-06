@@ -199,6 +199,49 @@ describe("PATCH /keys/{id}", () => {
     expect(err.error.message).toMatch(/role.*immutable/i);
   });
 
+  // The one response here that can carry an expiry, and it declared the field
+  // without ever sending it. Any key is patchable, a runtime credential
+  // included, and those always carry a hard lifetime bound — so a caller
+  // updating a credential's permissions got the credential back with the one
+  // field saying when it stops working missing from it.
+  //
+  // Minted through the store, because `createRuntimeCredential` is the only
+  // mint that can stamp an expiry and no route reaches it. A key made through
+  // a create door has none by construction, so patching one of those would
+  // leave this green whatever the handler did.
+  it("returns the expiry the stored row carries", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
+    const minted = await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: `runtime-${suffix}`,
+        source: `runtime-${suffix}`,
+        role: "member",
+        type_permissions: {},
+        connection_id: `conn-${suffix}`,
+        expires_at: expiresAt,
+        item_source: null,
+      },
+      hashApiKey(`marfa_k1_runtime_${suffix}`, TEST_API_KEY_SALT),
+      undefined,
+    );
+    expect(minted.expires_at).toBe(expiresAt);
+
+    const res = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
+      key: ctx.adminKey,
+      body: { label: "renamed runtime" },
+    });
+    expect(res.status).toBe(200);
+    const updated = (await res.json()) as Record<string, unknown>;
+
+    expect(updated.label).toBe("renamed runtime");
+    // Against the stored row rather than against the literal alone, so the
+    // assertion is that the response says what the key says.
+    const stored = await ctx.storage.keys.get(minted.id);
+    expect(stored?.expires_at).toBe(expiresAt);
+    expect(updated.expires_at).toBe(stored?.expires_at);
+  });
+
   it("returns 404 for an unknown key id", async () => {
     // Valid UUIDv7 shape, guaranteed not to exist in the store.
     const ghostId = "00000000-0000-7000-8000-000000000000";
