@@ -573,4 +573,40 @@ export class PgOauthProviderStore implements OauthProviderStore {
       .returning({ id: auth_oauth_consent.id });
     return updated.length > 0;
   }
+
+  async upsertConsent(input: {
+    clientId: string;
+    authUserId: string;
+    referenceId: string | null;
+    scopes: readonly string[];
+  }): Promise<void> {
+    const now = new Date();
+    // One statement, arbitrated by `uq_auth_oauth_consent_client_user`: a
+    // check followed by an insert loses a race to a constraint violation,
+    // and a throw here lands after the projection is written and before the
+    // device code flips. The update half re-stamps `referenceId`, because
+    // the plugin's own lookup filters on it whenever it is set (the space id
+    // in hosted mode; nothing on a single-space self-host, where re-stamping
+    // null is a no-op), and a row whose binding drifted would otherwise
+    // match nothing and be re-created behind the same constraint.
+    await this.db
+      .insert(auth_oauth_consent)
+      .values({
+        id: generateId(),
+        clientId: input.clientId,
+        userId: input.authUserId,
+        referenceId: input.referenceId,
+        scopes: [...input.scopes],
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [auth_oauth_consent.clientId, auth_oauth_consent.userId],
+        set: {
+          scopes: [...input.scopes],
+          referenceId: input.referenceId,
+          updatedAt: now,
+        },
+      });
+  }
 }

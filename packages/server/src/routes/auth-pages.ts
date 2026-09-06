@@ -215,7 +215,12 @@ async function createUserAppGrant(
   clientId: string,
   scopes: string[],
   source: "marfa/oauth/device",
-): Promise<{ id: string; created: boolean; scopes: string[] }> {
+): Promise<{
+  id: string;
+  created: boolean;
+  scopes: string[];
+  spaceId: string | undefined;
+}> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
   let spaceId: string | undefined;
@@ -322,7 +327,12 @@ async function createUserAppGrant(
           metadata,
           spaceId,
         });
-        return { id: updated.id, created: false, scopes: mergedScopes };
+        return {
+          id: updated.id,
+          created: false,
+          scopes: mergedScopes,
+          spaceId,
+        };
       }
     }
   }
@@ -351,7 +361,7 @@ async function createUserAppGrant(
   );
   const metadata = await storage.metadata.get(item.id);
   await publish({ type: "created", item, metadata, spaceId });
-  return { id: item.id, created: true, scopes };
+  return { id: item.id, created: true, scopes, spaceId };
 }
 
 /**
@@ -2626,6 +2636,7 @@ export function authRoutes(
       row.client_id,
       sessionResult.session.user.id,
       async () => {
+        const provider = storage.oauthProvider;
         const created = await createUserAppGrant(
           storage,
           sessionResult.session.user,
@@ -2634,6 +2645,34 @@ export function authRoutes(
           "marfa/oauth/device",
         );
         const bound = await storage.oauth.approveDeviceCode(row.id, created.id);
+        // The plugin's half of the grant. This surface never passes through
+        // the plugin's consent endpoint, so without this write a device
+        // grant had a projection and no consent row, and neither consent
+        // check (the plugin's exact-membership skip, Marfa's coverage check
+        // behind it) could see it: every later browser authorize for the
+        // same app rendered consent afresh. Written with the projection's
+        // merged set, because the projection is the grant and the row
+        // mirrors it: a row standing alone after a failed projection write
+        // is narrowed here to what the person just approved, which is less
+        // access rather than more, and the browser asks again for the rest.
+        // Inside the lock so a revoke cannot land between the two halves,
+        // and only once the code is bound: an approval that
+        // lost to a deny in another tab is told it did not take effect, and
+        // must not leave a row that answers the next browser authorize with
+        // a code and no screen. The trade: a throw from this write now lands
+        // after the bind, so the device gets its tokens on the next poll
+        // while the person sees an error and no `auth.grant.created` row is
+        // written. That is a projection without a row, the state this
+        // change repairs, and the next approval repairs it again; the other
+        // order wrote a row for an approval that never took effect.
+        if (bound && provider && typeof provider.upsertConsent === "function") {
+          await provider.upsertConsent({
+            clientId: row.client_id,
+            authUserId: sessionResult.session.user.id,
+            referenceId: created.spaceId ?? null,
+            scopes: created.scopes,
+          });
+        }
         return { grant: created, ok: bound };
       },
     );
@@ -2644,18 +2683,8 @@ export function authRoutes(
         302,
       );
     }
-    // Resolve space_id for the audit row. Duplicates the users-table
-    // lookup createUserAppGrant already did — kept to avoid changing the
-    // helper's signature.
-    let auditSpaceId: string | null = null;
-    if (storage.users) {
-      const userRow = await storage.users.getByAuthUserId(
-        sessionResult.session.user.id,
-      );
-      auditSpaceId = userRow?.space_id ?? null;
-    }
     void storage.audit.log({
-      space_id: auditSpaceId,
+      space_id: grant.spaceId ?? null,
       action: "auth.grant.created",
       resource_type: "oauth_grant",
       resource_id: row.client_id,

@@ -2106,6 +2106,39 @@ export interface OauthProviderStore {
     scopes: readonly string[],
     expectedScopes: readonly string[],
   ): Promise<boolean>;
+  /**
+   * Write the plugin's consent row for `(clientId, authUserId)`: create it,
+   * or replace its scopes and re-stamp its space binding if one exists.
+   * One statement, arbitrated by the unique index both dialects carry on
+   * the pair, so two writers cannot leave two rows or a constraint error.
+   *
+   * The row is what both consent checks read: the plugin's own, inside its
+   * authorize endpoint, which skips its screen when the row holds every
+   * requested scope literally, and Marfa's, on `GET /auth/authorize`, which
+   * skips when the row covers the request by pattern. A device approval
+   * never passes through the plugin's consent endpoint, so without this
+   * write a device grant had a projection and no row, and every later
+   * browser authorize for the same app rendered consent afresh.
+   *
+   * `scopes` is the projection's merged set, not this approval alone, and
+   * it replaces the scopes the row held (claims and resources, which the
+   * device flow never writes, stand): the projection is the grant and the
+   * row mirrors it. The two can differ when a row stands with no projection
+   * beside it (the code flow logs a failed projection write and issues its
+   * code anyway); a later device approval then narrows the row to what the
+   * person just approved, deliberately. That is less recorded consent
+   * rather than more, since tokens already issued outlive the row, and the
+   * browser asks again for the rest. `referenceId` is the
+   * user's space id, the value `consentReferenceId` hands the plugin, and
+   * it is written on update as well because the plugin's lookup filters on
+   * it.
+   */
+  upsertConsent(input: {
+    clientId: string;
+    authUserId: string;
+    referenceId: string | null;
+    scopes: readonly string[];
+  }): Promise<void>;
   /** Bearer-middleware lookup over `auth_oauth_access_token`. Returns the
    *  row keyed by the hashed token output of `storeTokens.hash` (which is
    *  `hashApiKey(token, salt)`), or null if the token isn't recognized or

@@ -622,4 +622,34 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       );
     return result.rowsAffected > 0;
   }
+
+  async upsertConsent(input: {
+    clientId: string;
+    authUserId: string;
+    referenceId: string | null;
+    scopes: readonly string[];
+  }): Promise<void> {
+    const now = new Date();
+    // One statement, arbitrated by `uq_auth_oauth_consent_client_user`; see
+    // the Postgres twin for why the update half re-stamps `referenceId`.
+    await this.db
+      .insert(auth_oauth_consent)
+      .values({
+        id: generateId(),
+        clientId: input.clientId,
+        userId: input.authUserId,
+        referenceId: input.referenceId,
+        scopes: JSON.stringify([...input.scopes]),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [auth_oauth_consent.clientId, auth_oauth_consent.userId],
+        set: {
+          scopes: JSON.stringify([...input.scopes]),
+          referenceId: input.referenceId,
+          updatedAt: now,
+        },
+      });
+  }
 }

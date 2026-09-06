@@ -213,11 +213,16 @@ async function authorizationCodeGrant(
   );
   expect(authorizeRes.status).toBe(302);
   const location = authorizeRes.headers.get("location") ?? "";
+  // The interactive path, and only that: a device approval now writes the
+  // consent row the browser flow skips on, so each case gives the code leg
+  // its own client, and this helper refuses a silent answer rather than
+  // accepting whichever branch the plugin took. The property under test is
+  // that the decision handler and the device route agree, which needs the
+  // decision handler to run.
   if (!location.includes("/auth/authorize?")) {
     throw new Error(`authorize did not reach consent: ${location}`);
   }
   const signedQuery = location.slice(location.indexOf("?") + 1);
-
   const decisionRes = await request(c.app, "POST", "/auth/authorize/decision", {
     form: {
       accept: "true",
@@ -305,7 +310,15 @@ describe("refresh-token issuance is gated on offline_access", () => {
     expect(viaDevice.status).toBe(200);
     expect(viaDevice.body.access_token).toMatch(/^marfa_at_/);
 
-    const viaCode = await authorizationCodeGrant(ctx, clientId, cookie, scope);
+    // Its own client: the device approval above wrote a consent row for
+    // `clientId`, and the browser flow for that client would now skip.
+    const codeClientId = await seedClient(ctx);
+    const viaCode = await authorizationCodeGrant(
+      ctx,
+      codeClientId,
+      cookie,
+      scope,
+    );
     expect(viaCode.status).toBe(200);
     expect(viaCode.body.access_token).toBeTruthy();
 
@@ -336,7 +349,15 @@ describe("refresh-token issuance is gated on offline_access", () => {
     expect(viaDevice.status).toBe(200);
     expect(viaDevice.body.refresh_token).toMatch(/^marfa_rt_/);
 
-    const viaCode = await authorizationCodeGrant(ctx, clientId, cookie, scope);
+    // Its own client: the device approval above wrote a consent row for
+    // `clientId`, and the browser flow for that client would now skip.
+    const codeClientId = await seedClient(ctx);
+    const viaCode = await authorizationCodeGrant(
+      ctx,
+      codeClientId,
+      cookie,
+      scope,
+    );
     expect(viaCode.status).toBe(200);
     expect(viaCode.body.refresh_token).toBeTruthy();
   });
