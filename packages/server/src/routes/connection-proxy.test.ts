@@ -297,6 +297,33 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
     expect(fetchState.calls).toBe(1);
   });
 
+  it("forwards an empty upstream path when no sub-path is given", async () => {
+    // Hono matches `/connections/<id>/proxy` against `/:id/proxy/*`, so
+    // the handler is reached with no sub-path at all. The prefix used to
+    // be sliced off the raw pathname and left `""`; rebuilding from
+    // segments would give `/` instead, and an upstream is entitled to
+    // treat those as different. Pinned because nothing else does.
+    const connectionId = await createConnection();
+    await seedToken(connectionId);
+
+    const fetchState = installFetchScript([
+      ({ url }) => {
+        expect(url).toBe("https://upstream.test");
+        return jsonResponse(200, { ok: true });
+      },
+    ]);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/proxy`,
+      { key: ctx.adminKey, body: { hello: "world" } },
+    );
+
+    expect(res.status).toBe(200);
+    expect(fetchState.calls).toBe(1);
+  });
+
   it("returns 401 when the caller is unauthenticated", async () => {
     const connectionId = await createConnection();
     await seedToken(connectionId);

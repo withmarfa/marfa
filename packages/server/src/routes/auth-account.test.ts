@@ -573,7 +573,7 @@ describe("sign-in guard cancel-token reuse + audit hygiene", () => {
     expect(count).toBe(1);
   });
 
-  it("cannot be walked around by re-spelling the sign-in path", async () => {
+  it("holds on a trailing slash and on a percent-escaped spelling", async () => {
     // The guard decides on the raw pathname against a set of two literal
     // strings, which is an enumeration over a value whose spelling is not
     // canonical: `/auth/sign-%69n/email` is the same path and is not in
@@ -620,6 +620,17 @@ describe("sign-in guard cancel-token reuse + audit hygiene", () => {
     });
     expect(encoded.status).toBe(404);
     expect(encoded.headers.get("set-cookie")).toBeNull();
+
+    // The trailing slash is the spelling the guard has to carry itself,
+    // because it is the one the catch-all would otherwise pass to a
+    // handler whose refusal is a library default rather than anything
+    // here. It is in the set now, so this is the guard answering.
+    const slashed = await request(ctx.app, "POST", "/auth/sign-in/email/", {
+      body: credentials,
+      headers: { origin: ORIGIN },
+    });
+    expect(slashed.status).toBe(401);
+    expect(slashed.headers.get("set-cookie")).toBeNull();
   });
 
   it("audit row for sign_in_blocked carries no plaintext email", async () => {

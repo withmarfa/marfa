@@ -870,16 +870,27 @@ export function connectionProxyRoutes(
       segments[3] === "proxy" &&
       decodeSegment(segments[2] ?? "") === connectionId;
     if (!shaped) {
-      // Fails closed. A prefix that does not match means this route was
-      // reached some way the code above did not anticipate, and sending
-      // an unrecognized path to somebody else's service is not a safe
-      // thing to do while unsure what it is.
+      // Fails closed, and it is unreachable as this router is mounted
+      // today: `app.ts` routes it once, under `/connections`, so Hono has
+      // already matched the two literal segments, and the id has been
+      // resolved to a stored row by the access check above, which makes
+      // it a UUIDv7 whose every spelling decodes alike. The one thing
+      // that would fire it is a second mount at another prefix — cheap
+      // insurance, named so the next reader does not take it for a
+      // protection something relies on today. Sending an unrecognized
+      // path to somebody else's service is not a safe default.
       throw new MarfaError(
         ErrorCode.INVALID_REQUEST,
         "Proxy path did not resolve to a connection sub-path",
       );
     }
-    const upstreamPath = "/" + segments.slice(4).join("/");
+    // `> 4` rather than `>= 4`, so that `POST /connections/<id>/proxy`
+    // with no sub-path forwards an empty path as it always did. Hono
+    // matches that against `/:id/proxy/*`, so it reaches here with four
+    // segments, and a naive rejoin would send `/` to an upstream that
+    // may well distinguish the two.
+    const upstreamPath =
+      segments.length > 4 ? "/" + segments.slice(4).join("/") : "";
     const upstreamUrl =
       effectiveBaseUrl.replace(/\/+$/, "") + upstreamPath + reqUrl.search;
 

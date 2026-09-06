@@ -48,16 +48,22 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  * the reason it carries no key. `routes/idempotent-write-doors.test.ts`
  * holds both halves against the app's own route table.
  *
- * **A door over a segment whose spelling varies is safe here.** Every
- * entry below carries a UUIDv7, which percent-encodes to itself, so for a
- * long time the fingerprint could hash the raw path and nothing showed.
- * It no longer does: `canonicalPath` re-spells each segment before the
- * digest, so two encodings of one request are one fingerprint and a retry
- * that re-encodes is replayed rather than refused. That is what lets a
- * tag, an extension namespace or any other free-text segment join this
- * list without reopening it, and it is stated here because the
+ * **A door over a free-text PATH segment is safe here; the query is not
+ * covered.** Every entry below carries a UUIDv7, which percent-encodes to
+ * itself, so for a long time the fingerprint could hash the raw path and
+ * nothing showed. It no longer does: `canonicalPath` re-spells each path
+ * segment before the digest, so two encodings of one request are one
+ * fingerprint and a retry that re-encodes is replayed rather than
+ * refused. That is what lets a tag, an extension namespace or any other
+ * free-text path segment join this list.
+ *
+ * **The query string is hashed as written**, so a door taking a free-text
+ * query value reopens the same bug on that axis. It is safe today because
+ * no door here takes one: nine carry no query parameter and the tenth
+ * carries `conflict`, a closed enum. Both halves are stated because the
  * alternative was two lists that happened not to overlap, with nothing
- * recording the relationship.
+ * recording the relationship — which is how this went unnoticed the first
+ * time.
  */
 export const IDEMPOTENT_WRITE_DOORS: readonly string[] = [
   "POST /items",
@@ -237,11 +243,14 @@ async function fingerprint(c: Context<AppEnv>, body: string): Promise<string> {
   const material = [
     c.req.method,
     canonicalPath(url.pathname),
-    // The query is left as written, deliberately. Canonicalizing it means
-    // deciding whether parameter order is part of the request, which is a
-    // wider question than the path's and is not what bit here: a client
-    // that reorders its query between attempts is a shape nobody has, and
-    // a client whose encoder changes is one this middleware has to survive.
+    // The query is left as written, and the reason is checkable rather
+    // than a judgement: no door in IDEMPOTENT_WRITE_DOORS carries a query
+    // value whose spelling can vary. Nine take no query parameter at all,
+    // and the tenth takes `conflict` on PATCH /items/{id}, a closed enum
+    // of ASCII words. A door that later accepts a free-text query value
+    // reopens exactly this bug on that axis, and canonicalizing the query
+    // then also means deciding whether parameter order is part of the
+    // request, which is a wider question than the path's.
     url.search,
     credentialHandle(c),
     body,

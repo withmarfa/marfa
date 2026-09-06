@@ -127,6 +127,9 @@ describe("DELETE /items/{id}/tags/{tag} takes the tag the caller named", () => {
     // becomes `50%off`, which no row holds — so the removal matched
     // nothing, the response was 200, and the tag stayed.
     const id = await createItemWithTags(["50%25off", "keep-me"]);
+    // The pre-state, so a future normalization in the add door cannot
+    // make this case pass by removing the tag it is about.
+    expect(await tagsOf(id)).toContain("50%25off");
 
     const res = await request(
       ctx.app,
