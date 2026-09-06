@@ -35,8 +35,15 @@ export interface VisibleLayer {
  * server stamps both, and a client that guessed would produce a row that
  * compares wrongly against the first event to arrive. `source` is empty for
  * the same reason — it comes from the credential, at the server.
+ *
+ * The properties go through the server's own null coercion for the reason
+ * spelled out on the update below, and this is the harder half of it: an
+ * update replays over a row the server holds, so a wrong projection is a
+ * wrong version of something real, while a create *is* the row. A null on an
+ * optional field would show a key that has never existed anywhere, with no
+ * held value underneath to fall back to.
  */
-function ghostItem(entry: OutboxEntry): Item {
+function ghostItem(entry: OutboxEntry, spaceId: string | null): Item {
   const payload = entry.payload as {
     id: string;
     type: string;
@@ -50,7 +57,11 @@ function ghostItem(entry: OutboxEntry): Item {
     id: payload.id,
     type: payload.type,
     state: payload.state ?? "active",
-    properties: payload.properties ?? {},
+    properties: coerceNullProperties(
+      payload.type,
+      payload.properties ?? {},
+      spaceId,
+    ),
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
     timestamp: payload.timestamp ?? entry.createdAt,
@@ -91,7 +102,7 @@ function applyItemMutation(
 ): Item | undefined {
   switch (entry.kind) {
     case "item.create":
-      return ghostItem(entry);
+      return ghostItem(entry, spaceId);
     case "item.update": {
       if (held === undefined) return undefined;
       const patch = (entry.payload.properties ?? {}) as Record<string, unknown>;

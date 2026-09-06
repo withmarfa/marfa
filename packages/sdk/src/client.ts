@@ -2049,13 +2049,18 @@ export class MarfaClient {
       return response.status === 200;
     },
 
-    /** Returns a direct CDN URL if configured, otherwise the API proxy URL. */
+    /** Returns a direct CDN URL if configured, otherwise the API proxy URL.
+     *
+     *  Escaped like every other path here, and this is the one that most
+     *  needs it: the return value is not a request this client makes but a
+     *  URL handed to somebody else to fetch, so an unescaped `/` or `..` in
+     *  the caller's hash addresses a different resource on the origin. */
     url: (hash: string): string => {
       const cleanHash = hash.startsWith("sha256:") ? hash : `sha256:${hash}`;
-      if (this.cdnBaseUrl) {
-        return `${this.cdnBaseUrl}/blobs/${cleanHash}`;
-      }
-      return `${this.apiBaseUrl}/blobs/${cleanHash}`;
+      const suffix = path`/blobs/${cleanHash}`;
+      return this.cdnBaseUrl
+        ? `${this.cdnBaseUrl}${suffix}`
+        : `${this.apiBaseUrl}${suffix}`;
     },
   };
 
@@ -2601,7 +2606,11 @@ export class MarfaClient {
       confirmDelete: async (token: string): Promise<void> => {
         const res = await this.transport.rawRequest(
           "GET",
-          path`/auth/account/delete/confirm?token=${token}`,
+          // The query stays outside the tag, as it does on the type
+          // delete above: a value after the `?` is not a segment, and a
+          // second spelling of that rule in one file is how the next
+          // reader learns the wrong one.
+          "/auth/account/delete/confirm?token=" + encodeURIComponent(token),
         );
         if (!res.ok) {
           throw new Error(

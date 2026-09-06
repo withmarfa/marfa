@@ -42,9 +42,45 @@ arrives — so on a quiet space it could stand indefinitely, with
 `visible.getItem` handing back a field that does not exist server-side.
 
 The projection now calls the same coercion the server's door applies, rather
-than restating the rule. A null on a required field is unaffected: the local
-validator already refuses that write before it is queued, as the server
-refuses it on arrival.
+than restating the rule, on the create door as well as the update. The create
+is the sharper half: an update replays over a row the server holds, so a wrong
+projection is a wrong version of something real, while a created row _is_ the
+projection and a null on it showed a key that had never existed anywhere. A
+null on a required field is unaffected: the local validator already refuses
+that write before it is queued, as the server refuses it on arrival.
+
+### Every request path escapes the segments it interpolates
+
+Request paths were built by plain interpolation, so an identifier carrying a
+`/`, a `?` or a `#` addressed a route the caller did not name — silently, with
+the server answering something plausible for the request it was actually sent.
+Sixteen paths looked encoded and were half encoded, escaping one interpolation
+and not its sibling in the same template.
+
+Every path now goes through one tagged template that escapes each
+interpolation, so the escape is the syntax rather than something each call site
+remembers, and a lint rule refuses an untagged path template in the client.
+
+**One value changes shape on the wire.** A blob hash is a `sha256:<hex>`
+identifier, and the colon is now sent as `%3A` — `GET /blobs/sha256%3A<hex>`
+rather than `GET /blobs/sha256:<hex>`. Both spellings resolve on the Marfa
+server, and the Swift kit already sends the escaped form, so the two clients
+now put the same bytes on the wire for the same identifier. **A proxy, WAF
+rule, CDN cache key or log filter matching the literal `sha256:` in a blob path
+will stop matching.** Every other identifier this package interpolates is a
+UUIDv7, a dotted type id or a hyphenated edge-type id, all of which encode to
+themselves, so no stored idempotency key changes shape.
+
+`blobs.url` is escaped along with the rest, and it is the one that most needed
+it: its return value is not a request this client makes but a URL handed to
+something else to fetch.
+
+### Search can be asked for `system.*` rows
+
+`SearchFilters` declared no `include`, though the search route has always read
+it and the client already spread its filters into the query. So the parameter
+travelled and no caller could name it, leaving search the one read that could
+not reach the reserved namespace its sibling listing could.
 
 ## 5.1.0
 

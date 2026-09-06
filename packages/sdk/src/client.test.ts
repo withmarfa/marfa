@@ -2262,6 +2262,31 @@ describe("the paging helpers and the system opt-in", () => {
     );
   });
 
+  it("reaches system.* rows through search only when asked, and sends the token", async () => {
+    // The declaration is the whole of this fix -- the runtime already spread
+    // its filters into the query -- so the test that matters is the one that
+    // fails when the declaration goes away rather than one asserting a type.
+    // Both halves in one case: the token leaves, and the rows it widens to
+    // arrive. Without the paired negative, a search that returned everything
+    // would pass.
+    const marker = "search-system-optin";
+    await seedPair(marker);
+    const { client: recorded, urls } = recordingClient();
+
+    const without = await recorded
+      .search(marker, { tags: [marker] })
+      .then((rows) => rows.map((row) => row.item.type));
+    const with_ = await recorded
+      .search(marker, { tags: [marker], include: "system" })
+      .then((rows) => rows.map((row) => row.item.type));
+
+    expect(without).toContain("core.note");
+    expect(without).not.toContain("system.device");
+    expect(with_).toContain("core.note");
+    expect(with_).toContain("system.device");
+    expect(includesSent(urls)).toEqual([null, "system"]);
+  });
+
   it("omits system.* rows from an extensions walk that does not ask for them", async () => {
     const marker = "walk-extensions-absent";
     const { noteId, deviceId } = await seedPair(marker);

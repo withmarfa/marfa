@@ -1710,6 +1710,27 @@ describe("a null on an optional field (seam: offline, then online)", () => {
     expect(pending).toEqual(await settle(id));
   });
 
+  it("drops the same null on the create door, before anything is sent", async () => {
+    // The other door, and the one with nothing underneath it to correct the
+    // answer. An update replays over a held row, so a wrong projection is at
+    // least a wrong version of something real; a create IS the row, so a null
+    // the server's validator strips shows a key that has never existed
+    // anywhere and never will.
+    seam.mode = "offline";
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "kept", title: null },
+    });
+    const shown = await store.visible.getItem(note.id);
+    if (shown === undefined) throw new Error("the row left the projection");
+
+    // Pinned against the server rather than against a restatement here, the
+    // same way every case above is.
+    expect(shown.properties).not.toHaveProperty("title");
+    expect(note.properties).not.toHaveProperty("title");
+    expect(shown.properties).toEqual(await settle(note.id));
+  });
+
   it("still applies a value the patch actually sets", async () => {
     // The guard on the guard: a coercion that dropped too much would pass
     // every case above by showing the row unchanged.

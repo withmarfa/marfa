@@ -72,6 +72,27 @@ describe("an identifier cannot smuggle a query onto a real route", () => {
     expect(url.pathname).toContain("real-id");
   });
 
+  it("escapes the blob URL it hands to somebody else to fetch", () => {
+    // `blobs.url` makes no request: it returns a URL for an `<img src>` or a
+    // download, so an unescaped separator in the caller's hash is a URL
+    // pointing at a different resource on the origin, resolved by whoever
+    // fetches it rather than by this client. Both branches, because the CDN
+    // one is a different origin and was written separately.
+    const api = new MarfaClient({ url: "http://localhost", apiKey: "k" });
+    expect(api.blobs.url("sha256:abc/../../admin/spaces")).toBe(
+      "http://localhost/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fspaces",
+    );
+
+    const cdn = new MarfaClient({
+      url: "http://localhost",
+      apiKey: "k",
+      cdnBaseUrl: "http://cdn.example",
+    });
+    expect(cdn.blobs.url("sha256:abc/../../admin/spaces")).toBe(
+      "http://cdn.example/blobs/sha256%3Aabc%2F..%2F..%2Fadmin%2Fspaces",
+    );
+  });
+
   it("puts a caller's slash in the segment, never in the route", async () => {
     const { client, urls } = recordingClient();
     await ignoringResult(client.items.get("a/b"));
