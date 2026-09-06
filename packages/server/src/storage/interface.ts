@@ -2776,10 +2776,20 @@ export interface EdgeStore {
    * the invariant, while all of them still answer 2xx.
    *
    * `expectedVersion` makes the write conditional — it joins the id and
-   * the space fence in one WHERE, so the statement is atomic and needs no
-   * surrounding transaction. Edge properties replace rather than merge, so
-   * there is nothing computed from a prior read to protect and none of the
-   * lost-update hazard that forces the item store to lock its row.
+   * the space fence in one WHERE, so the precondition is still decided by
+   * the statement rather than by a comparison before it.
+   *
+   * **Properties merge shallowly over what the edge holds**, as the item
+   * doors do. They used to replace, so an update naming one property
+   * dropped every property it did not name — and a client that queues a
+   * patch, which is what the local engine does, lost the rest of the edge
+   * with nothing reporting it. The merge is computed from a read, so this
+   * takes a transaction and locks the row on Postgres; a replacing write
+   * had neither and needed neither.
+   *
+   * There is no way to remove a single property from an edge, because
+   * these doors carry no `properties_mode` and no `null_clears`. Removing
+   * one means deleting the edge and creating it again.
    *
    * Returns the written edge, or the current one when the precondition did
    * not hold. A discriminated result rather than a thrown error so a new

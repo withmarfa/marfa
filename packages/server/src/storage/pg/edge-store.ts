@@ -35,6 +35,7 @@ import {
 } from "../interface.js";
 import type { CursorSortKey } from "../interface.js";
 import { rowToEdge } from "../edge-constraints.js";
+import { mergeUpdateProperties } from "../merge-properties.js";
 import { edges } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import { isPrimaryKeyViolation } from "./pk-violation.js";
@@ -252,29 +253,42 @@ export class PgEdgeStore implements EdgeStore {
       expectedVersion !== undefined
         ? and(identity, eq(edges.version, expectedVersion))
         : identity;
-    const [written] = await this.db
-      .update(edges)
-      .set({
-        properties: JSON.stringify(properties),
-        updated_at: now,
-        version: sql`${edges.version} + 1`,
-      })
-      .where(where)
-      .returning();
-    if (written) return { ok: true, edge: rowToEdge(written) };
-    // Zero rows is ambiguous: the row is gone, or its version moved. Read
-    // it back on identity alone to tell those apart — still space-fenced,
-    // so a cross-space id stays absent rather than becoming a conflict.
-    const [current] = await this.db.select().from(edges).where(identity);
-    // Typed, because this is a race a client hits legitimately: it held a
-    // version, somebody else moved the row on and then removed it. A bare
-    // Error fails the handler's duck-type and leaves for the caller a 500
-    // and an operator alert, for an outcome that is simply the row being
-    // gone.
-    if (!current) {
-      throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
-    }
-    return { ok: false, current: rowToEdge(current) };
+    return await this.db.transaction(async (tx) => {
+      // FOR UPDATE, because the merge below is computed from this read.
+      // Under READ COMMITTED an unlocked read lets a concurrent commit
+      // land between it and the write, and the write then reverts that
+      // commit's properties to the pre-change shape. The item store
+      // locks its row for exactly this reason; a replacing write did not
+      // have to, which is why this transaction is new.
+      const [row] = await tx.select().from(edges).where(identity).for("update");
+      // The row is gone. Typed, because this is a race a client hits
+      // legitimately: it held a version, somebody else moved the row on
+      // and then removed it. A bare Error fails the handler's duck-type
+      // and leaves for the caller a 500 and an operator alert, for an
+      // outcome that is simply the row being gone.
+      if (!row) {
+        throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
+      }
+      const merged = mergeUpdateProperties(
+        rowToEdge(row).properties,
+        properties,
+        false,
+      );
+      const [written] = await tx
+        .update(edges)
+        .set({
+          properties: JSON.stringify(merged),
+          updated_at: now,
+          version: sql`${edges.version} + 1`,
+        })
+        .where(where)
+        .returning();
+      if (written) return { ok: true as const, edge: rowToEdge(written) };
+      // The write matched nothing while the read found the row, so the
+      // precondition is what failed. The locked read is the current
+      // edge, so there is nothing to go back for.
+      return { ok: false as const, current: rowToEdge(row) };
+    });
   }
 
   async delete(id: string, spaceId?: string): Promise<void> {
