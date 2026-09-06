@@ -19,17 +19,27 @@
  * each pass, and the merged result lands over it with nothing refused.
  *
  * **The check fires on an increase, not on a state.** A row can already be
- * over this bound: the bulk doors write tags through paths that do not
- * consult it, so such rows exist. Refusing every write to one would strand
- * it — a merge carrying no tags at all, which changes nothing, would answer
- * 400 and tell the caller about a limit they had not approached. So a write
- * is refused when it is over the bound *and* larger than what the row already
- * held, which leaves a legacy row writable downward and a no-op a no-op.
+ * over this bound. Two ways: rows written through the bulk doors before those
+ * consulted it at all, and `items.create`, which writes tags verbatim and
+ * stays that way because it is also the archive restore's writer — an archive
+ * is a faithful record of rows written before this rule existed, so bounding
+ * that writer makes them unrestorable. Refusing every write to such a row
+ * would strand it: a merge carrying no tags at all, which changes nothing,
+ * would answer 400 and tell the caller about a limit they had not approached.
+ * So a write is refused when it is over the bound *and* larger than what the
+ * row already held, which leaves a legacy row writable downward and a no-op a
+ * no-op.
+ *
+ * **Where each layer counts.** The merging writers count a deduplicated set
+ * and the wholesale replace counts the array as sent, because each counts what
+ * it writes. The doors count the array as sent for the same reason: that is
+ * the request they are answering about.
  */
 
 /**
- * Largest number of distinct tags one item may hold.
+ * Largest number of tags one item may hold.
  *
- * Counted on the deduplicated set, because that is what the store writes.
+ * Counted on what the writer in hand will actually store — see the note above
+ * on where each layer counts.
  */
 export const MAX_TAGS_PER_ITEM = 100;

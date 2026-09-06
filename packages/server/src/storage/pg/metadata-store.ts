@@ -184,6 +184,35 @@ export class PgMetadataStore implements MetadataStore {
 
   async set(itemId: string, tags: string[]): Promise<Metadata> {
     await this.db.transaction(async (tx) => {
+      // The item row first, then the sidecar, in the order every other
+      // writer here takes them. `set` used to need neither lock because it
+      // read nothing; it reads the current set now, and taking the sidecar
+      // alone would invert the order `merge` and `removeTag` hold.
+      await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(eq(items.id, itemId))
+        .for("update");
+      const [row] = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .for("update");
+      const current = row ? rowToMetadata(row).tags : [];
+      // Counted on the array as sent rather than on a projection of it,
+      // because this writer stores it verbatim: what the row will hold is
+      // exactly what arrived. The merging writers count a deduplicated set
+      // for the same reason — each counts what it writes.
+      if (tags.length > MAX_TAGS_PER_ITEM && tags.length > current.length) {
+        // The wholesale replace answers to the same bound as the merging
+        // writers, and on the same read the write uses. Fires on an increase
+        // only, so a row already over the bound stays rewritable downward —
+        // see MAX_TAGS_PER_ITEM.
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
+        );
+      }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(tags) });
     });
     return this.get(itemId);

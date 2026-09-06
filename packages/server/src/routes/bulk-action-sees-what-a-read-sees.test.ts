@@ -234,3 +234,68 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     expect(asPlatform).toContain(deviceId);
   });
 });
+
+/**
+ * The other half of "matches what a read matches": the state axis.
+ *
+ * `GET /items` documents what an omitted `state` means, and the bulk-action
+ * filter did not — it declared a bare enum of the four states with no word
+ * about the absent value. The device resolves that filter locally at enqueue
+ * and the server resolves it again on replay, so two defaults that differed
+ * would act on different sets, and neither the specification nor a test could
+ * say whether they did.
+ *
+ * They agree, and the agreement is structural rather than a coincidence of two
+ * literals: both doors hand `state` to the same item query and neither sets the
+ * widening flag, so the store's own default applies to both. Pinned here so a
+ * later change to either one has to answer for it.
+ */
+describe("the bulk-action door and the list read agree about an omitted state", () => {
+  it("excludes trashed rows on both doors when no state is named", async () => {
+    const marker = Math.random().toString(36).slice(2, 8);
+    const live = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        properties: { body: `state-${marker}` },
+        tags: [marker],
+      },
+    });
+    expect(live.status).toBe(201);
+    const binned = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "core.note",
+        state: "trashed",
+        properties: { body: `state-binned-${marker}` },
+        tags: [marker],
+      },
+    });
+    expect(binned.status).toBe(201);
+    const { item: liveItem } = (await live.json()) as { item: { id: string } };
+    const { item: binnedItem } = (await binned.json()) as {
+      item: { id: string };
+    };
+
+    // The bulk-action door, naming no state.
+    const acted = await matchedIds({ tags: [marker] });
+    expect(acted).toContain(liveItem.id);
+    expect(acted).not.toContain(binnedItem.id);
+
+    // The list read, same filter, same omission. Both halves asserted, so
+    // this cannot pass on a pair that agree by both matching nothing.
+    const list = await request(ctx.app, "GET", `/items?tags=${marker}`, {
+      key: ctx.adminKey,
+    });
+    expect(list.status).toBe(200);
+    const listed = ((await list.json()) as { data: { id: string }[] }).data.map(
+      (i) => i.id,
+    );
+    expect(listed).toContain(liveItem.id);
+    expect(listed).not.toContain(binnedItem.id);
+
+    // And the same two ids come back on both doors, which is the property the
+    // device's local resolve depends on.
+    expect(acted.slice().sort()).toEqual(listed.slice().sort());
+  });
+});

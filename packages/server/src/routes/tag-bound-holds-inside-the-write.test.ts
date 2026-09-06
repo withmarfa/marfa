@@ -133,15 +133,21 @@ describe("the tag bound is enforced where the tags are written", () => {
     );
   });
 
-  // A row can already be over the bound, because the bulk doors write tags
-  // through paths that do not consult it. Refusing every write to one would
-  // strand it: a merge carrying nothing, which changes nothing, would answer
-  // 400 about a limit the caller never approached.
+  // A row can already be over the bound: rows were written through the bulk
+  // doors before those consulted it, and `items.create` still writes tags
+  // verbatim so an archive of such rows stays restorable. Refusing every write
+  // to one would strand it — a merge carrying nothing, which changes nothing,
+  // would answer 400 about a limit the caller never approached.
   it("leaves a row that is already over the bound writable", async () => {
-    const id = await createNote("already over");
-    // Through `set`, the wholesale-replace writer, which carries no bound of
-    // its own — the same way a real row gets over it.
-    await ctx.storage.metadata.set(id, tags("legacy", MAX_TAGS_PER_ITEM + 20));
+    // Through `items.create`, the one writer that is deliberately unbounded,
+    // which is now the only way such a row can come about — the same way an
+    // archive restore produces one.
+    const created = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "already over" },
+      tags: tags("legacy", MAX_TAGS_PER_ITEM + 20),
+    });
+    const id = created.id;
 
     const unchanged = await ctx.storage.metadata.merge(id, undefined);
     expect(unchanged.tags.length).toBeGreaterThan(MAX_TAGS_PER_ITEM);
@@ -168,5 +174,97 @@ describe("the tag bound is enforced where the tags are written", () => {
 
     const after = await ctx.storage.metadata.get(id);
     expect(after.tags).toHaveLength(0);
+  });
+});
+
+/**
+ * The doors that reach those writers, and the three that consulted the bound
+ * at neither layer.
+ *
+ * The bulk create arm writes tags through `items.create`, which is also the
+ * archive restore's writer and must stay unbounded — an archive is a faithful
+ * record of rows written before this rule existed, so tightening the store
+ * makes those unrestorable. The bound therefore belongs on the route, which is
+ * where the single-item create already puts it.
+ *
+ * The bulk update arm writes through `set`, the wholesale replace, which had
+ * no check of its own; it does now, so the bound holds wherever that writer is
+ * reached rather than only at the doors that remember.
+ *
+ * The bulk action's `add` array is the third question — what a caller may
+ * *send* — which the store cannot answer, because a hundred and one copies of
+ * one tag projects to one.
+ */
+describe("the bulk doors bound the tags they write", () => {
+  it("refuses a bulk create over the bound, and writes nothing", async () => {
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            type: "core.note",
+            properties: { body: "bulk create over the bound" },
+            tags: tags("bulkcreate", MAX_TAGS_PER_ITEM + 1),
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(JSON.stringify(body)).toContain(String(MAX_TAGS_PER_ITEM));
+
+    // Nothing landed. Keyed on a tag the refused entry carried, so a row
+    // written in spite of the refusal is exactly what this finds.
+    const after = await request(ctx.app, "GET", "/items?tags=bulkcreate-0", {
+      key: ctx.adminKey,
+    });
+    expect(after.status).toBe(200);
+    const listed = (await after.json()) as { data: unknown[] };
+    expect(listed.data).toHaveLength(0);
+  });
+
+  it("refuses a bulk update over the bound, and leaves the row as it was", async () => {
+    const id = await createNote("bulk update over the bound");
+    await ctx.storage.metadata.set(id, ["kept"]);
+
+    const res = await request(ctx.app, "POST", "/items/bulk", {
+      key: ctx.adminKey,
+      body: {
+        items: [
+          {
+            id,
+            type: "core.note",
+            tags: tags("bulkupdate", MAX_TAGS_PER_ITEM + 1),
+          },
+        ],
+      },
+    });
+    expect(res.status).toBe(400);
+
+    const after = await ctx.storage.metadata.get(id);
+    expect(after.tags).toEqual(["kept"]);
+  });
+
+  it("refuses a bulk action adding more tags than the bound", async () => {
+    const id = await createNote("bulk action over the bound");
+    await ctx.storage.metadata.set(id, ["selector"]);
+
+    const res = await request(ctx.app, "POST", "/items/bulk-actions", {
+      key: ctx.adminKey,
+      body: {
+        action: "update_tags",
+        filter: { tags: ["selector"] },
+        add: tags("bulkaction", MAX_TAGS_PER_ITEM + 1),
+      },
+    });
+    // Refused at the door rather than queued: the store would reject the
+    // write per row anyway, so accepting the request only defers a refusal
+    // the caller then has to read out of a job's error list.
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain(String(MAX_TAGS_PER_ITEM));
+
+    const after = await ctx.storage.metadata.get(id);
+    expect(after.tags).toEqual(["selector"]);
   });
 });

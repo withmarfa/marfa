@@ -33,6 +33,7 @@ import {
   connectionLeasedTokens,
   connectionOauthTokens,
   edges,
+  eventLog,
   inboundWebhooks,
   inboundWebhookEvents,
   items,
@@ -108,6 +109,11 @@ export async function sqlitePurgeSpaceScopedRows(
     .delete(customEdgeTypes)
     .where(eq(customEdgeTypes.space_id, spaceId))
     .run();
+  // The space's own event stream. The PG copy carries the reasoning: the
+  // retention sweep would age these out anyway, so the argument is the shape
+  // of the list rather than a leak, and instance-wide rows carry a NULL
+  // `space_id` that no equality matches.
+  await tx.delete(eventLog).where(eq(eventLog.space_id, spaceId)).run();
 }
 
 /**

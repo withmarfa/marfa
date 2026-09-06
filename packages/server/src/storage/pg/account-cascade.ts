@@ -43,7 +43,8 @@
  *      versions via FK; on Postgres the search vector is a column on the
  *      row, so deleting the row is the whole of that cleanup).
  *   5. Space-scoped blob rows.
- *   6. `api_keys` + outbound/inbound webhooks + `space_quotas`.
+ *   6. `api_keys` + outbound/inbound webhooks + `space_quotas`, the
+ *      space's own type vocabulary, and its `event_log` rows.
  *   7. `auth_verification` rows referencing this user (the cancel
  *      token + any in-flight reset/verify tokens — all keyed by
  *      `value = authUserId`).
@@ -98,6 +99,7 @@ import {
   connectionLeasedTokens,
   connectionOauthTokens,
   edges,
+  eventLog,
   inboundWebhooks,
   inboundWebhookEvents,
   items,
@@ -197,6 +199,15 @@ export async function pgPurgeSpaceScopedRows(
   // by a space deletion.
   await tx.delete(customTypes).where(eq(customTypes.space_id, spaceId));
   await tx.delete(customEdgeTypes).where(eq(customEdgeTypes.space_id, spaceId));
+  // The space's own event stream. The retention sweep ages these rows out on
+  // its own, so stranding them leaked nothing permanently — but this list is
+  // otherwise exhaustive, and one table missing from it reads as an oversight
+  // to whoever extends it next. A hole already in the list is what makes the
+  // next space-scoped table likelier to be missed too.
+  //
+  // Instance-wide rows carry a NULL `space_id`, which no equality matches, so
+  // a space deletion cannot reach them.
+  await tx.delete(eventLog).where(eq(eventLog.space_id, spaceId));
 }
 
 /**

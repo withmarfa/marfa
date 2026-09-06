@@ -188,6 +188,26 @@ export class SqliteMetadataStore implements MetadataStore {
 
   async set(itemId: string, tags: string[]): Promise<Metadata> {
     await this.db.transaction(async (tx) => {
+      const row = await tx
+        .select()
+        .from(metadata)
+        .where(eq(metadata.item_id, itemId))
+        .get();
+      const current = row ? rowToMetadata(row).tags : [];
+      // Counted on the array as sent rather than on a projection of it,
+      // because this writer stores it verbatim: what the row will hold is
+      // exactly what arrived. The merging writers count a deduplicated set
+      // for the same reason — each counts what it writes.
+      if (tags.length > MAX_TAGS_PER_ITEM && tags.length > current.length) {
+        // The wholesale replace answers to the same bound as the merging
+        // writers, and on the same read the write uses. Fires on an increase
+        // only, so a row already over the bound stays rewritable downward —
+        // see MAX_TAGS_PER_ITEM.
+        throw new MarfaError(
+          ErrorCode.VALIDATION_ERROR,
+          `Maximum ${String(MAX_TAGS_PER_ITEM)} tags per item (including existing tags)`,
+        );
+      }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(tags) });
     });
     return this.get(itemId);
