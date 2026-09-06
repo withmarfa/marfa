@@ -12,10 +12,10 @@
  * Plain Node and ESM, running inside the runtime image where there is no
  * tsx and no monorepo, so everything it needs must resolve from the
  * image's own filesystem. Beyond node: builtins that means one sibling
- * module, `@withmarfa/shared` through it, and two of the server's own
- * built entries, `dist/load-manifests.js` and `dist/client-manifests.js`.
- * All of them are there because the deploy prune keeps the server's
- * production dependencies and the build emits those entries by name.
+ * module, `@withmarfa/shared` itself, and two of the server's own built
+ * entries, `dist/load-manifests.js` and `dist/client-manifests.js`. All of
+ * them are there because the deploy prune keeps the server's production
+ * dependencies and the build emits those entries by name.
  *
  * Six checks, in order:
  *
@@ -70,6 +70,22 @@
  *      failure it cannot catch is the one where the two opinions differ,
  *      which is exactly the case that reaches production.
  *
+ *      Then the authoring rules, which the loader deliberately does not
+ *      run. `validateManifestCoherence` is the half every stored row
+ *      already satisfies, and it is all a resolution may enforce, because
+ *      that runs against a connection's persisted manifest and a
+ *      credential mint fails closed. `validateManifestAuthoring` is the
+ *      converse — a field with nothing to say is absent — and this is one
+ *      of the doors a manifest is written behind, along with
+ *      `POST /integrations` and the integrations repository's own suite.
+ *      Neither of those can reach what a pin ships, and this can.
+ *
+ *      **It could not join earlier, and the ordering is the whole
+ *      reason.** On the pin before this one every staged manifest declared
+ *      something it had nothing to say about, so holding the build to the
+ *      rule would have failed it on manifests the deployment was still
+ *      meant to ship. The rule arrives with the pin that satisfies it.
+ *
  *   5. The client manifests resolve from the image. A client's code runs
  *      on the user's machine, so nothing about it is installed into the
  *      integrations root and checks 1 and 2 cannot see it: its manifest is
@@ -114,6 +130,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createServer } from "node:http";
 import { Worker } from "node:worker_threads";
 import { readInstalledIntegrations } from "./read-installed-integrations.mjs";
+import { validateManifestAuthoring } from "@withmarfa/shared";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const INTEGRATIONS_ROOT =
@@ -566,8 +583,37 @@ if (misfiled.length > 0) {
   );
 }
 
+// A manifest declaring what it has no honest value for: a webhook
+// verification method with no webhook trigger, bidirectional handling on a
+// direction with one side, an empty requirement record. The loader will not
+// refuse any of these and must not — it runs against a connection's stored
+// manifest on every resolution, where a rule the stored rows do not already
+// meet is an outage rather than a validation change. Here there is no
+// stored row, only what the pin ships, so the converse rules apply.
+//
+// Imported from `@withmarfa/shared` rather than restated. The integrations
+// repository holds the same rule at the same function, and a second copy
+// here would agree with it by attention.
+const dishonest = loaded.manifests
+  .map((entry) => ({
+    name: entry.name,
+    issues: validateManifestAuthoring(entry.manifest),
+  }))
+  .filter((entry) => entry.issues.length > 0);
+if (dishonest.length > 0) {
+  fail(
+    `staged while declaring what it has no honest value for: ` +
+      dishonest
+        .map((entry) => `${entry.name} (${entry.issues.join("; ")})`)
+        .join(", ") +
+      `. A required field with no honest value gets filled with a ` +
+      `convention, and a convention in a manifest reads as a fact.`,
+  );
+}
+
 info(
-  `all ${String(loaded.manifests.length)} staged manifests load and validate`,
+  `all ${String(loaded.manifests.length)} staged manifests load and validate, ` +
+    `and declare only what is true of them`,
 );
 
 // The three fields the server's own catalog loader requires before it will
