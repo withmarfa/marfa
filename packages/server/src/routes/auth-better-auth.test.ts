@@ -536,8 +536,9 @@ describe("better-auth /auth/* surface", () => {
   it("discovery doc advertises none for revocation and not for introspection", async () => {
     // Every client this server issues is public and revokes with its
     // `client_id` alone, which the revocation endpoint admits. Introspection
-    // requires a secret in the plugin, so it keeps the two secret methods
-    // and a public client reading the document is not told it can call it.
+    // requires a secret in the plugin, so it keeps the confidential methods
+    // alone and a public client reading the document is not told it can
+    // call it.
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(
       ctx.app,

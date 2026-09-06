@@ -41,9 +41,6 @@ const UNIVERSAL = [
   "X-RateLimit-Reset",
 ];
 
-/** Published at a path the server does not mount, so nothing is true of it. */
-const UNSERVED = new Set(["POST /oauth2/register"]);
-
 /** Statuses an idempotency claim gives back rather than records. */
 const RELEASED = new Set([401, 403]);
 
@@ -107,7 +104,6 @@ describe("the published spec declares the headers the server sets", () => {
   it("declares the always-on headers on every response", () => {
     const missing: string[] = [];
     for (const [key, responses] of operations) {
-      if (UNSERVED.has(key)) continue;
       for (const [status, response] of Object.entries(responses)) {
         for (const name of UNIVERSAL) {
           if (!(name in (response.headers ?? {}))) {
@@ -132,7 +128,6 @@ describe("the published spec declares the headers the server sets", () => {
     const KNOWN_UNSTAMPED = new Set<string>([]);
     const wrong: string[] = [];
     for (const [key, responses] of operations) {
-      if (UNSERVED.has(key)) continue;
       for (const [status, response] of Object.entries(responses)) {
         const declared = "X-Error-Code" in (response.headers ?? {});
         const isError =
@@ -150,7 +145,6 @@ describe("the published spec declares the headers the server sets", () => {
     const wrong: string[] = [];
     let refusals = 0;
     for (const [key, responses] of operations) {
-      if (UNSERVED.has(key)) continue;
       for (const [status, response] of Object.entries(responses)) {
         const declared = "Retry-After" in (response.headers ?? {});
         if (status === "429") refusals += 1;
@@ -161,9 +155,9 @@ describe("the published spec declares the headers the server sets", () => {
     }
     // Every served operation is behind the limiter, so every one answers
     // 429 — a count of zero would mean the refusal stopped being declared
-    // and every assertion above passed by having nothing to check. The
-    // published-but-unserved path carries nothing at all, deliberately.
-    expect(refusals).toBe(operations.size - UNSERVED.size);
+    // and every assertion above passed by having nothing to check. Every
+    // published operation is served, so every one carries the refusal.
+    expect(refusals).toBe(operations.size);
     expect(wrong.sort()).toEqual([]);
   });
 
