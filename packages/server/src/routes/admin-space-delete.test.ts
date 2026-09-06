@@ -19,6 +19,7 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { initEventLog, __resetCycleDetectionForTests } from "../pubsub.js";
 
 const ORIGIN = "http://localhost:0";
 
@@ -140,6 +141,59 @@ describe("POST /admin/spaces/:id/delete", () => {
 
     expect(await ctx.storage.types.listCustom(spaceId)).toEqual([]);
     expect(await ctx.storage.edgeTypes.list(spaceId)).toEqual([]);
+  });
+
+  it("takes the space's event-log rows with it", async () => {
+    // The one space-scoped table the sweep did not name, in both dialects.
+    // The retention sweep ages the rows out eventually, so nothing leaked
+    // permanently — but a teardown that is exhaustive except for one table
+    // reads as an oversight to whoever extends it next, and the hole is what
+    // makes the next table likelier to be missed too.
+    ctx = await createTestContext();
+    const spaceId = await seedAccountlessSpace(ctx);
+    const keyRes = await request(
+      ctx.app,
+      "POST",
+      `/admin/spaces/${spaceId}/keys`,
+      {
+        key: ctx.adminKey,
+        body: { label: "events", source: "events", role: "space_admin" },
+      },
+    );
+    expect(keyRes.status).toBe(201);
+    const spaceKey = ((await keyRes.json()) as { key: string }).key;
+
+    // Persistence is wired at server startup, which a test context does not
+    // do, so the rows a real deployment writes have to be switched on here.
+    // Detached again afterwards: the wiring is module state, and leaving it
+    // bound to this context would follow every test after it in this file.
+    initEventLog(ctx.storage.eventLog);
+    try {
+      // A write through the routes, because that is what appends an
+      // event-log row; a hand-written row would test a fiction of it.
+      const itemRes = await request(ctx.app, "POST", "/items", {
+        key: spaceKey,
+        body: { type: "core.note", properties: { body: "announced" } },
+      });
+      expect(itemRes.status).toBe(201);
+
+      // Present before, or the assertion after proves nothing.
+      expect(
+        (await ctx.storage.eventLog.getAfter(0n, 100, spaceId)).length,
+      ).toBeGreaterThan(0);
+
+      const res = await request(
+        ctx.app,
+        "POST",
+        `/admin/spaces/${spaceId}/delete`,
+        { key: ctx.adminKey, body: { confirm: spaceId } },
+      );
+      expect(res.status).toBe(200);
+
+      expect(await ctx.storage.eventLog.getAfter(0n, 100, spaceId)).toEqual([]);
+    } finally {
+      __resetCycleDetectionForTests();
+    }
   });
 
   it("deletes the space and everything scoped to it", async () => {
