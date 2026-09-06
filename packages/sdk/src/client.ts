@@ -58,6 +58,7 @@ import {
 } from "./conflict.js";
 import { pollUntilTerminal } from "./poll.js";
 import { paginate } from "./pagination.js";
+import { path } from "./path.js";
 import {
   subscribeToEvents,
   type SubscribeOptions,
@@ -297,6 +298,19 @@ export interface SearchFilters {
   tags?: string[];
   filter?: string;
   limit?: number;
+  /**
+   * Comma-separated opt-in inclusions, the same parameter `ListFilters` takes.
+   *
+   * `system` widens the row set to reserved-namespace items, which search
+   * excludes by default. It is the only token this route reads, and a `type`
+   * filter inside the `system.` namespace opts in without it.
+   *
+   * Declared here because the route has always read it and this type has never
+   * offered it, so no caller could reach those rows through search while the
+   * sibling listing could. The value already travelled -- `search` spreads its
+   * filters straight into the query -- so the gap was the declaration alone.
+   */
+  include?: string;
 }
 
 export interface MetadataInput {
@@ -1054,7 +1068,7 @@ export class MarfaClient {
     get: async (id: string): Promise<Item> => {
       const res = await this.transport.request<{ item: Item }>(
         "GET",
-        `/items/${id}`,
+        path`/items/${id}`,
       );
       return res.item;
     },
@@ -1084,7 +1098,7 @@ export class MarfaClient {
       const include = opts?.include?.length
         ? opts.include.join(",")
         : undefined;
-      return this.transport.request<ItemDetail>("GET", `/items/${id}`, {
+      return this.transport.request<ItemDetail>("GET", path`/items/${id}`, {
         ...(include ? { query: { include } } : {}),
       });
     },
@@ -1245,7 +1259,7 @@ export class MarfaClient {
       id: string,
       options?: IdempotentWriteOptions,
     ): Promise<void> => {
-      await this.transport.request<undefined>("DELETE", `/items/${id}`, {
+      await this.transport.request<undefined>("DELETE", path`/items/${id}`, {
         ...(options?.idempotencyKey !== undefined && {
           idempotencyKey: options.idempotencyKey,
         }),
@@ -1257,14 +1271,14 @@ export class MarfaClient {
     purge: async (id: string): Promise<void> => {
       await this.transport.request<{ ok: true }>(
         "DELETE",
-        `/items/${id}/purge`,
+        path`/items/${id}/purge`,
       );
     },
 
     restore: async (id: string): Promise<Item> => {
       const res = await this.transport.request<{ item: Item }>(
         "POST",
-        `/items/${id}/restore`,
+        path`/items/${id}/restore`,
       );
       return res.item;
     },
@@ -1272,7 +1286,7 @@ export class MarfaClient {
     transition: async (id: string, state: string): Promise<Item> => {
       const res = await this.transport.request<{ item: Item }>(
         "POST",
-        `/items/${id}/transition`,
+        path`/items/${id}/transition`,
         { body: { state } },
       );
       return res.item;
@@ -1281,7 +1295,7 @@ export class MarfaClient {
     versions: async (id: string): Promise<Version[]> => {
       const res = await this.transport.request<{ versions: Version[] }>(
         "GET",
-        `/items/${id}/versions`,
+        path`/items/${id}/versions`,
       );
       return res.versions;
     },
@@ -1589,7 +1603,7 @@ export class MarfaClient {
     ): Promise<BulkActionJob> =>
       this.transport.request<BulkActionJob>(
         "GET",
-        `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}`,
+        path`/items/bulk-actions/jobs/${jobId}`,
         { timeoutMs: options?.timeoutMs },
       ),
 
@@ -1598,7 +1612,7 @@ export class MarfaClient {
     bulkActionCancel: (jobId: string): Promise<BulkActionJob> =>
       this.transport.request<BulkActionJob>(
         "DELETE",
-        `/items/bulk-actions/jobs/${encodeURIComponent(jobId)}`,
+        path`/items/bulk-actions/jobs/${jobId}`,
       ),
 
     /** Outbound edges from this item. Shortcut for edges.listFromSource. */
@@ -1628,7 +1642,7 @@ export class MarfaClient {
     get: async (itemId: string): Promise<Metadata> => {
       const res = await this.transport.request<{ metadata: Metadata }>(
         "GET",
-        `/items/${itemId}/metadata`,
+        path`/items/${itemId}/metadata`,
       );
       return res.metadata;
     },
@@ -1636,7 +1650,7 @@ export class MarfaClient {
     set: async (itemId: string, input: MetadataInput): Promise<Metadata> => {
       const res = await this.transport.request<{ metadata: Metadata }>(
         "PUT",
-        `/items/${itemId}/metadata`,
+        path`/items/${itemId}/metadata`,
         { body: input },
       );
       return res.metadata;
@@ -1648,7 +1662,7 @@ export class MarfaClient {
     ): Promise<Metadata> => {
       const res = await this.transport.request<{ metadata: Metadata }>(
         "PATCH",
-        `/items/${itemId}/metadata`,
+        path`/items/${itemId}/metadata`,
         { body: input },
       );
       return res.metadata;
@@ -1657,7 +1671,7 @@ export class MarfaClient {
     addTags: async (itemId: string, tags: string[]): Promise<Metadata> => {
       const res = await this.transport.request<{ metadata: Metadata }>(
         "POST",
-        `/items/${itemId}/tags`,
+        path`/items/${itemId}/tags`,
         { body: { tags } },
       );
       return res.metadata;
@@ -1666,7 +1680,7 @@ export class MarfaClient {
     removeTag: async (itemId: string, tag: string): Promise<void> => {
       await this.transport.request<{ metadata: Metadata }>(
         "DELETE",
-        `/items/${itemId}/tags/${encodeURIComponent(tag)}`,
+        path`/items/${itemId}/tags/${tag}`,
       );
     },
 
@@ -1690,15 +1704,12 @@ export class MarfaClient {
         const res = await this.transport.request<{
           namespace: string;
           data: Record<string, unknown> | null;
-        }>(
-          "GET",
-          `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`,
-        );
+        }>("GET", path`/items/${itemId}/extensions/${namespace}`);
         return res.data ? { [namespace]: res.data } : {};
       }
       const res = await this.transport.request<{
         extensions: Record<string, Record<string, unknown>>;
-      }>("GET", `/items/${itemId}/extensions`);
+      }>("GET", path`/items/${itemId}/extensions`);
       return res.extensions;
     },
 
@@ -1709,11 +1720,7 @@ export class MarfaClient {
     ): Promise<Record<string, Record<string, unknown>>> => {
       const res = await this.transport.request<{
         extensions: Record<string, Record<string, unknown>>;
-      }>(
-        "PUT",
-        `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`,
-        { body: data },
-      );
+      }>("PUT", path`/items/${itemId}/extensions/${namespace}`, { body: data });
       return res.extensions;
     },
 
@@ -1723,7 +1730,7 @@ export class MarfaClient {
     ): Promise<void> => {
       await this.transport.request(
         "DELETE",
-        `/items/${itemId}/extensions/${encodeURIComponent(namespace)}`,
+        path`/items/${itemId}/extensions/${namespace}`,
       );
     },
   };
@@ -1828,7 +1835,7 @@ export class MarfaClient {
       // that body worth having — would be discarded on the way out.
       const res = (await this.transport.requestWithConflict<{ edge: Edge }>(
         "PATCH",
-        `/edges/${id}`,
+        path`/edges/${id}`,
         {
           body: {
             properties,
@@ -1859,7 +1866,7 @@ export class MarfaClient {
       id: string,
       options?: IdempotentWriteOptions,
     ): Promise<void> => {
-      await this.transport.request<{ ok: true }>("DELETE", `/edges/${id}`, {
+      await this.transport.request<{ ok: true }>("DELETE", path`/edges/${id}`, {
         ...(options?.idempotencyKey !== undefined && {
           idempotencyKey: options.idempotencyKey,
         }),
@@ -1901,7 +1908,7 @@ export class MarfaClient {
         : filters?.edge_type;
       return this.transport.request<PaginatedResult<Edge>>(
         "GET",
-        `/items/${sourceId}/edges`,
+        path`/items/${sourceId}/edges`,
         {
           query: {
             ...(edgeType && { edge_type: edgeType }),
@@ -1926,7 +1933,7 @@ export class MarfaClient {
         : filters?.edge_type;
       return this.transport.request<PaginatedResult<Edge>>(
         "GET",
-        `/items/${targetId}/backrefs`,
+        path`/items/${targetId}/backrefs`,
         {
           query: {
             ...(edgeType && { edge_type: edgeType }),
@@ -1987,7 +1994,7 @@ export class MarfaClient {
       delete: async (id: string): Promise<void> => {
         await this.transport.request<{ ok: true }>(
           "DELETE",
-          `/edge-types/${id}`,
+          path`/edge-types/${id}`,
         );
       },
     },
@@ -2019,7 +2026,10 @@ export class MarfaClient {
     },
 
     download: async (hash: string): Promise<ArrayBuffer> => {
-      const response = await this.transport.rawRequest("GET", `/blobs/${hash}`);
+      const response = await this.transport.rawRequest(
+        "GET",
+        path`/blobs/${hash}`,
+      );
 
       if (!response.ok) {
         const body: unknown = await response.json();
@@ -2034,7 +2044,7 @@ export class MarfaClient {
       const cleanHash = hash.startsWith("sha256:") ? hash : `sha256:${hash}`;
       const response = await this.transport.rawRequest(
         "HEAD",
-        `/blobs/${cleanHash}`,
+        path`/blobs/${cleanHash}`,
       );
       return response.status === 200;
     },
@@ -2057,7 +2067,7 @@ export class MarfaClient {
     },
 
     get: async (id: string): Promise<TypeSchema> => {
-      return this.transport.request<TypeSchema>("GET", `/types/${id}`);
+      return this.transport.request<TypeSchema>("GET", path`/types/${id}`);
     },
 
     register: async (schema: TypeSchema): Promise<TypeSchema> => {
@@ -2075,7 +2085,7 @@ export class MarfaClient {
     ): Promise<TypeSchema> => {
       const res = await this.transport.request<{ type: TypeSchema }>(
         "PUT",
-        `/types/${id}`,
+        path`/types/${id}`,
         { body: schema },
       );
       return res.type;
@@ -2088,7 +2098,9 @@ export class MarfaClient {
       const query = options?.force ? "?force=true" : "";
       await this.transport.request<{ ok: boolean }>(
         "DELETE",
-        `/types/${id}${query}`,
+        // The query stays outside the tag: it is a suffix, not a segment,
+        // and escaping it would put `?force=true` inside the type name.
+        path`/types/${id}` + query,
       );
     },
   };
@@ -2123,13 +2135,13 @@ export class MarfaClient {
      * immutable after creation and cannot be changed; the server rejects
      * them with a 400. */
     update: async (id: string, input: UpdateKeyInput): Promise<ApiKey> => {
-      return this.transport.request<ApiKey>("PATCH", `/keys/${id}`, {
+      return this.transport.request<ApiKey>("PATCH", path`/keys/${id}`, {
         body: input,
       });
     },
 
     revoke: async (id: string): Promise<void> => {
-      await this.transport.request<undefined>("DELETE", `/keys/${id}`);
+      await this.transport.request<undefined>("DELETE", path`/keys/${id}`);
     },
   };
 
@@ -2151,11 +2163,11 @@ export class MarfaClient {
     },
 
     get: async (id: string): Promise<Webhook> => {
-      return this.transport.request<Webhook>("GET", `/webhooks/${id}`);
+      return this.transport.request<Webhook>("GET", path`/webhooks/${id}`);
     },
 
     update: async (id: string, input: UpdateWebhookInput): Promise<Webhook> => {
-      return this.transport.request<Webhook>("PATCH", `/webhooks/${id}`, {
+      return this.transport.request<Webhook>("PATCH", path`/webhooks/${id}`, {
         body: input,
       });
     },
@@ -2163,7 +2175,7 @@ export class MarfaClient {
     delete: async (id: string): Promise<void> => {
       await this.transport.request<{ ok: boolean }>(
         "DELETE",
-        `/webhooks/${id}`,
+        path`/webhooks/${id}`,
       );
     },
 
@@ -2174,7 +2186,7 @@ export class MarfaClient {
       const query = options?.limit ? { limit: String(options.limit) } : {};
       const res = await this.transport.request<{
         deliveries: WebhookDelivery[];
-      }>("GET", `/webhooks/${id}/deliveries`, { query });
+      }>("GET", path`/webhooks/${id}/deliveries`, { query });
       return res.deliveries;
     },
   };
@@ -2233,7 +2245,7 @@ export class MarfaClient {
     uninstall: async (id: string): Promise<ConnectionUninstallResult> => {
       return this.transport.request<ConnectionUninstallResult>(
         "POST",
-        `/connections/${id}/uninstall`,
+        path`/connections/${id}/uninstall`,
       );
     },
     /**
@@ -2258,7 +2270,7 @@ export class MarfaClient {
     pause: async (id: string): Promise<ConnectionRuntimeStateResult> => {
       return this.transport.request<ConnectionRuntimeStateResult>(
         "POST",
-        `/connections/${id}/pause`,
+        path`/connections/${id}/pause`,
       );
     },
     /**
@@ -2274,7 +2286,7 @@ export class MarfaClient {
     resume: async (id: string): Promise<ConnectionRuntimeStateResult> => {
       return this.transport.request<ConnectionRuntimeStateResult>(
         "POST",
-        `/connections/${id}/resume`,
+        path`/connections/${id}/resume`,
       );
     },
     /**
@@ -2341,7 +2353,7 @@ export class MarfaClient {
       getById: async (spaceId: string): Promise<SpaceQuota> => {
         return this.transport.request<SpaceQuota>(
           "GET",
-          `/spaces/${encodeURIComponent(spaceId)}/quotas`,
+          path`/spaces/${spaceId}/quotas`,
         );
       },
 
@@ -2359,7 +2371,7 @@ export class MarfaClient {
       ): Promise<SpaceQuota> => {
         return this.transport.request<SpaceQuota>(
           "PUT",
-          `/spaces/${encodeURIComponent(spaceId)}/quotas`,
+          path`/spaces/${spaceId}/quotas`,
           { body: input },
         );
       },
@@ -2424,7 +2436,7 @@ export class MarfaClient {
           space: Space;
           quotas: SpaceQuota | null;
           recent_activity: SpaceActivityEntry[];
-        }>("GET", `/admin/spaces/${encodeURIComponent(spaceId)}`);
+        }>("GET", path`/admin/spaces/${spaceId}`);
       },
 
       /**
@@ -2436,7 +2448,7 @@ export class MarfaClient {
       suspend: async (spaceId: string): Promise<Space> => {
         return this.transport.request<Space>(
           "POST",
-          `/admin/spaces/${encodeURIComponent(spaceId)}/suspend`,
+          path`/admin/spaces/${spaceId}/suspend`,
         );
       },
 
@@ -2444,7 +2456,7 @@ export class MarfaClient {
       unsuspend: async (spaceId: string): Promise<Space> => {
         return this.transport.request<Space>(
           "POST",
-          `/admin/spaces/${encodeURIComponent(spaceId)}/unsuspend`,
+          path`/admin/spaces/${spaceId}/unsuspend`,
         );
       },
 
@@ -2455,7 +2467,7 @@ export class MarfaClient {
       metrics: async (spaceId: string): Promise<SpaceMetrics> => {
         return this.transport.request<SpaceMetrics>(
           "GET",
-          `/admin/spaces/${encodeURIComponent(spaceId)}/metrics`,
+          path`/admin/spaces/${spaceId}/metrics`,
         );
       },
     },
@@ -2466,7 +2478,7 @@ export class MarfaClient {
       list: async (spaceId: string): Promise<SpaceApiKeySummary[]> => {
         const res = await this.transport.request<{
           data: SpaceApiKeySummary[];
-        }>("GET", `/admin/spaces/${encodeURIComponent(spaceId)}/keys`);
+        }>("GET", path`/admin/spaces/${spaceId}/keys`);
         return res.data;
       },
 
@@ -2487,7 +2499,7 @@ export class MarfaClient {
       ): Promise<ApiKey & { key: string }> => {
         return this.transport.request<ApiKey & { key: string }>(
           "POST",
-          `/admin/spaces/${encodeURIComponent(spaceId)}/keys`,
+          path`/admin/spaces/${spaceId}/keys`,
           { body: input },
         );
       },
@@ -2552,7 +2564,7 @@ export class MarfaClient {
       remove: async (id: string): Promise<{ removed: true; id: string }> => {
         return this.transport.request<{ removed: true; id: string }>(
           "POST",
-          `/admin/platform-types/${encodeURIComponent(id)}/remove`,
+          path`/admin/platform-types/${id}/remove`,
         );
       },
     },
@@ -2589,7 +2601,7 @@ export class MarfaClient {
       confirmDelete: async (token: string): Promise<void> => {
         const res = await this.transport.rawRequest(
           "GET",
-          `/auth/account/delete/confirm?token=${encodeURIComponent(token)}`,
+          path`/auth/account/delete/confirm?token=${token}`,
         );
         if (!res.ok) {
           throw new Error(

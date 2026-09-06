@@ -1172,7 +1172,7 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     // failure is silent, which is why it is asserted here rather than left
     // to a round trip.
     expect(blobSeam.calls).toEqual([
-      "HEAD /blobs/" + hash,
+      "HEAD /blobs/" + encodeURIComponent(hash),
       "POST /blobs",
       "POST /items",
     ]);
@@ -1206,7 +1206,7 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     // again for a server that already has them, and on a photograph over a
     // phone connection that is the difference the probe is for.
     expect(blobSeam.calls).toEqual([
-      "HEAD /blobs/" + landedHash,
+      "HEAD /blobs/" + encodeURIComponent(landedHash),
       "POST /items",
     ]);
     expect(
@@ -1229,7 +1229,7 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     // one that never re-uploaded would be right above and leave a dangling
     // reference here.
     expect(blobSeam.calls).toEqual([
-      "HEAD /blobs/" + lostHash,
+      "HEAD /blobs/" + encodeURIComponent(lostHash),
       "POST /blobs",
       "POST /items",
     ]);
