@@ -41,9 +41,17 @@ afterEach(() => {
 });
 
 /**
- * The smallest export the verification accepts as a manifest, which is the
- * same three fields the server's catalog loader requires. Writing less than
- * this would make every fixture fail for the wrong reason.
+ * The smallest export the verification accepts as a manifest: the three
+ * fields the server's catalog loader requires, plus one trigger. Writing
+ * less than this would make every fixture fail for the wrong reason.
+ *
+ * The trigger is not decoration. A server-run manifest declaring none is
+ * incoherent and the real loader refuses it, so a fixture without one is
+ * not a smaller version of a staged manifest — it is a manifest that would
+ * never have been staged, and it would fail the authoring check while
+ * standing in for one that could not. A client-run fixture gets none, for
+ * the same reason in reverse: nothing on this side fires a trigger for code
+ * that runs somewhere else.
  *
  * A dispatchable entry also carries the bare kit import a real bundle
  * carries, because a real one always does: registering a handler is the
@@ -57,6 +65,8 @@ function manifestSource(
     kit?: "bare" | "none" | "partial";
     /** Stage a manifest that says its code runs on the user's machine. */
     runsOn?: "server" | "client";
+    /** Extra manifest fields, for the cases about what a manifest says. */
+    extra?: Record<string, unknown>;
   } = {},
 ): string {
   const manifest = `export const manifest = ${JSON.stringify({
@@ -64,6 +74,10 @@ function manifestSource(
     name,
     version: "1.0.0",
     ...(options.runsOn ? { runs_on: options.runsOn } : {}),
+    ...(options.runsOn === "client"
+      ? {}
+      : { triggers: [{ type: "schedule", config: { cron: "*/5 * * * *" } }] }),
+    ...options.extra,
   })};\n`;
   switch (options.kit ?? "none") {
     case "bare":
@@ -161,8 +175,9 @@ function clientManifestsSource(clients: string[]): string {
  * under the integrations root; a name suffixed `!manifest` gets a
  * manifest-only
  * entry, `!empty` gets a directory with nothing built in it, `!bare` gets a
- * handler entry that exports no manifest, and `!bare-manifest` gets a
- * manifest-only entry that exports none.
+ * handler entry that exports no manifest, `!bare-manifest` gets a
+ * manifest-only entry that exports none, and `!dishonest` gets one
+ * declaring a field it has no honest value for.
  *
  * `declared` lines are written verbatim, so a caller can pass a marker or a
  * malformed line as easily as a name.
@@ -243,6 +258,21 @@ function image(options: {
       writeFileSync(
         join(dist, "local.js"),
         'export { manifest } from "./chunk-ABCDEFGH.js";\n',
+      );
+      continue;
+    }
+    if (shape === "dishonest") {
+      // A manifest declaring a webhook verification method with no webhook
+      // trigger: the shape twelve of sixteen manifests carried while the
+      // schema demanded a value from every one of them. It validates, it is
+      // coherent, and it tells a reader this integration verifies
+      // deliveries it can never receive.
+      writeFileSync(
+        join(dist, "local.js"),
+        manifestSource(name ?? raw, {
+          kit: "bare",
+          extra: { webhook_verification: { method: "hmac-sha256" } },
+        }),
       );
       continue;
     }
@@ -454,6 +484,9 @@ describe("the in-image integration verification", () => {
     expect(run.output).toContain("all 2 declared integrations are listed");
     expect(run.output).toContain("runtime kit is external to all 2");
     expect(run.output).toContain("all 2 staged manifests load and validate");
+    // The other half of the authoring check below: a green run here is what
+    // says it refuses a dishonest manifest rather than every manifest.
+    expect(run.output).toContain("declare only what is true of them");
     expect(run.output).toContain("PASSED");
     expect(run.code).toBe(0);
   });
@@ -913,6 +946,34 @@ describe("the in-image integration verification", () => {
     expect(run.code).toBe(1);
     expect(run.output).toContain('declaring runs_on "client"');
     expect(run.output).toContain("acme/alpha");
+  });
+
+  it("fails a manifest declaring a field it has no honest value for", () => {
+    // The authoring rules join the image build with the pin that satisfies
+    // them, and not before: on the previous pin thirteen of the fourteen
+    // staged manifests declared something they had nothing to say about, so
+    // holding the build to the rule would have failed it on manifests the
+    // deployment was still meant to ship.
+    //
+    // Its other half is the whole-image pass at the top of this file, which
+    // asserts the same check reporting green. Without that, a check refusing
+    // everything reads exactly like this one working.
+    // With the dispatch fixture, so the exit code says something: without
+    // it the run would fail check 6 too and a code of 1 would be satisfied
+    // by a check that had never fired.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!dishonest"],
+        fixture: true,
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain("declaring what it has no honest value for");
+    expect(run.output).toContain("acme/alpha");
+    expect(run.output).toContain(
+      "webhook_verification without a webhook trigger",
+    );
   });
 
   it("fails when the catalog loader cannot be loaded at all", () => {

@@ -722,13 +722,13 @@ export function validateManifestCoherence(
  * somebody already installed against, which is the whole reason the split
  * exists.
  *
- * **The image build is not one of those doors yet, and the ordering is the
- * reason.** The manifests a deployment stages are pinned to a commit of
- * `withmarfa/integrations`, and the manifests on the current pin predate
- * this rule — every one of them declares something it has nothing to say
- * about. Holding the image build to the rule before the pin moves would
- * fail the build on manifests the deployment is still meant to ship, so
- * that door arrives with the pin rather than ahead of it.
+ * **The image build is the third door, and it arrived with the pin rather
+ * than ahead of it.** The manifests a deployment stages are pinned to a
+ * commit of `withmarfa/integrations`, and on the pin before the sweep
+ * thirteen of the fourteen staged manifests declared something they had
+ * nothing to say about. Holding the image build to the rule then would
+ * have failed the build on manifests the deployment was still meant to
+ * ship, so the rule and the pin that satisfies it moved together.
  *
  * The boot catalog reconcile is deliberately never on that list. It
  * registers what the image already staged, which may predate a rule, and
