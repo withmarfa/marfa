@@ -729,10 +729,11 @@ async function main() {
   }
 
   // Device codes were written and never swept: pending, denied, approved and
-  // redeemed rows all outlived their expiry indefinitely. Same daily cadence
-  // as the DCR reaper, an hour's grace past expiry, nothing to configure.
-  const deviceCodeCleanupIntervalMs =
-    config.dcrClientCleanupIntervalMs ?? 86_400_000;
+  // redeemed rows all outlived their expiry indefinitely. Daily, with an
+  // hour's grace past expiry, and deliberately not configurable: a code lives
+  // minutes, so the only thing a knob could tune is how long dead rows sit,
+  // and the DCR reaper's own interval is that job's setting, not this one's.
+  const deviceCodeCleanupIntervalMs = 86_400_000;
   const deviceCodeCleaner = new DeviceCodeCleaner(
     storage,
     deviceCodeCleanupIntervalMs,
@@ -1215,6 +1216,7 @@ async function main() {
     dcrClientCleaner?.stop();
     revokedGrantPurger?.stop();
     grantInactivityRetirer?.stop();
+    deviceCodeCleaner.stop();
     runtimeCredentialReaper?.stop();
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();
