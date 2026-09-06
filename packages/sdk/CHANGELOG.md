@@ -27,6 +27,25 @@ than only the first. The option is declared once as the exported
 `items.listAll` is unchanged: it does not hydrate, so it never spent
 `include` and could always be passed `include: "system"` directly.
 
+### A pending edit no longer shows a null the server drops
+
+The local engine's projection replays queued mutations over server state so
+an edit is visible before it has been sent. It merged an update's properties
+plainly, while the server's update door reads a `null` on an optional field
+as "unset" and drops it from the patch. So a null written offline cleared the
+value on screen and left it standing on the server, or added a key the server
+does not hold at all.
+
+Nothing reported the disagreement: the write is accepted, nothing errors, and
+the projection is only overwritten when an inbound event for that item
+arrives — so on a quiet space it could stand indefinitely, with
+`visible.getItem` handing back a field that does not exist server-side.
+
+The projection now calls the same coercion the server's door applies, rather
+than restating the rule. A null on a required field is unaffected: the local
+validator already refuses that write before it is queued, as the server
+refuses it on arrival.
+
 ## 5.1.0
 
 ### A slow status poll no longer reports a failure for a bulk action that is succeeding

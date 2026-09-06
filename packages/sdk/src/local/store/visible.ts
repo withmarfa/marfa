@@ -1,3 +1,4 @@
+import { coerceNullProperties } from "@withmarfa/shared";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { OutboxEntry } from "../types.js";
 import type { OutboxLayer } from "./outbox.js";
@@ -86,6 +87,7 @@ function ghostEdge(entry: OutboxEntry): Edge {
 function applyItemMutation(
   held: Item | undefined,
   entry: OutboxEntry,
+  spaceId: string | null,
 ): Item | undefined {
   switch (entry.kind) {
     case "item.create":
@@ -95,7 +97,21 @@ function applyItemMutation(
       const patch = (entry.payload.properties ?? {}) as Record<string, unknown>;
       return {
         ...held,
-        properties: { ...held.properties, ...patch },
+        // Through the server's own coercion rather than a plain merge,
+        // because this row is a prediction of the one the update will
+        // produce and the door reads a null on an optional field as
+        // "unset". Kept as a stored null it showed a value that was never
+        // written, with nothing to say so: the write is accepted, nothing
+        // errors, and on a quiet space nothing overwrites the projection.
+        //
+        // The shared function rather than the rule spelled out again. A
+        // restated copy is free to drift the moment the field-requiredness
+        // it reads from changes, and it would drift silently — which is the
+        // same failure from the other side.
+        properties: {
+          ...held.properties,
+          ...coerceNullProperties(held.type, patch, spaceId),
+        },
         updated_at: entry.updatedAt,
       };
     }
@@ -129,9 +145,16 @@ function applyEdgeMutation(
   }
 }
 
+/**
+ * @param spaceId The space to resolve types under, in the registry's own
+ * sentinel — `null` on a server with no spaces. A type registered by one
+ * space declares its own required fields, so a space-blind projection would
+ * classify another space's field and coerce the wrong nulls.
+ */
 export function createVisibleLayer(
   server: ServerStateLayer,
   outbox: OutboxLayer,
+  spaceId: string | null,
 ): VisibleLayer {
   const replayItem = async (
     id: string,
@@ -140,7 +163,7 @@ export function createVisibleLayer(
     let held = base;
     for (const entry of await outbox.listForTarget(id)) {
       if (entry.targetKind !== "item") continue;
-      held = applyItemMutation(held, entry);
+      held = applyItemMutation(held, entry, spaceId);
     }
     return held;
   };
@@ -158,7 +181,11 @@ export function createVisibleLayer(
       // hide exactly the writes this client has not sent.
       for (const entry of await outbox.list()) {
         if (entry.targetKind !== "item") continue;
-        const next = applyItemMutation(held.get(entry.targetId), entry);
+        const next = applyItemMutation(
+          held.get(entry.targetId),
+          entry,
+          spaceId,
+        );
         if (next === undefined) held.delete(entry.targetId);
         else if (filters?.type === undefined || next.type === filters.type) {
           held.set(entry.targetId, next);

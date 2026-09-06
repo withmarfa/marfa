@@ -238,7 +238,7 @@ function buildScope(
   const syncState = createSyncStateLayer(exec);
   const cachedTypes = createTypeCacheLayer(exec);
   const blobs = createBlobLayer(exec);
-  const visible = createVisibleLayer(rawServer, rawOutbox);
+  const visible = createVisibleLayer(rawServer, rawOutbox, scope);
   const index = createSearchIndexLayer(exec);
   const search = createSearchLayer({
     index,
