@@ -4,6 +4,8 @@ import {
   buildPublishedOpenAPISpec,
   buildSpecForAuthMode,
 } from "./openapi-published.js";
+import { EXTRA_PATHS } from "./openapi-finalize.js";
+import { createTestContext, request } from "./test-utils.js";
 
 type Operation = Record<string, unknown>;
 type Paths = Record<string, Record<string, Operation>>;
@@ -71,6 +73,32 @@ describe("published OpenAPI spec", () => {
       expect(String(operation?.description), `${key} description`).toContain(
         "AUTH_MODE",
       );
+    }
+  });
+
+  it("serves every hand-declared path at the path it is published under", async () => {
+    // The reflection cannot see these routes, so their paths are typed by
+    // hand, and a typed path is one nothing checks. The registration
+    // operation was published at `/oauth2/register` for months while the
+    // route lived under `/auth`, and a carve-out excused the phantom from
+    // the header declarations rather than correcting it. Anything other
+    // than the router's 404 says the path is served: an unauthenticated
+    // stream request is refused as 401 and a bodyless registration as 400.
+    const ctx = await createTestContext();
+    try {
+      for (const [path, methods] of Object.entries(EXTRA_PATHS)) {
+        for (const method of Object.keys(methods)) {
+          const res = await request(
+            ctx.app,
+            method.toUpperCase(),
+            path.replace(/\{[^}]+\}/g, "x"),
+            { headers: { origin: "http://localhost:0" } },
+          );
+          expect(res.status, `${method.toUpperCase()} ${path}`).not.toBe(404);
+        }
+      }
+    } finally {
+      await ctx.cleanup();
     }
   });
 

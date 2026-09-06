@@ -533,6 +533,29 @@ describe("better-auth /auth/* surface", () => {
     expect(body.code_challenge_methods_supported).toEqual(["S256"]);
   });
 
+  it("discovery doc advertises none for revocation and not for introspection", async () => {
+    // Every client this server issues is public and revokes with its
+    // `client_id` alone, which the revocation endpoint admits. Introspection
+    // requires a secret in the plugin, so it keeps the confidential methods
+    // alone and a public client reading the document is not told it can
+    // call it.
+    ctx = await createTestContext({ authAllowSignup: false });
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/.well-known/oauth-authorization-server/auth",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      revocation_endpoint_auth_methods_supported?: string[];
+      introspection_endpoint_auth_methods_supported?: string[];
+    };
+    expect(body.revocation_endpoint_auth_methods_supported).toContain("none");
+    expect(body.introspection_endpoint_auth_methods_supported).not.toContain(
+      "none",
+    );
+  });
+
   it("discovery doc advertises the device_code grant + device_authorization_endpoint", async () => {
     // RFC 8628 §4: clients discover the device-flow initiation endpoint
     // via the `device_authorization_endpoint` metadata field. The grant

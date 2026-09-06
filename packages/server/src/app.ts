@@ -605,6 +605,22 @@ export function createApp(
       // `${authBaseUrl}/auth/device` (initiation; the polled token
       // exchange happens at `/auth/device/token`).
       payload.device_authorization_endpoint = `${baseURL.replace(/\/+$/, "")}/auth/device`;
+      // RFC 8414 §2: the revocation endpoint admits a public client presenting
+      // its `client_id` alone, which is how every client this server issues
+      // revokes. The plugin advertises only the confidential methods there
+      // (secret in the header, secret in the body, private-key JWT) because
+      // its one override covers introspection as well, where a secret is
+      // required, so `none` is added here and to the revocation list only.
+      // This helper serves the authorization-server document and the OpenID
+      // ones alike, so both carry it. Without it a client reading the
+      // document concludes it cannot revoke, and keeps a grant it meant to
+      // end.
+      const revocationRaw = payload.revocation_endpoint_auth_methods_supported;
+      const revocationMethods = Array.isArray(revocationRaw)
+        ? revocationRaw.filter((m): m is string => typeof m === "string")
+        : [];
+      if (!revocationMethods.includes("none")) revocationMethods.push("none");
+      payload.revocation_endpoint_auth_methods_supported = revocationMethods;
       // Marfa extension: advertise the named permission bundles so clients
       // can render / request the bundled consent without hard-coding the
       // scope grammar. Non-standard field; OIDC/OAuth RPs ignore it.

@@ -391,6 +391,26 @@ describe("renderConsentScreen — re-consent diff", () => {
     expect(html).not.toContain("wants to change what it can access");
   });
 
+  it("says the app is asking to confirm what it already has when nothing is new", () => {
+    // A narrowing, or a fresh decision the provider asked for on a grant
+    // that already covers the request: no New rows, so "a little more" would
+    // be a claim the screen contradicts two lines down.
+    const html = renderConsentScreen({
+      ...PARAMS,
+      priorScopes: [
+        "core.note:read",
+        "core.note:write",
+        "core.task:read",
+        "core.task:write",
+      ],
+    });
+    expect(html).toContain("One more thing");
+    expect(html).toContain("asking you to confirm what it already has");
+    expect(html).not.toContain("asking for a little more");
+    expect(html).not.toContain(">New<");
+    expect(html).toContain(">No longer needed<");
+  });
+
   it("places newly-requested scopes under New and shared scopes under Already allowed", () => {
     const html = renderConsentScreen({
       ...PARAMS,
