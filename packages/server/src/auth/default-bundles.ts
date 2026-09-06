@@ -291,25 +291,28 @@ export function buildDefaultPermissionBundles(
     {
       id: "profile",
       label: "Your profile",
-      // Shown only when the group renders no rows of its own; `summarize`
-      // builds the sentence from the toggles otherwise. It still has to
-      // agree with them, and it did not: it said "name and email" while the
-      // toggles said name, picture and email. `profile` returns `name` and
-      // `picture`, `email` returns the address.
-      description: "Your name, picture and email address.",
-      // **The OIDC literals only, and Category 2's own scopes deliberately
-      // stay out.** This bundle is `default_on`, so adding `profile:read`
-      // here would widen every existing consenting app from the three OIDC
-      // claims to the whole profile surface — bio, timezone and the username
-      // that namespaces published types — silently, on the next approval.
-      //
-      // Category 2 follows the content category's precedent instead:
-      // requestable, and in no shipped bundle, so an application opts in by
-      // name. What this bundle grants is unchanged by that category becoming
-      // enforceable; the two overlap on the reads that `/oauth/userinfo`
-      // answers, and the union that makes them agree is in `oauth-provider.ts`
-      // rather than here.
-      scopes: ["openid", "profile", "email"],
+      // Shown when the group renders no rows of its own, and published as is
+      // in the discovery document beside the scope list, so it has to name
+      // what the four scopes read and nothing less: `profile` returns `name`
+      // and `picture`, `email` the address, and `profile:read` the rest of
+      // the record that `GET /profile/me` answers with. It fell behind the
+      // scopes once before, saying "name and email" beside three of them.
+      description:
+        "Your name, picture, email address, username, bio and timezone.",
+      // **`profile:read` rides with the OIDC literals; `profile:write` stays
+      // opt-in by name.** The read half of the profile category is what an
+      // app needs to show the person to themselves, which is what every app
+      // that asks for `profile` is doing, and the two overlap on the reads
+      // `/oauth/userinfo` answers. Adding it here widens a consenting app from
+      // the three claims to the whole read surface, bio and timezone and the
+      // username that namespaces published types, and does so on the next
+      // approval rather than silently: a standing grant that lacks it meets
+      // the re-consent screen with the new row under "New", ticked, and the
+      // person decides. The write half is administrative authority over the
+      // profile and follows the content category's precedent instead:
+      // requestable, in no shipped bundle, asked for by name and shown
+      // pre-ticked under the fallback bucket when it is.
+      scopes: ["openid", "profile", "email", "profile:read"],
       default_on: true,
     },
   ];

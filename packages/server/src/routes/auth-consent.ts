@@ -1685,7 +1685,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // None of these states that the parent reaches rows added later — that is
   // composed from `isOpenEnded`, which answers true for the bare `profile`
   // form and false for a row, exactly as it does for a wildcard.
-  profile: "Your name, email address and avatar.",
+  profile: "Your name, email address, avatar, username, bio and timezone.",
   "profile.name": "Your name.",
   "profile.email": "Your email address.",
   "profile.avatar": "Your avatar.",

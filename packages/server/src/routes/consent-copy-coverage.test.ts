@@ -402,6 +402,21 @@ describe("the consent copy guard derives the scopes it checks", () => {
     }
   });
 
+  it("describes every pattern of the profile family the allowlist publishes", () => {
+    // The family is read through the description map like the described
+    // kinds, but its root is reserved rather than registered, so the registry
+    // check above has nothing to compare it with and would pass over an
+    // undescribed row. `profile:read` rides in the default bundle, which puts
+    // the bare pattern on the device screen for every client that names no
+    // scope, so the map's sentence is what an ordinary person reads.
+    const profile = distinctPatterns(["profile"]);
+    expect(profile.length).toBeGreaterThan(0);
+    const descriptions = buildScopeDescriptions(profile);
+    for (const scope of profile) {
+      expect(descriptions[scope.typePattern], scope.typePattern).toMatch(/\S/);
+    }
+  });
+
   it("resolves that copy through the screens, not only through the map", () => {
     // The map answering is not the same claim as a person reading it. The
     // renderers each have their own fallback chain between the two, and the

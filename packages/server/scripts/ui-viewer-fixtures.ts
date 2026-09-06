@@ -121,6 +121,9 @@ const CONSENT_SCOPES: ParsedScope[] = [
     oidcScope: "profile",
   },
   { kind: "oidc", typePattern: "email", operation: "none", oidcScope: "email" },
+  // The category read that rides in the profile bundle, so the preview shows
+  // the fourth row the bundle now carries.
+  { kind: "profile", typePattern: "profile", operation: "read" },
 ];
 
 const DEVICE_SCOPES: ParsedScope[] = [
@@ -210,6 +213,8 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   // OIDC literals: `openid` rides along as a hidden field, `profile` is a row.
   "openid",
   "profile",
+  // The profile category's read, which rides in the default profile bundle.
+  "profile:read",
   // Item types, the only kind with a curated toggle label.
   "core.note:read",
   "core.note:write",
@@ -754,7 +759,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
                 id: "grant-3",
                 client_name: "Standup Bot",
                 client_id: "standup-client",
-                scopes: ["openid", "profile", "email"],
+                scopes: ["openid", "profile", "email", "profile:read"],
                 granted_at: "2026-06-02T08:00:00.000Z",
                 last_used_at: "2026-06-19T07:45:00.000Z",
               },
