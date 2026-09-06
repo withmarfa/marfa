@@ -2,16 +2,11 @@ import { createGzip } from "node:zlib";
 import { Readable, PassThrough } from "node:stream";
 import { createRoute, z } from "@hono/zod-openapi";
 import type { Context } from "hono";
-import {
-  MarfaError,
-  ErrorCode,
-  GLOBAL_TYPE_WILDCARD,
-  isValidTypePattern,
-  resolveEnforcement,
-} from "@withmarfa/shared";
+import { MarfaError, ErrorCode, resolveEnforcement } from "@withmarfa/shared";
 import * as tar from "tar-stream";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { assertTypeFilter } from "./_type-filter.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
 import { resolveBlobForSpace } from "../storage/blob-reader.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
@@ -148,7 +143,9 @@ const exportRoute = createRoute({
       type: z
         .string()
         .optional()
-        .describe("Filter to a single type identifier"),
+        .describe(
+          "Filter to a single type identifier, subtypes included. A concrete identifier the space does not know is refused with 400 `unknown_type`.",
+        ),
       state: z
         .string()
         .optional()
@@ -195,7 +192,7 @@ const exportRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema(["validation_error", "unknown_type"]),
         },
       },
       description: "Validation error",
@@ -297,12 +294,9 @@ export function exportRoutes(
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid type identifier",
-      );
-    }
+    // The space resolved once above, as the archive path passes it: a
+    // platform admin exporting another space names that space's types.
+    assertTypeFilter(type, spaceId);
 
     // Same resolution as `GET /items`, sentinel included. Export shares the
     // storage filter with the listing, so a door that could not name every
@@ -465,9 +459,7 @@ async function handleArchiveExport(
   sourceFilter: SourceFilterSettings | undefined,
 ): Promise<Response> {
   const type = c.req.query("type");
-  if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
-    throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
-  }
+  assertTypeFilter(type, spaceId);
   // The NDJSON path's twin, and it has to read the parameter the same way:
   // the two formats are one door with one query schema, so a sentinel
   // honored by one and stripped by the other would be worse than neither.

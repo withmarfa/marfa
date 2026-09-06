@@ -10,8 +10,6 @@ import {
   isValidId,
   isValidTimestamp,
   isValidTypeIdentifier,
-  isValidTypePattern,
-  GLOBAL_TYPE_WILDCARD,
   getTypeSchema,
   getEdgeTypeSchema,
   validateProperties,
@@ -37,6 +35,7 @@ import {
 } from "../storage/merge-properties.js";
 import { log } from "../middleware/logger.js";
 import type { AppEnv } from "../middleware/auth.js";
+import { assertTypeFilter } from "./_type-filter.js";
 import {
   requireAuth,
   requireSpaceAdmin,
@@ -490,7 +489,9 @@ const listItemsRoute = createRoute({
       type: z
         .string()
         .optional()
-        .describe("Type identifier; matches subtypes via inheritance"),
+        .describe(
+          "Type identifier; matches subtypes via inheritance. A concrete identifier the space does not know is refused with 400 `unknown_type`; a wildcard over nothing answers an empty page.",
+        ),
       state: z
         .string()
         .optional()
@@ -600,6 +601,7 @@ const listItemsRoute = createRoute({
           schema: makeErrorResponseSchema([
             "validation_error",
             "missing_required_field",
+            "unknown_type",
           ]),
         },
       },
@@ -2241,18 +2243,9 @@ export function itemRoutes(storage: Storage) {
     }
 
     const type = query.type;
-    // The value compiles into a `LIKE` predicate, so it has to clear the
-    // pattern grammar rather than a bare "ends with `.*`" shape check —
-    // otherwise `%.*` reaches the query as a SQL wildcard. The global `*` is
-    // rejected on top: "everything" is `GET /items` with no type at all, and
-    // a type filter that matches every type would slip past the per-type
-    // enforcement levers keyed off this parameter.
-    if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid type identifier",
-      );
-    }
+    // Grammar, the global wildcard and an unknown concrete type, decided once
+    // for every list surface; the reasoning is at `assertTypeFilter`.
+    assertTypeFilter(type, c.get("apiKey")?.space_id);
 
     // `any` is a widening, not a state, so it never reaches the column
     // comparison. Shared with `GET /export`, which reads the same filter.

@@ -1,14 +1,8 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  MarfaError,
-  ErrorCode,
-  ITEM_STATES,
-  GLOBAL_TYPE_WILDCARD,
-  isValidTypePattern,
-  resolveEnforcement,
-} from "@withmarfa/shared";
+import { ITEM_STATES, resolveEnforcement } from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
+import { assertTypeFilter } from "./_type-filter.js";
 import {
   requireAuth,
   requireTypeAccess,
@@ -56,7 +50,12 @@ const searchRoute = createRoute({
         .string()
         .min(1, "Query parameter 'q' is required")
         .describe("Full-text search query."),
-      type: z.string().describe("Restrict to a single type.").optional(),
+      type: z
+        .string()
+        .describe(
+          "Restrict to a single type, subtypes included. A concrete identifier the space does not know is refused with 400 `unknown_type`.",
+        )
+        .optional(),
       state: z
         .enum(ITEM_STATES as unknown as [string, ...string[]])
         .describe("Filter by lifecycle state.")
@@ -138,7 +137,7 @@ const searchRoute = createRoute({
     400: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
+          schema: makeErrorResponseSchema(["validation_error", "unknown_type"]),
         },
       },
       description:
@@ -189,22 +188,9 @@ export function searchRoutes(storage: Storage) {
       timestamp_before: timestampBefore,
     } = c.req.valid("query");
 
-    // Same grammar as `GET /items?type=`, because the parameter means the
-    // same thing on both: the named type and everything under it. Validating
-    // it as a bare identifier here made the explicit `parent.*` spelling a
-    // 400 on search while it was a subtree read on the listing.
-    //
-    // The value compiles into a `LIKE` predicate, so it has to clear the
-    // pattern grammar rather than an "ends with `.*`" shape check. The global
-    // `*` is rejected on top, matching the listing: "everything" is a search
-    // with no type at all, and a type filter matching every type would slip
-    // past the per-type enforcement levers keyed off this parameter.
-    if (type && (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type))) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid type identifier",
-      );
-    }
+    // Grammar, the global wildcard and an unknown concrete type, decided once
+    // for every list surface; the reasoning is at `assertTypeFilter`.
+    assertTypeFilter(type, c.get("apiKey")?.space_id);
 
     if (type) requireTypeAccess(c, type, "read");
 
