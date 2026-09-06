@@ -162,6 +162,50 @@ describe("performUpgrade", () => {
     expect(after?.properties.triggers).toBeUndefined();
   });
 
+  it("leaves a property written between the read and the write alone", async () => {
+    // The pipeline reads the connection, then does several awaits — a
+    // preview, a lock, a credential sweep — before writing. The dispatch
+    // side writes `runtime_status` on that same row with a merge and no
+    // lock, so anything that lands in that window is concurrent by design
+    // rather than by accident.
+    //
+    // A whole-property-set write from the earlier snapshot silently reverts
+    // it: a token that died mid-upgrade goes back to `healthy` and dispatch
+    // resumes against a credential that no longer works. The write has to
+    // name the keys it means and leave the rest to the row.
+    const s = await scenario({ target_types: ["core.note", "core.bookmark"] });
+    const realGet = ctx.storage.items.get.bind(ctx.storage.items);
+    let injected = false;
+    ctx.storage.items.get = async (id: string, spaceId?: string) => {
+      const item = await realGet(id, spaceId);
+      if (!injected && id === s.connection.id) {
+        injected = true;
+        // The concurrent writer: a merge on one key, which is what the
+        // dispatch side does when an upstream token stops working.
+        await ctx.storage.items.update(
+          s.connection.id,
+          { properties: { runtime_status: "reauth_required" } },
+          undefined,
+        );
+      }
+      return item;
+    };
+
+    try {
+      await performUpgrade(ctx.storage, {
+        ...caller,
+        connectionId: s.connection.id,
+        consentedToWidening: true,
+      });
+    } finally {
+      ctx.storage.items.get = realGet;
+    }
+
+    const after = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(after?.properties.runtime_status).toBe("reauth_required");
+    expect(after?.properties.integration_ref).toBe(s.v2.id);
+  });
+
   it("applies the pinned version rather than the newest registered one", async () => {
     // What the approval route depends on. It checks the candidate against
     // the version a person was shown, then calls this; without the pin the

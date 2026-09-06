@@ -7,12 +7,13 @@
  * takes less than the connection already has.
  */
 import { describe, it, expect } from "vitest";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
+import { IntegrationManifestSchema } from "@withmarfa/shared";
 import { diffManifestGrants, describeGrantDelta } from "./manifest-diff.js";
 
 function manifest(
-  over: Partial<IntegrationManifest> = {},
-): IntegrationManifest {
+  over: Partial<ParsedIntegrationManifest> = {},
+): ParsedIntegrationManifest {
   return {
     name: "acme/thing",
     version: "1.0.0",
@@ -304,22 +305,18 @@ describe("diffManifestGrants — where the code runs", () => {
     expect(delta.runsOn).toEqual({ from: "client", to: "server" });
   });
 
-  it("reads an absent runs_on as server on both sides, so it does not widen", () => {
-    const before = manifest();
-    const after = manifest();
-    delete (before as { runs_on?: unknown }).runs_on;
-    delete (after as { runs_on?: unknown }).runs_on;
-    const delta = diffManifestGrants(before, after);
-    expect(delta.runsOn).toBeUndefined();
-    expect(delta.widens).toBe(false);
-  });
+  it("takes the default from the parse, not from a fallback here", () => {
+    // Post-parse a manifest always carries `runs_on`, so the diff needs no
+    // fallback of its own — and must not grow one, because a second place
+    // deciding what absence means is how the two come to disagree. Parsed
+    // rather than hand-deleted: the state this asserts is the one a reader
+    // downstream of `validateManifest` can actually meet.
+    const withoutField = { ...manifest() } as Record<string, unknown>;
+    delete withoutField.runs_on;
+    const parsed = IntegrationManifestSchema.parse(withoutField);
+    expect(parsed.runs_on).toBe("server");
 
-  it("does not widen when an absent runs_on meets an explicit server", () => {
-    // The default is the same statement as the declaration, so a manifest
-    // that starts spelling it out has not changed what it does.
-    const before = manifest();
-    delete (before as { runs_on?: unknown }).runs_on;
-    const delta = diffManifestGrants(before, manifest({ runs_on: "server" }));
+    const delta = diffManifestGrants(parsed, manifest({ runs_on: "server" }));
     expect(delta.runsOn).toBeUndefined();
     expect(delta.widens).toBe(false);
   });
