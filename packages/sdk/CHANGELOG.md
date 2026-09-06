@@ -1,5 +1,87 @@
 # @withmarfa/sdk
 
+## 5.2.0
+
+### The paging helpers can be asked for `system.*` rows
+
+`include` on the list endpoint is one parameter doing two jobs. Three of its
+tokens hydrate an extra onto the rows already coming back; `system` widens
+which rows those are, opting back in to the reserved namespace a listing omits
+by default. The helpers that hydrate spend the parameter on their own token
+before a caller sees it, so the second job had nowhere to go on any of them
+except `listWithMetadata`.
+
+That left the walk-everything helpers unable to ask for what they exist to
+walk. A caller reaching for `items.listAllWithMetadata` to read everything got
+everything except the reserved namespace, silently — and a client pruning a
+local copy against such a walk deletes every reserved row it holds, because
+they are absent from the read and indistinguishable from rows the server no
+longer has. Two client kits had already lost data to this shape.
+
+`items.listAllWithMetadata`, `items.listWithExtensions` and
+`items.listAllWithExtensions` now take `includeSystemTypes`, matching
+`items.listWithMetadata`, and the walk helpers forward it on every page rather
+than only the first. The option is declared once as the exported
+`SystemTypesOptIn` instead of being restated per helper.
+
+`items.listAll` is unchanged: it does not hydrate, so it never spent
+`include` and could always be passed `include: "system"` directly.
+
+### A pending edit no longer shows a null the server drops
+
+The local engine's projection replays queued mutations over server state so
+an edit is visible before it has been sent. It merged an update's properties
+plainly, while the server's update door reads a `null` on an optional field
+as "unset" and drops it from the patch. So a null written offline cleared the
+value on screen and left it standing on the server, or added a key the server
+does not hold at all.
+
+Nothing reported the disagreement: the write is accepted, nothing errors, and
+the projection is only overwritten when an inbound event for that item
+arrives — so on a quiet space it could stand indefinitely, with
+`visible.getItem` handing back a field that does not exist server-side.
+
+The projection now calls the same coercion the server's door applies, rather
+than restating the rule, on the create door as well as the update. The create
+is the sharper half: an update replays over a row the server holds, so a wrong
+projection is a wrong version of something real, while a created row _is_ the
+projection and a null on it showed a key that had never existed anywhere. A
+null on a required field is unaffected: the local validator already refuses
+that write before it is queued, as the server refuses it on arrival.
+
+### Every request path escapes the segments it interpolates
+
+Request paths were built by plain interpolation, so an identifier carrying a
+`/`, a `?` or a `#` addressed a route the caller did not name — silently, with
+the server answering something plausible for the request it was actually sent.
+Sixteen paths looked encoded and were half encoded, escaping one interpolation
+and not its sibling in the same template.
+
+Every path now goes through one tagged template that escapes each
+interpolation, so the escape is the syntax rather than something each call site
+remembers, and a lint rule refuses an untagged path template in the client.
+
+**One value changes shape on the wire.** A blob hash is a `sha256:<hex>`
+identifier, and the colon is now sent as `%3A` — `GET /blobs/sha256%3A<hex>`
+rather than `GET /blobs/sha256:<hex>`. Both spellings resolve on the Marfa
+server, and the Swift kit already sends the escaped form, so the two clients
+now put the same bytes on the wire for the same identifier. **A proxy, WAF
+rule, CDN cache key or log filter matching the literal `sha256:` in a blob path
+will stop matching.** Every other identifier this package interpolates is a
+UUIDv7, a dotted type id or a hyphenated edge-type id, all of which encode to
+themselves, so no stored idempotency key changes shape.
+
+`blobs.url` is escaped along with the rest, and it is the one that most needed
+it: its return value is not a request this client makes but a URL handed to
+something else to fetch.
+
+### Search can be asked for `system.*` rows
+
+`SearchFilters` declared no `include`, though the search route has always read
+it and the client already spread its filters into the query. So the parameter
+travelled and no caller could name it, leaving search the one read that could
+not reach the reserved namespace its sibling listing could.
+
 ## 5.1.0
 
 ### A slow status poll no longer reports a failure for a bulk action that is succeeding

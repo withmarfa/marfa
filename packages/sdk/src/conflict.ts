@@ -8,6 +8,7 @@ import type {
   Tier,
 } from "@withmarfa/shared";
 import type { HttpTransport } from "./transport.js";
+import { path } from "./path.js";
 import {
   AncestorUnavailableError,
   ConflictError,
@@ -166,7 +167,7 @@ export async function handleConflictUpdate(
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const result = await transport.requestWithConflict<UpdateSuccess>(
       "PATCH",
-      `/items/${itemId}`,
+      path`/items/${itemId}`,
       {
         // `auto` is the whole of the kit's part in resolution: it says who
         // resolves, and the server does the rest. `manual` and `callback`

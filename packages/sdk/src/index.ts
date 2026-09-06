@@ -5,6 +5,7 @@ export type {
   IdempotentWriteOptions,
   UpdateOptions,
   ListFilters,
+  SystemTypesOptIn,
   SearchFilters,
   MetadataInput,
   ItemWithExtensions,

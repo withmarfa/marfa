@@ -1172,7 +1172,7 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     // failure is silent, which is why it is asserted here rather than left
     // to a round trip.
     expect(blobSeam.calls).toEqual([
-      "HEAD /blobs/" + hash,
+      "HEAD /blobs/" + encodeURIComponent(hash),
       "POST /blobs",
       "POST /items",
     ]);
@@ -1206,7 +1206,7 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     // again for a server that already has them, and on a photograph over a
     // phone connection that is the difference the probe is for.
     expect(blobSeam.calls).toEqual([
-      "HEAD /blobs/" + landedHash,
+      "HEAD /blobs/" + encodeURIComponent(landedHash),
       "POST /items",
     ]);
     expect(
@@ -1229,7 +1229,7 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     // one that never re-uploaded would be right above and leave a dangling
     // reference here.
     expect(blobSeam.calls).toEqual([
-      "HEAD /blobs/" + lostHash,
+      "HEAD /blobs/" + encodeURIComponent(lostHash),
       "POST /blobs",
       "POST /items",
     ]);
@@ -1620,5 +1620,127 @@ describe("a term found online (seam: online, then offline)", () => {
     // resolved through visible state rather than served from the index.
     await searchStore.mutations.deleteItem(unsent.id);
     expect(await searchStore.search.find("clarinet")).toEqual([]);
+  });
+});
+
+/**
+ * A null on an optional field, in the window before the write is sent.
+ *
+ * The projection exists so a pending edit is visible before the server has
+ * it, which only works while the row it shows is the row the write will
+ * produce. The server's update door reads a null on an optional field as
+ * "unset" and drops it from the patch, so the key keeps whatever it held and
+ * an untouched key stays absent. A plain merge kept the null instead, so the
+ * projection showed a value cleared that the server never cleared, or a key
+ * present that the server does not hold — and nothing said so: the write is
+ * accepted, nothing errors, and on a quiet space nothing overwrites the
+ * projection until some inbound event happens to arrive.
+ *
+ * Each case pins the pending projection against what the server actually
+ * holds once the same patch reaches it, rather than against a restatement of
+ * the rule here. The two agreeing is the whole property, and an expectation
+ * written out by hand is free to drift the same way a second copy of the
+ * rule would.
+ */
+describe("a null on an optional field (seam: offline, then online)", () => {
+  /** Queue `patch` over a settled row while offline, and report what the
+   *  projection shows before anything is sent. */
+  async function pendingAfter(
+    created: Record<string, unknown>,
+    patch: Record<string, unknown>,
+  ): Promise<{ id: string; pending: Record<string, unknown> }> {
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: created,
+    });
+    // Settled first, so the pending window is a real one: a row the server
+    // holds, and an edit over it that has not left.
+    expect(await drain.drain()).toMatchObject({ sent: 1, remaining: 0 });
+
+    seam.mode = "offline";
+    await store.mutations.updateItem(note.id, patch);
+    const shown = await store.visible.getItem(note.id);
+    if (shown === undefined) throw new Error("the row left the projection");
+    return { id: note.id, pending: shown.properties };
+  }
+
+  /** Send the queued edit and report the row the server ends up holding. */
+  async function settle(id: string): Promise<Record<string, unknown>> {
+    seam.reset();
+    seam.mode = "online";
+    expect(await drain.drain()).toMatchObject({ sent: 1, remaining: 0 });
+    return (await client.items.get(id)).properties;
+  }
+
+  it("leaves the stored value standing, as the server's door leaves it", async () => {
+    const { id, pending } = await pendingAfter(
+      { body: "kept", title: "held" },
+      { title: null },
+    );
+
+    // Not cleared: the null never reaches the merge, so the value the row
+    // already had is the value it keeps.
+    expect(pending.title).toBe("held");
+    expect(pending).toEqual(await settle(id));
+  });
+
+  it("leaves a custom key standing too, which the type treats as optional", async () => {
+    // Unknown properties pass through rather than being refused, so the
+    // coercion has to classify them the way the server does — as optional,
+    // whose null is dropped from the patch.
+    const { id, pending } = await pendingAfter(
+      { body: "kept", scratch: "held" },
+      { scratch: null },
+    );
+
+    expect(pending.scratch).toBe("held");
+    expect(pending).toEqual(await settle(id));
+  });
+
+  it("does not invent a key the row never had", async () => {
+    // The shape an app actually trips over: `visible.getItem` handing back a
+    // field that does not exist server-side, so a read of it succeeds
+    // locally and finds nothing anywhere else.
+    const { id, pending } = await pendingAfter(
+      { body: "kept" },
+      { notes: null },
+    );
+
+    expect(pending).not.toHaveProperty("notes");
+    expect(pending).toEqual(await settle(id));
+  });
+
+  it("drops the same null on the create door, before anything is sent", async () => {
+    // The other door, and the one with nothing underneath it to correct the
+    // answer. An update replays over a held row, so a wrong projection is at
+    // least a wrong version of something real; a create IS the row, so a null
+    // the server's validator strips shows a key that has never existed
+    // anywhere and never will.
+    seam.mode = "offline";
+    const note = await store.mutations.createItem({
+      type: "core.note",
+      properties: { body: "kept", title: null },
+    });
+    const shown = await store.visible.getItem(note.id);
+    if (shown === undefined) throw new Error("the row left the projection");
+
+    // Pinned against the server rather than against a restatement here, the
+    // same way every case above is.
+    expect(shown.properties).not.toHaveProperty("title");
+    expect(note.properties).not.toHaveProperty("title");
+    expect(shown.properties).toEqual(await settle(note.id));
+  });
+
+  it("still applies a value the patch actually sets", async () => {
+    // The guard on the guard: a coercion that dropped too much would pass
+    // every case above by showing the row unchanged.
+    const { id, pending } = await pendingAfter(
+      { body: "kept", title: "before" },
+      { title: "after", notes: null },
+    );
+
+    expect(pending.title).toBe("after");
+    expect(pending).not.toHaveProperty("notes");
+    expect(pending).toEqual(await settle(id));
   });
 });

@@ -1,3 +1,4 @@
+import { coerceNullProperties } from "@withmarfa/shared";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { OutboxEntry } from "../types.js";
 import type { OutboxLayer } from "./outbox.js";
@@ -34,8 +35,15 @@ export interface VisibleLayer {
  * server stamps both, and a client that guessed would produce a row that
  * compares wrongly against the first event to arrive. `source` is empty for
  * the same reason — it comes from the credential, at the server.
+ *
+ * The properties go through the server's own null coercion for the reason
+ * spelled out on the update below, and this is the harder half of it: an
+ * update replays over a row the server holds, so a wrong projection is a
+ * wrong version of something real, while a create *is* the row. A null on an
+ * optional field would show a key that has never existed anywhere, with no
+ * held value underneath to fall back to.
  */
-function ghostItem(entry: OutboxEntry): Item {
+function ghostItem(entry: OutboxEntry, spaceId: string | null): Item {
   const payload = entry.payload as {
     id: string;
     type: string;
@@ -49,7 +57,11 @@ function ghostItem(entry: OutboxEntry): Item {
     id: payload.id,
     type: payload.type,
     state: payload.state ?? "active",
-    properties: payload.properties ?? {},
+    properties: coerceNullProperties(
+      payload.type,
+      payload.properties ?? {},
+      spaceId,
+    ),
     created_at: entry.createdAt,
     updated_at: entry.updatedAt,
     timestamp: payload.timestamp ?? entry.createdAt,
@@ -86,16 +98,31 @@ function ghostEdge(entry: OutboxEntry): Edge {
 function applyItemMutation(
   held: Item | undefined,
   entry: OutboxEntry,
+  spaceId: string | null,
 ): Item | undefined {
   switch (entry.kind) {
     case "item.create":
-      return ghostItem(entry);
+      return ghostItem(entry, spaceId);
     case "item.update": {
       if (held === undefined) return undefined;
       const patch = (entry.payload.properties ?? {}) as Record<string, unknown>;
       return {
         ...held,
-        properties: { ...held.properties, ...patch },
+        // Through the server's own coercion rather than a plain merge,
+        // because this row is a prediction of the one the update will
+        // produce and the door reads a null on an optional field as
+        // "unset". Kept as a stored null it showed a value that was never
+        // written, with nothing to say so: the write is accepted, nothing
+        // errors, and on a quiet space nothing overwrites the projection.
+        //
+        // The shared function rather than the rule spelled out again. A
+        // restated copy is free to drift the moment the field-requiredness
+        // it reads from changes, and it would drift silently — which is the
+        // same failure from the other side.
+        properties: {
+          ...held.properties,
+          ...coerceNullProperties(held.type, patch, spaceId),
+        },
         updated_at: entry.updatedAt,
       };
     }
@@ -129,9 +156,16 @@ function applyEdgeMutation(
   }
 }
 
+/**
+ * @param spaceId The space to resolve types under, in the registry's own
+ * sentinel — `null` on a server with no spaces. A type registered by one
+ * space declares its own required fields, so a space-blind projection would
+ * classify another space's field and coerce the wrong nulls.
+ */
 export function createVisibleLayer(
   server: ServerStateLayer,
   outbox: OutboxLayer,
+  spaceId: string | null,
 ): VisibleLayer {
   const replayItem = async (
     id: string,
@@ -140,7 +174,7 @@ export function createVisibleLayer(
     let held = base;
     for (const entry of await outbox.listForTarget(id)) {
       if (entry.targetKind !== "item") continue;
-      held = applyItemMutation(held, entry);
+      held = applyItemMutation(held, entry, spaceId);
     }
     return held;
   };
@@ -158,7 +192,11 @@ export function createVisibleLayer(
       // hide exactly the writes this client has not sent.
       for (const entry of await outbox.list()) {
         if (entry.targetKind !== "item") continue;
-        const next = applyItemMutation(held.get(entry.targetId), entry);
+        const next = applyItemMutation(
+          held.get(entry.targetId),
+          entry,
+          spaceId,
+        );
         if (next === undefined) held.delete(entry.targetId);
         else if (filters?.type === undefined || next.type === filters.type) {
           held.set(entry.targetId, next);
