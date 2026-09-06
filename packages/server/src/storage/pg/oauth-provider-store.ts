@@ -262,7 +262,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
         AND value::jsonb->'query'->>'client_id' = ${clientId}
       RETURNING id
     `);
-    return (deleted as unknown as { length: number }).length;
+    return deleted.length;
   }
 
   async revokeAuthorizationCodesForGrant(

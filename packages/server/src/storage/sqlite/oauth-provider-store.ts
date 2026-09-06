@@ -292,6 +292,10 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   async revokeAuthorizationCodesForClient(clientId: string): Promise<number> {
+    // No `RETURNING` here, deliberately, where the Postgres twin needs one:
+    // libsql reports zero rows affected for any statement that returns data,
+    // so making the two symmetric would restore the always-zero count in the
+    // direction nothing fails on.
     const result = await this.db.run(sql`
       DELETE FROM auth_verification
       WHERE json_extract(value, '$.type') = 'authorization_code'
