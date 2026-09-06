@@ -70,8 +70,9 @@ import { serverAddedResponseParam } from "./redirect-params.js";
  * matchers + handlers. Mirrors the slice of Better Auth's
  * `HookEndpointContext` we touch — `path` is widened to `string | undefined`
  * to match the library's type (some internal paths leave it unset).
- * `method` is read only on the before side; `authorizeSettings` on both,
- * since the consent-skip audit after the authorize endpoint keys on it.
+ * `method` and `authorizeSettings` are read on both sides: the request
+ * selector consults both, and the consent-skip audit after the authorize
+ * endpoint calls it and keys on `authorizeSettings` directly.
  */
 interface HookCtxLite {
   path?: string;
@@ -797,7 +798,9 @@ export function buildOauthProjectionPlugin(opts: {
  * straight to the callback with a code, and Marfa's route never runs. Every
  * re-authorization by an app whose grant covers what it asks for takes the
  * second path, so the operator trail showed a grant being created once and
- * never used again, while the tokens kept being minted.
+ * never used again, while the tokens kept being minted. "Every" means every
+ * request the plugin's exact-membership check covered; a request covered
+ * only by a pattern fell through to Marfa's page and was audited there.
  *
  * **A request off the wire, that succeeded, without the person asking to be
  * asked.** The plugin re-enters its own authorize endpoint from the consent
@@ -824,9 +827,10 @@ export function buildOauthProjectionPlugin(opts: {
  * Marfa's store resolves it through the same hash the plugin stored it
  * under. That is one read of a row the plugin wrote a moment ago, and it
  * means the audit row names the person the code was minted for rather than
- * whoever the hook guessed. The scopes come from `ctx.query.scope`, which
- * is the value the plugin minted for: the ceiling default when the request
- * named none, and the narrowing hook's rewrite when it dropped literals.
+ * whoever the hook guessed. The scopes come from the request as the plugin
+ * read it, the form body on a POST and the query on a GET, which is the
+ * value the plugin minted for: the ceiling default when the request named
+ * none, and the narrowing hook's rewrite when it dropped literals.
  * Marfa's own skip reads the same post-narrowing value, and deduplicates
  * it, so the two doors write one shape for one request. No request IP: the
  * hook context does not carry one, the same as the client-revoke cascade.
@@ -878,8 +882,10 @@ function auditProviderConsentSkip(
           return;
         }
         // A code minted with no consent row behind it is the plugin's
-        // `skipConsent` path, not a reuse; nothing registers that field
-        // today, so this is the guard for the day something does.
+        // `skipConsent` path, not a reuse. Registration refuses that field
+        // today and the code guard refuses such a code at exchange, so
+        // this is the third fence rather than the first; it costs one read
+        // already made.
         if (!row.hasConsent) return;
         return auditGrantReused(storage, {
           authUserId: row.userId,

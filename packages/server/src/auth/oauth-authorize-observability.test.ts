@@ -460,7 +460,7 @@ describe("the provider's own consent skip is audited", () => {
     const posted = await request(
       c.app,
       "POST",
-      "/auth/oauth2/authorize?scope=forged:scope",
+      `/auth/oauth2/authorize?scope=forged:scope&redirect_uri=${encodeURIComponent(CALLBACK)}`,
       {
         form: Object.fromEntries(
           new URL(authorizeUrl(clientId, scope), "http://localhost")
@@ -477,7 +477,9 @@ describe("the provider's own consent skip is audited", () => {
       () => c.storage.audit.list({ action: "auth.grant.reused", limit: 10 }),
       (r) => r.data.length >= 3,
     );
+    expect(reusedThrice.data.length).toBe(3);
     expect(reusedThrice.data[0]!.details.scopes).toEqual([scope]);
+    expect(reusedThrice.data[0]!.details.scopes).not.toContain("forged:scope");
 
     // The client asked to be asked: the plugin renders consent, so the
     // Location carries no code and the code check alone already answers
