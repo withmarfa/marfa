@@ -86,7 +86,7 @@ export const DISPATCH_FIXTURE_MANIFEST = {
   publisher: "acme",
   description:
     "A fixture integration, installed by nothing. The server image dispatches through it to prove the runtime kit resolves to a single copy inside the image, then drops it.",
-  manifest_schema_version: "2.0.0",
+  manifest_schema_version: "2.2.0",
   direction: "read" as const,
   target_types: ["core.note"] as const,
   triggers: [
@@ -97,7 +97,6 @@ export const DISPATCH_FIXTURE_MANIFEST = {
   ] as const,
   permissions: {
     extension: { "connection.runtime": "write" as const },
-    edge: {},
   },
 };
 

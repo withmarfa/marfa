@@ -72,7 +72,7 @@ Email verification is required. New accounts sign up successfully but `auth_user
 
 Sign-in methods: email + password, passkey + magic link, generic OIDC client / federated, Marfa as IdP via OIDC Provider plugin.
 
-User-app grants are stored as `system.connection` items with `kind: app`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE); the former standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other kind shipped by the Connections build: `integration` (a connected upstream service such as Google Calendar).
+User-app grants are stored as `system.connection` items with `kind: app`. The OAuth tables `oauth_codes` and `oauth_tokens` reference the item via `connection_item_id` (FK to `items.id`, ON DELETE CASCADE); the former standalone `oauth_grants` table is dropped. The same `system.connection` type carries the other kind shipped by the Connections build: `integration`, which is anything installed from a manifest whatever its upstream — a vendor service, a protocol, Marfa's own infrastructure, or nothing outside the space. Where its code runs is the manifest's own `runs_on` field, not an inference from the kind.
 
 The OAuth consent endpoints (`GET/POST /auth/authorize`) gate on the Better Auth session cookie, not admin bearer tokens. End users sign in via `/auth/sign-in` and approve their own grants; an unauthenticated request to `/auth/authorize` redirects to `/auth/sign-in?return_to=<original-url>`. Admin bearer tokens are still required for `/auth/clients` (client registration) and `/auth/tokens` (token management).
 

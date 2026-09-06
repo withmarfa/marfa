@@ -56,16 +56,8 @@ function manifest(name: string) {
     // credential minted for this Connection could write types the member
     // cannot.
     target_types: ["core.note", "core.task"],
-    bidirectional_handling: {
-      echo_ttl_seconds: 60,
-      lag_window_seconds: 60,
-      tombstone_mapping: "state-trashed" as const,
-      partial_write_mode: "all-or-nothing" as const,
-    },
-    oauth_requirements: {},
-    webhook_verification: { method: "hmac-sha256" as const },
     manifest_schema_version: "2.0.0",
-    permissions: { extension: { "acme.cursor": "write" as const }, edge: {} },
+    permissions: { extension: { "acme.cursor": "write" as const } },
   };
 }
 

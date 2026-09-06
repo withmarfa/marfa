@@ -682,14 +682,6 @@ describe("the configuration surface answers a browser session", () => {
       configuration_schema: {
         folder: { type: "string", description: "Folder to read from." },
       },
-      bidirectional_handling: {
-        echo_ttl_seconds: 60,
-        lag_window_seconds: 60,
-        tombstone_mapping: "ignore",
-        partial_write_mode: "accept-partial",
-      },
-      oauth_requirements: {},
-      webhook_verification: { method: "hmac-sha256" },
       manifest_schema_version: "2.0.0",
     };
   }

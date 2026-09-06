@@ -58,13 +58,15 @@
                 },
                 "required": [
                   "cron"
-                ]
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
               "type",
               "config"
-            ]
+            ],
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -76,7 +78,8 @@
             },
             "required": [
               "type"
-            ]
+            ],
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -88,7 +91,8 @@
             },
             "required": [
               "type"
-            ]
+            ],
+            "additionalProperties": false
           },
           {
             "type": "object",
@@ -100,7 +104,8 @@
             },
             "required": [
               "type"
-            ]
+            ],
+            "additionalProperties": false
           }
         ]
       }
@@ -146,7 +151,8 @@
       "required": [
         "tombstone_mapping",
         "partial_write_mode"
-      ]
+      ],
+      "additionalProperties": false
     },
     "oauth_requirements": {
       "type": "object",
@@ -185,7 +191,8 @@
           },
           "required": [
             "method"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -197,7 +204,8 @@
           },
           "required": [
             "method"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -209,7 +217,8 @@
           },
           "required": [
             "method"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -221,7 +230,8 @@
           },
           "required": [
             "method"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -233,7 +243,8 @@
           },
           "required": [
             "method"
-          ]
+          ],
+          "additionalProperties": false
         },
         {
           "type": "object",
@@ -245,7 +256,8 @@
           },
           "required": [
             "method"
-          ]
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -284,7 +296,8 @@
             ]
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "configuration_schema": {
       "type": "object",

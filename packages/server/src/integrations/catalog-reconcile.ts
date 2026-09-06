@@ -177,23 +177,35 @@ export async function reconcileShippedCatalog(
   // Both sides are withheld, not just the loser. Picking one is the thing
   // being refused, and a deployment told which manifest it is missing and
   // why can fix it; a deployment silently running the other cannot.
-  const collidedNames = new Set(collided.map((entry) => entry.manifest.name));
+  const collidedNames = new Map(
+    collided.map((entry) => [
+      entry.manifest.name,
+      entry.manifest.runs_on === "client"
+        ? `${entry.manifest.name} was discovered in the installed ` +
+          `integrations directory while declaring runs_on "client". Code ` +
+          `that runs on somebody else's machine is not something a ` +
+          `deployment installs, so it was not registered from there.`
+        : `${entry.manifest.name} was discovered in the installed ` +
+          `integrations directory, and this build already ships a client ` +
+          `manifest of that name. One of the two is wrong; neither was ` +
+          `registered, because registration keys on (name, version) and ` +
+          `picking one would decide it silently.`,
+    ]),
+  );
   const registrable = [...discovered.manifests, ...CLIENT_MANIFESTS].filter(
     (entry) => !collidedNames.has(entry.manifest.name),
   );
 
   const result = await reconcileIntegrationCatalog(storage, registrable);
 
-  const collisions = [...collidedNames].map((name) => ({
+  // One cause per message. The two are different faults with different
+  // repairs — a client staged into the integrations root, or a directory
+  // manifest colliding with one the build ships — and an operator told
+  // "this or that" has to work out which before doing anything.
+  const collisions = [...collidedNames].map(([name, reason]) => ({
     name,
     version: "",
-    reason:
-      `${name} was discovered in the installed integrations directory ` +
-      `while declaring runs_on "client", or while this build already ` +
-      `ships a client of that name. Code that runs on somebody else's ` +
-      `machine is not something a deployment installs, so one of the two ` +
-      `is wrong; neither was registered, because registration keys on ` +
-      `(name, version) and picking one would decide it silently.`,
+    reason,
   }));
 
   return {

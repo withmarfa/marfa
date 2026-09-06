@@ -285,7 +285,6 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
               webhook_verification: { method: "hmac-sha256" },
               permissions: {
                 extension: { "connection.runtime": "write" },
-                edge: {},
               },
             },
             registered_at: new Date().toISOString(),

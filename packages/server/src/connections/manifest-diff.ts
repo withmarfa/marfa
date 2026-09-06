@@ -49,6 +49,16 @@ export interface ManifestGrantDelta {
   tokens: { name: string; to: string }[];
   /** Configuration fields that are required now and were not before. */
   configurationRequired: string[];
+  /**
+   * Set when the candidate runs somewhere else than the consented manifest
+   * did. Not a grant, and reported here anyway: the background pass moves a
+   * connection whenever nothing widens, and a version that relocates the
+   * code changes what the connection *is* — a server-run integration
+   * becoming client-run stops being dispatched at all, and the reverse
+   * starts a deployment running code the space never agreed it would.
+   * Neither is something to apply on a timer.
+   */
+  runsOn?: { from: "server" | "client"; to: "server" | "client" };
 }
 
 function diffPermissionMap(
@@ -127,6 +137,13 @@ export function diffManifestGrants(
     if (beforeFields[name]?.required !== true) configurationRequired.push(name);
   }
 
+  const consentedRunsOn = consented.runs_on ?? "server";
+  const candidateRunsOn = candidate.runs_on ?? "server";
+  const runsOn =
+    consentedRunsOn === candidateRunsOn
+      ? undefined
+      : { from: consentedRunsOn, to: candidateRunsOn };
+
   return {
     widens:
       types.length > 0 ||
@@ -134,13 +151,15 @@ export function diffManifestGrants(
       edges.length > 0 ||
       oauth.length > 0 ||
       tokens.length > 0 ||
-      configurationRequired.length > 0,
+      configurationRequired.length > 0 ||
+      runsOn !== undefined,
     types,
     extensions,
     edges,
     oauth,
     tokens,
     configurationRequired,
+    ...(runsOn ? { runsOn } : {}),
   };
 }
 
@@ -160,6 +179,13 @@ export function describeGrantDelta(delta: ManifestGrantDelta): string[] {
       e.from
         ? `Writes to the ${e.name} extension instead of only reading it`
         : `Reaches a new extension: ${e.name}`,
+    );
+  }
+  if (delta.runsOn) {
+    lines.push(
+      delta.runsOn.to === "client"
+        ? "Stops being run by Marfa: this version's code runs on your own machine"
+        : "Starts being run by Marfa's own runtime, where the previous version ran on your machine",
     );
   }
   for (const e of delta.edges) {

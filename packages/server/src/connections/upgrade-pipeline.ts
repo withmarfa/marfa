@@ -426,23 +426,39 @@ async function applyUpgrade(
     manifest_version: candidate.version,
   };
 
+  // The second frozen copy. Install stamps these onto the connection and the
+  // console reads them, so leaving them behind would produce a connection
+  // whose own row disagrees with the manifest it now resolves.
+  //
+  // **Built and then pruned, rather than spread conditionally.** The base is
+  // the connection's existing properties, so a key the candidate no longer
+  // declares survives unless it is removed: a conditional spread writes
+  // nothing and the stale value stays. That is not hypothetical — a
+  // connection moving onto a manifest that declares no triggers kept the
+  // trigger array from the version before it, so its row claimed a `manual`
+  // trigger the run route refuses. Install builds a fresh object and never
+  // met this; upgrade spreads the old one and does.
+  const nextProperties: Record<string, unknown> = {
+    ...connection.properties,
+    integration_ref: preview.candidate_integration_ref,
+    configuration: nextConfiguration,
+    direction: candidate.direction,
+  };
+  if (candidate.triggers === undefined) {
+    delete nextProperties.triggers;
+  } else {
+    nextProperties.triggers = candidate.triggers;
+  }
+
+  // `replace`, not the default merge. Pruning a key from the payload does
+  // nothing under a merge — the row keeps what the write does not name —
+  // so the stale trigger array survived a `delete` on this object and the
+  // fix read as applied while changing nothing. `nextProperties` is built
+  // from the row's own properties and then pruned, so it IS the complete
+  // intended set, which is exactly what `replace` means.
   await storage.items.update(
     input.connectionId,
-    {
-      properties: {
-        ...connection.properties,
-        integration_ref: preview.candidate_integration_ref,
-        configuration: nextConfiguration,
-        // The second frozen copy. Install stamps these onto the connection
-        // and the console reads them, so leaving them behind would produce
-        // a connection whose own row disagrees with the manifest it now
-        // resolves.
-        direction: candidate.direction,
-        ...(candidate.triggers !== undefined
-          ? { triggers: candidate.triggers }
-          : {}),
-      },
-    },
+    { properties: nextProperties, properties_mode: "replace" },
     input.spaceId,
   );
 

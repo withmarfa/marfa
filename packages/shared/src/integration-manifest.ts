@@ -102,24 +102,24 @@ const ManifestNameSchema = z
       "manifest name must follow namespace-slash-name grammar (e.g. acme/calendar-sync)",
   });
 
-const TriggerScheduleSchema = z.object({
-  type: z.literal("schedule"),
-  config: z.object({
-    cron: z.string().min(1, "schedule trigger requires a cron expression"),
-  }),
-});
+const TriggerScheduleSchema = z
+  .object({
+    type: z.literal("schedule"),
+    config: z
+      .object({
+        cron: z.string().min(1, "schedule trigger requires a cron expression"),
+      })
+      .strict(),
+  })
+  .strict();
 
-const TriggerWebhookSchema = z.object({
-  type: z.literal("webhook"),
-});
+const TriggerWebhookSchema = z.object({ type: z.literal("webhook") }).strict();
 
-const TriggerItemEventSchema = z.object({
-  type: z.literal("item-event"),
-});
+const TriggerItemEventSchema = z
+  .object({ type: z.literal("item-event") })
+  .strict();
 
-const TriggerManualSchema = z.object({
-  type: z.literal("manual"),
-});
+const TriggerManualSchema = z.object({ type: z.literal("manual") }).strict();
 
 const TriggerSchema = z.discriminatedUnion("type", [
   TriggerScheduleSchema,
@@ -130,10 +130,12 @@ const TriggerSchema = z.discriminatedUnion("type", [
 
 const PermissionLevel = z.enum(["read", "write"]);
 
-const PermissionsSchema = z.object({
-  extension: z.record(z.string().min(1), PermissionLevel).optional(),
-  edge: z.record(z.string().min(1), PermissionLevel).optional(),
-});
+const PermissionsSchema = z
+  .object({
+    extension: z.record(z.string().min(1), PermissionLevel).optional(),
+    edge: z.record(z.string().min(1), PermissionLevel).optional(),
+  })
+  .strict();
 
 const TombstoneMappingSchema = z.enum([
   "state-trashed",
@@ -158,49 +160,51 @@ const PartialWriteModeSchema = z.enum(["all-or-nothing", "accept-partial"]);
 export const DEFAULT_ECHO_TTL_SECONDS = 60;
 export const DEFAULT_LAG_WINDOW_SECONDS = 60;
 
-const BidirectionalHandlingSchema = z.object({
-  /**
-   * Echo-suppression TTL (seconds). The integration's `pending_writes` set
-   * is keyed by `(external_id, content_hash)` and entries expire after
-   * this window. Default 60 per Design Direction line 100; per-Integration
-   * override allowed.
-   */
-  echo_ttl_seconds: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_ECHO_TTL_SECONDS),
-  /**
-   * External-truth-lag window (seconds). Reactive code that reads items
-   * recently written by the same Connection waits at least this long
-   * before trusting the read. Default 60.
-   */
-  lag_window_seconds: z
-    .number()
-    .int()
-    .positive()
-    .default(DEFAULT_LAG_WINDOW_SECONDS),
-  /**
-   * Tombstone mapping — what happens when the external service deletes
-   * something Marfa has locally.
-   *   - `state-trashed` (default for read-only Connections): set
-   *     `state: trashed` on the item.
-   *   - `prompt-user`   (default for read-write Connections): emit a
-   *     `system.activity` with `severity: action_required` for the user
-   *     to resolve.
-   *   - `ignore`        : do not propagate the delete.
-   */
-  tombstone_mapping: TombstoneMappingSchema,
-  /**
-   * Partial-write mode — what the integration does when an external write
-   * partially succeeds.
-   *   - `all-or-nothing` (default): roll back the local optimistic write
-   *     and surface an error.
-   *   - `accept-partial`: persist the partial outcome (Notion-style
-   *     per-property errors).
-   */
-  partial_write_mode: PartialWriteModeSchema,
-});
+const BidirectionalHandlingSchema = z
+  .object({
+    /**
+     * Echo-suppression TTL (seconds). The integration's `pending_writes` set
+     * is keyed by `(external_id, content_hash)` and entries expire after
+     * this window. Default 60 per Design Direction line 100; per-Integration
+     * override allowed.
+     */
+    echo_ttl_seconds: z
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_ECHO_TTL_SECONDS),
+    /**
+     * External-truth-lag window (seconds). Reactive code that reads items
+     * recently written by the same Connection waits at least this long
+     * before trusting the read. Default 60.
+     */
+    lag_window_seconds: z
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_LAG_WINDOW_SECONDS),
+    /**
+     * Tombstone mapping — what happens when the external service deletes
+     * something Marfa has locally.
+     *   - `state-trashed` (default for read-only Connections): set
+     *     `state: trashed` on the item.
+     *   - `prompt-user`   (default for read-write Connections): emit a
+     *     `system.activity` with `severity: action_required` for the user
+     *     to resolve.
+     *   - `ignore`        : do not propagate the delete.
+     */
+    tombstone_mapping: TombstoneMappingSchema,
+    /**
+     * Partial-write mode — what the integration does when an external write
+     * partially succeeds.
+     *   - `all-or-nothing` (default): roll back the local optimistic write
+     *     and surface an error.
+     *   - `accept-partial`: persist the partial outcome (Notion-style
+     *     per-property errors).
+     */
+    partial_write_mode: PartialWriteModeSchema,
+  })
+  .strict();
 
 const OAuthRequirementValue = z.enum(["proxy", "leased"]);
 
@@ -224,19 +228,19 @@ const OAuthRequirementValue = z.enum(["proxy", "leased"]);
 const TokenRequirementValue = z.literal("required");
 
 const WebhookVerificationSchema = z.discriminatedUnion("method", [
-  z.object({ method: z.literal("hmac-sha256") }),
-  z.object({ method: z.literal("slack") }),
-  z.object({ method: z.literal("stripe") }),
-  z.object({ method: z.literal("github") }),
+  z.object({ method: z.literal("hmac-sha256") }).strict(),
+  z.object({ method: z.literal("slack") }).strict(),
+  z.object({ method: z.literal("stripe") }).strict(),
+  z.object({ method: z.literal("github") }).strict(),
   // `google-channel` covers Google Workspace push notifications
   // (Calendar / Drive / Gmail) — body-less; verification by X-Goog-
   // Channel-Token header against the per-channel stored secret.
-  z.object({ method: z.literal("google-channel") }),
+  z.object({ method: z.literal("google-channel") }).strict(),
   // `cloudflare-email` covers Cloudflare Email Routing → Email Worker
   // → signed JSON envelope. Verification is HMAC-SHA256 over the body
   // (same on-wire shape as `hmac-sha256`); the distinct method declares
   // the body schema (parsed-email envelope) the integration handler expects.
-  z.object({ method: z.literal("cloudflare-email") }),
+  z.object({ method: z.literal("cloudflare-email") }).strict(),
 ]);
 
 /**
@@ -486,7 +490,31 @@ export const IntegrationManifestSchema = z
   })
   .strict();
 
-export type IntegrationManifest = z.infer<typeof IntegrationManifestSchema>;
+/**
+ * A manifest as an author writes one — the schema's INPUT view.
+ *
+ * `runs_on` is optional here because a manifest may omit it and mean
+ * `server`; the JSON Schema artifact published alongside this type says the
+ * same thing, and the two would otherwise disagree about the same contract.
+ * Marfa's own manifests declare it explicitly anyway, because being
+ * explicit about where code runs costs one line.
+ */
+export type IntegrationManifest = z.input<typeof IntegrationManifestSchema>;
+
+/**
+ * A manifest as the server holds one, after `validateManifest` — the
+ * schema's OUTPUT view, where every default has been applied and `runs_on`
+ * is therefore always a value.
+ *
+ * Two types rather than one because the two questions differ: what an
+ * author must supply, and what a reader may rely on. Collapsing them makes
+ * one of the two wrong, and it was the reader's half that mattered — a
+ * consumer branching on `runs_on` should not have to spell the default
+ * again, and the day it does is the day some caller spells it differently.
+ */
+export type ParsedIntegrationManifest = z.infer<
+  typeof IntegrationManifestSchema
+>;
 
 export interface ConfigurationIssue {
   key: string;
@@ -673,10 +701,15 @@ export function validateManifestCoherence(
  * where one is read.
  *
  * "A field with nothing to say is absent" is an authoring rule. Held at
- * every door a manifest is authored behind — the in-tree manifest tests in
- * this repository and in `withmarfa/integrations`, and the image build
- * over the manifests it stages — it is system enforcement that cannot
- * reach a row somebody already installed against.
+ * every door a manifest is authored behind: `POST /integrations`, which
+ * judges an incoming body and never a stored row; the image build, over
+ * the manifests it stages; and the in-tree manifest tests here and in
+ * `withmarfa/integrations`. None of those can reach a row somebody already
+ * installed against, which is the whole reason the split exists.
+ *
+ * The boot catalog reconcile is deliberately not on that list. It registers
+ * what the image already staged, which may predate a rule, and refusing
+ * there would take the catalog down rather than tell an author anything.
  *
  * **Deliberately not in `validateManifestCoherence`.** Replayed over the
  * stored catalog rows on 6 September 2026, these three refuse 46, 52 and
@@ -696,6 +729,7 @@ export function validateManifestAuthoring(
     | "bidirectional_handling"
     | "oauth_requirements"
     | "token_requirements"
+    | "permissions"
     | "runs_on"
   >,
 ): string[] {
@@ -720,6 +754,26 @@ export function validateManifestAuthoring(
       issues.push(
         `${field} is declared and empty: an empty record is the absence of a requirement wearing the shape of one, so drop the field`,
       );
+    }
+  }
+  // `permissions` is the same shape and was missed the first time this rule
+  // was written, which is how `permissions: { edge: {} }` survived on both
+  // manifests this repository ships while the rule beside it condemned the
+  // identical thing under two other names. A rule that covers two of three
+  // instances of a shape is a preference; covering all three makes it a rule.
+  if (manifest.permissions !== undefined) {
+    if (Object.keys(manifest.permissions).length === 0) {
+      issues.push(
+        "permissions is declared and empty: drop the field rather than declaring no permissions",
+      );
+    }
+    for (const axis of ["extension", "edge"] as const) {
+      const map = manifest.permissions[axis];
+      if (map !== undefined && Object.keys(map).length === 0) {
+        issues.push(
+          `permissions.${axis} is declared and empty: an empty map grants nothing, which is what omitting it says, so drop it`,
+        );
+      }
     }
   }
   return issues;

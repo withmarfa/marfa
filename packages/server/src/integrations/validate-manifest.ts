@@ -5,7 +5,7 @@ import {
   validateWriteFamilies,
   validateManifestCoherence,
 } from "@withmarfa/shared";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
 
 export interface ValidateManifestError {
   path: string;
@@ -13,7 +13,7 @@ export interface ValidateManifestError {
 }
 
 export type ValidateManifestResult =
-  | { ok: true; manifest: IntegrationManifest }
+  | { ok: true; manifest: ParsedIntegrationManifest }
   | { ok: false; errors: ValidateManifestError[] };
 
 /**

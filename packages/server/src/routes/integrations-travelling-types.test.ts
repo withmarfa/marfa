@@ -38,14 +38,6 @@ function manifest(overrides: Record<string, unknown>): Record<string, unknown> {
     direction: "read",
     triggers: [{ type: "manual" }],
     target_types: ["core.note"],
-    bidirectional_handling: {
-      echo_ttl_seconds: 60,
-      lag_window_seconds: 60,
-      tombstone_mapping: "state-trashed",
-      partial_write_mode: "all-or-nothing",
-    },
-    oauth_requirements: {},
-    webhook_verification: { method: "hmac-sha256" },
     manifest_schema_version: "2.0.0",
     ...overrides,
   };

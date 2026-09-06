@@ -28,6 +28,7 @@ import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import { resolveSpaceAdminCaller } from "./_space-caller.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
+import { validateManifestAuthoring } from "@withmarfa/shared";
 import { registerIntegrationManifest } from "../integrations/register-manifest.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import {
@@ -406,6 +407,26 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
       );
     }
     const manifest = result.manifest;
+
+    // The authoring door. This route judges a manifest somebody is writing
+    // now, never a row somebody installed against earlier, so it can hold
+    // the stricter half: a field with nothing to say is absent. The boot
+    // reconcile deliberately does not call this — it registers what the
+    // image already staged, which may predate the rule, and refusing there
+    // would take the catalog down rather than telling an author anything.
+    const authoringIssues = validateManifestAuthoring(manifest);
+    if (authoringIssues.length > 0) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "Manifest validation failed",
+        {
+          errors: authoringIssues.map((message) => ({
+            path: "_root",
+            message,
+          })),
+        },
+      );
+    }
 
     const outcome = await registerIntegrationManifest(
       storage,
