@@ -989,10 +989,10 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // on the tombstone. The merge's own both-axes read is the second fence and
   // is covered directly in `auth-grant-visibility.test.ts`.
   //
-  // Driven through `DELETE /items/{id}` with the platform credential rather
-  // than written onto the row, because the shape being pinned is one the API
-  // actually produces, and a hand-stamped `state` would prove only that the
-  // predicate reads the field.
+  // Written onto the row through the store, because no API door produces
+  // this shape any more: every door that would move a live grant out of
+  // `active` refuses it. What a hand-stamped `state` proves, that the
+  // predicate reads the field, is exactly what this case is for.
   it("does not merge into a grant whose lifecycle state is not active", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);

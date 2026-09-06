@@ -22,6 +22,7 @@
  * the rows the writes returned rather than reading them back.
  */
 import { collectBlobHashes } from "../storage/blob-utils.js";
+import { liveConnectionRefusal } from "../routes/_connection-refusal.js";
 import type { Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
@@ -92,6 +93,19 @@ async function runTransitionChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
+        // A live connection is narrowed out rather than moved, the answer
+        // this route gives on every other axis: retiring the row would
+        // leave its credentials or the app's tokens behind with nothing
+        // naming them. The entry names the door that does it properly.
+        if (input.state !== "active") {
+          const reason = liveConnectionRefusal(
+            await storage.items.get(id, spaceId ?? undefined),
+          );
+          if (reason) {
+            errors.push({ id, code: "connection_live", message: reason });
+            continue;
+          }
+        }
         moved.push(
           await storage.items.transition(id, input.state, spaceId ?? undefined),
         );
@@ -135,9 +149,23 @@ async function runPurgeChunk({
     // which sent every id down the not-found branch below while `bulkPurge`
     // deleted them anyway — and took the blob-hash collection with it, so the
     // hashes a purged item referenced were never reported for collection.
-    const items = await storage.items.getMany(ids, spaceId ?? undefined, {
+    const found = await storage.items.getMany(ids, spaceId ?? undefined, {
       includeTrashed: true,
     });
+    // A live connection is narrowed out of the purge: `bulkPurge` has no
+    // soft-delete gate of its own, so this is the only thing between a
+    // filter naming `system.connection` and every live grant in the space
+    // being hard-deleted with its tokens left standing.
+    const items = new Map<string, Item>();
+    for (const [id, item] of found) {
+      const reason = liveConnectionRefusal(item);
+      if (reason) {
+        errors.push({ id, code: "connection_live", message: reason });
+        continue;
+      }
+      items.set(id, item);
+    }
+    ids = ids.filter((id) => items.has(id) || !found.has(id));
     for (const item of items.values()) {
       collectBlobHashes(item.properties, blob_hashes);
       removed.push(item);

@@ -11,6 +11,7 @@ import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
+import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import {
   createOwnershipGuard,
   resolveOrphanScopeForOwnWrite,
@@ -249,6 +250,10 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     requireRowWritable(c.get("apiKey"), item);
     await lifecycleGuard()(c.get("apiKey"), item);
+    // Moving a live connection out of `active` reaches exactly the rows
+    // `DELETE /items/{id}` does and leaves the same strand; guarding one
+    // door and not the other would move the gap rather than close it.
+    if (state !== "active") refuseUnlessUninstalled(item);
     const updated = await storage.items.transition(id, state, spaceId);
     const metadata = await storage.metadata.get(id);
     await publish({

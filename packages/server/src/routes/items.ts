@@ -98,6 +98,7 @@ import {
   resolveStateFilter,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
+import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import { itemsLifecycleRoutes } from "./items-lifecycle.js";
 import { itemsVersionsRoutes } from "./items-versions.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
@@ -820,7 +821,7 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Soft delete an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
+    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -839,7 +840,7 @@ const deleteItemRoute = createRoute({
         },
       },
       description:
-        "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
+        "The item is a live `system.connection`. Uninstall an integration first, or revoke an app grant through `DELETE /auth/grants/{id}`: removing the row here would leave its runtime credentials, or the app's tokens and stored consent, behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -1136,7 +1137,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1155,7 +1156,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
+        "The item is a live `system.connection`. Uninstall an integration first, or revoke an app grant through `DELETE /auth/grants/{id}`: removing the row here would leave its runtime credentials, or the app's tokens and stored consent, behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -2984,69 +2985,6 @@ export function itemRoutes(storage: Storage) {
     );
   });
 
-  /**
-   * Refuse to remove a `system.connection` row that has not been uninstalled.
-   *
-   * **A credential must not outlive the connection it was minted for**, and
-   * neither of these doors was keeping that true. Both remove the row and
-   * neither revokes anything: `api_keys.connection_id` carries no foreign key,
-   * so a runtime credential whose connection has been deleted is standing
-   * privilege that nothing can attribute — the row naming its owner is gone.
-   * Five such credentials were found on staging and the session that found them
-   * could not establish where they came from, which is the shape the
-   * conventions forbid twice over.
-   *
-   * **Refusing rather than revoking here is the point.** Revoking would be a
-   * second teardown beside `performUninstall`, and `performUninstall` does more
-   * than revoke: leased tokens, the proxy's cached upstream tokens, inbound
-   * webhook subscriptions. Two teardowns drift, and the one reached by an
-   * ordinary `DELETE /items/{id}` is the one nobody would think to keep in step.
-   * So this door sends the caller to the door that already does it properly.
-   *
-   * An already-revoked connection deletes freely: uninstall has run, the
-   * credentials are gone, and the row is ordinary history at that point.
-   *
-   * **An `app` connection is an OAuth grant, and the same rule holds with a
-   * different door to send the caller to.** A grant is two records, this
-   * projection and the plugin's consent row, with the app's tokens hanging
-   * off the pair. Removing the projection here leaves the tokens live and
-   * the consent row standing, so the app keeps working and the next
-   * authorize is answered silently, while the security page has nothing
-   * left to show a Disconnect button for. `DELETE /auth/grants/{id}` and its
-   * form-friendly twin run the cascade that drops all of it first, so a
-   * grant live on both lifecycle axes is refused and sent there. One
-   * revoked on either axis is a tombstone and deletes freely.
-   */
-  function refuseUnlessUninstalled(
-    item: Awaited<ReturnType<typeof storage.items.get>>,
-  ): void {
-    if (item?.type !== "system.connection") return;
-    const props = item.properties as
-      { status?: unknown; kind?: unknown } | undefined;
-    if (props?.kind === "app") {
-      if (item.state !== "active" || props.status !== "active") return;
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        `Grant ${item.id} is still live. Revoke it first with ` +
-          `DELETE /auth/grants/${item.id} or POST /auth/grants/${item.id}/revoke, ` +
-          `which drop the app's tokens and its stored consent. Removing the row ` +
-          `here would leave both behind with nothing listing them.`,
-      );
-    }
-    // **`kind`, not just the type.** `system.connection` covers both kinds
-    // and only `integration` has a runtime credential minted for it.
-    if (props?.kind !== "integration") return;
-    if (props.status === "revoked") return;
-    throw new MarfaError(
-      ErrorCode.VALIDATION_ERROR,
-      `Connection ${item.id} is still live. Uninstall it first with ` +
-        `POST /connections/${item.id}/uninstall, which revokes its runtime ` +
-        `credentials and leased tokens, drops its cached upstream tokens and ` +
-        `disables its inbound webhooks. Removing the row here would leave ` +
-        `those behind with nothing naming their owner.`,
-    );
-  }
-
   router.openapi(deleteItemRoute, async (c) => {
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
@@ -3095,7 +3033,13 @@ export function itemRoutes(storage: Storage) {
       // than leaving a partial cascade, and against the snapshots already
       // read rather than a second round of reads.
       for (const snap of snaps) {
-        if (snap) await guardDestroy(c.get("apiKey"), snap);
+        if (!snap) continue;
+        await guardDestroy(c.get("apiKey"), snap);
+        // The same is true of the connection refusal: a `parent-of` edge
+        // from any row to a live grant would otherwise carry the grant out
+        // through the cascade with no refusal, from a credential that could
+        // not write it directly.
+        refuseUnlessUninstalled(snap);
       }
       for (const delId of toDelete) {
         await storage.items.delete(delId, tid);

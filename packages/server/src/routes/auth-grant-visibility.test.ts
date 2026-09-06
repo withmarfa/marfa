@@ -8,8 +8,10 @@
  * either axis is listed by neither and cannot be revoked through any
  * interface the product has.
  *
- * `DELETE /items/{id}` with a platform credential produces exactly one such
- * row on its own. `softDeleteState` resolves `revoked` rather than `trashed`
+ * `DELETE /items/{id}` with a platform credential produced exactly one such
+ * row on its own, before that door refused a live grant; every item door
+ * refuses it now, so the fixture below is written through the store.
+ * `softDeleteState` resolves `revoked` rather than `trashed`
  * for a `system.*` type, so `state` moves and `properties` does not — the
  * row now reads active on the status axis and revoked on the state axis.
  * `findGrantItemId` had no `state` predicate and `items.get` hides only
@@ -22,9 +24,9 @@
  * grant can reach, and it fixes the code-flow twin at the same time, since
  * `projectGrantOnConsent` resolves through the same method.
  *
- * Driven through the real routes rather than store writes, because the
- * disagreement under test is one a real route produces and a hand-stamped
- * `state` would prove only that the predicate reads the field.
+ * The disagreement was driven through the real routes while a route still
+ * produced the shape. None does now, so the shape is written onto the row,
+ * and what that proves, that the predicate reads the field, is the point.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -254,9 +256,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     );
 
     // The door that produced this shape now refuses a live grant; shape the
-
     // row through the store instead.
-
     await softDeleteGrantRow(c, grant.id);
     expect((await c.storage.items.get(grant.id))?.state).toBe("revoked");
 
@@ -388,6 +388,109 @@ describe("an operator cannot strand a live grant through the item doors", () => 
       key: c.adminKey,
     });
     expect(res.status).toBe(200);
-    expect(await listedGrants(c)).toEqual([]);
+    // The soft delete took: the row moved on the state axis. The list was
+    // already empty after the revoke, so it is not the evidence here.
+    expect((await c.storage.items.get(grant!.id))?.state).toBe("revoked");
+  });
+
+  it("a grant revoked on the state axis alone is the strand, and both doors still refuse it", async () => {
+    // The revoke cascade writes `status` and never `state`, so this shape is
+    // not a tombstone: tokens live, consent row standing, listed by neither
+    // read surface. Purging it would make the strand permanent, since
+    // nothing could ever run the cascade for it again.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "grant-visibility-strand@example.com");
+    await approveDeviceFlow(c, clientId, cookie, "core.note:read");
+    const [grant] = await listedGrants(c);
+    await softDeleteGrantRow(c, grant!.id);
+    const row = await c.storage.items.get(grant!.id);
+    expect(row?.state).toBe("revoked");
+    expect(row?.properties.status).toBe("active");
+
+    const del = await request(c.app, "DELETE", `/items/${grant!.id}`, {
+      key: c.adminKey,
+    });
+    expect(del.status).toBe(400);
+    expect(
+      ((await del.json()) as { error: { message: string } }).error.message,
+    ).toContain("still live");
+    const purge = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
+      key: c.adminKey,
+    });
+    expect(purge.status).toBe(400);
+    expect(
+      ((await purge.json()) as { error: { message: string } }).error.message,
+    ).toContain("still live");
+    expect(await c.storage.items.get(grant!.id)).not.toBeNull();
+  });
+
+  it("POST /items/{id}/transition out of active refuses a live grant", async () => {
+    // The transition route reaches exactly the rows the delete does and
+    // would leave the same strand.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(
+      c,
+      "grant-visibility-transition@example.com",
+    );
+    await approveDeviceFlow(c, clientId, cookie, "core.note:read");
+    const [grant] = await listedGrants(c);
+
+    // The route's own schema admits only `active`, `archived` and `trashed`,
+    // so `revoked` was never reachable here; `archived` is the shape a
+    // caller can actually send, and the refusal has to come before the
+    // store's transition rules get to say anything about it.
+    const res = await request(c.app, "POST", `/items/${grant!.id}/transition`, {
+      key: c.adminKey,
+      body: { state: "archived" },
+    });
+    expect(res.status).toBe(400);
+    expect(
+      ((await res.json()) as { error: { message: string } }).error.message,
+    ).toContain("still live");
+    const row = await c.storage.items.get(grant!.id);
+    expect(row?.state).toBe("active");
+    expect(row?.properties.status).toBe("active");
+  });
+
+  it("the delete cascade refuses a live grant reached through an edge, and the whole delete rolls back", async () => {
+    // `parent-of` cascades on delete and admits any type at either end, so
+    // a row anyone can write could otherwise carry the grant out with it.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const c = ctx;
+    const clientId = await seedClient(c);
+    const cookie = await signInUser(c, "grant-visibility-cascade@example.com");
+    await approveDeviceFlow(c, clientId, cookie, "core.note:read");
+    const [grant] = await listedGrants(c);
+
+    const note = await request(c.app, "POST", "/items", {
+      key: c.adminKey,
+      body: {
+        type: "core.note",
+        properties: { title: "parent", body: "holds the grant" },
+      },
+    });
+    expect(note.status).toBe(201);
+    const noteId = ((await note.json()) as { item: { id: string } }).item.id;
+    const edge = await request(c.app, "POST", "/edges", {
+      key: c.adminKey,
+      body: { source_id: noteId, target_id: grant!.id, edge_type: "parent-of" },
+    });
+    expect(edge.status).toBe(201);
+
+    const res = await request(c.app, "DELETE", `/items/${noteId}`, {
+      key: c.adminKey,
+    });
+    expect(res.status).toBe(400);
+    expect(
+      ((await res.json()) as { error: { message: string } }).error.message,
+    ).toContain("still live");
+    // Rolled back as a whole: the parent is untouched too.
+    expect((await c.storage.items.get(noteId))?.state).toBe("active");
+    expect((await c.storage.items.get(grant!.id))?.state).toBe("active");
+    expect((await listedGrants(c)).map((g) => g.id)).toEqual([grant!.id]);
   });
 });

@@ -159,6 +159,12 @@ describe("removing a system.connection row", () => {
     expect(refusal.error.code).toBe("validation_error");
     expect(refusal.error.message).toContain(`DELETE /auth/grants/${id}`);
     expect(refusal.error.message).not.toContain("/uninstall");
+
+    // The row is still there.
+    const still = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(still.status).toBe(200);
   });
 
   it("deletes a revoked app connection freely: the tombstone is history", async () => {
