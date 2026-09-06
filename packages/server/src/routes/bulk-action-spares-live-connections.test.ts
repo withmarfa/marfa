@@ -13,10 +13,14 @@
  */
 import { describe, it, expect, afterEach } from "vitest";
 import {
+  collectEdgeEvents,
+  collectItemEvents,
   createTestContext,
   request,
   runBulkActionAsync,
+  settle,
 } from "../test-utils.js";
+import { initEventLog } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
@@ -99,6 +103,17 @@ describe("bulk actions spare a live connection", () => {
     expect(edge.status).toBe(201);
     const edgeId = ((await edge.json()) as { edge: { id: string } }).edge.id;
 
+    // The narrowed row is an error entry, not a chunk failure, so what did
+    // purge is announced: the publish gate used to key on an empty error
+    // list, which one skipped grant turned off for the whole chunk. Listen
+    // for the frames rather than trusting the counts, which never consulted
+    // the gate.
+    initEventLog(ctx.storage.eventLog);
+    const items = new AbortController();
+    const edges = new AbortController();
+    const heardItems = collectItemEvents(items.signal);
+    const heardEdges = collectEdgeEvents(edges.signal);
+    await settle();
     const { result } = await runBulkActionAsync(
       ctx,
       {
@@ -108,6 +123,18 @@ describe("bulk actions spare a live connection", () => {
       },
       ctx.adminKey,
     );
+    await settle(400);
+    items.abort();
+    edges.abort();
+    await heardItems.done;
+    await heardEdges.done;
+    expect(
+      heardItems.events
+        .filter((e) => e.item.id === tombstone)
+        .map((e) => e.type),
+    ).toEqual(["purged"]);
+    expect(heardItems.events.filter((e) => e.item.id === live)).toEqual([]);
+    expect(heardEdges.events.filter((e) => e.edge.id === edgeId)).toEqual([]);
     expect(result?.errors?.map((e) => e.id)).toEqual([live]);
     expect(result?.errors?.[0]?.code).toBe("connection_live");
     expect(await ctx.storage.items.get(live)).not.toBeNull();
@@ -115,8 +142,6 @@ describe("bulk actions spare a live connection", () => {
     // The edge deletes run on the narrowed ids too, so the live grant's
     // edge is still there.
     expect(await ctx.storage.edges.get(edgeId)).not.toBeNull();
-    // A narrowed row is not a chunk failure: what did purge is counted, and
-    // announced.
     expect(result?.succeeded).toBe(1);
   });
 });

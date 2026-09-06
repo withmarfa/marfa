@@ -75,7 +75,9 @@ export function liveConnectionRefusal(
   if (props?.kind !== "integration") {
     return (
       `Connection ${item.id} has no recognized kind and is not revoked; ` +
-      `nothing knows what credentials hang off it, so it stays.`
+      `nothing knows what credentials hang off it, so it stays. A row in ` +
+      `this shape was not written through a validating door and is an ` +
+      `administrative repair, not a delete.`
     );
   }
   return (
