@@ -139,6 +139,29 @@ describe("performUpgrade", () => {
     expect(result.to.manifest_version).toBe("2.0.0");
   });
 
+  it("drops a triggers array the candidate no longer declares", async () => {
+    // The connection carries its own frozen copy of `triggers`, and the
+    // update spreads the existing properties as its base. A candidate that
+    // declares none writes nothing, so the old array survived and the row
+    // claimed a trigger the manifest had dropped — the exact case of the
+    // sync client moving from a vestigial `manual` to none at all, on a
+    // connection the run route now refuses on `runs_on`. Install builds a
+    // fresh object and never met this; upgrade spreads the old one.
+    const s = await scenario({ runs_on: "client", triggers: undefined });
+    const before = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(before?.properties.triggers).toBeDefined();
+
+    const result = await performUpgrade(ctx.storage, {
+      ...caller,
+      connectionId: s.connection.id,
+      consentedToWidening: true,
+    });
+    expect(result.to.manifest_version).toBe("2.0.0");
+
+    const after = await ctx.storage.items.get(s.connection.id, undefined);
+    expect(after?.properties.triggers).toBeUndefined();
+  });
+
   it("applies the pinned version rather than the newest registered one", async () => {
     // What the approval route depends on. It checks the candidate against
     // the version a person was shown, then calls this; without the pin the

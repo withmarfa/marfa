@@ -53,12 +53,17 @@ afterEach(() => {
  */
 function manifestSource(
   name: string,
-  options: { kit?: "bare" | "none" | "partial" } = {},
+  options: {
+    kit?: "bare" | "none" | "partial";
+    /** Stage a manifest that says its code runs on the user's machine. */
+    runsOn?: "server" | "client";
+  } = {},
 ): string {
   const manifest = `export const manifest = ${JSON.stringify({
     manifest_schema_version: "2.0.0",
     name,
     version: "1.0.0",
+    ...(options.runsOn ? { runs_on: options.runsOn } : {}),
   })};\n`;
   switch (options.kit ?? "none") {
     case "bare":
@@ -238,6 +243,16 @@ function image(options: {
       writeFileSync(
         join(dist, "local.js"),
         'export { manifest } from "./chunk-ABCDEFGH.js";\n',
+      );
+      continue;
+    }
+    if (shape === "client-run") {
+      // A client staged into the integrations root, which the Dockerfile's
+      // staging step says in a comment must never happen. The comment is not
+      // enforcement; this is.
+      writeFileSync(
+        join(dist, "local.js"),
+        manifestSource(name ?? raw, { kit: "bare", runsOn: "client" }),
       );
       continue;
     }
@@ -880,6 +895,24 @@ describe("the in-image integration verification", () => {
     expect(run.code).toBe(1);
     expect(run.output).toContain("not the manifest's own name");
     expect(run.output).toContain('acme/alpha declares "other/acme/alpha"');
+  });
+
+  it("fails when a client-run manifest was staged into the integrations root", () => {
+    // The Dockerfile's staging step says in a comment that nothing a client
+    // needs is staged here. A comment is not enforcement: a client staged by
+    // mistake would register in the catalog as installable and dispatch
+    // nothing, which is the shape of failure this whole script exists to
+    // refuse — an image that looks complete and quietly is not.
+    const run = verify(
+      image({
+        declared: ["acme/alpha"],
+        installed: ["acme/alpha!client-run"],
+        fixture: true,
+      }),
+    );
+    expect(run.code).toBe(1);
+    expect(run.output).toContain('declaring runs_on "client"');
+    expect(run.output).toContain("acme/alpha");
   });
 
   it("fails when the catalog loader cannot be loaded at all", () => {

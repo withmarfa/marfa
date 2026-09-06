@@ -278,3 +278,49 @@ describe("diffManifestGrants — triggers grant nothing", () => {
     expect(d.types).toEqual([{ name: "core.bookmark", to: "write" }]);
   });
 });
+
+describe("diffManifestGrants — where the code runs", () => {
+  it("treats a move to client as widening, so no timer applies it", () => {
+    // Not a grant, and blocking anyway. The background pass moves a
+    // connection whenever nothing widens, and a version that relocates the
+    // code changes what the connection is rather than what it may reach.
+    const delta = diffManifestGrants(
+      manifest({ runs_on: "server" }),
+      manifest({ runs_on: "client" }),
+    );
+    expect(delta.widens).toBe(true);
+    expect(delta.runsOn).toEqual({ from: "server", to: "client" });
+    expect(describeGrantDelta(delta).join(" ")).toContain("your own machine");
+  });
+
+  it("treats a move to server as widening too", () => {
+    // The reverse starts a deployment running code the space never agreed
+    // it would run, which is the more consequential direction of the two.
+    const delta = diffManifestGrants(
+      manifest({ runs_on: "client" }),
+      manifest({ runs_on: "server" }),
+    );
+    expect(delta.widens).toBe(true);
+    expect(delta.runsOn).toEqual({ from: "client", to: "server" });
+  });
+
+  it("reads an absent runs_on as server on both sides, so it does not widen", () => {
+    const before = manifest();
+    const after = manifest();
+    delete (before as { runs_on?: unknown }).runs_on;
+    delete (after as { runs_on?: unknown }).runs_on;
+    const delta = diffManifestGrants(before, after);
+    expect(delta.runsOn).toBeUndefined();
+    expect(delta.widens).toBe(false);
+  });
+
+  it("does not widen when an absent runs_on meets an explicit server", () => {
+    // The default is the same statement as the declaration, so a manifest
+    // that starts spelling it out has not changed what it does.
+    const before = manifest();
+    delete (before as { runs_on?: unknown }).runs_on;
+    const delta = diffManifestGrants(before, manifest({ runs_on: "server" }));
+    expect(delta.runsOn).toBeUndefined();
+    expect(delta.widens).toBe(false);
+  });
+});

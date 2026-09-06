@@ -185,6 +185,32 @@ describe("POST /connections/{id}/run", () => {
     expect(enqueued).toHaveLength(0);
   });
 
+  it("refuses a client-run integration on the field, not on the missing trigger", async () => {
+    // The ordering is the point. A client-run manifest declares no triggers,
+    // so the `manual` check below would also refuse it — and would report the
+    // absent trigger, which is a consequence of running elsewhere rather than
+    // the reason. The runtime is registered here precisely so that a
+    // registration miss cannot be the explanation either.
+    const clientRun = manifest({ runs_on: "client" });
+    delete (clientRun as { triggers?: unknown }).triggers;
+    const id = await scenario(clientRun);
+    const { runtime, enqueued } = fakeRuntime();
+    const res = await appWith(runtime).request(`/connections/${id}/run`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(400);
+    // The parsed message, not the JSON string: stringifying escapes the
+    // quotes around "client" and a substring match on the raw text fails
+    // for a reason that has nothing to do with the behaviour.
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain('runs_on "client"');
+    expect(body.error.message).toContain("your own machine");
+    // The trigger check never ran, so its vocabulary must not appear.
+    expect(body.error.message).not.toContain("manual");
+    expect(enqueued).toHaveLength(0);
+  });
+
   it("refuses when the running build's trigger set disagrees with the stored manifest", async () => {
     const id = await scenario(manifest());
     const { runtime, enqueued } = fakeRuntime({ triggerKinds: ["schedule"] });
