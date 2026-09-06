@@ -11,6 +11,7 @@ import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
+import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import {
   createOwnershipGuard,
   resolveOrphanScopeForOwnWrite,
@@ -249,6 +250,13 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     requireRowWritable(c.get("apiKey"), item);
     await lifecycleGuard()(c.get("apiKey"), item);
+    // A live connection does not leave `active` through this door: the
+    // lifecycle table admits only `revoked` for a `system.*` type and this
+    // route cannot name it, so the store would refuse in any case. The
+    // refusal here answers first, so the caller reads why a grant is not
+    // retired this way rather than a lifecycle complaint, and the door
+    // stays closed if the table ever widens.
+    if (state !== "active") refuseUnlessUninstalled(item);
     const updated = await storage.items.transition(id, state, spaceId);
     const metadata = await storage.metadata.get(id);
     await publish({

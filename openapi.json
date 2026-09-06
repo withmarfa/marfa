@@ -4060,7 +4060,7 @@
           "Items"
         ],
         "summary": "Soft delete an item",
-        "description": "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
+        "description": "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
         "security": [
           {
             "bearerAuth": []
@@ -4128,7 +4128,7 @@
             }
           },
           "400": {
-            "description": "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
+            "description": "The item is a live `system.connection`. Uninstall an integration first, or revoke an app grant through `DELETE /auth/grants/{id}`: removing the row here would leave its runtime credentials, or the app's tokens and stored consent, behind with nothing naming their owner.",
             "content": {
               "application/json": {
                 "schema": {
@@ -7024,7 +7024,7 @@
           "Items"
         ],
         "summary": "Permanently delete an item",
-        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: uninstall it first, so its runtime credentials are revoked with it.",
+        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
         "security": [
           {
             "bearerAuth": []
@@ -7092,7 +7092,7 @@
             }
           },
           "400": {
-            "description": "The item is a live `system.connection`. Uninstall it first — removing the row here would leave its runtime credentials behind with nothing naming their owner.",
+            "description": "The item is a live `system.connection`. Uninstall an integration first, or revoke an app grant through `DELETE /auth/grants/{id}`: removing the row here would leave its runtime credentials, or the app's tokens and stored consent, behind with nothing naming their owner.",
             "content": {
               "application/json": {
                 "schema": {

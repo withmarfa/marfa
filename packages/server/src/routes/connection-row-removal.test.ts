@@ -126,16 +126,14 @@ describe("removing a system.connection row", () => {
     expect(purged.status).toBe(200);
   });
 
-  it("leaves an app connection alone, which is how a grant is withdrawn", async () => {
+  it("refuses a live app connection and names the grant routes, not the uninstall pipeline", async () => {
     // `system.connection` covers two kinds and only `integration` has a
     // runtime credential minted for it. An `app` connection is an OAuth
-    // grant: nothing to revoke, no uninstall pipeline to be sent to, and
-    // deleting the row is exactly how a person withdraws it.
-    //
-    // Keying the guard on the type alone broke that, and no case here
-    // caught it because every fixture above installs an integration. CI
-    // did, through a device-grant test that deletes a grant and expects
-    // 200 — which is a worse way to find out than this one.
+    // grant: no uninstall pipeline to be sent to, but two records and the
+    // app's tokens hanging off the pair, so removing the row here would
+    // leave the tokens live and the consent row standing with nothing
+    // listing them. The refusal sends the caller to the grant routes, whose
+    // cascade drops all of it first.
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {
@@ -149,14 +147,50 @@ describe("removing a system.connection row", () => {
     });
     const body = (await res.json()) as { item?: { id: string } };
     expect(res.status, JSON.stringify(body)).toBe(201);
+    const id = body.item!.id;
+
+    const deleted = await request(ctx.app, "DELETE", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(deleted.status).toBe(400);
+    const refusal = (await deleted.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(refusal.error.code).toBe("validation_error");
+    expect(refusal.error.message).toContain(`DELETE /auth/grants/${id}`);
+    expect(refusal.error.message).not.toContain("/uninstall");
+
+    // The row is still there.
+    const still = await request(ctx.app, "GET", `/items/${id}`, {
+      key: ctx.adminKey,
+    });
+    expect(still.status).toBe(200);
+  });
+
+  it("deletes a revoked app connection freely: the tombstone is history", async () => {
+    // Once the grant cascade has run, `status` reads revoked and the row is
+    // ordinary history. Nothing is left to strand, and the integration
+    // uninstall gate must not fire on it either.
+    const res = await request(ctx.app, "POST", "/items", {
+      key: ctx.adminKey,
+      body: {
+        type: "system.connection",
+        properties: {
+          kind: "app",
+          status: "revoked",
+          granted_at: new Date().toISOString(),
+          revoked_at: new Date().toISOString(),
+        },
+      },
+    });
+    const body = (await res.json()) as { item?: { id: string } };
+    expect(res.status, JSON.stringify(body)).toBe(201);
 
     const deleted = await request(
       ctx.app,
       "DELETE",
       `/items/${body.item!.id}`,
-      {
-        key: ctx.adminKey,
-      },
+      { key: ctx.adminKey },
     );
     expect(deleted.status).toBe(200);
   });

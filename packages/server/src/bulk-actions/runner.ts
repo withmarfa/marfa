@@ -22,6 +22,7 @@
  * the rows the writes returned rather than reading them back.
  */
 import { collectBlobHashes } from "../storage/blob-utils.js";
+import { liveConnectionRefusal } from "../routes/_connection-refusal.js";
 import type { Storage } from "../storage/interface.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { BulkActionErrorEntry, BulkActionInput } from "./types.js";
@@ -90,8 +91,30 @@ async function runTransitionChunk({
   // subscriber is never told about a row a rollback then took away.
   const moved: Item[] = [];
   await storage.runInTransaction(async () => {
+    // One read for the chunk, as the purge chunk does, rather than one per
+    // id inside the transaction.
+    const rows =
+      input.state !== "active"
+        ? await storage.items.getMany(ids, spaceId ?? undefined, {
+            includeTrashed: true,
+          })
+        : new Map<string, Item>();
     for (const id of ids) {
       try {
+        // A live connection is narrowed out rather than moved, the answer
+        // this route gives on every other axis: retiring the row would
+        // leave its credentials or the app's tokens behind with nothing
+        // naming them, and the entry names the door that does it properly.
+        // For a `system.connection` the lifecycle table already refuses
+        // every state but `revoked`, which this action cannot name, so the
+        // refusal here decides which answer the caller reads first.
+        if (input.state !== "active") {
+          const reason = liveConnectionRefusal(rows.get(id));
+          if (reason) {
+            errors.push({ id, code: "connection_live", message: reason });
+            continue;
+          }
+        }
         moved.push(
           await storage.items.transition(id, input.state, spaceId ?? undefined),
         );
@@ -129,15 +152,35 @@ async function runPurgeChunk({
   // nothing to read afterwards. Staged the same way and discarded by the
   // same gate below.
   const removed: Item[] = [];
+  // Set only when the chunk itself failed: a narrowed-out live connection
+  // is an error entry for the caller, not a failure of the rows that did
+  // purge, and those still have to be announced. A holder rather than a
+  // bare boolean, because the write happens inside the transaction callback
+  // where control-flow analysis cannot see it.
+  const chunk = { failed: false };
   await storage.runInTransaction(async () => {
     // Trashed included: purge is the terminal step after a soft delete, so
     // every id it is handed is trashed. Excluding them left this map empty,
     // which sent every id down the not-found branch below while `bulkPurge`
     // deleted them anyway — and took the blob-hash collection with it, so the
     // hashes a purged item referenced were never reported for collection.
-    const items = await storage.items.getMany(ids, spaceId ?? undefined, {
+    const found = await storage.items.getMany(ids, spaceId ?? undefined, {
       includeTrashed: true,
     });
+    // A live connection is narrowed out of the purge: `bulkPurge` has no
+    // soft-delete gate of its own, so this is the only thing between a
+    // filter naming `system.connection` and every live grant in the space
+    // being hard-deleted with its tokens left standing.
+    const items = new Map<string, Item>();
+    for (const [id, item] of found) {
+      const reason = liveConnectionRefusal(item);
+      if (reason) {
+        errors.push({ id, code: "connection_live", message: reason });
+        continue;
+      }
+      items.set(id, item);
+    }
+    ids = ids.filter((id) => items.has(id) || !found.has(id));
     for (const item of items.values()) {
       collectBlobHashes(item.properties, blob_hashes);
       removed.push(item);
@@ -174,6 +217,7 @@ async function runPurgeChunk({
       }
       void purged;
     } catch (err) {
+      chunk.failed = true;
       // The chunk did not complete, so nothing it staged may be
       // announced.
       //
@@ -196,7 +240,9 @@ async function runPurgeChunk({
   // failure cannot be recorded as a per-item error on a purge that
   // completed — and gated on the chunk having no errors, so a chunk that
   // failed announces nothing. See the `catch` above for why that gate
-  // cannot fire today and is kept regardless.
+  // fires whenever the chunk failed. A `connection_live` entry is not a
+  // failure: the row it names was never handed to the purge, and the rows
+  // that were still have to be announced.
   //
   // An edge pointing AT one of these items lives on an item that is NOT
   // being purged, so nothing else tells its holder the relationship is
@@ -211,7 +257,7 @@ async function runPurgeChunk({
   // noisier than the transition it follows.
   //
   // Edges first and rows after, the ordering the single-item door states.
-  if (errors.length === 0) {
+  if (!chunk.failed) {
     for (const edge of cascaded) {
       await publishEdge({
         type: "edge_deleted",

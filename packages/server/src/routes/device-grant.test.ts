@@ -989,10 +989,10 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
   // on the tombstone. The merge's own both-axes read is the second fence and
   // is covered directly in `auth-grant-visibility.test.ts`.
   //
-  // Driven through `DELETE /items/{id}` with the platform credential rather
-  // than written onto the row, because the shape being pinned is one the API
-  // actually produces, and a hand-stamped `state` would prove only that the
-  // predicate reads the field.
+  // Written onto the row through the store, because no API door produces
+  // this shape any more: every door that would move a live grant out of
+  // `active` refuses it. What a hand-stamped `state` proves, that the
+  // predicate reads the field, is exactly what this case is for.
   it("does not merge into a grant whose lifecycle state is not active", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await createClient(ctx);
@@ -1008,12 +1008,18 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
       cookie,
       "core.note:read core.task:write",
     );
-    const grantId = (await standingGrant(ctx)).id;
+    const original = await standingGrant(ctx);
+    const grantId = original.id;
 
-    const deleted = await request(ctx.app, "DELETE", `/items/${grantId}`, {
-      key: ctx.adminKey,
-    });
-    expect(deleted.status).toBe(200);
+    // Straight to the state axis. A bare item delete of a live grant is
+    // refused now (it would strand the plugin's records), so the shape this
+    // case needs, revoked on the state axis and still active on the status
+    // axis, is written the way a misbehaving operator path would leave it.
+    await ctx.storage.items.transition(
+      grantId,
+      "revoked",
+      original.space_id ?? undefined,
+    );
     // The fixture only means something if it is admitted by the predicate the
     // clause was added to. `status` still reads "active", so the merge would
     // take these scopes as standing were the `state` clause removed.
