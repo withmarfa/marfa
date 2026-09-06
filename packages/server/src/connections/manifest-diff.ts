@@ -22,7 +22,7 @@
  * manifest grants a runtime credential, so the diff is computed from those
  * rather than from a second reading of the manifest.
  */
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
 import {
   buildEdgePermissions,
   buildExtensionPermissions,
@@ -89,8 +89,8 @@ function diffPermissionMap(
  * something the new manifest is asking for.
  */
 export function diffManifestGrants(
-  consented: IntegrationManifest,
-  candidate: IntegrationManifest,
+  consented: ParsedIntegrationManifest,
+  candidate: ParsedIntegrationManifest,
   connectionProperties?: Record<string, unknown>,
 ): ManifestGrantDelta {
   const types = diffPermissionMap(
@@ -137,12 +137,14 @@ export function diffManifestGrants(
     if (beforeFields[name]?.required !== true) configurationRequired.push(name);
   }
 
-  const consentedRunsOn = consented.runs_on ?? "server";
-  const candidateRunsOn = candidate.runs_on ?? "server";
+  // No fallback: both sides come from `validateManifest`, which applies the
+  // default. Spelling `?? "server"` here would be a second place deciding
+  // what absence means, and the day the two disagree is the day nothing
+  // reports it.
   const runsOn =
-    consentedRunsOn === candidateRunsOn
+    consented.runs_on === candidate.runs_on
       ? undefined
-      : { from: consentedRunsOn, to: candidateRunsOn };
+      : { from: consented.runs_on, to: candidate.runs_on };
 
   return {
     widens:

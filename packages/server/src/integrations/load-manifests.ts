@@ -29,7 +29,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { ParsedIntegrationManifest } from "@withmarfa/shared";
 import { validateManifest } from "./validate-manifest.js";
 import { discoverIntegrationDirs } from "./discover.js";
 
@@ -41,7 +41,7 @@ export interface InTreeManifest {
    *  install into a directory that disagrees, and the skip reasons have to
    *  name the directory that was read rather than the manifest it claimed. */
   dirName: string;
-  manifest: IntegrationManifest;
+  manifest: ParsedIntegrationManifest;
 }
 
 export interface LoadManifestsResult {

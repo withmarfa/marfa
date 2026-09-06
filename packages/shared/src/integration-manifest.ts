@@ -31,6 +31,22 @@ import {
  *   - **patch** — clarification, doc-only change, more permissive
  *     validator on an already-defined field. Forward- and
  *     backward-compatible by definition.
+ *   - **correction** — a validator that begins refusing what it previously
+ *     accepted and silently discarded. Neither major nor minor, and the
+ *     bullets above do not name it because the contract never meant to
+ *     accept the input in the first place: a plain Zod object strips an
+ *     unknown key, so the schema's own output type said the key could not
+ *     be there while its input admitted it. Refusing it states what was
+ *     always true rather than changing what is true.
+ *
+ *     **Conditional on measurement, not on the argument.** It is a
+ *     correction only where no shipped and no stored manifest is refused,
+ *     and the measurement is recorded with its date, the builds it ran
+ *     against and the route it read. Without that it is a major, because a
+ *     manifest somebody wrote against the permissive reading is refused on
+ *     the next resolution and a mint fails closed. The instance is the
+ *     2.2.0 strictness pass; the record is in the vault artifact this
+ *     policy's ticket names.
  *
  * The majors the server accepts are declared by
  * `MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS` below, and anything outside
@@ -700,16 +716,24 @@ export function validateManifestCoherence(
  * The stricter half, enforced where a manifest is written rather than
  * where one is read.
  *
- * "A field with nothing to say is absent" is an authoring rule. Held at
- * every door a manifest is authored behind: `POST /integrations`, which
- * judges an incoming body and never a stored row; the image build, over
- * the manifests it stages; and the in-tree manifest tests here and in
- * `withmarfa/integrations`. None of those can reach a row somebody already
- * installed against, which is the whole reason the split exists.
+ * "A field with nothing to say is absent" is an authoring rule. It is held
+ * at `POST /integrations`, which judges an incoming body and never a stored
+ * row, and at the in-tree manifest tests here. Neither can reach a row
+ * somebody already installed against, which is the whole reason the split
+ * exists.
  *
- * The boot catalog reconcile is deliberately not on that list. It registers
- * what the image already staged, which may predate a rule, and refusing
- * there would take the catalog down rather than tell an author anything.
+ * **The image build is not one of those doors yet, and the ordering is the
+ * reason.** The manifests a deployment stages are pinned to a commit of
+ * `withmarfa/integrations`, and the manifests on the current pin predate
+ * this rule — every one of them declares something it has nothing to say
+ * about. Holding the image build to the rule before the pin moves would
+ * fail the build on manifests the deployment is still meant to ship, so
+ * that door arrives with the pin rather than ahead of it.
+ *
+ * The boot catalog reconcile is deliberately never on that list. It
+ * registers what the image already staged, which may predate a rule, and
+ * refusing there would take the catalog down rather than tell an author
+ * anything.
  *
  * **Deliberately not in `validateManifestCoherence`.** Replayed over the
  * stored catalog rows on 6 September 2026, these three refuse 46, 52 and

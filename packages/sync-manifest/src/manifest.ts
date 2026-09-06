@@ -30,10 +30,9 @@
 import type { IntegrationManifest } from "@withmarfa/shared";
 
 // Annotated with the literal rather than the bare type, because
-// `CLIENT_MANIFESTS` accepts only a client-run manifest and a widened
-// `runs_on` would make this a runtime throw at boot instead of an error
-// here. The narrowing is the whole point: a client manifest that forgot the
-// field should not compile.
+// `CLIENT_MANIFESTS` accepts only a client-run manifest. The narrowing is
+// the whole point: a client manifest that forgot the field should not
+// compile.
 export const SYNC_MANIFEST: IntegrationManifest & { runs_on: "client" } = {
   name: "marfa/sync",
   version: "0.4.0",
