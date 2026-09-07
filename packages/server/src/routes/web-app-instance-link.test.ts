@@ -124,6 +124,25 @@ describe("resolveWebAppInstanceLink", () => {
     expect(link).toBeUndefined();
   });
 
+  it("costs the link rather than the page when the lookup fails", async () => {
+    // This is the only storage read the sign-in page makes. Everything else
+    // on it renders from the URL, so an unguarded throw here would turn a
+    // database blip into a 500 on the one screen most worth still serving
+    // during one.
+    const failing = {
+      oauthProvider: {
+        getClient: () => Promise.reject(new Error("connection terminated")),
+      },
+    } as unknown as Storage;
+    await expect(
+      resolveWebAppInstanceLink(
+        failing,
+        authorizeReturnTo({ client_id: "marfa-web", redirect_uri: REGISTERED }),
+        INSTANCE,
+      ),
+    ).resolves.toBeUndefined();
+  });
+
   it("says nothing when this deployment does not know its own base URL", async () => {
     const link = await resolveWebAppInstanceLink(
       webAppStorage,

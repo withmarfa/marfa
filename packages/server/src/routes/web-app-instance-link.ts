@@ -53,7 +53,17 @@ export async function resolveWebAppInstanceLink(
   const redirectUri = params.get("redirect_uri");
   if (!redirectUri) return undefined;
 
-  const client = await storage.oauthProvider?.getClient(clientId);
+  // The only database read on this page, and it is answered rather than
+  // propagated. `GET /auth/sign-in` renders without touching storage
+  // otherwise, which makes it the page most likely to still work during a
+  // database incident and the worst one to have taken a dependency on. A blip
+  // costs the link; it must not cost the sign-in screen.
+  let client;
+  try {
+    client = await storage.oauthProvider?.getClient(clientId);
+  } catch {
+    return undefined;
+  }
   // Exact membership, matching how the provider itself compares a redirect.
   // A prefix or origin comparison here would admit a URI the client never
   // registered, which is the whole of what this check is for.
