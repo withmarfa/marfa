@@ -14,6 +14,7 @@ import {
   CAPABILITY_ROOT,
   CAPABILITY_SCOPES,
   hasCapability,
+  requiresExplicitConsent,
   scopesOfferedOffByDefaultOnly,
   grantCoversScope,
 } from "./scopes.js";
@@ -1684,5 +1685,43 @@ describe("the content category is covered by holding it and by nothing else", ()
     expect(grantCoversScope(["content:write"], "marfa.podcast.show:read")).toBe(
       true,
     );
+  });
+});
+
+describe("requiresExplicitConsent", () => {
+  it("is true for every capability, because one is granted by being named", () => {
+    for (const literal of CAPABILITY_SCOPES) {
+      expect(requiresExplicitConsent(literal), literal).toBe(true);
+    }
+  });
+
+  it("is false for everything a surface may offer pre-ticked", () => {
+    // The families a bundle's `default_on` genuinely governs, plus the two
+    // hidden mechanisms. None of these is administrative authority a role
+    // would otherwise hand over unnamed, so none of them needs this rule.
+    for (const literal of [
+      "openid",
+      "offline_access",
+      "profile",
+      "profile:read",
+      "core.note:read",
+      "*:write",
+      "edge.parent-of:write",
+      "metadata:read",
+      "metadata.types:write",
+      "content:read",
+    ]) {
+      expect(requiresExplicitConsent(literal), literal).toBe(false);
+    }
+  });
+
+  it("answers false for a literal the grammar does not recognize", () => {
+    // A guard rather than a throw: the surfaces reading this ask it of
+    // whatever a client sent, and a malformed literal is refused a step
+    // earlier by `isValidScope`. Answering true here would make a typo
+    // un-grantable-by-silence rather than refused, which reads as the rule
+    // working while the real check is the one that fired.
+    expect(requiresExplicitConsent("capability.not_a_real_one")).toBe(false);
+    expect(requiresExplicitConsent("")).toBe(false);
   });
 });

@@ -171,11 +171,17 @@ export type CapabilityScope =
  * ordered — a reader deciding what to grant reads down the list, so the
  * order is part of what the screen says.
  *
- * Exported so that the set has one home before it has a second reader. No
- * route gate consults a capability yet and no bundle offers one, so today
- * the only consumers are this package's own tests; the export exists so the
- * gate and the consent renderer read this array when they arrive rather than
- * each growing a list that can drift from it.
+ * Exported so the set has one home. The server's scope allowlist emits this
+ * array directly, which is what makes a capability requestable at all, and
+ * both consent surfaces read `requiresExplicitConsent` rather than each
+ * growing a list that can drift from it.
+ *
+ * **Emitted from here rather than through a bundle, deliberately.** Putting
+ * the family in an off-by-default bundle is the shape that suggests itself
+ * and it fails twice: a bundle-claimed capability leaves the consent
+ * screen's unclaimed-scope bucket and inherits the bundle's tick, and it
+ * makes reachability depend on a configuration, so an operator shipping no
+ * bundles has an instance whose gates nobody can satisfy.
  */
 export const CAPABILITY_SCOPES: readonly CapabilityScope[] = [
   "capability.webhooks",
@@ -196,6 +202,46 @@ const CAPABILITY_SET: ReadonlySet<string> = new Set(CAPABILITY_SCOPES);
 /** Returns true if the literal names a capability this build recognizes. */
 export function isCapabilityScope(scope: string): scope is CapabilityScope {
   return CAPABILITY_SET.has(scope);
+}
+
+/**
+ * Whether a consent surface must obtain a deliberate yes for this scope,
+ * rather than offering it pre-ticked or granting it alongside everything
+ * else.
+ *
+ * **One predicate because two surfaces answer, and they disagreed.** The
+ * code-flow consent screen gives a capability its own unticked row and says
+ * why at the site: it is authority a token would otherwise inherit from a
+ * role without anybody naming it, so arriving pre-ticked would grant it by
+ * silence. The device-approval screen could not reach that reasoning at all —
+ * its only withholding input was derived from the configured bundles, and a
+ * capability no bundle names is offered by no bundle, so it was in no
+ * withheld set. The two screens therefore held opposite opinions about
+ * administrative authority, and which one a person met decided what they
+ * handed over. Stating the rule once, here, is what stops that recurring for
+ * the next scope family that needs it.
+ *
+ * **Distinct from `default_on`, which is a bundle's opinion about its own
+ * contents.** This is the platform's opinion about a scope, so it holds
+ * whether or not any bundle names the literal — which is the case the
+ * bundle-derived answer could not express. A surface asks both: `default_on`
+ * decides what to offer ticked among the scopes a bundle claims, and this
+ * decides what may never be ticked for the person.
+ *
+ * **It answers about the initial offer, never about what to keep.** A scope
+ * the person already granted renders from the prior grant at re-consent; a
+ * default that decides what to *offer* must not be reused to decide what to
+ * *keep*, or an untouched Continue silently narrows a grant and revokes the
+ * app's working tokens.
+ *
+ * A guard rather than a throw for an unrecognized literal, matching
+ * `capabilityLabel` and for the same reason: the callers ask this of whatever
+ * a client sent, and a malformed literal is already refused a step earlier by
+ * `isValidScope`. Answering true here would report the typo as an
+ * ungrantable permission rather than as the invalid scope it is.
+ */
+export function requiresExplicitConsent(scope: string): boolean {
+  return isCapabilityScope(scope);
 }
 
 /**
@@ -1419,8 +1465,8 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
  * "Reached" rather than "named", because a bundle may hold a wildcard. An
  * on-by-default bundle offering `core.*:read` gives the user `core.note:read`
  * without anybody ticking anything, so withholding `core.note:read` because
- * an off-by-default bundle also names it withholds nothing real and refuses
- * the device flow over a scope the consent screen would tick.
+ * an off-by-default bundle also names it withholds nothing real and unticks
+ * a scope the other consent surface offers ticked.
  */
 export function scopesOfferedOffByDefaultOnly(
   bundles: readonly PermissionBundle[],
