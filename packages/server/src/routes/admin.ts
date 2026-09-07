@@ -734,7 +734,7 @@ const createAccountRoute = createRoute({
   tags: ["Admin"],
   summary: "Create an account",
   description:
-    "Creates an email + password account, already verified, with its own space and `space_admin` on it — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned.\n\nHosted instances close sign-up, so `POST /auth/sign-up/email` refuses and there was no other door: an operator could create a space and issue it a key, but a key is not an account and cannot hold a browser session. Anything that needs one — a smoke suite signing in, an agent driving the app, a support account provisioned for someone — had no supported path to it. This is that path. The password goes through Better Auth's own hasher and the account is written through its own adapter, so it is indistinguishable from a signed-up account except that its address arrives proven rather than mailed a link.",
+    "Creates an email + password account, already verified, with its own space and `space_admin` on it — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -775,7 +775,7 @@ const createAccountRoute = createRoute({
         },
       },
       description:
-        "The address is not a well-formed one, or the password falls outside the length the sign-in path enforces",
+        "The address is not a well-formed one, the password falls outside the length the sign-in path enforces, or this deployment has no user accounts",
     },
     401: {
       content: {
@@ -792,14 +792,6 @@ const createAccountRoute = createRoute({
         },
       },
       description: "Forbidden",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["not_found"]),
-        },
-      },
-      description: "This deployment has no user accounts",
     },
     409: {
       content: {
@@ -1361,13 +1353,14 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     const actor = requireAdmin(c);
     const auth = opts.auth;
     const users = storage.users;
-    // Keys-mode has no auth server and no users table. `NOT_FOUND`
-    // rather than a dedicated code, matching every sibling here: the
-    // resource does not exist on this instance.
+    // Keys mode has no auth server and no users table. The same code and
+    // near enough the same words as `POST /admin/accounts/{id}/delete`,
+    // which answers for the identical condition: an operator meeting
+    // both on one deployment should not be told two different things.
     if (!auth || !users) {
       throw new MarfaError(
-        ErrorCode.NOT_FOUND,
-        "This deployment has no user accounts",
+        ErrorCode.VALIDATION_ERROR,
+        "This deployment has no user accounts to create",
       );
     }
     const body = c.req.valid("json");
@@ -1397,13 +1390,20 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       );
     }
 
-    // No address in the details. The auth user id in `resource_id`
+    // Platform-level, like `admin.account.deleted` and unlike the space
+    // routes: `space_id` on the row is what scopes it to a space's own
+    // `GET /audit` feed, and the account provisioned here owns that
+    // space, so stamping it would hand the new account a record of the
+    // operator who made it. The space is still the fact worth keeping,
+    // so it goes in the details.
+    //
+    // No address anywhere on the row. The auth user id in `resource_id`
     // resolves back to it through `auth_user` when an operator needs it,
-    // and putting it here would re-introduce the plaintext PII trail
+    // and putting it here would re-introduce the plaintext trail
     // `auth-account.ts` deliberately keeps out of the audit rows.
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: provisioned.space_id,
+      space_id: null,
       key_id: actor.id,
       action: "admin.account.create",
       resource_type: "account",

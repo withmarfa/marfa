@@ -170,10 +170,15 @@ async function claimFreeHandle(
 
 /**
  * Minimal structural view of the Better Auth runtime context the operator
- * account-creation path reaches for. The full `AuthContext` type lives in
- * `@better-auth/core` and drags in generic machinery that breaks portable
- * `.d.ts` emit — the same reason `consent-idempotent-adapter.ts` declares
- * its own adapter surface rather than importing one.
+ * account-creation path reaches for. The full `AuthContext` lives in
+ * `@better-auth/core`, which is not a dependency here and drags in generic
+ * machinery this needs none of — the same trade
+ * `consent-idempotent-adapter.ts` makes for the adapter surface.
+ *
+ * The trade has a cost worth stating: nothing checks this shape against
+ * Better Auth's real one, so a rename in a minor bump compiles clean and
+ * fails at runtime. `admin-account-create.test.ts` is what catches that,
+ * by signing in as an account this path created.
  */
 interface BetterAuthCredentialContext {
   password: {
@@ -877,7 +882,8 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     // is NOT NULL, so a name that is absent or blank falls back to the
     // address's local part rather than reaching the hook as undefined.
     const submittedName = params.name?.trim() ?? "";
-    const name = submittedName === "" ? email.split("@")[0] : submittedName;
+    const name =
+      submittedName === "" ? (email.split("@")[0] ?? email) : submittedName;
     let user: { id: string; email: string } | null;
     try {
       user = await authContext.internalAdapter.createUser(
@@ -885,20 +891,41 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
         { method: "email-password" },
       );
     } catch (err) {
-      // The lookup above is a fast path, not a lock: two operators
-      // creating the same address at once both pass it and the second
-      // meets the unique index on `auth_user.email`. Re-read rather than
-      // matching driver-specific constraint text, which differs between
-      // Postgres and SQLite and would silently stop matching on an
-      // upgrade.
-      if (await authContext.internalAdapter.findUserByEmail(email)) {
-        return { ok: false, reason: "email_exists" };
-      }
+      // Two different failures arrive here and they need opposite
+      // answers. The lookup above is a fast path, not a lock, so two
+      // operators creating one address both pass it and the second meets
+      // the unique index on `auth_user.email` — nothing of this call's
+      // was written, and "it already exists" is the truth. But the
+      // provisioning hook runs inline on the create and rethrows when it
+      // fails, and that arrives here with this call's own row already
+      // committed. Answering that with a conflict tells the operator the
+      // opposite of what happened, and leaves an address that every
+      // retry then refuses.
+      //
+      // Which one it is is read rather than matched on driver-specific
+      // constraint text, which differs between Postgres and SQLite and
+      // would silently stop matching on an upgrade. A row that exists
+      // and carries a `users` row belongs to somebody else and this is a
+      // genuine duplicate; a row with none is the half-made one this
+      // call just left behind, so the failure is reported as a failure.
+      const existing = await authContext.internalAdapter.findUserByEmail(email);
+      const provisioned = existing
+        ? await options.storage?.users?.getByAuthUserId(existing.user.id)
+        : null;
+      if (provisioned) return { ok: false, reason: "email_exists" };
       throw err;
     }
     if (!user) {
       throw new Error("better-auth created no user");
     }
+    // Sign-up's handler wraps its user and account writes in one
+    // transaction and this does not, because the helper that opens one
+    // is not reachable from here. A `linkAccount` that throws therefore
+    // leaves a provisioned account with no password, which a retry then
+    // refuses as a duplicate. It takes a database failure to reach, the
+    // request answers 500 rather than pretending otherwise, and
+    // `POST /admin/accounts/{id}/delete` clears it — the id is on the
+    // space as `owner_auth_user_id`.
     await authContext.internalAdapter.linkAccount({
       userId: user.id,
       providerId: "credential",

@@ -38682,7 +38682,7 @@
           "Admin"
         ],
         "summary": "Create an account",
-        "description": "Creates an email + password account, already verified, with its own space and `space_admin` on it — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned.\n\nHosted instances close sign-up, so `POST /auth/sign-up/email` refuses and there was no other door: an operator could create a space and issue it a key, but a key is not an account and cannot hold a browser session. Anything that needs one — a smoke suite signing in, an agent driving the app, a support account provisioned for someone — had no supported path to it. This is that path. The password goes through Better Auth's own hasher and the account is written through its own adapter, so it is indistinguishable from a signed-up account except that its address arrives proven rather than mailed a link.",
+        "description": "Creates an email + password account, already verified, with its own space and `space_admin` on it — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
         "security": [
           {
             "bearerAuth": []
@@ -38764,7 +38764,7 @@
             }
           },
           "400": {
-            "description": "The address is not a well-formed one, or the password falls outside the length the sign-in path enforces",
+            "description": "The address is not a well-formed one, the password falls outside the length the sign-in path enforces, or this deployment has no user accounts",
             "content": {
               "application/json": {
                 "schema": {
@@ -38889,62 +38889,6 @@
                           "type": "string",
                           "enum": [
                             "forbidden"
-                          ]
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "details": {
-                          "type": "object",
-                          "additionalProperties": {
-                            "nullable": true
-                          }
-                        }
-                      },
-                      "required": [
-                        "code",
-                        "message"
-                      ]
-                    }
-                  },
-                  "required": [
-                    "error"
-                  ]
-                }
-              }
-            },
-            "headers": {
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-RateLimit-Limit": {
-                "$ref": "#/components/headers/X-RateLimit-Limit"
-              },
-              "X-RateLimit-Remaining": {
-                "$ref": "#/components/headers/X-RateLimit-Remaining"
-              },
-              "X-RateLimit-Reset": {
-                "$ref": "#/components/headers/X-RateLimit-Reset"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "404": {
-            "description": "This deployment has no user accounts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "error": {
-                      "type": "object",
-                      "properties": {
-                        "code": {
-                          "type": "string",
-                          "enum": [
-                            "not_found"
                           ]
                         },
                         "message": {
