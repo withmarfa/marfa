@@ -125,7 +125,7 @@
           "Items"
         ],
         "summary": "Create an item",
-        "description": "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
+        "description": "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. An `id` that collides with a row the caller already holds is answered with that stored row and `acknowledged: true`, and nothing is written or published — the backstop for two arrivals racing on one id. It is reached only once the write is attempted, so a space at its item ceiling refuses it with 429 like any other create. Retry safety after a lost response is `Idempotency-Key`, whose record is served ahead of the write.",
         "security": [
           {
             "bearerAuth": []
@@ -202,7 +202,7 @@
         },
         "responses": {
           "200": {
-            "description": "The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (stamped from the credential) and request `source_id` resolve a live item in the caller's space, and it is updated in place — an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged repeat:** the request carries an `id` the caller already created, so the create is a second arrival of that client's own write; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted.",
+            "description": "The request resolved an item that already exists, by one of two keys, and there are three answers. **Natural-key upsert:** both `source` (stamped from the credential) and request `source_id` resolve a live item in the caller's space, and it is updated in place — an idempotent re-sync of the upstream entry. **Acknowledged re-sync:** the same natural key resolves an item the user has trashed, so the response carries `acknowledged: true` and nothing is written; the deletion stands rather than the re-sync being refused forever. **Acknowledged race:** the request carries an `id` that collides with a row this caller already holds, so the create is the losing half of two arrivals on one id; the stored row comes back with `acknowledged: true`, in whatever state it holds including trashed, and nothing is written or published. That answer needs the write to be attempted, so it is not what makes a resend after a lost response safe; send an `Idempotency-Key` for that. On every one of the three the resolved item's `type` decides the shape, so a request naming a different one is refused with 409 `type_mismatch` rather than reinterpreted.",
             "content": {
               "application/json": {
                 "schema": {
@@ -12864,7 +12864,7 @@
           "Edges"
         ],
         "summary": "Create an edge",
-        "description": "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
+        "description": "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is answered with the stored edge and `acknowledged: true` at status 200 when two arrivals raced on that id and this one lost the insert: nothing is written and no event is published. An ordinary resend does not race, so it meets the exact-duplicate refusal instead (400 `edge_constraint_violation`, `constraint: duplicate`) — send an `Idempotency-Key` to make a resend after a lost response replay the first attempt's answer. An `id` naming a different edge is refused with 409 `conflict`.",
         "security": [
           {
             "bearerAuth": []
@@ -12907,7 +12907,7 @@
         },
         "responses": {
           "200": {
-            "description": "The supplied `id` already names this exact edge — same source, target and type — so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`.",
+            "description": "Two arrivals raced on one `id` and this one lost the insert. The supplied `id` already names this exact edge, same source, target and type, so the stored edge is returned with `acknowledged: true`; nothing is written and no event is published. A resend that did not race meets the exact-duplicate refusal rather than this answer, and `Idempotency-Key` is what replays the first attempt after a lost response.",
             "content": {
               "application/json": {
                 "schema": {
