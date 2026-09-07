@@ -1276,9 +1276,17 @@ export function requireMetadataPermission(
  * key: the family exists to name what a person handed an app, and an API key
  * is the person's own credential rather than an app's. Refusing one here would
  * break a self-host in keys mode, where no OAuth principal reaches a role gate
- * at all, the bootstrap mint of a first key, and every CLI admin command — for
- * no gain, since a key's authority is already bounded by the role lattice, the
- * platform flag and its space.
+ * at all, and every CLI admin command — for no gain, since a key's authority
+ * is already bounded by the role lattice, the platform flag and its space.
+ *
+ * **A bootstrap caller is refused here, and its protection is the route's
+ * rather than this function's.** Bootstrap presents no credential at all:
+ * `apiKey` is undefined and `authType` unset, so `checkAuth` throws before the
+ * OAuth question is reached. That is the right answer for a helper that cannot
+ * see the sentinel, and it means a call site on the mint path has to sit
+ * inside its own `if (!isBootstrap)` block, where every other authority check
+ * on that route already is. Do not weaken this to admit the shape; put the
+ * call in the right place.
  *
  * **So this is added beside an existing authority check, never instead of
  * one.** The role gate answers whether this principal may act on the surface;

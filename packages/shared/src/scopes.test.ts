@@ -985,7 +985,7 @@ describe("scopesOfferedOffByDefaultOnly", () => {
     // The overlap case again, one step wider. `core.*:write` is what the
     // user gets by leaving the ticked bundle alone, and it reaches
     // `core.task:write`, so withholding that literal withholds nothing while
-    // refusing a device flow the consent screen would have ticked.
+    // unticking it on a device flow the consent screen would have ticked.
     const out = scopesOfferedOffByDefaultOnly([
       bundle("write", true, ["core.*:write"]),
       bundle("manage", false, ["core.task:write"]),

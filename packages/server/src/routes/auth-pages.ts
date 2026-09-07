@@ -189,16 +189,17 @@ function selfServeEdgePermissions(
  * `projectGrantOnConsent`). Status flips to "active" + `revoked_at` is
  * cleared on re-consent to avoid stale-revoked projections. The scopes it
  * writes there are the merge described in `device-scope-merge.ts`, not the
- * request. This surface confirms a list rather than offering one to edit, so
- * it may widen a standing grant and never shrinks one — and a revoked grant
- * is not a standing one, so it merges against nothing and the record comes
- * back at the request alone.
+ * request. That merge may widen a standing grant and never shrinks one, even
+ * though the device screen now offers per-scope toggles: an untick there
+ * reaches the token this device is issued rather than the record, for the
+ * reasons at that function. A revoked grant is not a standing one, so it
+ * merges against nothing and the record comes back at the approval alone.
  *
  * **`source` is the device literal and not the wider union it used to
- * declare.** There is one caller. The merge rule inside is specific to a
- * screen with no per-scope toggles, and the authorize surface has the
- * deliberate opposite contract: a narrowing there is a decision the user
- * made and revokes the tokens carrying what was dropped. Advertising this
+ * declare.** There is one caller. The merge rule inside is specific to the
+ * device surface, and the authorize surface has the deliberate opposite
+ * contract: a narrowing there is a decision the user made and revokes the
+ * tokens carrying what was dropped. Advertising this
  * function as serving both would let a future authorize caller pick it up
  * and silently disable that revoke.
  *
@@ -2640,7 +2641,11 @@ export function authRoutes(
           approvedScopes,
           "marfa/oauth/device",
         );
-        const bound = await storage.oauth.approveDeviceCode(row.id, created.id);
+        const bound = await storage.oauth.approveDeviceCode(
+          row.id,
+          created.id,
+          approvedScopes,
+        );
         // The plugin's half of the grant. This surface never passes through
         // the plugin's consent endpoint, so without this write a device
         // grant had a projection and no consent row, and neither consent

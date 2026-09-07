@@ -69,11 +69,13 @@ describe("DeviceCodeCleaner.runOnce", () => {
     await oauth.approveDeviceCode(
       staleApproved,
       await seedConnection(ctx, "client_sweep"),
+      ["core.note:read"],
     );
     const staleRedeemed = await seedCode(ctx, "AAAA-0006", hours(-2));
     await oauth.approveDeviceCode(
       staleRedeemed,
       await seedConnection(ctx, "client_sweep"),
+      ["core.note:read"],
     );
     expect(await oauth.redeemDeviceCode(staleRedeemed)).toBe(true);
     // Inside the hour's grace, and live in two statuses.
@@ -83,6 +85,7 @@ describe("DeviceCodeCleaner.runOnce", () => {
     await oauth.approveDeviceCode(
       liveApproved,
       await seedConnection(ctx, "client_sweep"),
+      ["core.note:read"],
     );
 
     const cleaner = new DeviceCodeCleaner(ctx.storage, 86_400_000, () => now);

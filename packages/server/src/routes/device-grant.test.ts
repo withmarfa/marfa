@@ -920,6 +920,52 @@ describe("POST /auth/device/consent grants the ticked set", () => {
     }
   });
 
+  it("issues the device only what was ticked, even when the record holds more", async () => {
+    // **The case the retired initiation refusal used to make unreachable.**
+    // Its own comment named the invariant: refusing at initiation rather than
+    // at approval kept the screen, the grant, the audit row and the issued
+    // token reading one set. Moving the withholding to the screen breaks that
+    // unless the approval is what the token is measured against.
+    //
+    // The device code's stored scopes are what the device asked for, and the
+    // grant after a re-approval is the standing record, which merges upward.
+    // So both inputs to the token step can still carry a scope the person
+    // just unticked, and the untick is a no-op for anything the standing
+    // grant already holds — silently, with the audit row saying otherwise.
+    const ctx = await createTestContext({ authMode: "hosted" });
+    try {
+      const clientId = await createClient(ctx);
+      const cookie = await signInAndCookie(
+        ctx,
+        "device-ticked-issued@test.marfa.so",
+        "correct-horse-battery-4",
+      );
+      // A standing grant that already holds both.
+      await approveWith(
+        ctx,
+        clientId,
+        cookie,
+        "openid offline_access core.note:read core.task:write",
+        ["openid", "offline_access", "core.note:read", "core.task:write"],
+      );
+      // The same request again, with one unticked.
+      const { init } = await approveWith(
+        ctx,
+        clientId,
+        cookie,
+        "openid offline_access core.note:read core.task:write",
+        ["openid", "offline_access", "core.note:read"],
+      );
+
+      const poll = await pollToken(ctx, init.device_code, clientId);
+      expect(poll.status).toBe(200);
+      expect(String(poll.body.scope)).not.toContain("core.task:write");
+      expect(String(poll.body.scope)).toContain("core.note:read");
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
   it("treats an approval with nothing ticked as a denial", async () => {
     // Same rule the authorize screen applies to a zero-scope accept, and for
     // the same reason: a grant of nothing is not a grant, and recording one
@@ -956,11 +1002,10 @@ describe("POST /auth/device/consent grants the ticked set", () => {
 });
 
 /**
- * The device screen confirms a scope list rather than offering one to edit,
- * so an approval may widen a standing grant and must never shrink one. These
- * pin both directions, plus the consequence at the token step: the record can
- * now hold more than this device asked for, and what it is handed must still
- * be what it asked for.
+ * An approval may widen a standing grant and must never shrink one. These pin
+ * both directions, plus the consequence at the token step: the record can now
+ * hold more than this device asked for, and what it is handed must still be
+ * what it was approved for.
  *
  * The standing grant is established by an earlier device approval rather than
  * a browser consent because the record is the same row either way, and this
@@ -1613,6 +1658,7 @@ describe("POST /auth/device/token — RFC 8628 error paths", () => {
     const approved = await ctx.storage.oauth.approveDeviceCode(
       codeRow!.id,
       decoyNote.id,
+      ["core.note:read"],
     );
     expect(approved).toBe(true);
 
@@ -2028,35 +2074,6 @@ describe("POST /auth/device — off-by-default scopes", () => {
     );
   });
 
-  it("tells an unauthenticated caller nothing about what is withheld", async () => {
-    // **The leak this replaces is closed by construction rather than by
-    // care.** The refusal answered an unauthenticated caller and named a
-    // withheld scope so the client could narrow, which meant one request per
-    // scope enumerated a partition that is not otherwise public: discovery
-    // advertises `scopes_supported` and carries no `default_on`. The version
-    // before that joined every reached scope and handed the partition back in
-    // a single response.
-    //
-    // With nothing refused there is nothing to name. Withholding is now
-    // visible only on the approval screen, which is session-gated, so the
-    // caller learns what it always could — that its request was accepted.
-    await withBundles(
-      [
-        bundle("read", true, ["core.note:read"]),
-        bundle("manage", false, ["core.task:write", "core.note:write"]),
-      ],
-      async () => {
-        ctx = await createTestContext();
-        const clientId = await createClient(ctx);
-
-        const res = await tryInit(ctx, clientId, "core.*:write");
-        expect(res.status).toBe(200);
-        expect(JSON.stringify(res.body)).not.toContain("core.task:write");
-        expect(JSON.stringify(res.body)).not.toContain("core.note:write");
-      },
-    );
-  });
-
   it("keeps a request clear of the withheld set working", async () => {
     // The control. Withholding is not "an off-by-default bundle exists", it
     // is this scope, so a neighboring scope still initiates.
@@ -2123,9 +2140,13 @@ describe("POST /auth/device/consent binds the code inside the consent lock", () 
     const oauth = ctx.storage.oauth;
     const realApprove = oauth.approveDeviceCode.bind(oauth);
     let heldAtBinding: boolean | undefined;
-    oauth.approveDeviceCode = async (codeId: string, grantId: string) => {
+    oauth.approveDeviceCode = async (
+      codeId: string,
+      grantId: string,
+      approvedScopes: readonly string[],
+    ) => {
       heldAtBinding = lockHeld;
-      return realApprove(codeId, grantId);
+      return realApprove(codeId, grantId, approvedScopes);
     };
 
     const init = await initiate(ctx, clientId, "core.note:read");
@@ -2291,7 +2312,9 @@ describe("POST /auth/device/token — a device code is exchanged once", () => {
       },
       source: "test/device-grant",
     });
-    expect(await oauth.approveDeviceCode(row.id, connection.id)).toBe(true);
+    expect(
+      await oauth.approveDeviceCode(row.id, connection.id, ["core.note:read"]),
+    ).toBe(true);
     expect(await oauth.redeemDeviceCode(row.id)).toBe(true);
     expect(await oauth.redeemDeviceCode(row.id)).toBe(false);
     expect((await oauth.findDeviceCodeByUserCode("SPND-0001"))?.status).toBe(

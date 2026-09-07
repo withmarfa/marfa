@@ -145,7 +145,11 @@ describe("requireCapability", () => {
     }).toThrow(MarfaError);
   });
 
-  it("refuses an unauthenticated caller", () => {
+  it("refuses a caller presenting no credential, bootstrap included", () => {
+    // Bootstrap has this exact shape — no `apiKey`, no `authType` — so this
+    // helper refuses it, and the mint route's protection is its own
+    // `if (!isBootstrap)` block rather than anything here. Pinned so the
+    // answer is a decision rather than a surprise at the first call site.
     expect(() => {
       requireCapability(fakeContext({}), "capability.keys");
     }).toThrow(MarfaError);

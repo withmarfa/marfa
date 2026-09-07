@@ -22,7 +22,11 @@ import * as logger from "../middleware/logger.js";
 import { buildAllowedScopes } from "./oauth-provider.js";
 import { bundlePublishedScopes } from "./ceiling-catchup.js";
 import { resetWithheldScopeWarnings } from "./allowlist-withholding.js";
-import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
+import {
+  DEFAULT_PERMISSION_BUNDLES,
+  setActivePermissionBundles,
+} from "../config.js";
+import { dcrDefaultScopes } from "./mint-ceiling.js";
 
 /** A bundle of the shape `MARFA_PERMISSION_BUNDLES` produces, naming a
  *  capability — the configuration that can carry the defect. */
@@ -85,6 +89,25 @@ describe("a bundle still cannot be the reason one is publishable", () => {
         (data as { scope?: string } | undefined)?.scope === "capability.keys",
     );
     expect(named.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps it out of the ceiling an anonymous registration is given", () => {
+    // The third bundle door, and the one that was reading the bundles raw.
+    // It was invisible while the family was unpublishable: the registration
+    // validated its own defaults against an allowlist holding no capability,
+    // so an operator bundle naming one made every anonymous DCR fail
+    // `invalid_scope`. With the family published that check passes instead,
+    // and the literal would be written into a stored client row that outlives
+    // the configuration. Loud became silent, which is the direction that
+    // matters.
+    setActivePermissionBundles([CLAIMING_BUNDLE]);
+    try {
+      const defaults = dcrDefaultScopes();
+      expect(defaults).not.toContain("capability.keys");
+      expect(defaults).toContain("core.note:read");
+    } finally {
+      setActivePermissionBundles(null);
+    }
   });
 
   it("no shipped bundle names a capability", () => {

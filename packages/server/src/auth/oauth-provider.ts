@@ -320,10 +320,12 @@ export function buildAllowedScopes(
   // the day the name it was meant to be starts meaning something.
   // Two filters, and they answer different questions. `isValidScope` asks
   // whether the grammar recognizes the literal at all; `isWithheldFromAllowlist`
-  // asks whether this server is willing to publish one it recognizes. Only the
-  // first was here, so a bundle naming `capability.keys` published a scope the
-  // allowlist deliberately never emits — administrative authority, arriving
-  // through the one door that does not pass a parser.
+  // asks whether a bundle may be the thing that publishes one it recognizes.
+  //
+  // The capability family is emitted above, from the closed set, so the drop
+  // no longer changes this function's output for one. What it still decides
+  // is whether a *configuration* can claim the literal, which is the half
+  // that reaches a stored client ceiling and the consent screen's grouping.
   for (const scope of expandBundlesToScopes(permissionBundles)) {
     if (!isValidScope(scope)) {
       warnOnceAboutBundleScope(scope);

@@ -99,6 +99,7 @@ export class PgOAuthStore implements OAuthStore {
   async approveDeviceCode(
     id: string,
     connectionItemId: string,
+    approvedScopes: readonly string[],
   ): Promise<boolean> {
     const result = await this.db
       .update(oauthDeviceCodes)
@@ -106,6 +107,9 @@ export class PgOAuthStore implements OAuthStore {
         status: "approved",
         connection_item_id: connectionItemId,
         approved_at: new Date().toISOString(),
+        // What may be issued, which after approval is what this row is for.
+        // The requested set it replaces is still the audit row's `scopes`.
+        scope: approvedScopes.join(" "),
       })
       .where(
         and(

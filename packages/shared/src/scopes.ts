@@ -1452,10 +1452,10 @@ export function expandBundlesToScopes(bundles: PermissionBundle[]): string[] {
  * Scopes that only an off-by-default bundle offers.
  *
  * `default_on: false` means the toggle starts unticked, and the whole of
- * what it grants is that a person ticked it. A surface with no per-scope
- * toggle therefore cannot grant one of these at all: there is no tick to
- * make, so "leaving it alone grants nothing" has nothing to attach to. The
- * device flow is that surface, and this is what it refuses.
+ * what it grants is that a person ticked it. Both consent surfaces read this
+ * to decide which rows arrive unticked. The device flow used to have no tick
+ * to make, so it refused these at initiation instead; it has per-scope
+ * toggles now and withholds them the same way the authorize screen does.
  *
  * Claimed by at least one bundle and reached by no on-by-default one, so a
  * scope the user already gets by default is not withheld, and a scope no

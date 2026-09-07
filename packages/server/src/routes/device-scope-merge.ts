@@ -22,21 +22,36 @@ import type {
  * The scope set a device approval leaves on a grant it is re-approving.
  *
  * **A device approval never narrows a standing grant; it merges into it.**
- * The device screen CONFIRMS a scope list. It has no per-scope toggles, and
- * its own copy says the rows are confirmed rather than editable, so a device
- * request narrower than what the user already granted is an artifact of what
- * that client asked for, not the user electing to give something up. Signing
- * in on a CLI must not silently shrink what the same app already reaches from
- * the browser, and it must not leave `/auth/security` under-reporting access
- * that still works. Requiring full re-consent instead was the other candidate
- * and is worse: it revokes the user's live tokens as an unshown side effect
- * of a CLI login.
+ * A device request narrower than what the user already granted is usually an
+ * artifact of what that client asked for rather than the user electing to
+ * give something up, and signing in on a CLI must not silently shrink what
+ * the same app already reaches from the browser or leave `/auth/security`
+ * under-reporting access that still works. Requiring full re-consent instead
+ * was the other candidate and is worse: it revokes the user's live tokens as
+ * an unshown side effect of a CLI login.
+ *
+ * **The device screen offers per-scope toggles now, so that reasoning no
+ * longer covers every narrower set arriving here**, and the difference is
+ * worth stating rather than leaving to be rediscovered. A set arriving
+ * smaller may be the client asking for less or the person unticking a row,
+ * and this function cannot tell them apart. It keeps the standing grant
+ * either way, deliberately: the cost of the wrong guess in that direction is
+ * a grant wider than one screen displayed, and in the other it is a CLI login
+ * silently revoking a browser app's live tokens.
+ *
+ * **What the untick does reach is the token this device is issued**, which is
+ * where it belongs: `approveDeviceCode` records the approved set on the
+ * device-code row, so `intersectDeviceScopes` measures the issuance against
+ * what the person ticked rather than against what the client asked for.
+ * Without that the untick was a silent no-op for anything the standing grant
+ * already held. So the two halves are: the record merges upward, the token
+ * does not.
  *
  * `preserveBroaderGrant` in `routes/auth-consent.ts` is the deliberate
- * opposite and the pair is worth reading together. That screen offers
- * per-scope toggles, so a set arriving smaller is the user having unticked
- * something and is honored; it compares literals because what it restores is
- * the record of what the user ticked, verbatim.
+ * opposite and the pair is worth reading together. That screen's untick
+ * narrows the record itself, and revokes to match; it compares literals
+ * because what it restores is what the user ticked, verbatim. Whether this
+ * screen should follow it is a product question rather than a defect.
  *
  * **Why this cannot be computed on the literals.** Scope resolution gives an
  * exact type id precedence over a wildcard spanning it, so a literal sitting

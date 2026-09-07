@@ -658,9 +658,11 @@ describe("revocation reaches outstanding device codes", () => {
       deviceCodeHash(second.device_code),
     );
     expect(pending?.status).toBe("pending");
-    expect(await c.storage.oauth.approveDeviceCode(pending!.id, grant.id)).toBe(
-      true,
-    );
+    expect(
+      await c.storage.oauth.approveDeviceCode(pending!.id, grant.id, [
+        "core.note:read",
+      ]),
+    ).toBe(true);
 
     // The code the poll is about to present: bound to the revoked grant,
     // still approved, and provably unexpired. The expiry check sits ABOVE

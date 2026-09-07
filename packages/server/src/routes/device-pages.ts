@@ -342,6 +342,12 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
     seenLiterals.add(literal);
     const safeLiteral = escapeHtml(literal);
     const human = describeScope(scope, params.descriptions);
+    // Suppressing a repeated line is a display decision, so it hides the row
+    // and never the input. Dropping the checkbox with it would leave a scope
+    // the device asked for unsubmittable, which reads to the person as
+    // approved and reaches the grant as absent, with nothing saying so.
+    const duplicateLine = seenLines.has(human);
+    seenLines.add(human);
     if (hiddenLiterals.has(literal)) {
       // Submitted hidden, because no per-scope decision applies to a
       // mechanism — but still *stated*, which is where this screen differs
@@ -354,21 +360,22 @@ export function renderDeviceConsentScreen(params: DeviceConsentParams): string {
       hidden.push(
         `<input type="checkbox" name="scopes" value="${safeLiteral}" checked hidden>`,
       );
-      if (seenLines.has(human)) continue;
-      seenLines.add(human);
-      visible.push(
-        `<div class="subrow"><span>${escapeHtml(human)}</span></div>`,
-      );
+      if (!duplicateLine) {
+        visible.push(
+          `<div class="subrow"><span>${escapeHtml(human)}</span></div>`,
+        );
+      }
       continue;
     }
-    if (seenLines.has(human)) continue;
-    seenLines.add(human);
     const checked =
       requiresExplicitConsent(literal) || reachesWithheld(literal)
         ? ""
         : " checked";
+    // A repeated line renders its toggle with no label rather than being
+    // dropped: the input has to reach the form whatever the copy does.
+    const label = duplicateLine ? "" : escapeHtml(human);
     visible.push(
-      `<div class="subrow"><span>${escapeHtml(human)}</span><label class="sw"><input type="checkbox" name="scopes" value="${safeLiteral}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`,
+      `<div class="subrow"><span>${label}</span><label class="sw"><input type="checkbox" name="scopes" value="${safeLiteral}"${checked}><span class="tk" aria-hidden="true"></span></label></div>`,
     );
   }
 
