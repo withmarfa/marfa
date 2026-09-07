@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt, magicLink } from "better-auth/plugins";
+import { createLocalAccountIssuer } from "better-auth/db";
 import { passkey } from "@better-auth/passkey";
 import {
   deriveHandleFromEmail,
@@ -167,6 +168,47 @@ async function claimFreeHandle(
   return handleWithSuffix(base, `-${randomBytes(4).toString("hex")}`);
 }
 
+/**
+ * Minimal structural view of the Better Auth runtime context the operator
+ * account-creation path reaches for. The full `AuthContext` lives in
+ * `@better-auth/core`, which is not a dependency here and drags in generic
+ * machinery this needs none of — the same trade
+ * `consent-idempotent-adapter.ts` makes for the adapter surface.
+ *
+ * The trade has a cost worth stating: nothing checks this shape against
+ * Better Auth's real one, so a rename in a minor bump compiles clean and
+ * fails at runtime. `admin-account-create.test.ts` is what catches that,
+ * by signing in as an account this path created.
+ */
+interface BetterAuthCredentialContext {
+  password: {
+    hash: (password: string) => Promise<string>;
+    config: { minPasswordLength: number; maxPasswordLength: number };
+  };
+  internalAdapter: {
+    findUserByEmail: (
+      email: string,
+    ) => Promise<{ user: { id: string } } | null>;
+    createUser: (
+      user: Record<string, unknown>,
+      source: { method: string },
+    ) => Promise<{ id: string; email: string } | null>;
+    linkAccount: (account: Record<string, unknown>) => Promise<unknown>;
+  };
+}
+
+/**
+ * The outcome of `createEmailAccount`. Refusals are values rather than
+ * throws because each maps to a different status on the route that calls
+ * this, and a caller that forgets one gets a compile error instead of a
+ * 500.
+ */
+export type CreateEmailAccountResult =
+  | { ok: true; authUserId: string; email: string }
+  | { ok: false; reason: "email_exists" }
+  | { ok: false; reason: "password_too_short"; minLength: number }
+  | { ok: false; reason: "password_too_long"; maxLength: number };
+
 /** Authenticated user on a Better Auth session. Reduced surface — only the
  *  fields the OAuth consent flow currently consumes. */
 export interface MarfaAuthSessionUser {
@@ -193,6 +235,26 @@ export interface MarfaAuth {
    * requiring admin bearer tokens.
    */
   getSession: (headers: Headers) => Promise<MarfaAuthSession | null>;
+  /**
+   * Create an email + password account without going through sign-up.
+   *
+   * `POST /auth/sign-up/email` is the only endpoint that mints a password
+   * account, and it refuses whenever `disableSignUp` is set — which is
+   * every hosted instance, deliberately. This runs the same machinery the
+   * endpoint does: Better Auth's own hasher, its internal adapter, and so
+   * the `user.create` database hook that provisions the space. The one
+   * difference is that the address arrives already proven, because an
+   * operator asked for the account rather than a stranger claiming it, and
+   * nobody is going to open the inbox to click a link.
+   *
+   * `POST /admin/accounts` is the only caller, and the platform-admin gate
+   * lives there. This function does not decide who may create an account.
+   */
+  createEmailAccount: (params: {
+    email: string;
+    password: string;
+    name?: string;
+  }) => Promise<CreateEmailAccountResult>;
   /** Whether new account creation is allowed on this instance. Mirrors
    *  the constructor option; the sign-in page reads it to decide
    *  whether to render a "Create one" link below the form. */
@@ -773,10 +835,112 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     }) => Promise<MarfaAuthSession | null>;
   };
 
+  // Operator account creation. Deliberately reads the built context
+  // rather than calling `api.signUpEmail`: that endpoint answers
+  // `EMAIL_PASSWORD_SIGN_UP_DISABLED` on every instance with sign-up
+  // closed, which is the only kind of instance this exists for.
+  //
+  // The order below is sign-up's own, and the reasons are its reasons.
+  // Hash before anything is written, so a hasher that throws throws
+  // before a user row exists. Create the user through the internal
+  // adapter, which is what runs the `user.create` hook that provisions
+  // the space, the handle and the `space_admin` role. Then link the
+  // credential account with the issuer Better Auth's own credential
+  // lookup keys on — imported rather than spelled here, because a
+  // literal would keep working until the day the format moved and then
+  // fail as "wrong password" with nothing naming the cause.
+  const createEmailAccount = async (params: {
+    email: string;
+    password: string;
+    name?: string;
+  }): Promise<CreateEmailAccountResult> => {
+    const authContext = await (
+      instance as unknown as { $context: Promise<BetterAuthCredentialContext> }
+    ).$context;
+    const { minPasswordLength, maxPasswordLength } =
+      authContext.password.config;
+    if (params.password.length < minPasswordLength) {
+      return {
+        ok: false,
+        reason: "password_too_short",
+        minLength: minPasswordLength,
+      };
+    }
+    if (params.password.length > maxPasswordLength) {
+      return {
+        ok: false,
+        reason: "password_too_long",
+        maxLength: maxPasswordLength,
+      };
+    }
+    const email = params.email.toLowerCase();
+    if (await authContext.internalAdapter.findUserByEmail(email)) {
+      return { ok: false, reason: "email_exists" };
+    }
+    const password = await authContext.password.hash(params.password);
+    // The handle, space and role all derive from `name`, and the column
+    // is NOT NULL, so a name that is absent or blank falls back to the
+    // address's local part rather than reaching the hook as undefined.
+    const submittedName = params.name?.trim() ?? "";
+    const name =
+      submittedName === "" ? (email.split("@")[0] ?? email) : submittedName;
+    let user: { id: string; email: string } | null;
+    try {
+      user = await authContext.internalAdapter.createUser(
+        { email, name, emailVerified: true },
+        { method: "email-password" },
+      );
+    } catch (err) {
+      // Two different failures arrive here and they need opposite
+      // answers. The lookup above is a fast path, not a lock, so two
+      // operators creating one address both pass it and the second meets
+      // the unique index on `auth_user.email` — nothing of this call's
+      // was written, and "it already exists" is the truth. But the
+      // provisioning hook runs inline on the create and rethrows when it
+      // fails, and that arrives here with this call's own row already
+      // committed. Answering that with a conflict tells the operator the
+      // opposite of what happened, and leaves an address that every
+      // retry then refuses.
+      //
+      // Which one it is is read rather than matched on driver-specific
+      // constraint text, which differs between Postgres and SQLite and
+      // would silently stop matching on an upgrade. A row that exists
+      // and carries a `users` row belongs to somebody else and this is a
+      // genuine duplicate; a row with none is the half-made one this
+      // call just left behind, so the failure is reported as a failure.
+      const existing = await authContext.internalAdapter.findUserByEmail(email);
+      const provisioned = existing
+        ? await options.storage?.users?.getByAuthUserId(existing.user.id)
+        : null;
+      if (provisioned) return { ok: false, reason: "email_exists" };
+      throw err;
+    }
+    if (!user) {
+      throw new Error("better-auth created no user");
+    }
+    // Sign-up's handler wraps its user and account writes in one
+    // transaction and this does not, because the helper that opens one
+    // is not reachable from here. A `linkAccount` that throws therefore
+    // leaves a provisioned account with no password, which a retry then
+    // refuses as a duplicate. It takes a database failure to reach, the
+    // request answers 500 rather than pretending otherwise, and
+    // `POST /admin/accounts/{id}/delete` clears it — the id is on the
+    // space as `owner_auth_user_id`.
+    await authContext.internalAdapter.linkAccount({
+      userId: user.id,
+      providerId: "credential",
+      issuer: createLocalAccountIssuer("credential"),
+      accountId: user.id,
+      password,
+    });
+    return { ok: true, authUserId: user.id, email: user.email };
+  };
+
   return {
     handler: instance.handler,
     api: instance.api,
     getSession: (headers: Headers) => api.getSession({ headers }),
+    createEmailAccount,
     allowSignup: options.allowSignup,
     oidcProviderIds: (options.oidcProviders ?? []).map((p) => p.providerId),
     ready,

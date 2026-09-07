@@ -867,6 +867,10 @@ export function createApp(
     adminRoutes(storage, {
       graceDays: config.accountDeletionGraceDays ?? 30,
       apiKeySalt: config.apiKeySalt,
+      // `POST /admin/accounts` mints an account through Better Auth's own
+      // machinery, so it needs the instance rather than the storage
+      // handles. Absent in keys mode, where the route answers 404.
+      auth,
     }),
   );
 
