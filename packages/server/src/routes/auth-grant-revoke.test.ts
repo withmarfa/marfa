@@ -871,11 +871,19 @@ describe("revocation reaches outstanding device codes", () => {
     expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
       200,
     );
+    // A second code bound to the same grant. A code is spent by its one
+    // exchange, so the code that proves the fixture mints cannot also be
+    // the code the refusal below is measured on.
+    const probe = await initiateDeviceFlow(c, clientId, "core.note:read");
+    expect((await approveDeviceFlow(c, probe.user_code, cookie)).status).toBe(
+      200,
+    );
     const grant = await onlyGrant(c);
 
-    // The same code mints while the grant is live, so the refusal below is
-    // about the state axis and nothing else about the fixture.
-    expect((await pollDeviceToken(c, flow.device_code, clientId)).status).toBe(
+    // A code bound to this grant mints while the grant is live, so the
+    // refusal below is about the state axis and nothing else about the
+    // fixture.
+    expect((await pollDeviceToken(c, probe.device_code, clientId)).status).toBe(
       200,
     );
 
@@ -925,11 +933,17 @@ describe("revocation reaches outstanding device codes", () => {
     expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
       200,
     );
+    // A second code bound to the same grant, for the reason the sibling
+    // case above gives: a code is spent by its one exchange.
+    const probe = await initiateDeviceFlow(c, clientId, "core.note:read");
+    expect((await approveDeviceFlow(c, probe.user_code, cookie)).status).toBe(
+      200,
+    );
     const grant = await onlyGrant(c);
 
     // Admitted before the purge, so the refusal below is about the missing
     // grant rather than about the fixture.
-    expect((await pollDeviceToken(c, flow.device_code, clientId)).status).toBe(
+    expect((await pollDeviceToken(c, probe.device_code, clientId)).status).toBe(
       200,
     );
 

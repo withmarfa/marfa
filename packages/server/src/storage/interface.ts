@@ -1792,6 +1792,33 @@ export interface OAuthStore {
   denyDeviceCode(id: string): Promise<boolean>;
 
   /**
+   * Flip status from `approved` to `redeemed`. Returns false if the row was
+   * not approved, which is what a second poll with the same code sees.
+   *
+   * A device code is exchanged once. RFC 8628 §3.5 has the client stop
+   * polling on success, but nothing stopped the server answering again: an
+   * approved row stayed approved for the rest of its TTL, so a code that
+   * leaked from a device's logs or a shared terminal could be exchanged a
+   * second time for a second live pair, and with `offline_access` a second
+   * refresh token, minted after the device had its own. The flip is a
+   * conditional update on the status column, so two polls racing for the
+   * same code see one winner and the other is refused.
+   */
+  redeemDeviceCode(id: string): Promise<boolean>;
+
+  /**
+   * Delete every device-code row whose `expires_at` is before `cutoffIso`,
+   * whatever its status. Returns the number of rows deleted.
+   *
+   * Rows were never removed once written: a pending code that nobody
+   * approved, a denied one, an approved one whose grant lives on, and now a
+   * redeemed one all sat in the table for as long as the deployment did. An
+   * expired row answers nothing to any caller, so the sweep is safe at any
+   * cutoff at or past expiry; the retention job passes one an hour past.
+   */
+  deleteDeviceCodesExpiredBefore(cutoffIso: string): Promise<number>;
+
+  /**
    * Delete every device code bound to a projected grant, so revoking that
    * grant leaves nothing behind that can still be exchanged for a token.
    *

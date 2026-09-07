@@ -765,7 +765,13 @@ export interface OAuthDeviceCode {
 }
 
 export type OAuthDeviceCodeStatus =
-  "pending" | "approved" | "denied" | "expired";
+  | "pending"
+  | "approved"
+  | "denied"
+  | "expired"
+  /** Exchanged for tokens. A code is spent by its one issuance, so a later
+   *  poll with the same code is refused rather than minting a second pair. */
+  | "redeemed";
 
 // ---------------------------------------------------------------------------
 // Webhook types

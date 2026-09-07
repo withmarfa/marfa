@@ -337,9 +337,10 @@ export const oauthDeviceCodes = sqliteTable(
      *  Uniqueness lets validateToken-style lookups stay constant-time. */
     device_code_hash: text("device_code_hash").notNull().unique(),
     /** Short, low-entropy code displayed to the human (XXXX-XXXX shape).
-     *  Unique while the row is `pending`; once approved/denied/expired
-     *  the row is preserved for audit but no new pending row may reuse
-     *  the value (enforced by a unique index over the natural key). */
+     *  Unique while the row is `pending`; once approved, redeemed or
+     *  denied the row stays until the cleanup job deletes it an hour past
+     *  expiry, and no new pending row may reuse the value meanwhile
+     *  (enforced by a unique index over the natural key). */
     user_code: text("user_code").notNull().unique(),
     /** Stores the @better-auth/oauth-provider client_id business key
      *  (auth_oauth_client.client_id) as a plain string — application-
@@ -349,8 +350,10 @@ export const oauthDeviceCodes = sqliteTable(
     /** Space-separated list of requested scopes. Stored verbatim;
      *  parsed via parseScope at consent / token time. */
     scope: text("scope").notNull(),
-    /** Lifecycle: pending → approved | denied; expired by the cleanup
-     *  job once `expires_at < now()`. */
+    /** Lifecycle: pending → approved → redeemed, or pending → denied.
+     *  Nothing writes an expired status: a row past `expires_at` is refused
+     *  by the token step and deleted by the cleanup job an hour later,
+     *  whatever its status. */
     status: text("status").notNull().default("pending"),
     /** Set when status transitions to `approved`. References the
      *  system.connection (kind: app) created on approval. */

@@ -1,4 +1,4 @@
-import { eq, and, sql } from "drizzle-orm";
+import { lt, eq, and, sql } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
 import type { OAuthDeviceCode, OAuthDeviceCodeStatus } from "@withmarfa/shared";
 import type { OAuthStore } from "../interface.js";
@@ -129,6 +129,28 @@ export class SqliteOAuthStore implements OAuthStore {
       )
       .run();
     return result.rowsAffected > 0;
+  }
+
+  async redeemDeviceCode(id: string): Promise<boolean> {
+    const result = await this.db
+      .update(oauthDeviceCodes)
+      .set({ status: "redeemed" })
+      .where(
+        and(
+          eq(oauthDeviceCodes.id, id),
+          eq(oauthDeviceCodes.status, "approved"),
+        ),
+      )
+      .run();
+    return result.rowsAffected > 0;
+  }
+
+  async deleteDeviceCodesExpiredBefore(cutoffIso: string): Promise<number> {
+    const result = await this.db
+      .delete(oauthDeviceCodes)
+      .where(lt(oauthDeviceCodes.expires_at, cutoffIso))
+      .run();
+    return result.rowsAffected;
   }
 
   async deleteDeviceCodesForGrant(connectionItemId: string): Promise<void> {

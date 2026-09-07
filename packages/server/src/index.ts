@@ -39,6 +39,7 @@ import {
   PendingDeletePurger,
   RateLimitWindowCleaner,
   DcrClientCleaner,
+  DeviceCodeCleaner,
   RuntimeCredentialReaper,
   runSpaceCleanup,
 } from "./storage/retention.js";
@@ -727,6 +728,31 @@ async function main() {
     );
   }
 
+  // Device codes were written and never swept: pending, denied, approved and
+  // redeemed rows all outlived their expiry indefinitely. Daily, with an
+  // hour's grace past expiry, and deliberately not configurable: a code lives
+  // minutes, so the only thing a knob could tune is how long dead rows sit,
+  // and the DCR reaper's own interval is that job's setting, not this one's.
+  const deviceCodeCleanupIntervalMs = 86_400_000;
+  const deviceCodeCleaner = new DeviceCodeCleaner(
+    storage,
+    deviceCodeCleanupIntervalMs,
+    undefined,
+    storage.coordination,
+  );
+  scheduleJob(
+    {
+      name: "device-code-cleanup",
+      logName: "Device code cleanup",
+      intervalMs: deviceCodeCleanupIntervalMs,
+      firstRunDelaySeconds: 30,
+      runOnce: () => deviceCodeCleaner.runScheduled(),
+    },
+    () => {
+      deviceCodeCleaner.start();
+    },
+  );
+
   // Runtime credentials are minted per dispatch, so the table grows with
   // traffic unless something retires them. The mint path supersedes its own
   // siblings and the bearer gate refuses expired rows, but neither reaches
@@ -1190,6 +1216,7 @@ async function main() {
     dcrClientCleaner?.stop();
     revokedGrantPurger?.stop();
     grantInactivityRetirer?.stop();
+    deviceCodeCleaner.stop();
     runtimeCredentialReaper?.stop();
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();
