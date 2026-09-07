@@ -1153,8 +1153,19 @@ export interface SearchStore {
 }
 
 export interface KeyStore {
+  /**
+   * Mint a key.
+   *
+   * `scope_enforced` is an intersection rather than a field on
+   * `CreateKeyInput` for the same reason `is_runtime_credential` is not one:
+   * it is set by the server from who is calling, never from a request body,
+   * and `CreateKeyInput` is published — an SDK consumer can construct one, and
+   * a settable flag there would read as something a caller may ask for. It
+   * holds the key to its permission maps rather than to its role, which is
+   * what keeps the mint clamp meaningful after the mint.
+   */
   create(
-    input: CreateKeyInput,
+    input: CreateKeyInput & { scope_enforced?: boolean },
     keyHash: string,
     spaceId?: string,
   ): Promise<ApiKey>;

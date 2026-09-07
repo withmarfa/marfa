@@ -260,10 +260,15 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
       try {
         if (!ctx.storage.spaces) throw new Error("hosted storage expected");
         const space = await ctx.storage.spaces.create("proj-space");
-        const { token } = await seedOauthBearer(ctx.storage, [], {
-          spaceId: space.id,
-          userRole: "instance_admin",
-        });
+        const { token } = await seedOauthBearer(
+          ctx.storage,
+          // The door reads a capability as well as the role now, and the
+          // capability is checked first. Without it the request is refused
+          // before the projection is consulted, and this test would pass or
+          // fail on something other than what it is named for.
+          ["capability.keys"],
+          { spaceId: space.id, userRole: "instance_admin" },
+        );
 
         // GET /keys is admin-role-gated. It resolves only if the bearer
         // middleware's `users.getByAuthUserId` lookup (owner connection,

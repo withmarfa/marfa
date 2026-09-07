@@ -8,8 +8,11 @@ import {
   parseMarfaRole,
 } from "@withmarfa/shared";
 import type { MarfaRole } from "@withmarfa/shared";
+import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
+import { firstUncoveredScope } from "../auth/mint-clamp.js";
 import {
+  requireCapability,
   requireSpaceAdmin,
   hashApiKey,
   isReservedCredentialSource,
@@ -67,6 +70,12 @@ const KeyListItemSchema = z.object({
   role: z.string(),
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
+  scope_enforced: z
+    .boolean()
+    .optional()
+    .describe(
+      "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API.",
+    ),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -97,7 +106,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
+    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. A signed-in app must hold `capability.keys`, and the key it mints may not reach past what its own grant covers — a request for more is refused naming the scope. Such a key is `scope_enforced`: its permission maps decide what it reaches and its role does not override them. Omitting the maps mints a key matching the session's own reach rather than an empty one. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -172,7 +181,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Caller is not an admin or space_admin, is an OAuth access token, or requested a role above its own.",
+        "Caller is not an admin or space_admin, requested a role above its own, or is a signed-in app that was not granted `capability.keys` or asked for reach its grant does not cover. The last two name the missing scope in `details.required_scope`.",
     },
   },
 });
@@ -268,6 +277,12 @@ const KeyDetailSchema = z.object({
   role: RoleResponseSchema,
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
+  scope_enforced: z
+    .boolean()
+    .optional()
+    .describe(
+      "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API.",
+    ),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -352,6 +367,49 @@ const updateKeyRoute = createRoute({
 });
 
 // ---------------------------------------------------------------------------
+/**
+ * The `details` an OAuth-minted key's audit row carries, so a revoked grant
+ * leads to the keys it created.
+ *
+ * **A key outlives the grant that minted it**, and nothing else in the row
+ * points back: `key_id` names the synthetic principal, whose id is the access
+ * token's, and that token is gone within the hour. So the durable identifiers
+ * go in `details` — the client, the user, and the grant projection — mirroring
+ * the shape the `auth.grant.*` rows already use, which is what lets an operator
+ * revoking an app find the credentials it left behind.
+ *
+ * Resolved with the same call the bearer middleware makes, and tolerated
+ * missing: a null projection is a grant an operator deleted by hand, and losing
+ * the client and user ids as well because of it would be the worse answer.
+ */
+async function mintDetails(
+  storage: Storage,
+  c: Context<AppEnv>,
+  platformTierMint: boolean,
+): Promise<Record<string, unknown> | undefined> {
+  const base = platformTierMint ? { platform_tier: true } : {};
+  const grant = c.get("oauthGrant");
+  if (!grant) return platformTierMint ? base : undefined;
+
+  let grantItemId: string | null = null;
+  if (
+    grant.authUserId &&
+    typeof storage.oauthProvider?.findGrantItemId === "function"
+  ) {
+    grantItemId = await storage.oauthProvider.findGrantItemId({
+      spaceId: c.get("apiKey")?.space_id ?? null,
+      clientId: grant.clientId,
+      authUserId: grant.authUserId,
+    });
+  }
+  return {
+    ...base,
+    client_id: grant.clientId,
+    user_id: grant.authUserId,
+    grant_item_id: grantItemId,
+  };
+}
+
 // Router
 // ---------------------------------------------------------------------------
 
@@ -362,19 +420,17 @@ export function keyRoutes(storage: Storage, salt: string) {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
       requireSpaceAdmin(c);
-      // OAuth principals carry the user's projected role but are scope-limited
-      // grants, not the user acting directly. Minting an API key produces a
-      // durable credential that bypasses the permission maps the OAuth token is
-      // held to — so an app granted a narrow scope could escalate it into full
-      // space access. Block key creation for OAuth callers; they keep
-      // read/manage reach via the role projection but cannot forge a
-      // non-scope-enforced key. (`authType` is set by the bearer middleware.)
-      if (c.get("authType") === "oauth") {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          "OAuth access tokens cannot create API keys; authenticate with an API key to mint one.",
-        );
-      }
+      // A session may mint, if it was granted the permission to and the key it
+      // asks for does not reach past the session's own grant. Role still caps
+      // what can be granted; this caps what a granted role may be spent on.
+      //
+      // The blanket refusal that used to stand here was doing two jobs at once
+      // — withholding the permission, and preventing the escalation a mint
+      // makes possible. Both are still done, by two things that can be reasoned
+      // about separately: `requireCapability` here, and the breadth clamp plus
+      // `scope_enforced` below. Removing one without the others is the mistake
+      // to avoid; see `auth/mint-clamp.ts`.
+      requireCapability(c, "capability.keys");
     }
 
     const body = c.req.valid("json");
@@ -431,7 +487,63 @@ export function keyRoutes(storage: Storage, salt: string) {
 
     assertUnreservedSource(body.source);
 
-    const typePermissions = body.type_permissions ?? {};
+    // **The default for a session is a key like the session.** An OAuth caller
+    // that names no permission maps gets the ones its own grant projects, which
+    // the bearer middleware has already computed and hung on the synthetic key.
+    // The alternative default is `{}`, and on a `scope_enforced` key that means
+    // a credential that can read nothing — so "mint me a key" would hand back
+    // something inert, and the only way to get a working one would be to
+    // enumerate by hand what the session already holds.
+    //
+    // An API-key caller keeps `{}`, exactly as before: its key is not
+    // scope-enforced, so its role decides, and inheriting the caller's maps
+    // would silently widen the common `role: "member"` mint.
+    const callerGrant = c.get("oauthGrant");
+    const sessionKey = c.get("apiKey");
+    const mintingFromSession = !isBootstrap && c.get("authType") === "oauth";
+    const requested = {
+      type_permissions: body.type_permissions,
+      edge_permissions: body.edge_permissions,
+      metadata_permissions: body.metadata_permissions,
+      extension_permissions: body.extension_permissions,
+    };
+    const namesNoReach =
+      requested.type_permissions === undefined &&
+      requested.edge_permissions === undefined &&
+      requested.metadata_permissions === undefined;
+
+    if (mintingFromSession) {
+      // Asking for more than the grant covers is refused by name, so a client
+      // can narrow toward something that will work. Checked before the derive
+      // below, because the derived case cannot exceed anything.
+      const uncovered = firstUncoveredScope(
+        callerGrant?.scopes ?? [],
+        requested,
+      );
+      if (uncovered !== null) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `This app was not granted ${uncovered}, so it cannot mint a key that reaches it.`,
+          { required_scope: uncovered },
+        );
+      }
+    }
+
+    const derivedFromSession = mintingFromSession && namesNoReach;
+    const typePermissions = derivedFromSession
+      ? (sessionKey?.type_permissions ?? {})
+      : (body.type_permissions ?? {});
+    const edgePermissions = derivedFromSession
+      ? (sessionKey?.edge_permissions ?? {})
+      : body.edge_permissions;
+    const metadataPermissions = derivedFromSession
+      ? (sessionKey?.metadata_permissions ?? {})
+      : body.metadata_permissions;
+    // Never derived, because no scope expresses an extension grant: the
+    // synthetic key carries `{}` and there is nothing for a session to pass on.
+    const extensionPermissions = derivedFromSession
+      ? {}
+      : body.extension_permissions;
 
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
@@ -492,9 +604,13 @@ export function keyRoutes(storage: Storage, salt: string) {
         default_tier: body.default_tier,
         is_platform: isPlatform,
         type_permissions: typePermissions,
-        extension_permissions: body.extension_permissions,
-        edge_permissions: body.edge_permissions,
-        metadata_permissions: body.metadata_permissions,
+        extension_permissions: extensionPermissions,
+        edge_permissions: edgePermissions,
+        metadata_permissions: metadataPermissions,
+        // Set from who is minting, never from the body. A key minted through a
+        // session is held to the maps above rather than to its role, which is
+        // what keeps the clamp meaningful past the moment of minting.
+        scope_enforced: mintingFromSession,
       },
       keyHash,
       newKeySpaceId,
@@ -516,7 +632,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       action: isBootstrap ? "key.bootstrap" : "key.create",
       resource_type: "key",
       resource_id: stored.id,
-      details: platformTierMint ? { platform_tier: true } : undefined,
+      details: await mintDetails(storage, c, platformTierMint),
     });
 
     return c.json(
@@ -546,6 +662,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     // space-bound `admin`, and a role-keyed fence would hand that
     // credential every other space's key inventory.
     const key = requireSpaceAdmin(c);
+    requireCapability(c, "capability.keys");
     const all = await storage.keys.list();
     const visible = key.space_id
       ? all.filter((k) => k.space_id === key.space_id)
@@ -555,6 +672,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(revokeKeyRoute, async (c) => {
     const key = requireSpaceAdmin(c);
+    requireCapability(c, "capability.keys");
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
@@ -589,6 +707,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(updateKeyRoute, async (c) => {
     const key = requireSpaceAdmin(c);
+    requireCapability(c, "capability.keys");
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 

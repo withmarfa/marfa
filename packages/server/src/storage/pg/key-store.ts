@@ -45,6 +45,7 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     default_tier: row.default_tier as Tier,
     is_platform: row.is_platform,
     is_runtime_credential: row.is_runtime_credential,
+    scope_enforced: row.scope_enforced,
     connection_id: row.connection_id ?? undefined,
     item_source: row.item_source ?? undefined,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
@@ -88,7 +89,7 @@ export class PgKeyStore implements KeyStore {
   constructor(private db: PgDb) {}
 
   async create(
-    input: CreateKeyInput,
+    input: CreateKeyInput & { scope_enforced?: boolean },
     keyHash: string,
     spaceId?: string,
   ): Promise<ApiKey> {
@@ -120,6 +121,7 @@ export class PgKeyStore implements KeyStore {
       role: input.role,
       default_tier: input.default_tier ?? "library",
       is_platform: input.is_platform ?? false,
+      scope_enforced: input.scope_enforced ?? false,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
@@ -135,6 +137,7 @@ export class PgKeyStore implements KeyStore {
       role: input.role,
       default_tier: row.default_tier,
       is_platform: row.is_platform,
+      scope_enforced: row.scope_enforced,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},

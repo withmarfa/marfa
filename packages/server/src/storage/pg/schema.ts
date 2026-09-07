@@ -301,6 +301,16 @@ export const apiKeys = pgTable(
     is_runtime_credential: boolean("is_runtime_credential")
       .notNull()
       .default(false),
+    // A key minted through an OAuth session, held to the permission maps it
+    // was minted with rather than to its role.
+    //
+    // **Without this the breadth clamp on the mint is decorative.** That clamp
+    // refuses a request for reach the session's own grant does not cover, but a
+    // key whose role bypasses the maps ignores them at every later request — so
+    // the narrowing would hold for exactly as long as it took to use the key.
+    // Set by the server when the minting caller is OAuth, never from a request
+    // body, and never cleared.
+    scope_enforced: boolean("scope_enforced").notNull().default(false),
     connection_id: text("connection_id"),
     item_source: text("item_source"),
     type_permissions: text("type_permissions")

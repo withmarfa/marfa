@@ -31,6 +31,7 @@ import {
   createTestContext,
   markEmailVerified,
   request,
+  seedOauthBearer,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -197,6 +198,96 @@ const DOORS: MintDoor[] = [
         body: { label: "down", source: "mint-down", role: "member" },
       });
       expect(member.status).toBe(201);
+    },
+  },
+  {
+    // The same spec route as the row above, and a second row rather than a
+    // longer one: this is a different principal reaching the same door, with a
+    // ceiling made of scopes instead of a role lattice. `specRoute` repeats
+    // deliberately — the coverage check reads a Set, so a door reachable two
+    // ways is named twice and counted once.
+    //
+    // The axis is new. Until this shipped, `POST /keys` refused an OAuth caller
+    // outright, and that refusal was the whole ceiling. Now a session may mint,
+    // so the ceiling has to be stated: never past the reach the grant covers,
+    // and the key it produces holds to its maps rather than to its role.
+    name: "POST /keys — a session mints no wider than its own grant",
+    specRoute: "post /keys",
+    forgedSource: async () => {
+      const spaceId = `t-oauth-forge-${Math.random().toString(36).slice(2, 8)}`;
+      const space = await ctx.storage.spaces!.create(spaceId);
+      const { token } = await seedOauthBearer(
+        ctx.storage,
+        ["openid", "capability.keys"],
+        { userRole: "space_admin", spaceId: space.id },
+      );
+      const res = await request(ctx.app, "POST", "/keys", {
+        key: token,
+        body: {
+          label: "forged",
+          source: `oauth:${"c".repeat(8)}`,
+          role: "member",
+        },
+      });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    },
+    ceiling: async () => {
+      const space = await ctx.storage.spaces!.create(
+        `t-oauth-mint-${Math.random().toString(36).slice(2, 8)}`,
+      );
+      const scopes = ["openid", "capability.keys", "core.note:read"];
+
+      // Over the ceiling: no capability, so the door does not open at all.
+      const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {
+        userRole: "space_admin",
+        spaceId: space.id,
+      });
+      const refused = await request(ctx.app, "POST", "/keys", {
+        key: ungranted.token,
+        body: { label: "no cap", source: "oauth-no-cap", role: "member" },
+      });
+      expect(refused.status).toBe(403);
+
+      // Over the ceiling: reach the grant does not cover. `core.note:read`
+      // does not cover `core.note:write` — the verb ranks.
+      const granted = await seedOauthBearer(ctx.storage, scopes, {
+        userRole: "space_admin",
+        spaceId: space.id,
+      });
+      const wider = await request(ctx.app, "POST", "/keys", {
+        key: granted.token,
+        body: {
+          label: "wider",
+          source: "oauth-wider",
+          role: "member",
+          type_permissions: { "core.note": "write" },
+        },
+      });
+      expect(wider.status).toBe(403);
+
+      // Over the ceiling: rank above the session's own user.
+      const lowly = await seedOauthBearer(ctx.storage, scopes, {
+        userRole: "member",
+        spaceId: space.id,
+      });
+      const up = await request(ctx.app, "POST", "/keys", {
+        key: lowly.token,
+        body: { label: "up", source: "oauth-up", role: "space_admin" },
+      });
+      expect(up.status).toBe(403);
+
+      // At the ceiling: a key like the session, held to its maps rather than
+      // to its role — without which the clamp above lasts until first use.
+      const at = await request(ctx.app, "POST", "/keys", {
+        key: granted.token,
+        body: { label: "like me", source: "oauth-like-me", role: "member" },
+      });
+      expect(at.status).toBe(201);
+      const body = (await at.json()) as { id: string };
+      const stored = await ctx.storage.keys.get(body.id);
+      expect(stored?.scope_enforced).toBe(true);
+      expect(stored?.is_platform).toBe(false);
+      expect(stored?.type_permissions["core.note"]).toBe("read");
     },
   },
   {

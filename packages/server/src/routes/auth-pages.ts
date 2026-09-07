@@ -1380,12 +1380,14 @@ export function authRoutes(
     const scopes = formData
       .getAll("scopes")
       .filter((v): v is string => typeof v === "string")
-      // The content drop is a standing limitation recorded elsewhere; the
-      // withheld drop is this ticket's. A hand-crafted post to this form could
-      // name `capability.keys`, and while that grants nothing today — the
-      // literal projects into no permission map — a mint door admitting a
-      // literal it cannot enforce is the same shape as the bundle door, and it
-      // is cheaper to refuse than to rely on the projection staying inert.
+      // The content drop is a standing limitation recorded elsewhere. The
+      // withheld drop is what stops a hand-crafted post to this form from
+      // naming a capability, and the reason has changed rather than gone: it
+      // used to be that such a literal granted nothing, so admitting one was
+      // merely untidy. `capability.keys` now opens all four keys doors, so a
+      // form post that slipped one through would be a grant nobody ticked on
+      // a consent screen — which is the one thing the capability family exists
+      // to prevent.
       .filter(
         (s) =>
           isValidScope(s) && !isContentScope(s) && !isWithheldFromAllowlist(s),

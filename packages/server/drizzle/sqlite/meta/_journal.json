@@ -617,6 +617,13 @@
       "when": 1788598401000,
       "tag": "0087_enrichment_queue_by_arrival",
       "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "6",
+      "when": 1788823816322,
+      "tag": "0088_api_keys_scope_enforced",
+      "breakpoints": true
     }
   ]
 }

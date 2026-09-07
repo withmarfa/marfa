@@ -274,6 +274,12 @@ export const KeyResponseSchema = z.object({
   role: RoleResponseSchema,
   default_tier: z.enum(["library", "feed"]),
   is_platform: z.boolean(),
+  scope_enforced: z
+    .boolean()
+    .optional()
+    .describe(
+      "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API.",
+    ),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))

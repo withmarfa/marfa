@@ -40,8 +40,11 @@ describe("bearer middleware role projection (OAuth)", () => {
     const space = await spaces().create("admin-space");
     const { token } = await seedOauthBearer(
       ctx.storage,
-      // No data-plane scopes needed — /keys is gated on role, not scopes.
-      [],
+      // No data-plane scopes — the door reads role and one capability, and
+      // this file is about the role half. The capability is present because
+      // without it the request never reaches the role check, which would make
+      // a passing test say nothing about what it is named for.
+      ["capability.keys"],
       { spaceId: space.id, userRole: "instance_admin" },
     );
 
@@ -51,13 +54,27 @@ describe("bearer middleware role projection (OAuth)", () => {
 
   it("projects users.role 'space_admin' onto the OAuth principal — /keys CRUD succeeds (space-scoped)", async () => {
     const space = await spaces().create("space-admin-space");
-    const { token } = await seedOauthBearer(ctx.storage, [], {
+    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
       spaceId: space.id,
       userRole: "space_admin",
     });
 
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(200);
+  });
+
+  it("does not let the capability stand in for the role", async () => {
+    // The two axes are independent and the door reads both. A member holding
+    // `capability.keys` is still refused, which is what keeps role the ceiling
+    // on what a consent screen can hand over.
+    const space = await spaces().create("member-with-capability-space");
+    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
+      spaceId: space.id,
+      userRole: "member",
+    });
+
+    const res = await request(ctx.app, "GET", "/keys", { key: token });
+    expect(res.status).toBe(403);
   });
 
   it("projects users.role 'member' onto the OAuth principal — /keys CRUD forbidden", async () => {
