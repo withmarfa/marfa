@@ -149,7 +149,14 @@ async function approveOnDevice(
   expect(init.status).toBe(200);
   const { user_code } = (await init.json()) as { user_code: string };
   const approve = await request(c.app, "POST", "/auth/device/consent", {
-    form: { user_code, decision: "approve" },
+    form: {
+      user_code,
+      decision: "approve",
+      // Everything ticked, which is what the screen submits untouched:
+      // the approval form carries a checkbox per requested scope, so a
+      // post with none is a denial rather than a full approval.
+      scopes: scope.split(" ").filter(Boolean),
+    },
     headers: { origin: ORIGIN, cookie },
   });
   expect(approve.status).toBe(200);
@@ -435,7 +442,11 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     expect(init.status).toBe(200);
     const { user_code } = (await init.json()) as { user_code: string };
     const approve = await request(ctx.app, "POST", "/auth/device/consent", {
-      form: { user_code, decision: "approve" },
+      form: {
+        user_code,
+        decision: "approve",
+        scopes: ["core.note:read"],
+      },
       headers: { origin: ORIGIN, cookie },
     });
     expect(approve.status).toBe(302);

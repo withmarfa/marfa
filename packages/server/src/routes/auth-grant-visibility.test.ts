@@ -128,7 +128,14 @@ async function approveDeviceFlow(
   expect(init.status).toBe(200);
   const { user_code } = (await init.json()) as { user_code: string };
   const consent = await request(c.app, "POST", "/auth/device/consent", {
-    form: { user_code, decision: "approve" },
+    form: {
+      user_code,
+      decision: "approve",
+      // Everything ticked, which is what the screen submits untouched:
+      // the approval form carries a checkbox per requested scope, so a
+      // post with none is a denial rather than a full approval.
+      scopes: scope.split(" ").filter(Boolean),
+    },
     headers: { origin: ORIGIN, cookie },
   });
   expect(consent.status).toBe(200);

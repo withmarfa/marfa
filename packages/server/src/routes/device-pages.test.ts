@@ -98,15 +98,29 @@ describe("renderDeviceConsentScreen", () => {
     expect(html).toContain('value="deny"');
   });
 
-  it("renders the plain-English description for each scope (no code literals)", () => {
+  it("shows a person plain English, never a scope literal", () => {
+    // **Asked of the visible copy rather than of the document**, because the
+    // rows submit now. Each carries its literal as a checkbox `value`, the
+    // same way the authorize screen does, so the string is necessarily in
+    // the markup and the old whole-document assertion would have to be
+    // abandoned or satisfied by not submitting the scope. What has to stay
+    // true is that nobody reads it.
     const html = renderDeviceConsentScreen(PARAMS);
     expect(html).toContain("Text you created.");
-    expect(html).not.toContain("core.note:read");
+    const visible = [...html.matchAll(/<span>([^<]*)<\/span>/g)].map(
+      (m) => m[1] ?? "",
+    );
+    expect(visible.join(" ")).not.toContain("core.note:read");
+    // And the literal is present exactly where it has to be.
+    expect(html).toContain('value="core.note:read"');
   });
 
-  it("renders each capability as a .crow check row", () => {
+  it("renders each requested scope as a toggle row", () => {
     const html = renderDeviceConsentScreen(PARAMS);
-    expect(html).toContain('class="crow"');
+    // The rows were check glyphs confirming a list and are toggles now, so
+    // they share the authorize screen's row markup and submit a literal each.
+    expect(html).toContain('class="subrow"');
+    expect(html).toContain('name="scopes"');
     expect(html).toContain("Text you created.");
   });
 

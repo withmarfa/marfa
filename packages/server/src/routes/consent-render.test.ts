@@ -990,7 +990,8 @@ describe("a grant that reaches things not yet created says so", () => {
       userCode: "ABCD-EFGH",
       descriptions: buildScopeDescriptions([parsed]),
     });
-    const rows = html.match(/<div class="crow">[\s\S]*?<\/div>/g) ?? [];
+    const rows =
+      html.match(/<div class="subrow">[\s\S]*?<\/label><\/div>/g) ?? [];
     expect(
       rows,
       `device screen rendered ${String(rows.length)} rows for ${literal}, not one`,

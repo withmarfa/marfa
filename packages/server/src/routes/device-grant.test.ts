@@ -151,6 +151,24 @@ async function initiate(
   return (await res.json()) as Awaited<ReturnType<typeof initiate>>;
 }
 
+/**
+ * The body the approval form submits when nobody unticks anything.
+ *
+ * The screen carries a checkbox per requested scope, so an approve post with
+ * no `scopes` is a denial. A test approving a whole request therefore has to
+ * say so, the same way a browser does.
+ */
+function approveForm(userCode: string, scope: string): string {
+  const body = new URLSearchParams({
+    user_code: userCode,
+    decision: "approve",
+  });
+  for (const literal of scope.split(" ").filter(Boolean)) {
+    body.append("scopes", literal);
+  }
+  return body.toString();
+}
+
 async function pollToken(
   c: TestContext,
   deviceCode: string,
@@ -559,7 +577,10 @@ describe("GET /auth/device/consent — gated on session", () => {
     expect(html).toContain(
       "Your custom types. Also covers anything added later.",
     );
-    const rowCount = html.split('class="crow"').length - 1;
+    // One toggle row per requested scope. The class moved with the rows
+    // themselves: they were check glyphs confirming a list and are toggles
+    // now, so they share the authorize screen's row markup.
+    const rowCount = html.split('class="subrow"').length - 1;
     expect(rowCount).toBe(2);
   });
 
@@ -619,10 +640,10 @@ describe("POST /auth/device/consent — approve / deny", () => {
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: initResult.user_code,
-          decision: "approve",
-        }).toString(),
+        body: approveForm(
+          initResult.user_code,
+          "core.note:read core.note:write",
+        ),
       }),
     );
     expect(res.status).toBe(200);
@@ -659,10 +680,10 @@ describe("POST /auth/device/consent — approve / deny", () => {
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: initResult.user_code,
-          decision: "approve",
-        }).toString(),
+        body: approveForm(
+          initResult.user_code,
+          "core.note:read core.note:write",
+        ),
       }),
     );
     expect(res.status).toBe(200);
@@ -711,10 +732,7 @@ describe("POST /auth/device/consent — approve / deny", () => {
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: first.user_code,
-          decision: "approve",
-        }).toString(),
+        body: approveForm(first.user_code, "core.note:read core.note:write"),
       }),
     );
     expect(res1.status).toBe(200);
@@ -736,10 +754,7 @@ describe("POST /auth/device/consent — approve / deny", () => {
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: second.user_code,
-          decision: "approve",
-        }).toString(),
+        body: approveForm(second.user_code, "core.note:read core.note:write"),
       }),
     );
     expect(res2.status).toBe(200);
@@ -805,6 +820,142 @@ describe("POST /auth/device/consent — approve / deny", () => {
 });
 
 /**
+ * The device approval screen offers toggles, so the grant is the ticked set
+ * rather than the requested one.
+ *
+ * **This is what replaced the initiation refusal.** A scope only an
+ * off-by-default bundle offers, and every capability, used to be refused
+ * outright at `POST /auth/device` because the screen could not express
+ * withholding. It can now, so the withholding happens where a person can act
+ * on it — and these pin the half that makes that safe: what the form submits
+ * is what gets granted, and it can only ever narrow.
+ */
+describe("POST /auth/device/consent grants the ticked set", () => {
+  async function approveWith(
+    c: TestContext,
+    clientId: string,
+    cookie: string,
+    scope: string,
+    ticked: string[],
+  ) {
+    const init = await initiate(c, clientId, scope);
+    const body = new URLSearchParams({
+      user_code: init.user_code,
+      decision: "approve",
+    });
+    for (const s of ticked) body.append("scopes", s);
+    const res = await c.app.fetch(
+      new Request(`${ORIGIN}/auth/device/consent`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          origin: ORIGIN,
+          cookie,
+        },
+        body: body.toString(),
+      }),
+    );
+    return { init, res };
+  }
+
+  it("grants only what was ticked, dropping the rest", async () => {
+    const ctx = await createTestContext({ authMode: "hosted" });
+    try {
+      const clientId = await createClient(ctx);
+      const cookie = await signInAndCookie(
+        ctx,
+        "device-ticked-narrow@test.marfa.so",
+        "correct-horse-battery-1",
+      );
+      const { res } = await approveWith(
+        ctx,
+        clientId,
+        cookie,
+        "openid offline_access core.note:read core.task:read",
+        ["openid", "offline_access", "core.note:read"],
+      );
+      expect(res.status).toBe(200);
+      const items = await ctx.storage.items.list({
+        type: "system.connection",
+        state: "active",
+      });
+      const granted = items.data[0]!.properties.scopes as string[];
+      expect(granted).toContain("core.note:read");
+      expect(granted).not.toContain("core.task:read");
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it("cannot widen past what the device asked for", async () => {
+    // The form is a browser surface and its fields are whoever's browser it
+    // is to edit, so the submitted set is an intersection rather than a
+    // substitution. Without it, a hand-edited form would grant an app more
+    // than the client requested and more than the screen displayed.
+    const ctx = await createTestContext({ authMode: "hosted" });
+    try {
+      const clientId = await createClient(ctx);
+      const cookie = await signInAndCookie(
+        ctx,
+        "device-ticked-widen@test.marfa.so",
+        "correct-horse-battery-2",
+      );
+      const { res } = await approveWith(
+        ctx,
+        clientId,
+        cookie,
+        "openid offline_access core.note:read",
+        ["openid", "offline_access", "core.note:read", "core.task:write"],
+      );
+      expect(res.status).toBe(200);
+      const items = await ctx.storage.items.list({
+        type: "system.connection",
+        state: "active",
+      });
+      const granted = items.data[0]!.properties.scopes as string[];
+      expect(granted).not.toContain("core.task:write");
+      expect(granted).toContain("core.note:read");
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it("treats an approval with nothing ticked as a denial", async () => {
+    // Same rule the authorize screen applies to a zero-scope accept, and for
+    // the same reason: a grant of nothing is not a grant, and recording one
+    // would leave a projection and a consent row standing for an app that
+    // can do nothing with them.
+    const ctx = await createTestContext({ authMode: "hosted" });
+    try {
+      const clientId = await createClient(ctx);
+      const cookie = await signInAndCookie(
+        ctx,
+        "device-ticked-none@test.marfa.so",
+        "correct-horse-battery-3",
+      );
+      const { init, res } = await approveWith(
+        ctx,
+        clientId,
+        cookie,
+        "openid core.note:read",
+        [],
+      );
+      expect(res.status).toBe(200);
+      const items = await ctx.storage.items.list({
+        type: "system.connection",
+        state: "active",
+      });
+      expect(items.data.length).toBe(0);
+      const poll = await pollToken(ctx, init.device_code, clientId);
+      expect(poll.status).toBe(400);
+      expect(poll.body.error).toBe("access_denied");
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+});
+
+/**
  * The device screen confirms a scope list rather than offering one to edit,
  * so an approval may widen a standing grant and must never shrink one. These
  * pin both directions, plus the consequence at the token step: the record can
@@ -825,6 +976,16 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
     scope: string,
   ): Promise<Awaited<ReturnType<typeof initiate>>> {
     const init = await initiate(c, clientId, scope);
+    // Everything ticked, which is what the screen submits when nobody
+    // touches it: the approval form carries a checkbox per requested scope
+    // now, so a post with none is a denial rather than a full approval.
+    const body = new URLSearchParams({
+      user_code: init.user_code,
+      decision: "approve",
+    });
+    for (const literal of scope.split(" ").filter(Boolean)) {
+      body.append("scopes", literal);
+    }
     const res = await c.app.fetch(
       new Request(`${ORIGIN}/auth/device/consent`, {
         method: "POST",
@@ -833,10 +994,7 @@ describe("POST /auth/device/consent, approving merges into a standing grant", ()
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: init.user_code,
-          decision: "approve",
-        }).toString(),
+        body: body.toString(),
       }),
     );
     expect(res.status).toBe(200);
@@ -1720,8 +1878,8 @@ describe("POST /auth/device — a real registration can complete a login", () =>
 });
 
 // ---------------------------------------------------------------------------
-// An off-by-default bundle withholds a scope from a screen that cannot offer
-// it, and a wildcard must not walk around that.
+// An off-by-default bundle withholds a scope by having it arrive unticked.
+// Initiation admits it; the screen is where it is withheld.
 // ---------------------------------------------------------------------------
 
 describe("POST /auth/device — off-by-default scopes", () => {
@@ -1758,47 +1916,93 @@ describe("POST /auth/device — off-by-default scopes", () => {
     default_on: boolean;
   } => ({ id, label: id, description: "", scopes, default_on });
 
-  it("refuses a wildcard that reaches a withheld scope", async () => {
-    // The device approval screen confirms a scope list and has no per-scope
-    // toggle, so an off-by-default scope reaching it is granted on one click.
-    // Matching the withheld set by membership let `core.*:write` past while
-    // covering every literal in it.
+  /** The consent screen for an initiated code, as the person sees it. */
+  async function consentHtml(
+    c: TestContext,
+    clientId: string,
+    scope: string,
+    email: string,
+  ): Promise<string> {
+    const init = await initiate(c, clientId, scope);
+    const cookie = await signInAndCookie(c, email, "correct horse");
+    const res = await c.app.fetch(
+      new Request(
+        `${ORIGIN}/auth/device/consent?user_code=${encodeURIComponent(init.user_code)}`,
+        { headers: { origin: ORIGIN, cookie } },
+      ),
+    );
+    expect(res.status).toBe(200);
+    return res.text();
+  }
+
+  /** The opening tag of the checkbox carrying `literal`, so a case can assert
+   *  on the tick rather than on the whole document. */
+  function rowFor(html: string, literal: string): string {
+    const at = html.indexOf(`value="${literal}"`);
+    return at === -1 ? "" : html.slice(at, html.indexOf(">", at) + 1);
+  }
+
+  it("admits the withheld scope named outright, and offers it unticked", async () => {
+    // **This is the inversion, and it is the point of the change.** The
+    // scope used to be refused at initiation, because the screen confirmed a
+    // list it could not edit and approving granted the lot. The screen has
+    // toggles now, so the withholding moved to where a person can act on it:
+    // the request is admitted, the row arrives unticked, and leaving it
+    // alone grants nothing.
+    //
+    // Refusing was never merely conservative. The CLI signs in through this
+    // flow and nothing else, and the MCP server reads the token the CLI
+    // stored, so a refusal here is the only door either will ever meet.
     await withBundles(
       [
         bundle("read", true, ["core.note:read"]),
         bundle("manage", false, ["core.task:write"]),
       ],
       async () => {
-        ctx = await createTestContext();
+        ctx = await createTestContext({ authAllowSignup: true });
         const clientId = await createClient(ctx);
 
-        const res = await tryInit(ctx, clientId, "core.*:write");
-        expect(res.status).toBe(400);
-        expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+        const res = await tryInit(ctx, clientId, "core.task:write");
+        expect(res.status).toBe(200);
 
-        // Naming the wildcard back at the client tells it nothing it did not
-        // already know. Naming what is being protected is what lets it narrow
-        // to a request this flow can honor.
-        const message = (res.body.error as { message?: string }).message ?? "";
-        expect(message).toContain("core.task:write");
-        expect(message).not.toContain("core.*:write");
+        const html = await consentHtml(
+          ctx,
+          clientId,
+          "core.note:read core.task:write",
+          "withheld-outright@test.marfa.so",
+        );
+        expect(rowFor(html, "core.task:write")).not.toContain("checked");
+        // The neighbouring scope its own bundle offers still arrives ticked,
+        // so the case is not passing because nothing is ticked at all.
+        expect(rowFor(html, "core.note:read")).toContain("checked");
       },
     );
   });
 
-  it("still refuses the withheld scope named outright", async () => {
+  it("does not let a wildcard tick a scope its own bundle withholds", async () => {
+    // The breadth half, which survives the inversion unchanged in substance.
+    // Membership alone let `core.*:write` past a withheld set holding every
+    // literal beneath it; the question is asked as coverage, so a wildcard
+    // reaching a withheld literal is itself withheld rather than admitted
+    // ticked. What changed is the consequence — unticked rather than
+    // refused — not the comparison.
     await withBundles(
       [
         bundle("read", true, ["core.note:read"]),
         bundle("manage", false, ["core.task:write"]),
       ],
       async () => {
-        ctx = await createTestContext();
+        ctx = await createTestContext({ authAllowSignup: true });
         const clientId = await createClient(ctx);
 
-        const res = await tryInit(ctx, clientId, "core.task:write");
-        expect(res.status).toBe(400);
-        expect(res.body.error).toMatchObject({ code: "invalid_scope" });
+        const html = await consentHtml(
+          ctx,
+          clientId,
+          "core.note:read core.*:write",
+          "withheld-wildcard@test.marfa.so",
+        );
+        expect(rowFor(html, "core.*:write")).not.toContain("checked");
+        expect(rowFor(html, "core.note:read")).toContain("checked");
       },
     );
   });
@@ -1824,13 +2028,18 @@ describe("POST /auth/device — off-by-default scopes", () => {
     );
   });
 
-  it("names one withheld scope rather than the operator's whole set", async () => {
-    // The refusal answers an unauthenticated caller, and which scopes an
-    // operator withheld is not otherwise public: discovery advertises
-    // `scopes_supported` and carries no `default_on`. Joining every reached
-    // scope would hand the partition back in one response, so a wildcard
-    // reaching two withheld scopes must still name only one — enumeration
-    // stays at a request per scope, as it is for the refusals beside it.
+  it("tells an unauthenticated caller nothing about what is withheld", async () => {
+    // **The leak this replaces is closed by construction rather than by
+    // care.** The refusal answered an unauthenticated caller and named a
+    // withheld scope so the client could narrow, which meant one request per
+    // scope enumerated a partition that is not otherwise public: discovery
+    // advertises `scopes_supported` and carries no `default_on`. The version
+    // before that joined every reached scope and handed the partition back in
+    // a single response.
+    //
+    // With nothing refused there is nothing to name. Withholding is now
+    // visible only on the approval screen, which is session-gated, so the
+    // caller learns what it always could — that its request was accepted.
     await withBundles(
       [
         bundle("read", true, ["core.note:read"]),
@@ -1841,12 +2050,9 @@ describe("POST /auth/device — off-by-default scopes", () => {
         const clientId = await createClient(ctx);
 
         const res = await tryInit(ctx, clientId, "core.*:write");
-        expect(res.status).toBe(400);
-        const message = (res.body.error as { message?: string }).message ?? "";
-        const named = ["core.task:write", "core.note:write"].filter((s) =>
-          message.includes(s),
-        );
-        expect(named).toHaveLength(1);
+        expect(res.status).toBe(200);
+        expect(JSON.stringify(res.body)).not.toContain("core.task:write");
+        expect(JSON.stringify(res.body)).not.toContain("core.note:write");
       },
     );
   });
@@ -1931,10 +2137,7 @@ describe("POST /auth/device/consent binds the code inside the consent lock", () 
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: init.user_code,
-          decision: "approve",
-        }).toString(),
+        body: approveForm(init.user_code, "core.note:read"),
       }),
     );
     expect(res.status).toBe(200);
@@ -1963,10 +2166,7 @@ describe("POST /auth/device/token — a device code is exchanged once", () => {
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: initResult.user_code,
-          decision: "approve",
-        }).toString(),
+        body: approveForm(initResult.user_code, "core.note:read"),
       }),
     );
     expect(approve.status).toBe(200);
@@ -2020,10 +2220,7 @@ describe("POST /auth/device/token — a device code is exchanged once", () => {
           origin: ORIGIN,
           cookie,
         },
-        body: new URLSearchParams({
-          user_code: initResult.user_code,
-          decision: "approve",
-        }).toString(),
+        body: approveForm(initResult.user_code, "core.note:read"),
       }),
     );
     expect(approve.status).toBe(200);

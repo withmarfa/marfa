@@ -185,13 +185,17 @@ async function initiateDeviceFlow(
   c: TestContext,
   clientId: string,
   scope: string,
-): Promise<{ device_code: string; user_code: string }> {
+): Promise<{ device_code: string; user_code: string; scope: string }> {
   const res = await request(c.app, "POST", "/auth/device", {
     body: { client_id: clientId, scope },
     headers: { origin: ORIGIN },
   });
   expect(res.status).toBe(200);
-  return (await res.json()) as { device_code: string; user_code: string };
+  // The scope rides along because approving needs it: the consent form
+  // carries a checkbox per requested scope, so an approval has to say what
+  // it is ticking.
+  const body = (await res.json()) as { device_code: string; user_code: string };
+  return { ...body, scope };
 }
 
 /** Poll the terminal token step for a device code. */
@@ -217,11 +221,18 @@ function deviceCodeHash(deviceCode: string): string {
 
 function approveDeviceFlow(
   c: TestContext,
-  userCode: string,
+  flow: { user_code: string; scope: string },
   cookie: string,
 ): Promise<Response> {
   return request(c.app, "POST", "/auth/device/consent", {
-    form: { user_code: userCode, decision: "approve" },
+    form: {
+      user_code: flow.user_code,
+      decision: "approve",
+      // Everything ticked, which is what the screen submits untouched: the
+      // approval form carries a checkbox per requested scope, so a post with
+      // none is a denial rather than a full approval.
+      scopes: flow.scope.split(" ").filter(Boolean),
+    },
     headers: { origin: ORIGIN, cookie },
   });
 }
@@ -241,9 +252,7 @@ describe("POST /auth/grants/:id/revoke — the record never overstates the revok
     const cookie = await signInUser(c, "revoke-cascade@example.com");
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
     const grant = await onlyGrant(c);
     const tokenHash = await seedAccessToken(
       c,
@@ -294,9 +303,7 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     // A standing grant for the client, so there is something to revoke
     // and the second approval takes the update-in-place branch.
     const first = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, first.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, first, cookie)).status).toBe(200);
     const grant = await onlyGrant(c);
 
     // Park the second approval between resolving the projection and
@@ -323,7 +330,7 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     };
 
     const second = await initiateDeviceFlow(c, clientId, "core.task:write");
-    const approving = approveDeviceFlow(c, second.user_code, cookie);
+    const approving = approveDeviceFlow(c, second, cookie);
     await reached;
 
     // Meanwhile the user revokes the app from /auth/security.
@@ -598,9 +605,7 @@ describe("revocation reaches outstanding device codes", () => {
       clientId,
       "core.note:read offline_access",
     );
-    expect((await approveDeviceFlow(c, first.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, first, cookie)).status).toBe(200);
     const minted = await pollDeviceToken(c, first.device_code, clientId);
     expect(minted.status).toBe(200);
     const mintedBody = (await minted.json()) as {
@@ -693,9 +698,7 @@ describe("revocation reaches outstanding device codes", () => {
     const cookie = await signInUser(c, "device-codes-swept@example.com");
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
     const grant = await onlyGrant(c);
 
     // Present before the revoke, so the assertion after it is about the
@@ -738,9 +741,7 @@ describe("revocation reaches outstanding device codes", () => {
     const cookieB = await signInUser(c, "device-sweep-b@example.com");
 
     const flowA = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, flowA.user_code, cookieA)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, flowA, cookieA)).status).toBe(200);
     const grant = await onlyGrant(c);
 
     // B is mid-flow on the same client: initiated, not approved, so the row
@@ -778,9 +779,7 @@ describe("revocation reaches outstanding device codes", () => {
     // And B carries it through to a token, which is the part that matters:
     // "still pending" would also be the answer if the code had survived in
     // a state nothing could finish.
-    expect((await approveDeviceFlow(c, flowB.user_code, cookieB)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, flowB, cookieB)).status).toBe(200);
     const mintedForB = await pollDeviceToken(c, flowB.device_code, clientId);
     expect(mintedForB.status).toBe(200);
     expect(
@@ -807,9 +806,7 @@ describe("revocation reaches outstanding device codes", () => {
     const cookie = await signInUser(c, "device-sweep-throws@example.com");
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
     const grant = await onlyGrant(c);
     const tokenHash = await seedAccessToken(
       c,
@@ -868,16 +865,12 @@ describe("revocation reaches outstanding device codes", () => {
     const cookie = await signInUser(c, "device-grant-soft-deleted@example.com");
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
     // A second code bound to the same grant. A code is spent by its one
     // exchange, so the code that proves the fixture mints cannot also be
     // the code the refusal below is measured on.
     const probe = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, probe.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, probe, cookie)).status).toBe(200);
     const grant = await onlyGrant(c);
 
     // A code bound to this grant mints while the grant is live, so the
@@ -930,15 +923,11 @@ describe("revocation reaches outstanding device codes", () => {
     const cookie = await signInUser(c, "device-grant-purged@example.com");
 
     const flow = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, flow.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, flow, cookie)).status).toBe(200);
     // A second code bound to the same grant, for the reason the sibling
     // case above gives: a code is spent by its one exchange.
     const probe = await initiateDeviceFlow(c, clientId, "core.note:read");
-    expect((await approveDeviceFlow(c, probe.user_code, cookie)).status).toBe(
-      200,
-    );
+    expect((await approveDeviceFlow(c, probe, cookie)).status).toBe(200);
     const grant = await onlyGrant(c);
 
     // Admitted before the purge, so the refusal below is about the missing
