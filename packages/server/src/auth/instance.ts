@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt, magicLink } from "better-auth/plugins";
+import { createLocalAccountIssuer } from "better-auth/db";
 import { passkey } from "@better-auth/passkey";
 import {
   deriveHandleFromEmail,
@@ -167,6 +168,42 @@ async function claimFreeHandle(
   return handleWithSuffix(base, `-${randomBytes(4).toString("hex")}`);
 }
 
+/**
+ * Minimal structural view of the Better Auth runtime context the operator
+ * account-creation path reaches for. The full `AuthContext` type lives in
+ * `@better-auth/core` and drags in generic machinery that breaks portable
+ * `.d.ts` emit — the same reason `consent-idempotent-adapter.ts` declares
+ * its own adapter surface rather than importing one.
+ */
+interface BetterAuthCredentialContext {
+  password: {
+    hash: (password: string) => Promise<string>;
+    config: { minPasswordLength: number; maxPasswordLength: number };
+  };
+  internalAdapter: {
+    findUserByEmail: (
+      email: string,
+    ) => Promise<{ user: { id: string } } | null>;
+    createUser: (
+      user: Record<string, unknown>,
+      source: { method: string },
+    ) => Promise<{ id: string; email: string } | null>;
+    linkAccount: (account: Record<string, unknown>) => Promise<unknown>;
+  };
+}
+
+/**
+ * The outcome of `createEmailAccount`. Refusals are values rather than
+ * throws because each maps to a different status on the route that calls
+ * this, and a caller that forgets one gets a compile error instead of a
+ * 500.
+ */
+export type CreateEmailAccountResult =
+  | { ok: true; authUserId: string; email: string }
+  | { ok: false; reason: "email_exists" }
+  | { ok: false; reason: "password_too_short"; minLength: number }
+  | { ok: false; reason: "password_too_long"; maxLength: number };
+
 /** Authenticated user on a Better Auth session. Reduced surface — only the
  *  fields the OAuth consent flow currently consumes. */
 export interface MarfaAuthSessionUser {
@@ -193,6 +230,26 @@ export interface MarfaAuth {
    * requiring admin bearer tokens.
    */
   getSession: (headers: Headers) => Promise<MarfaAuthSession | null>;
+  /**
+   * Create an email + password account without going through sign-up.
+   *
+   * `POST /auth/sign-up/email` is the only endpoint that mints a password
+   * account, and it refuses whenever `disableSignUp` is set — which is
+   * every hosted instance, deliberately. This runs the same machinery the
+   * endpoint does: Better Auth's own hasher, its internal adapter, and so
+   * the `user.create` database hook that provisions the space. The one
+   * difference is that the address arrives already proven, because an
+   * operator asked for the account rather than a stranger claiming it, and
+   * nobody is going to open the inbox to click a link.
+   *
+   * `POST /admin/accounts` is the only caller, and the platform-admin gate
+   * lives there. This function does not decide who may create an account.
+   */
+  createEmailAccount: (params: {
+    email: string;
+    password: string;
+    name?: string;
+  }) => Promise<CreateEmailAccountResult>;
   /** Whether new account creation is allowed on this instance. Mirrors
    *  the constructor option; the sign-in page reads it to decide
    *  whether to render a "Create one" link below the form. */
@@ -773,10 +830,90 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     }) => Promise<MarfaAuthSession | null>;
   };
 
+  // Operator account creation. Deliberately reads the built context
+  // rather than calling `api.signUpEmail`: that endpoint answers
+  // `EMAIL_PASSWORD_SIGN_UP_DISABLED` on every instance with sign-up
+  // closed, which is the only kind of instance this exists for.
+  //
+  // The order below is sign-up's own, and the reasons are its reasons.
+  // Hash before anything is written, so a hasher that throws throws
+  // before a user row exists. Create the user through the internal
+  // adapter, which is what runs the `user.create` hook that provisions
+  // the space, the handle and the `space_admin` role. Then link the
+  // credential account with the issuer Better Auth's own credential
+  // lookup keys on — imported rather than spelled here, because a
+  // literal would keep working until the day the format moved and then
+  // fail as "wrong password" with nothing naming the cause.
+  const createEmailAccount = async (params: {
+    email: string;
+    password: string;
+    name?: string;
+  }): Promise<CreateEmailAccountResult> => {
+    const authContext = await (
+      instance as unknown as { $context: Promise<BetterAuthCredentialContext> }
+    ).$context;
+    const { minPasswordLength, maxPasswordLength } =
+      authContext.password.config;
+    if (params.password.length < minPasswordLength) {
+      return {
+        ok: false,
+        reason: "password_too_short",
+        minLength: minPasswordLength,
+      };
+    }
+    if (params.password.length > maxPasswordLength) {
+      return {
+        ok: false,
+        reason: "password_too_long",
+        maxLength: maxPasswordLength,
+      };
+    }
+    const email = params.email.toLowerCase();
+    if (await authContext.internalAdapter.findUserByEmail(email)) {
+      return { ok: false, reason: "email_exists" };
+    }
+    const password = await authContext.password.hash(params.password);
+    // The handle, space and role all derive from `name`, and the column
+    // is NOT NULL, so a name that is absent or blank falls back to the
+    // address's local part rather than reaching the hook as undefined.
+    const submittedName = params.name?.trim() ?? "";
+    const name = submittedName === "" ? email.split("@")[0] : submittedName;
+    let user: { id: string; email: string } | null;
+    try {
+      user = await authContext.internalAdapter.createUser(
+        { email, name, emailVerified: true },
+        { method: "email-password" },
+      );
+    } catch (err) {
+      // The lookup above is a fast path, not a lock: two operators
+      // creating the same address at once both pass it and the second
+      // meets the unique index on `auth_user.email`. Re-read rather than
+      // matching driver-specific constraint text, which differs between
+      // Postgres and SQLite and would silently stop matching on an
+      // upgrade.
+      if (await authContext.internalAdapter.findUserByEmail(email)) {
+        return { ok: false, reason: "email_exists" };
+      }
+      throw err;
+    }
+    if (!user) {
+      throw new Error("better-auth created no user");
+    }
+    await authContext.internalAdapter.linkAccount({
+      userId: user.id,
+      providerId: "credential",
+      issuer: createLocalAccountIssuer("credential"),
+      accountId: user.id,
+      password,
+    });
+    return { ok: true, authUserId: user.id, email: user.email };
+  };
+
   return {
     handler: instance.handler,
     api: instance.api,
     getSession: (headers: Headers) => api.getSession({ headers }),
+    createEmailAccount,
     allowSignup: options.allowSignup,
     oidcProviderIds: (options.oidcProviders ?? []).map((p) => p.providerId),
     ready,

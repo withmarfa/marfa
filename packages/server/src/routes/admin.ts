@@ -15,6 +15,7 @@
  *   - GET    /admin/spaces/:id/keys              — a space's API keys
  *   - POST   /admin/spaces/:id/keys              — mint a key bound to that space
  *   - POST   /admin/spaces/:id/delete            — hard-delete a space nobody owns
+ *   - POST   /admin/accounts                     — create an account and its space
  *   - POST   /admin/accounts/:id/delete          — delete an account and its space
  *   - POST   /admin/account-deletion/purge-now    — force a one-shot pending-delete sweep
  *   - POST   /admin/oauth-clients/:client_id/delete — remove an OAuth client and every grant made to it
@@ -42,6 +43,7 @@ import {
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { hashApiKey, requireAdmin } from "../middleware/auth.js";
+import type { CreateEmailAccountResult, MarfaAuth } from "../auth/instance.js";
 import { assertUnreservedSource } from "./keys.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -602,6 +604,39 @@ function apiKeySummary(key: ApiKey): z.infer<typeof ApiKeySummarySchema> {
 export interface AdminRoutesOptions {
   graceDays: number;
   apiKeySalt: string;
+  /** The Better Auth instance, when this deployment has one. Only
+   *  `POST /admin/accounts` uses it; a keys-mode self-host has no auth
+   *  server and the route answers 404 there, the same as every other
+   *  route whose resource does not exist on the instance. */
+  auth?: MarfaAuth | undefined;
+}
+
+/**
+ * Map a refusal from the auth layer onto the status an operator sees.
+ * Exhaustive by construction: a refusal reason added to
+ * `CreateEmailAccountResult` fails to compile here rather than falling
+ * through to an opaque 500.
+ */
+function accountCreationRefusal(
+  outcome: Extract<CreateEmailAccountResult, { ok: false }>,
+): MarfaError {
+  switch (outcome.reason) {
+    case "email_exists":
+      return new MarfaError(
+        ErrorCode.CONFLICT,
+        "An account already exists for that address",
+      );
+    case "password_too_short":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `password must be at least ${String(outcome.minLength)} characters`,
+      );
+    case "password_too_long":
+      return new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        `password must be at most ${String(outcome.maxLength)} characters`,
+      );
+  }
 }
 
 const deleteSpaceRoute = createRoute({
@@ -678,6 +713,101 @@ const deleteSpaceRoute = createRoute({
         },
       },
       description: "The space still has users; delete the account instead",
+    },
+  },
+});
+
+const AccountSchema = z.object({
+  id: z
+    .string()
+    .describe(
+      "The account's auth user id — the same id `POST /admin/accounts/{id}/delete` takes.",
+    ),
+  email: z.string().describe("The address, lower-cased."),
+  space_id: z.string().describe("The space provisioned for this account."),
+});
+
+const createAccountRoute = createRoute({
+  operationId: "adminCreateAccount",
+  method: "post",
+  path: "/accounts",
+  tags: ["Admin"],
+  summary: "Create an account",
+  description:
+    "Creates an email + password account, already verified, with its own space and `space_admin` on it — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned.\n\nHosted instances close sign-up, so `POST /auth/sign-up/email` refuses and there was no other door: an operator could create a space and issue it a key, but a key is not an account and cannot hold a browser session. Anything that needs one — a smoke suite signing in, an agent driving the app, a support account provisioned for someone — had no supported path to it. This is that path. The password goes through Better Auth's own hasher and the account is written through its own adapter, so it is indistinguishable from a signed-up account except that its address arrives proven rather than mailed a link.",
+  security: [{ bearerAuth: [] }],
+  request: {
+    body: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            email: z
+              .email()
+              .describe("The address. Lower-cased before it is stored."),
+            password: z
+              .string()
+              .min(1)
+              .describe(
+                "The password the account signs in with. Refused when it falls outside the length the sign-in path itself enforces.",
+              ),
+            name: z
+              .string()
+              .min(1)
+              .max(200)
+              .optional()
+              .describe(
+                "Display name. Defaults to the address's local part, which is also what the space and the handle are derived from.",
+              ),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: {
+      content: { "application/json": { schema: AccountSchema } },
+      description: "Account created",
+    },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description:
+        "The address is not a well-formed one, or the password falls outside the length the sign-in path enforces",
+    },
+    401: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["unauthorized"]),
+        },
+      },
+      description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description: "Forbidden",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["not_found"]),
+        },
+      },
+      description: "This deployment has no user accounts",
+    },
+    409: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["conflict"]),
+        },
+      },
+      description: "An account already exists for that address",
     },
   },
 });
@@ -1225,6 +1355,70 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     });
 
     return c.json({ deleted: true as const }, 200);
+  });
+
+  router.openapi(createAccountRoute, async (c) => {
+    const actor = requireAdmin(c);
+    const auth = opts.auth;
+    const users = storage.users;
+    // Keys-mode has no auth server and no users table. `NOT_FOUND`
+    // rather than a dedicated code, matching every sibling here: the
+    // resource does not exist on this instance.
+    if (!auth || !users) {
+      throw new MarfaError(
+        ErrorCode.NOT_FOUND,
+        "This deployment has no user accounts",
+      );
+    }
+    const body = c.req.valid("json");
+    const outcome = await auth.createEmailAccount({
+      email: body.email,
+      password: body.password,
+      ...(body.name === undefined ? {} : { name: body.name }),
+    });
+    if (!outcome.ok) throw accountCreationRefusal(outcome);
+
+    // The space, the handle and the `space_admin` role are the sign-up
+    // provisioning hook's work, and it runs inside the create above.
+    // Reading the row back is what turns "the hook is wired" into "the
+    // hook ran for this account" — and the space id is half the answer
+    // the caller asked for.
+    const provisioned = await users.getByAuthUserId(outcome.authUserId);
+    if (!provisioned) {
+      // Unreachable through the hook, which rethrows rather than leaving
+      // an account without a space — so reaching here means the hook was
+      // skipped or silently changed. A bare `Error` because there is no
+      // client-facing code for it: the handler turns it into a 500, logs
+      // the message, and fires the error webhook. The account exists and
+      // has no home, so the message names the way to remove it.
+      throw new Error(
+        `admin.account.create: ${outcome.authUserId} was created with no space. ` +
+          `Remove it with POST /admin/accounts/${outcome.authUserId}/delete.`,
+      );
+    }
+
+    // No address in the details. The auth user id in `resource_id`
+    // resolves back to it through `auth_user` when an operator needs it,
+    // and putting it here would re-introduce the plaintext PII trail
+    // `auth-account.ts` deliberately keeps out of the audit rows.
+    await storage.audit.log({
+      client_ip: c.get("clientIp") ?? null,
+      space_id: provisioned.space_id,
+      key_id: actor.id,
+      action: "admin.account.create",
+      resource_type: "account",
+      resource_id: outcome.authUserId,
+      details: { space_id: provisioned.space_id },
+    });
+
+    return c.json(
+      {
+        id: outcome.authUserId,
+        email: outcome.email,
+        space_id: provisioned.space_id,
+      },
+      201,
+    );
   });
 
   router.openapi(deleteAccountRoute, async (c) => {
