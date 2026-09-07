@@ -1524,6 +1524,7 @@ exports[`every gallery variant renders > renders 'auth/sign-in/error' 1`] = `
     <p class="aux">No account yet?
          <a href="/auth/sign-up?return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode">Create one</a>
        </p>
+    
     <script src="/auth/static/passkey.js"></script>
     <script>(function () {
   function show(id) { var el = document.getElementById(id); if (el) el.hidden = false; }
@@ -1661,6 +1662,7 @@ exports[`every gallery variant renders > renders 'auth/sign-in/password' 1`] = `
     <p class="aux">No account yet?
          <a href="/auth/sign-up?return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode">Create one</a>
        </p>
+    
     <script src="/auth/static/passkey.js"></script>
     <script>(function () {
   function show(id) { var el = document.getElementById(id); if (el) el.hidden = false; }
@@ -1749,6 +1751,106 @@ exports[`every gallery variant renders > renders 'auth/sign-in/sent-no-email' 1`
       <a href="/auth/sign-in?mode=magic&return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode" class="btn btn--outline">Use a different email</a>
     </div>
     <p class="aux"><a href="/auth/sign-in?return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode">Use a password instead</a></p>
+    <script src="/auth/static/submit-state.js"></script>
+  
+  </main>
+</body>
+</html>"
+`;
+
+exports[`every gallery variant renders > renders 'auth/sign-in/web-app' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in to Marfa</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card" aria-label="Sign in to Marfa">
+    
+    <h1 class="title">Sign in to Marfa</h1>
+    <p class="sub">Welcome back.</p>
+    
+    
+    <form method="POST" action="/auth/sign-in" novalidate>
+      <input type="hidden" name="return_to" value="/auth/authorize?client_id=marfa-cli&amp;response_type=code">
+      <div class="form">
+        <label class="field">
+          <span class="field__label">Email</span>
+          <input type="email"
+                 name="email"
+                 required
+                 autocomplete="email"
+                 autofocus
+                 aria-required="true">
+        </label>
+        <label class="field">
+          <span class="field__label">Password</span>
+          <input type="password"
+                 name="password"
+                 required
+                 autocomplete="current-password"
+                 aria-required="true">
+        </label>
+        
+      </div>
+      <div class="actions">
+        <button type="submit" name="mode" value="password" class="btn btn--primary" data-loading-label="Signing in...">Sign in</button>
+      </div>
+    </form>
+  
+    <div class="separator">Or continue with</div>
+    <div class="alts">
+      
+    <form method="GET" action="/auth/sign-in">
+      <input type="hidden" name="mode" value="magic">
+      <input type="hidden" name="return_to" value="/auth/authorize?client_id=marfa-cli&amp;response_type=code">
+      <button type="submit" class="btn">One-time link</button>
+    </form>
+  
+      
+    <div id="passkey-block" hidden>
+      <button id="passkey-signin" type="button" class="btn">Passkey</button>
+    </div>
+  
+    </div>
+    <div id="passkey-error" class="banner banner--error" role="alert" hidden style="margin-top:12px"></div>
+    
+    <p class="aux">No account yet?
+         <a href="/auth/sign-up?return_to=%2Fauth%2Fauthorize%3Fclient_id%3Dmarfa-cli%26response_type%3Dcode">Create one</a>
+       </p>
+    <p class="aux">
+         <a href="https://app.marfa.so/?instance=https%3A%2F%2Fstaging.marfa.so">Use a different Marfa server</a>
+       </p>
+    <script src="/auth/static/passkey.js"></script>
+    <script>(function () {
+  function show(id) { var el = document.getElementById(id); if (el) el.hidden = false; }
+  function hide(id) { var el = document.getElementById(id); if (el) el.hidden = true; }
+  function setError(msg) {
+    var el = document.getElementById('passkey-error');
+    if (el) { el.textContent = msg; show('passkey-error'); }
+  }
+  if (!window.MarfaPasskey || !window.MarfaPasskey.isSupported()) return;
+  show('passkey-block');
+  var btn = document.getElementById('passkey-signin');
+  if (!btn) return;
+  btn.addEventListener('click', async function () {
+    hide('passkey-error');
+    btn.disabled = true;
+    try {
+      await window.MarfaPasskey.signIn();
+      window.location.assign("/auth/authorize?client_id=marfa-cli&response_type=code");
+    } catch (err) {
+      var info = window.MarfaPasskey.describeError(err, 'signin');
+      // A cancel / timeout is the user's choice — no scary banner, just re-enable.
+      if (!info.cancelled) setError(info.message);
+      btn.disabled = false;
+    }
+  });
+})();</script>
+    <script src="/auth/static/password-toggle.js"></script>
     <script src="/auth/static/submit-state.js"></script>
   
   </main>

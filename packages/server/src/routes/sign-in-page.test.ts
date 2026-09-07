@@ -5,6 +5,7 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { MARFA_WEB_CLIENT_ID } from "../auth/first-party-clients.js";
 import {
   renderSignInPage,
   synthesizeOauthReturnTo,
@@ -191,6 +192,34 @@ describe("renderSignInPage", () => {
     });
     expect(withoutSignup).not.toContain("/auth/sign-up");
     expect(withoutSignup).not.toContain("Create one");
+  });
+
+  it("offers a way back to the web app's picker when it has one", () => {
+    // The web app is gone by the time somebody realizes they wanted a
+    // different server, so this page is where they actually are. The href is
+    // resolved and proved elsewhere; what this pins is that the page renders
+    // it rather than dropping it.
+    const html = renderSignInPage({
+      returnTo: "/auth/authorize?client_id=marfa-web",
+      allowSignup: false,
+      oidcProviderIds: [],
+      instanceLinkUrl: "https://app.marfa.so/?instance=https%3A%2F%2Fx.example",
+    });
+    expect(html).toContain("Use a different Marfa server");
+    expect(html).toContain(
+      'href="https://app.marfa.so/?instance=https%3A%2F%2Fx.example"',
+    );
+  });
+
+  it("omits it entirely when there is nowhere proved to send them", () => {
+    // Every other client, and every sign-in reached directly. A link rendered
+    // pointing nowhere is worse than no link.
+    const html = renderSignInPage({
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(html).not.toContain("Use a different Marfa server");
   });
 
   it("renders one OIDC button per configured provider", () => {
@@ -388,6 +417,63 @@ describe("GET /auth/sign-in", () => {
     const html = await res.text();
     expect(html).toContain("Sign in to Marfa");
     expect(html).toContain('action="/auth/sign-in"');
+  });
+
+  it("carries the way back to the web app's picker, end to end", async () => {
+    // The route, the resolver and the renderer together. The unit tests
+    // either mock the lookup or hand the renderer a finished href, so a
+    // wiring break — the wrong query parameter, an unawaited resolve, a
+    // client id that stopped matching — would leave every one of them green
+    // while the link never appeared on a real deployment.
+    ctx = await createTestContext();
+    const redirectUri = "https://app.marfa.so/auth/callback";
+    await ctx.storage.oauthProvider?.createClient({
+      clientId: MARFA_WEB_CLIENT_ID,
+      name: "Marfa Web",
+      isPublic: true,
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      scopes: null,
+      redirectUris: [redirectUri],
+      referenceId: null,
+    });
+    const returnTo = `/auth/authorize?client_id=${MARFA_WEB_CLIENT_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(res.status).toBe(200);
+    const html = await res.text();
+    expect(html).toContain("Use a different Marfa server");
+    expect(html).toContain("https://app.marfa.so/?instance=");
+  });
+
+  it("carries no such link for a client that has no picker", async () => {
+    ctx = await createTestContext();
+    const redirectUri = "https://tickets.marfa.so/auth/callback";
+    await ctx.storage.oauthProvider?.createClient({
+      clientId: "marfa-tickets",
+      name: "Marfa Tickets",
+      isPublic: true,
+      grantTypes: ["authorization_code", "refresh_token"],
+      responseTypes: ["code"],
+      tokenEndpointAuthMethod: "none",
+      scopes: null,
+      redirectUris: [redirectUri],
+      referenceId: null,
+    });
+    const returnTo = `/auth/authorize?client_id=marfa-tickets&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+    const res = await request(
+      ctx.app,
+      "GET",
+      `/auth/sign-in?return_to=${encodeURIComponent(returnTo)}`,
+      { headers: { origin: ORIGIN } },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain("Use a different Marfa server");
   });
 
   it("§3.18: returns Cache-Control: no-store + Pragma: no-cache", async () => {
