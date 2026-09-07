@@ -83,10 +83,11 @@ const summaries = (html: string): string[] =>
     (m) => m[1] ?? "",
   );
 
-/** Every line on the device screen. */
+/** Every line on the device screen. The rows are toggles now and share the
+ *  authorize screen's row markup, so the class moved with them. */
 const deviceLines = (html: string): string[] =>
-  [...html.matchAll(/<div class="crow">.*?<span>([^<]*)<\/span><\/div>/g)].map(
-    (m) => (m[1] ?? "").replace(/&#39;/g, "'").replace(/&amp;/g, "&"),
+  [...html.matchAll(/<div class="subrow"><span>([^<]*)<\/span>/g)].map((m) =>
+    (m[1] ?? "").replace(/&#39;/g, "'").replace(/&amp;/g, "&"),
   );
 
 describe("a consent row states the operation, not only the type", () => {

@@ -1784,9 +1784,23 @@ export interface OAuthStore {
    *  `slow_down` (client polled inside the interval window). */
   markDeviceCodePolled(id: string, now: string): Promise<void>;
 
-  /** Flip status to `approved`, set `connection_item_id` and
-   *  `approved_at`. Returns false if the row was not pending. */
-  approveDeviceCode(id: string, connectionItemId: string): Promise<boolean>;
+  /** Flip status to `approved`, set `connection_item_id` and `approved_at`,
+   *  and rewrite `scope` to the set the person actually approved. Returns
+   *  false if the row was not pending.
+   *
+   *  **The scope rewrite is what keeps the screen and the token agreeing.**
+   *  The row's scopes are what the device asked for, and the approval screen
+   *  offers those as toggles, so a person can approve less. The token step
+   *  reads this row and the standing grant, and the grant merges upward on a
+   *  re-approval — so both of its inputs still carried an unticked scope, and
+   *  the untick was a silent no-op for anything the standing grant already
+   *  held. After approval the row's only remaining purpose is issuing that
+   *  token, so what it should record is what may be issued. */
+  approveDeviceCode(
+    id: string,
+    connectionItemId: string,
+    approvedScopes: readonly string[],
+  ): Promise<boolean>;
 
   /** Flip status to `denied`. Returns false if the row was not pending. */
   denyDeviceCode(id: string): Promise<boolean>;

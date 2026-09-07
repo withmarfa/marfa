@@ -1366,22 +1366,6 @@ details.disclosure[open] > summary .disclosure__chevron {
   color: var(--fg-muted);
 }
 
-/* Capability check rows (device approve) — airy, leading check glyph. */
-.crow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 0;
-}
-.crow svg {
-  flex: none;
-  color: var(--fg);
-}
-.crow span {
-  font-size: 14px;
-  color: var(--fg);
-}
-
 /* Code display tile (device approve) — soft tile, centered mono. */
 .codetile {
   background: var(--tile);

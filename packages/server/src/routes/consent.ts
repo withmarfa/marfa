@@ -30,11 +30,18 @@
  * resulting submission as a narrowing, which revokes the client's live
  * tokens. An untouched Continue would kill a working integration.
  *
- * **This screen is one of two, and the other cannot express the flag.** The
- * device-approval screen confirms a scope list with no per-scope toggle, so
- * a tick is not available to it. Rather than granting on one click what the
- * flag exists to withhold, device-flow initiation refuses a scope that only
- * an off-by-default bundle offers.
+ * **This screen is one of two, and both express the flag now.** The
+ * device-approval screen confirmed a scope list with no per-scope toggle, so
+ * a tick was not available to it, and device-flow initiation refused a scope
+ * only an off-by-default bundle offers rather than granting it on one click.
+ * That screen has toggles, so the refusal is retired and both surfaces
+ * withhold by rendering a row unticked.
+ *
+ * **One rule spans both, and it is `requiresExplicitConsent`.** A capability
+ * is granted by being named and never by silence, so it renders unticked
+ * whatever a bundle says about it — asked before the bundle, or a
+ * configuration naming one would put administrative authority behind a
+ * content heading and inherit that heading's tick.
  *
  * Per-type narrowing works because the requested scopes are concrete (see
  * `DEFAULT_PERMISSION_BUNDLES`): the OAuth provider only accepts a consent
@@ -59,6 +66,7 @@ import type { ParsedScope, PermissionBundle } from "@withmarfa/shared";
 import {
   HIDDEN_MECHANISM_SCOPES,
   parseScope,
+  requiresExplicitConsent,
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
@@ -294,13 +302,22 @@ function buildGroups(
     // offered. Applied per row, so one group may hold a forced row beside an
     // ordinary one — which is the whole point of the move.
     const bundle = literalToBundle.get(scopeLiteralFor(scope));
-    if (bundle) {
+    // Asked before the bundle, and that order is the rule rather than a
+    // preference. `default_on` is a bundle's opinion about its own contents
+    // and this is the platform's about the scope, so a configuration cannot
+    // put administrative authority behind a content heading or inherit that
+    // heading's tick. Asked after, a bundle naming `capability.keys` rendered
+    // it inside that bundle's group, pre-ticked, and the bucket built to say
+    // otherwise never fired — the fallback only sees a literal no bundle
+    // claimed. `forceDefaultOn` still outranks both, because a scope already
+    // granted is being shown rather than offered.
+    if (requiresExplicitConsent(scopeLiteralFor(scope))) {
+      otherCapability.rows.push({ scope, defaultOn: forceDefaultOn });
+    } else if (bundle) {
       byBundle.get(bundle.id)?.rows.push({
         scope,
         defaultOn: forceDefaultOn || (bundleDefaultOn.get(bundle.id) ?? true),
       });
-    } else if (scope.kind === "capability") {
-      otherCapability.rows.push({ scope, defaultOn: forceDefaultOn });
     } else if (scope.kind !== "oidc" && scope.operation === "write") {
       otherWrite.rows.push({ scope, defaultOn: true });
     } else {

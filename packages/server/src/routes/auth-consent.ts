@@ -1703,7 +1703,7 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   // **None of these sentences says that the grant reaches types nobody has
   // registered yet, and none of them may.** Both screens compose that from
   // the grammar: `subRow` puts `OPEN_ENDED_LINE` on the toggle row's second
-  // line, `describeCapabilities` appends `OPEN_ENDED_SENTENCE` to whichever
+  // line, `describeScope` appends `OPEN_ENDED_SENTENCE` to whichever
   // of these it is about to print, and `isOpenEnded` is the single answer
   // both read. So an entry here says what the grant reaches and stops.
   //
@@ -1860,14 +1860,14 @@ function describeScope(scope: ParsedScope): string | undefined {
   switch (scope.kind) {
     case "oidc":
       // Deliberately absent. `scopeName` in `consent.ts` and
-      // `describeCapabilities` in `device-pages.ts` both resolve an OIDC
+      // `describeScope` in `device-pages.ts` both resolve an OIDC
       // literal through `oidc-labels.ts` and return before they look at this
       // map, so anything written here for one was computed and discarded. A
       // third register existed to fill it and is gone with it.
       return undefined;
     case "capability":
       // Deliberately absent, for the reason above. `scopeName` in
-      // `consent.ts` and `describeCapabilities` in `device-pages.ts` both
+      // `consent.ts` and `describeScope` in `device-pages.ts` both
       // resolve a capability literal through `capability-labels.ts` and
       // return before they look at this map, so anything written here for
       // one was computed and discarded. The branch that filled it is gone
@@ -1882,7 +1882,7 @@ function describeScope(scope: ParsedScope): string | undefined {
       return undefined;
     case "content":
       // Resolved from the curated map, unlike the two arms above, because
-      // both renderers do read the map for this kind. `describeCapabilities`
+      // both renderers do read the map for this kind. `describeScope`
       // on the device screen falls to `descriptions?.[s.typePattern]` for
       // everything that is not OIDC or a capability, and `labelFor` on the
       // authorize screen falls through `SCOPE_LABELS` to the same map. So a

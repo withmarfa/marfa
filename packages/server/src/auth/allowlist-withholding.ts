@@ -12,13 +12,21 @@
  *
  * ## What is withheld, and what deliberately is not
  *
- * **`capability.*` is withheld.** The eleven administrative literals are a
- * closed set that `buildAllowedScopes` never emits, and the withholding was by
- * omission rather than by a check — nothing in the provider references
- * `CAPABILITY_SCOPES` at all. They are grammatically valid, they carry curated
- * consent copy, and they name authority over administrative surfaces rather
- * than over content, so a bundle naming one made it requestable, consentable
- * and grantable with no warning.
+ * **`capability.*` is withheld from a bundle, and only from a bundle.** The
+ * eleven administrative literals are now emitted by `buildAllowedScopes`
+ * itself, from the closed set, so the family is requestable and the drop here
+ * no longer decides that. What it decides is that a *bundle* can never be the
+ * reason one is publishable, and that is the half worth keeping: a
+ * bundle-claimed capability leaves the consent screen's unclaimed-scope
+ * bucket and would inherit the bundle's `default_on` tick, which is grant by
+ * silence — the thing the family exists to stop.
+ *
+ * **The drop is therefore no longer visible in the allowlist's output**, since
+ * the literal is emitted either way. It still shows at the other door, which
+ * is the one that mattered more all along: `bundlePublishedScopes` is what a
+ * stale client ceiling is *widened by*, and a literal admitted there is
+ * written into a registration row that outlives the configuration that
+ * introduced it. The allowlist is re-derived at every boot; a row is not.
  *
  * **A scope over a type or edge type nothing has registered is NOT withheld,
  * and that is deliberate.** `acme.thing:read` parses, and the allowlist
@@ -38,8 +46,13 @@ import { isCapabilityScope, type PermissionBundle } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /**
- * Whether this server refuses to publish a literal a bundle named, even
- * though the grammar recognizes it.
+ * Whether this server refuses to publish a literal *because a bundle named
+ * it*, even though the grammar recognizes it.
+ *
+ * Not "is this publishable at all": every capability is, from the closed set,
+ * emitted by the allowlist directly. This answers the narrower question the
+ * bundle doors ask, which is whether a configuration may be the thing that
+ * publishes it.
  *
  * Delegates to `isCapabilityScope` rather than matching the root, so there is
  * one answer to "is this a capability" rather than two that can drift. It is

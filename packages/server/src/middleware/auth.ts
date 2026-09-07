@@ -13,8 +13,14 @@ import {
   edgePermissionCovers,
   metadataPermissionCovers,
   profilePermissionCovers,
+  hasCapability,
 } from "@withmarfa/shared";
-import type { ApiKey, MarfaRole, TypeFilter } from "@withmarfa/shared";
+import type {
+  ApiKey,
+  CapabilityScope,
+  MarfaRole,
+  TypeFilter,
+} from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 
@@ -29,6 +35,34 @@ export interface AppEnv extends Record<string, unknown> {
     apiKey: ApiKey | undefined;
     isBootstrap: boolean;
     authType: "api_key" | "oauth" | undefined;
+    /**
+     * The OAuth grant behind this request, as granted. Set only for an
+     * OAuth bearer; `undefined` for an API key, for an anonymous request,
+     * and for bootstrap.
+     *
+     * **The scopes are here because they reach no permission map.** The
+     * three projections beside them translate a token's scopes into
+     * `type_permissions`, `edge_permissions` and `metadata_permissions`
+     * and drop every literal they do not recognize — deliberately, since a
+     * capability names authority over an administrative surface rather
+     * than over a resource, and admitting one into a projection would put
+     * it on the data plane where a wildcard could reach it. So the granted
+     * set has to travel beside the projections rather than through them,
+     * and `requireCapability` is the only thing that reads it.
+     *
+     * `clientId` and `authUserId` are here for a second reason: an audit
+     * row for an action an app took needs to name the grant it was taken
+     * through, and the synthetic key carries them only baked into a
+     * composite `label` / `source` string. Parsing that string back apart
+     * would make the row's meaning depend on a display format.
+     */
+    oauthGrant:
+      | {
+          scopes: readonly string[];
+          clientId: string;
+          authUserId: string | null;
+        }
+      | undefined;
     requestId: string;
     /**
      * The resolved `AppConfig`, stamped onto every request by `createApp`.
@@ -414,6 +448,14 @@ export function authMiddleware(
         last_used_at: null,
       });
       c.set("authType", "oauth");
+      // The granted set, beside the projections rather than inside them.
+      // Read only by `requireCapability` and by the audit rows that name
+      // the grant an action was taken through.
+      c.set("oauthGrant", {
+        scopes: oauthToken.scopes,
+        clientId: oauthToken.clientId,
+        authUserId: oauthToken.userId ?? null,
+      });
 
       if (oauthToken.userId) {
         void stampOAuthGrantLastUsedByGrantKey(storage, {
@@ -1221,6 +1263,57 @@ export function requireMetadataPermission(
     ErrorCode.FORBIDDEN,
     `Missing metadata.${subresource}:${level} permission`,
     { metadata_subresource: subresource, required: level },
+  );
+}
+
+/**
+ * Authority over one administrative surface, asked of the grant rather than
+ * of the role.
+ *
+ * **An API-key caller passes through unchanged, and that is the whole reason
+ * this can be added to a live gate without a migration for anybody.** A
+ * capability literal reaches no permission map, so it means nothing on an API
+ * key: the family exists to name what a person handed an app, and an API key
+ * is the person's own credential rather than an app's. Refusing one here would
+ * break a self-host in keys mode, where no OAuth principal reaches a role gate
+ * at all, and every CLI admin command — for no gain, since a key's authority
+ * is already bounded by the role lattice, the platform flag and its space.
+ *
+ * **A bootstrap caller is refused here, and its protection is the route's
+ * rather than this function's.** Bootstrap presents no credential at all:
+ * `apiKey` is undefined and `authType` unset, so `checkAuth` throws before the
+ * OAuth question is reached. That is the right answer for a helper that cannot
+ * see the sentinel, and it means a call site on the mint path has to sit
+ * inside its own `if (!isBootstrap)` block, where every other authority check
+ * on that route already is. Do not weaken this to admit the shape; put the
+ * call in the right place.
+ *
+ * **So this is added beside an existing authority check, never instead of
+ * one.** The role gate answers whether this principal may act on the surface;
+ * this answers whether the app was told it could. Both have to hold, and the
+ * order does not matter, but dropping the first would let a member's app reach
+ * a surface a member may not.
+ *
+ * **A missing carrier fails closed.** An OAuth request that reached a gate
+ * with no `oauthGrant` set is a defect in the bearer middleware, and the safe
+ * reading of "I cannot tell what was granted" is "nothing was".
+ *
+ * The refusal names the literal that would satisfy it, in the message and in
+ * `details`. A generic 403 on an administrative surface sends the reader to
+ * the role, which is not what refused them, and a client cannot narrow toward
+ * a scope nobody told it about.
+ */
+export function requireCapability(
+  c: Context<AppEnv>,
+  capability: CapabilityScope,
+): void {
+  checkAuth(c.get("apiKey"));
+  if (c.get("authType") !== "oauth") return;
+  if (hasCapability(c.get("oauthGrant")?.scopes ?? [], capability)) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `This app was not granted ${capability}`,
+    { required_scope: capability },
   );
 }
 

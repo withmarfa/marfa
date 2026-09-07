@@ -149,7 +149,14 @@ async function deviceGrant(
   };
 
   const consentRes = await request(c.app, "POST", "/auth/device/consent", {
-    form: { user_code: init.user_code, decision: "approve" },
+    form: {
+      user_code: init.user_code,
+      decision: "approve",
+      // Everything ticked, which is what the screen submits untouched:
+      // the approval form carries a checkbox per requested scope, so a
+      // post with none is a denial rather than a full approval.
+      scopes: scope.split(" ").filter(Boolean),
+    },
     headers: { cookie, origin: ORIGIN },
   });
   expect(consentRes.status).toBe(200);

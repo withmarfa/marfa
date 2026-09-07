@@ -977,9 +977,10 @@ describe("a grant that reaches things not yet created says so", () => {
   });
 
   /**
-   * One capability row from the device screen, which carries no toggles and
-   * no scope literals. Rendered a scope at a time so the row is the only
-   * one, since there is nothing in the markup to key a lookup on.
+   * One row from the device screen. Rendered a scope at a time so the row is
+   * the only one: the markup carries the literal on the checkbox now, but
+   * this helper reads the line rather than the input, and keying a lookup on
+   * the copy is what it was written to avoid.
    */
   const deviceRow = (literal: string): string => {
     const parsed = parseScope(literal);
@@ -990,7 +991,8 @@ describe("a grant that reaches things not yet created says so", () => {
       userCode: "ABCD-EFGH",
       descriptions: buildScopeDescriptions([parsed]),
     });
-    const rows = html.match(/<div class="crow">[\s\S]*?<\/div>/g) ?? [];
+    const rows =
+      html.match(/<div class="subrow">[\s\S]*?<\/label><\/div>/g) ?? [];
     expect(
       rows,
       `device screen rendered ${String(rows.length)} rows for ${literal}, not one`,
@@ -1007,7 +1009,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // held a map rather than a screen, and it held a word rather than a
     // statement: "Ones you remove later stay recoverable." satisfied it
     // while saying nothing whatever about how far the grant reaches. The
-    // clause is composed now, by `describeCapabilities` from the same
+    // clause is composed now, by `describeScope` from the same
     // `isOpenEnded` the toggle row asks, so what is worth holding is that it
     // arrives, exactly once, on the surface a person actually reads.
     //
@@ -2048,7 +2050,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
   });
 
   it("leaves a capability out, because both screens name one without it", () => {
-    // `labelFor` here and `describeCapabilities` on the device screen both
+    // `labelFor` here and `describeScope` on the device screen both
     // resolve a capability through `capability-labels.ts` and return before
     // they reach this map, so an entry would be computed and discarded on
     // every render. That is the whole reason the map has nothing for one.
@@ -2084,7 +2086,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
   });
 
   it("answers nothing for an OIDC literal", () => {
-    // `labelFor` here and `describeCapabilities` on the device screen both
+    // `labelFor` here and `describeScope` on the device screen both
     // resolve one through `oidc-labels.ts` and return before they reach this
     // map, so an entry would be computed and discarded on every render.
     expect(describeAll("openid", "profile", "email", "offline_access")).toEqual(
