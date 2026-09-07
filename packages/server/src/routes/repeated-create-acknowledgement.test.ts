@@ -83,6 +83,41 @@ async function createNote(
   });
 }
 
+async function seedItem(label: string): Promise<string> {
+  const res = await request(ctx.app, "POST", "/items", {
+    key: ctx.adminKey,
+    body: { type: "core.note", properties: { body: label } },
+  });
+  expect(res.status).toBe(201);
+  return ((await res.json()) as { item: { id: string } }).item.id;
+}
+
+/** A space, and a space_admin key inside it. */
+async function spaceWithKey(
+  label: string,
+  permissions: Record<string, TypePermission> = { "*": "write" },
+  role: "space_admin" | "member" = "space_admin",
+): Promise<{ spaceId: string; key: string }> {
+  const spaces = ctx.storage.spaces;
+  if (!spaces) throw new Error("this test needs a space store");
+  const space = await spaces.create(label);
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const key = `marfa_k1_${label.replace(/[^a-z]/g, "")}_${suffix}`;
+  await ctx.storage.keys.create(
+    {
+      label: `${label}-${suffix}`,
+      source: `${label}-${suffix}`,
+      role,
+      type_permissions: permissions,
+      default_tier: "library",
+      is_platform: false,
+    },
+    hashApiKey(key, TEST_API_KEY_SALT),
+    space.id,
+  );
+  return { spaceId: space.id, key };
+}
+
 describe("a repeated item create", () => {
   it("writes nothing and emits nothing", async () => {
     const id = generateId();
@@ -179,15 +214,6 @@ describe("a repeated item create", () => {
 });
 
 describe("a repeated edge create", () => {
-  async function seedItem(label: string): Promise<string> {
-    const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: { type: "core.note", properties: { body: label } },
-    });
-    expect(res.status).toBe(201);
-    return ((await res.json()) as { item: { id: string } }).item.id;
-  }
-
   it("writes nothing and emits nothing", async () => {
     const source = await seedItem("edge-quiet-source");
     const target = await seedItem("edge-quiet-target");
@@ -227,32 +253,6 @@ describe("a repeated edge create", () => {
 });
 
 describe("the gates an acknowledgement still runs", () => {
-  /** A space, and a space_admin key inside it. */
-  async function spaceWithKey(
-    label: string,
-    permissions: Record<string, TypePermission> = { "*": "write" },
-    role: "space_admin" | "member" = "space_admin",
-  ): Promise<{ spaceId: string; key: string }> {
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const space = await spaces.create(label);
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const key = `marfa_k1_${label.replace(/[^a-z]/g, "")}_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `${label}-${suffix}`,
-        source: `${label}-${suffix}`,
-        role,
-        type_permissions: permissions,
-        default_tier: "library",
-        is_platform: false,
-      },
-      hashApiKey(key, TEST_API_KEY_SALT),
-      space.id,
-    );
-    return { spaceId: space.id, key };
-  }
-
   it("is reached even when the space is at its item ceiling", async () => {
     // The acknowledgement used to sit behind the write transaction, whose
     // first statement reserves quota — so a full space answered a repeat
@@ -766,5 +766,97 @@ describe("attribution on the two acknowledged doors", () => {
     });
     expect(res.status).toBe(409);
     expect(((await res.json()) as ErrorBody).error.code).toBe("type_mismatch");
+  });
+});
+
+describe("the key, not the id, is what carries a retry", () => {
+  /** A value shaped like the one a queued mutation mints per write. */
+  const mintedKey = (label: string): string =>
+    `${label}-${Math.random().toString(36).slice(2, 12)}`;
+
+  it("replays an item create at the ceiling, where a keyless repeat is refused", async () => {
+    // The id-based pre-check sat ahead of the write transaction, and so
+    // ahead of the quota reservation, which is the only reason a full
+    // space could answer a repeat at all. `Idempotency-Key` covers that
+    // window properly: the record is served before the handler runs, so
+    // the reservation is never reached.
+    const { spaceId, key } = await spaceWithKey("keyedceiling");
+    const id = generateId();
+    const idem = mintedKey("ack-item");
+    const body = { type: "core.note", id, properties: { body: "at-ceiling" } };
+
+    const first = await request(ctx.app, "POST", "/items", {
+      key,
+      body,
+      headers: { "Idempotency-Key": idem },
+    });
+    expect(first.status).toBe(201);
+
+    // Ceiling set to exactly what the space now holds, so any create that
+    // reaches the reservation is refused.
+    const quota = await request(ctx.app, "PUT", `/spaces/${spaceId}/quotas`, {
+      key: ctx.adminKey,
+      body: { items_limit: 1 },
+    });
+    expect(quota.status).toBe(200);
+
+    // The retry a queued mutation actually sends: same key, same body.
+    const replayed = await request(ctx.app, "POST", "/items", {
+      key,
+      body,
+      headers: { "Idempotency-Key": idem },
+    });
+    expect(replayed.status).toBe(201);
+    expect(((await replayed.json()) as ItemBody).item.id).toBe(id);
+
+    // And the retry a client that mints ids but no keys sends. Nothing
+    // recognizes it any more, so it meets the ceiling like any other
+    // create rather than being answered from the row it names.
+    const keyless = await request(ctx.app, "POST", "/items", { key, body });
+    expect(keyless.status).toBe(429);
+  });
+
+  it("replays an edge create, where a keyless repeat meets the duplicate refusal", async () => {
+    const source = await seedItem("keyed-edge-source");
+    const target = await seedItem("keyed-edge-target");
+    const id = generateId();
+    const idem = mintedKey("ack-edge");
+    const body = {
+      id,
+      source_id: source,
+      target_id: target,
+      edge_type: "about",
+    };
+
+    const first = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body,
+      headers: { "Idempotency-Key": idem },
+    });
+    expect(first.status).toBe(201);
+
+    const replayed = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body,
+      headers: { "Idempotency-Key": idem },
+    });
+    expect(replayed.status).toBe(201);
+    expect(((await replayed.json()) as EdgeBody).edge.id).toBe(id);
+
+    // A keyless resend is no longer recognized by its id, so it reaches
+    // the exact-duplicate guard inside the transaction. That refusal
+    // carries `constraint: "duplicate"`, which is the one refusal an
+    // idempotent writer may read as success — so the answer stays
+    // machine-legible rather than becoming a bare conflict.
+    const keyless = await request(ctx.app, "POST", "/edges", {
+      key: ctx.adminKey,
+      body,
+    });
+    expect(keyless.status).toBe(400);
+    const failure = (await keyless.json()) as {
+      error: { code: string; details?: { constraint?: string } };
+    };
+    expect(failure.error.code).toBe("edge_constraint_violation");
+    expect(failure.error.details?.constraint).toBe("duplicate");
   });
 });
