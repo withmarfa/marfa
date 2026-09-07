@@ -8,6 +8,7 @@ import type {
 import type { SpaceConfig } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { logJobTickFailure } from "./job-tick.js";
+import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -276,6 +277,151 @@ export class RevokedGrantPurger {
       }
     } catch (err) {
       logJobTickFailure("Revoked grant purge", err, this.stopped);
+    }
+  }
+}
+
+/**
+ * Retires app grants nobody has used for a long time.
+ *
+ * A grant lasted for as long as nobody revoked it: the tokens under it
+ * rotated forever, the consent row and the projection stood, and the app
+ * kept its access to a space it had stopped reading. Three `space_admin`
+ * keys accumulated on production from finished sessions the same way, and
+ * the rule for keys is the rule here: standing privilege nobody is tracking
+ * needs an owner in code.
+ *
+ * Every live app grant whose `last_used_at`, or `granted_at` where it was
+ * never used, is older than the window goes through the same cascade the
+ * person's own Disconnect runs, and an `auth.grant.retired` row says why
+ * and when it was last used. The window is long by design (365 days by
+ * default, `MARFA_GRANT_INACTIVITY_DAYS`, `0` disables): a person's
+ * once-a-year app should still be connected in the spring.
+ *
+ * **What follows from a retirement is a chain already in place.** The
+ * cascade leaves a tombstone with `status: "revoked"`; `RevokedGrantPurger`
+ * removes that after its own window; and a client with no grant left then
+ * falls to `DcrClientCleaner`. Nothing here reaches into either.
+ *
+ * Instance-wide: the window is a property of the deployment rather than of
+ * space policy. Cluster-wide coordination lock keyed
+ * `"grant-inactivity-retire"`.
+ */
+/** Grants retired by one tick; the remainder wait for the next. */
+const RETIRE_PER_TICK = 500;
+
+export class GrantInactivityRetirer {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
+
+  constructor(
+    private storage: Storage,
+    private inactivityDays: number,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.stopped = false;
+    this.startupTimeout = setTimeout(() => void this.poll(), 40_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test entry point: retires every grant inactive past the window and
+   *  returns how many. */
+  async runOnce(): Promise<number> {
+    if (this.inactivityDays <= 0) return 0;
+    const cutoff = new Date(
+      this.nowFn().getTime() - this.inactivityDays * MS_PER_DAY,
+    ).toISOString();
+    const inactive = await this.storage.items.listInactiveAppGrants(cutoff);
+    let retired = 0;
+    // The first tick on a mature instance meets every dormant grant at once;
+    // the cap keeps one tick's cascade, and the lock it holds, bounded, and
+    // the rest go tomorrow. One grant that cannot be revoked is logged and
+    // passed over rather than costing every grant behind it: the cascade
+    // aborts on a fault by design, and a persistent fault on one row would
+    // otherwise stall the sweep at that row every day.
+    for (const grant of inactive.slice(0, RETIRE_PER_TICK)) {
+      const spaceId = grant.spaceId ?? undefined;
+      try {
+        await revokeProjectedGrant(this.storage, {
+          itemId: grant.id,
+          properties: grant.properties,
+          spaceId,
+          clientId: grant.clientId ?? undefined,
+          authUserId: grant.authUserId ?? undefined,
+        });
+      } catch (err) {
+        // Through the one classifier every job's failure takes, so a tick
+        // cut short by shutdown stands down at info here as everywhere.
+        logJobTickFailure(
+          `Inactive grant retirement (grant ${grant.id})`,
+          err,
+          this.stopped,
+        );
+        continue;
+      }
+      // Fire-and-forget like every other revoke door's row: the tracker
+      // drains it at close, and a retirement that cannot be audited is still
+      // a retirement the projection's own `revoked_at` records. This row is
+      // the only record of why, so it is written first of the two.
+      void this.storage.audit.log({
+        space_id: grant.spaceId,
+        action: "auth.grant.retired",
+        resource_type: "oauth_grant",
+        resource_id: grant.clientId ?? grant.id,
+        client_ip: null,
+        details: {
+          client_id: grant.clientId,
+          user_id: grant.authUserId,
+          grant_item_id: grant.id,
+          reason: "inactive",
+          last_used_at: grant.lastUsedAt,
+          granted_at: grant.grantedAt,
+          inactivity_days: this.inactivityDays,
+        },
+      });
+      retired += 1;
+    }
+    return retired;
+  }
+
+  /** Scheduler entry point: the same locked, logged tick the timer drives. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
+  private async poll(): Promise<void> {
+    if (this.stopped) return;
+    try {
+      const retired = this.coordination
+        ? await this.coordination.withJobLock("grant-inactivity-retire", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (retired !== undefined && retired > 0) {
+        log("info", "Inactive grants retired", {
+          retired,
+          inactivityDays: this.inactivityDays,
+        });
+      }
+    } catch (err) {
+      logJobTickFailure("Inactive grant retirement", err, this.stopped);
     }
   }
 }

@@ -1333,6 +1333,54 @@ export class SqliteItemStore implements ItemStore {
     });
   }
 
+  async listInactiveAppGrants(cutoffIso: string): Promise<
+    {
+      id: string;
+      spaceId: string | null;
+      clientId: string | null;
+      authUserId: string | null;
+      lastUsedAt: string | null;
+      grantedAt: string | null;
+      properties: Record<string, unknown>;
+    }[]
+  > {
+    // ISO-8601 strings compare lexically in timestamp order, which is what
+    // every other sweep here relies on too. A grant never used falls back
+    // to when it was granted, so a grant approved and forgotten retires on
+    // the same clock as one used once and forgotten.
+    // `itemColumns`, not `select()`: the properties column is read back
+    // through `json()` so `rowToItem` can parse it, as every other read here
+    // does. A raw select hands it the stored form and the parse comes back
+    // empty, which reads as a grant with no client and no user.
+    const rows = await this.db
+      .select(itemColumns)
+      .from(items)
+      .where(
+        and(
+          eq(items.type, "system.connection"),
+          eq(items.state, "active"),
+          sql`json_extract(${items.properties}, '$.kind') = 'app'`,
+          sql`json_extract(${items.properties}, '$.status') = 'active'`,
+          sql`coalesce(json_extract(${items.properties}, '$.last_used_at'), json_extract(${items.properties}, '$.granted_at')) < ${cutoffIso}`,
+        ),
+      );
+    return rows.map((row) => {
+      const item = rowToItem(row);
+      const props = item.properties;
+      const str = (v: unknown): string | null =>
+        typeof v === "string" ? v : null;
+      return {
+        id: item.id,
+        spaceId: item.space_id ?? null,
+        clientId: str(props.client_id),
+        authUserId: str(props.user_id),
+        lastUsedAt: str(props.last_used_at),
+        grantedAt: str(props.granted_at),
+        properties: props,
+      };
+    });
+  }
+
   async restore(id: string, spaceId?: string): Promise<Item> {
     const row = await this.getRaw(id, spaceId);
     if (!row) {
