@@ -58,6 +58,16 @@ interface SignInPageParams {
    * posting to `/auth/sign-in/provider/<id>`. Empty array → no buttons.
    */
   oidcProviderIds: readonly string[];
+  /**
+   * Where to send somebody who wants a different Marfa server, when this
+   * sign-in is for a client that has an instance picker to send them back to.
+   *
+   * Resolved by `resolveWebAppInstanceLink`, which proves the destination is
+   * one the client registered before handing it here. Absent for every other
+   * client and for a sign-in reached directly, and the link is then omitted
+   * rather than rendered pointing nowhere.
+   */
+  instanceLinkUrl?: string;
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -195,6 +205,16 @@ export function renderSignInPage(params: SignInPageParams): string {
       ? `<div class="oidc" style="margin-top:16px">${oidcButtons}</div>`
       : "";
 
+  // The web app hands the browser here the moment it loads, so this is where
+  // somebody who wanted a different server actually is when they realize it.
+  // Their own screen is gone by then and cannot offer them anything; this one
+  // can hand them back to it.
+  const instanceLink = params.instanceLinkUrl
+    ? `<p class="aux">
+         <a href="${escapeHtml(params.instanceLinkUrl)}">Use a different Marfa server</a>
+       </p>`
+    : "";
+
   const signupLink = params.allowSignup
     ? `<p class="aux">No account yet?
          <a href="/auth/sign-up?${buildQuery({ return_to: params.returnTo })}">Create one</a>
@@ -261,6 +281,7 @@ export function renderSignInPage(params: SignInPageParams): string {
     ${passkeyError}
     ${oidcStack}
     ${signupLink}
+    ${instanceLink}
     <script src="/auth/static/passkey.js"></script>
     <script>${passkeyScript}</script>
     <script src="/auth/static/password-toggle.js"></script>

@@ -315,6 +315,21 @@ const AUTH_SCREENS: GalleryScreen[] = [
           }),
       },
       {
+        id: "web-app",
+        label: "From the web app",
+        render: () =>
+          renderSignInPage({
+            returnTo: RETURN_TO,
+            allowSignup: true,
+            oidcProviderIds: [],
+            // Only a sign-in the first-party web app sent here carries this,
+            // and only after the destination is proved to be one that client
+            // registered. Every other client's sign-in renders without it.
+            instanceLinkUrl:
+              "https://app.marfa.so/?instance=https%3A%2F%2Fstaging.marfa.so",
+          }),
+      },
+      {
         id: "magic",
         label: "One-time link",
         render: () =>

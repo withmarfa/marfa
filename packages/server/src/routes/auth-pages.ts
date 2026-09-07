@@ -52,6 +52,7 @@ import {
   synthesizeOauthReturnTo,
   validateReturnTo,
 } from "./sign-in-page.js";
+import { resolveWebAppInstanceLink } from "./web-app-instance-link.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { renderVerifyEmailPage } from "./verify-email-page.js";
 import {
@@ -607,7 +608,7 @@ export function authRoutes(
   // works — Set-Cookie headers from a successful sign-in are forwarded
   // intact onto the redirect response.
 
-  router.get("/sign-in", (c) => {
+  router.get("/sign-in", async (c) => {
     const url = new URL(c.req.url);
     const modeRaw = url.searchParams.get("mode");
     const mode = modeRaw === "magic" ? "magic" : "password";
@@ -644,6 +645,11 @@ export function authRoutes(
       email,
       allowSignup: auth?.allowSignup ?? false,
       oidcProviderIds: auth?.oidcProviderIds ?? [],
+      instanceLinkUrl: await resolveWebAppInstanceLink(
+        storage,
+        returnTo,
+        auth?.baseURL,
+      ),
     });
     setNoStore(c);
     return c.html(html);

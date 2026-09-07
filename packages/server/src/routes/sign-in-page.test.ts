@@ -193,6 +193,34 @@ describe("renderSignInPage", () => {
     expect(withoutSignup).not.toContain("Create one");
   });
 
+  it("offers a way back to the web app's picker when it has one", () => {
+    // The web app is gone by the time somebody realizes they wanted a
+    // different server, so this page is where they actually are. The href is
+    // resolved and proved elsewhere; what this pins is that the page renders
+    // it rather than dropping it.
+    const html = renderSignInPage({
+      returnTo: "/auth/authorize?client_id=marfa-web",
+      allowSignup: false,
+      oidcProviderIds: [],
+      instanceLinkUrl: "https://app.marfa.so/?instance=https%3A%2F%2Fx.example",
+    });
+    expect(html).toContain("Use a different Marfa server");
+    expect(html).toContain(
+      'href="https://app.marfa.so/?instance=https%3A%2F%2Fx.example"',
+    );
+  });
+
+  it("omits it entirely when there is nowhere proved to send them", () => {
+    // Every other client, and every sign-in reached directly. A link rendered
+    // pointing nowhere is worse than no link.
+    const html = renderSignInPage({
+      returnTo: "/",
+      allowSignup: false,
+      oidcProviderIds: [],
+    });
+    expect(html).not.toContain("Use a different Marfa server");
+  });
+
   it("renders one OIDC button per configured provider", () => {
     const html = renderSignInPage({
       mode: "password",
