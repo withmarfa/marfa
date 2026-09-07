@@ -219,7 +219,7 @@ const createItemRoute = createRoute({
   tags: ["Items"],
   summary: "Create an item",
   description:
-    "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. Passing an `id` the caller already created is treated the same way: the create is a repeat of one the server has performed, so nothing is written, no event is published, and the stored item comes back with `acknowledged: true`.",
+    "Creates an item, validating its properties against the registered type schema before the write; a schema failure rejects the whole item. The server stamps identity, timestamps, version, and the source credential, so passing a `source_id` that already exists for that source upserts the existing item and returns 200 instead of 201. An `id` that collides with a row the caller already holds is answered with that stored row and `acknowledged: true`, and nothing is written or published — the backstop for two arrivals racing on one id. It is reached only once the write is attempted, so a space at its item ceiling refuses it with 429 like any other create. Retry safety after a lost response is `Idempotency-Key`, whose record is served ahead of the write.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -261,11 +261,14 @@ const createItemRoute = createRoute({
         "**Acknowledged re-sync:** the same natural key resolves an item " +
         "the user has trashed, so the response carries `acknowledged: true` " +
         "and nothing is written; the deletion stands rather than the " +
-        "re-sync being refused forever. **Acknowledged repeat:** the " +
-        "request carries an `id` the caller already created, so the create " +
-        "is a second arrival of that client's own write; the stored row " +
-        "comes back with `acknowledged: true`, in whatever state it holds " +
-        "including trashed, and nothing is written or published. On every " +
+        "re-sync being refused forever. **Acknowledged race:** the " +
+        "request carries an `id` that collides with a row this caller " +
+        "already holds, so the create is the losing half of two arrivals " +
+        "on one id; the stored row comes back with `acknowledged: true`, " +
+        "in whatever state it holds including trashed, and nothing is " +
+        "written or published. That answer needs the write to be " +
+        "attempted, so it is not what makes a resend after a lost " +
+        "response safe; send an `Idempotency-Key` for that. On every " +
         "one of the three the resolved item's `type` decides the shape, so " +
         "a request naming a different one is refused with 409 " +
         "`type_mismatch` rather than reinterpreted.",
@@ -1782,28 +1785,28 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // A create arriving a second time under an id the caller minted.
+    // Two arrivals racing on one caller-minted id, where this one lost
+    // the insert.
     //
-    // A synced client names a row before the server has seen it, so when
-    // the response to its create is lost it retries with the same id.
-    // The server already holds that row: the second arrival is the
-    // client's own write, not a collision with somebody else's. Refusing
-    // it forever is what strands the item — the client reads 409 as
-    // transient, retries, and every later edit to that item queues behind
-    // it. So the contract answers success and hands back the row.
+    // A synced client names a row before the server has seen it, so two
+    // sends of one id can both find nothing and one of them reaches the
+    // store's collision trap. That loser is the client's own write rather
+    // than a collision with somebody else's, and refusing it forever is
+    // what strands the item: the client reads 409 as transient, retries,
+    // and every later edit to that item queues behind it. So the contract
+    // answers success and hands back the row.
     //
-    // **Both a pre-check and a catch, and each covers what the other
-    // cannot.** The pre-check has to exist because the write path is not
-    // reachable at every moment the acknowledgement is owed: the
-    // transaction reserves quota before it inserts, so a space at its
-    // item ceiling would answer a repeat with `quota_exceeded` for a row
-    // it already holds — the same permanent refusal in another code. The
-    // catch has to exist because the pre-check races: two sends of one id
-    // can both find nothing, and the loser of the insert still needs an
-    // answer other than 409.
-    //
-    // One comparison serves both, so the two paths cannot disagree about
-    // what a repeat is or which gates it passes.
+    // **A lost response is a different question with a different
+    // answer.** A client that never saw its response retries under
+    // `Idempotency-Key`, and the first attempt's record is served before
+    // this handler runs — which is why that mechanism holds even at the
+    // space's item ceiling, where a create reaching the transaction is
+    // refused by the reservation. This comparison used to answer that
+    // case too, from the id alone and ahead of the transaction. Two
+    // mechanisms deciding one question is how they drift, and the key is
+    // the one the contract names, so what is left here is the race a key
+    // cannot serialize: a key collapses two attempts carrying that key
+    // and says nothing about two callers arriving on one id.
     const repeatedRow = async (): Promise<Item | null> => {
       // Only a caller-minted id can be a repeat. A server-generated one
       // colliding is not this caller's own write and has no business
@@ -1866,14 +1869,6 @@ export function itemRoutes(storage: Storage) {
       // transaction.
       (err.details as { existing_id?: string } | undefined)?.existing_id ===
         body.id;
-
-    const alreadyHeld = await repeatedRow();
-    if (alreadyHeld) {
-      return c.json(
-        await acknowledgedItemBody(storage, c.get("apiKey"), alreadyHeld),
-        200,
-      );
-    }
 
     let writeResult;
     try {
@@ -1954,8 +1949,9 @@ export function itemRoutes(storage: Storage) {
         };
       });
     } catch (err) {
-      // The concurrency backstop. The row appeared between the pre-check
-      // and the insert, which is the one case the pre-check cannot cover.
+      // The concurrency backstop, and the only caller of the comparison
+      // above. A row under this id landed while this transaction was
+      // open.
       if (!isOwnIdCollision(err)) throw err;
       const raced = await repeatedRow();
       if (!raced) throw err;

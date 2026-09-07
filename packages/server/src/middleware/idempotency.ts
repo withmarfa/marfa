@@ -24,12 +24,15 @@ import { withPreparedHeaders } from "../prepared-headers.js";
  * this" from "my own earlier write holds this". Replaying the stored one
  * says which.
  *
- * **Independent of the id-based create acknowledgement.** `POST /items`
- * and `POST /edges` already answer a repeat that carries a caller-minted
- * id, for a shipped client that retries with its id and no key. Neither
- * mechanism is built on the other and neither consults the other: the
- * acknowledgement is retired once that client adopts keys, and a
- * dependency either way would make retiring it break this.
+ * **This is now the only mechanism for a lost response.** `POST /items`
+ * and `POST /edges` used to recognize a resend by the caller-minted id it
+ * carried, which served a shipped client that retried with its id and no
+ * key. That comparison is gone from both create routes; what survives on
+ * them is a backstop for two arrivals racing on one id, which is a
+ * different question — a key collapses two attempts carrying that key and
+ * says nothing about two callers arriving on one id. Neither mechanism is
+ * built on the other and neither consults the other, which is what made
+ * retiring the first one safe.
  */
 
 /**

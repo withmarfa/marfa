@@ -169,7 +169,7 @@ const createEdgeRoute = createRoute({
   tags: ["Edges"],
   summary: "Create an edge",
   description:
-    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is treated as a repeat of a create the server already performed: nothing is written, no event is published, and the stored edge comes back with `acknowledged: true` and status 200. An `id` naming a different edge is refused with 409 `conflict`.",
+    "Creates a single typed edge between two existing items in the space. Writes are dual-gated, requiring write permission on both the source item's type and the edge type, and edge-type constraints and cycle rules are enforced at create time. A caller may supply the edge `id`, as `POST /items` allows for an item, so a client that mints ids locally keeps its own identifier for the row; omit it and the server mints one. An `id` already naming this exact edge is answered with the stored edge and `acknowledged: true` at status 200 when two arrivals raced on that id and this one lost the insert: nothing is written and no event is published. An ordinary resend does not race, so it meets the exact-duplicate refusal instead (400 `edge_constraint_violation`, `constraint: duplicate`) — send an `Idempotency-Key` to make a resend after a lost response replay the first attempt's answer. An `id` naming a different edge is refused with 409 `conflict`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -202,7 +202,7 @@ const createEdgeRoute = createRoute({
         },
       },
       description:
-        "The supplied `id` already names this exact edge — same source, target and type — so the create is treated as a repeat of one the server already performed. Nothing is written and no event is published; the stored edge is returned with `acknowledged: true`.",
+        "Two arrivals raced on one `id` and this one lost the insert. The supplied `id` already names this exact edge, same source, target and type, so the stored edge is returned with `acknowledged: true`; nothing is written and no event is published. A resend that did not race meets the exact-duplicate refusal rather than this answer, and `Idempotency-Key` is what replays the first attempt after a lost response.",
     },
     201: {
       content: {
@@ -438,23 +438,25 @@ export function edgeRoutes(storage: Storage) {
     requireTypeAccess(c, sourceItem.type, "write");
     requireEdgePermission(c, body.edge_type, "write");
 
-    // A create arriving a second time under an id the caller minted.
+    // Two arrivals racing on one caller-minted id, where this one lost
+    // the insert.
     //
-    // A synced client names a row before the server has seen it, so when
-    // the response to its create is lost it retries with the same id. The
-    // second arrival of an id the server already holds is that client's
-    // own write, so the contract answers success and returns the row
-    // rather than making every engine implement the lookup itself.
+    // A synced client names a row before the server has seen it, so two
+    // sends of one id can both pass the constraint checks and one of them
+    // reaches the primary-key collision. That loser is the client's own
+    // write rather than a collision with somebody else's, so the contract
+    // answers success and returns the row rather than making every engine
+    // implement the lookup itself.
     //
-    // **A pre-check and a catch, as the item door has.** The pre-check is
-    // load-bearing here rather than an optimization:
-    // `assertEdgeCanBeCreated` refuses an exact duplicate triple before
-    // any insert, so a client replaying its own create meets that 400 and
-    // never reaches the primary-key collision. The catch covers what the
-    // pre-check cannot — two sends of one id both finding nothing, where
-    // the loser of the insert still needs an answer other than 409.
-    //
-    // One comparison serves both.
+    // **A lost response is a different question with a different
+    // answer.** A client that never saw its response retries under
+    // `Idempotency-Key` and is served the first attempt's record before
+    // this handler runs. A resend that carries no key reaches
+    // `assertEdgeCanBeCreated`, which refuses an exact duplicate triple
+    // with a 400 carrying `constraint: "duplicate"` — the one refusal an
+    // idempotent writer may read as success. This comparison used to
+    // answer that resend from the id alone, ahead of the transaction, and
+    // two mechanisms deciding one question is how they drift.
     //
     // Gated above rather than here: the gates ran on the body's source
     // type and edge type, and an acknowledgement is only ever returned
@@ -482,11 +484,6 @@ export function edgeRoutes(storage: Storage) {
       );
     };
 
-    const alreadyHeld = await repeatedEdge();
-    if (alreadyHeld) {
-      return c.json({ edge: alreadyHeld, acknowledged: true }, 200);
-    }
-
     let edge: Edge;
     try {
       edge = await storage.runInTransaction(async () => {
@@ -508,8 +505,10 @@ export function edgeRoutes(storage: Storage) {
         );
       });
     } catch (err) {
-      // The concurrency backstop. The row appeared between the pre-check
-      // and the insert, which is the one case the pre-check cannot cover.
+      // The concurrency backstop, and the only caller of the comparison
+      // above. A row under this id landed while this transaction was
+      // open, having passed the duplicate guard that catches an ordinary
+      // resend.
       const isOwnIdCollision =
         body.id !== undefined &&
         err instanceof MarfaError &&

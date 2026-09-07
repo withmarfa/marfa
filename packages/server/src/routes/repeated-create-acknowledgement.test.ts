@@ -3,19 +3,28 @@
  *
  * A synced client mints an id before the server has seen the row, so it
  * is the only party that can name a write it is unsure landed. When the
- * response to its create is lost it retries with the same id, and the
- * server answered 409. The client reads a conflict as transient — which
- * it is, for an update — so it retried forever, and the queue's ordering
- * meant every later edit to that item waited behind it.
+ * response to its create is lost it retries, and the server answered 409.
+ * The client reads a conflict as transient — which it is, for an update —
+ * so it retried forever, and the queue's ordering meant every later edit
+ * to that item waited behind it.
  *
- * **Why this lives at the server rather than in each client.** A second
- * arrival of an id the server already holds is that client's own write.
- * Every sync engine would otherwise have to implement the same lookup —
- * catch the conflict, fetch the row, decide whether it is mine — and
- * each would get the edge cases differently. The contract answers
- * success and returns the row instead.
+ * **Two different questions, and only one of them is answered here.** A
+ * retry after a lost response carries `Idempotency-Key`, and the record
+ * of the first attempt is served ahead of the handler; that is the
+ * contract's mechanism and `middleware/idempotency.test.ts` owns it. What
+ * these cases pin is the narrower thing a key cannot serialize: two
+ * arrivals racing on one caller-minted id, where the loser of the insert
+ * still needs an answer other than 409. A key collapses two attempts
+ * carrying that key and says nothing about two callers on one id.
  *
- * The negative half is the load-bearing one and is asserted separately:
+ * The routes used to answer both from one id comparison sitting ahead of
+ * the write. It is gone, so the cases below also fix what a resend
+ * carrying no key now meets on each door, which is not the same answer on
+ * both: the item door reaches the store's collision trap and is
+ * acknowledged, and the edge door reaches the exact-duplicate guard and
+ * is refused with `constraint: "duplicate"`.
+ *
+ * The negative half is the load-bearing one and is asserted throughout:
  * an acknowledgement must write nothing and emit nothing, or it is an
  * idempotent-looking write that still bumps a version and wakes every
  * other device.
@@ -69,7 +78,10 @@ interface EdgeBody {
   acknowledged?: boolean;
 }
 interface ErrorBody {
-  error: { code: string; details?: { existing_id?: string } };
+  error: {
+    code: string;
+    details?: { existing_id?: string; constraint?: string };
+  };
 }
 
 /** A note created under an id the caller chose. */
@@ -213,8 +225,17 @@ describe("a repeated item create", () => {
   });
 });
 
-describe("a repeated edge create", () => {
-  it("writes nothing and emits nothing", async () => {
+describe("a keyless edge resend", () => {
+  it("is refused as a duplicate, and writes and emits nothing", async () => {
+    // No id comparison runs ahead of the write any more, so a resend
+    // reaches `assertEdgeCanBeCreated` inside the transaction. It refuses
+    // an exact duplicate triple with `constraint: "duplicate"`, which is
+    // the one refusal an idempotent writer may read as success — so the
+    // answer stays machine-legible rather than becoming a bare conflict.
+    //
+    // The negative half is the same one the acknowledgement had to carry:
+    // a refusal that published, or that merged the second body, would
+    // wake every other device for a write that did not happen.
     const source = await seedItem("edge-quiet-source");
     const target = await seedItem("edge-quiet-target");
     const id = generateId();
@@ -238,59 +259,28 @@ describe("a repeated edge create", () => {
       key: ctx.adminKey,
       body: { ...body, properties: { note: "second" } },
     });
-    expect(repeat.status).toBe(200);
+    expect(repeat.status).toBe(400);
     await settle();
     controller.abort();
     await done;
 
-    const parsed = (await repeat.json()) as EdgeBody;
-    expect(parsed.acknowledged).toBe(true);
-    expect(parsed.edge.id).toBe(id);
-    // The stored properties are the first write's.
-    expect(parsed.edge.properties).toEqual({ note: "first" });
+    const failure = (await repeat.json()) as ErrorBody;
+    expect(failure.error.code).toBe("edge_constraint_violation");
+    expect(failure.error.details?.constraint).toBe("duplicate");
     expect(events.filter((e) => e.edge.id === id)).toHaveLength(0);
+
+    // The stored properties are still the first write's, read back
+    // independently of the response.
+    const listed = await request(ctx.app, "GET", `/items/${source}/edges`, {
+      key: ctx.adminKey,
+    });
+    const stored = ((await listed.json()) as { data: EdgeBody["edge"][] }).data;
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.properties).toEqual({ note: "first" });
   });
 });
 
 describe("the gates an acknowledgement still runs", () => {
-  it("is reached even when the space is at its item ceiling", async () => {
-    // The acknowledgement used to sit behind the write transaction, whose
-    // first statement reserves quota — so a full space answered a repeat
-    // with `quota_exceeded` for a row it already held. That is the same
-    // permanent refusal the whole change exists to remove, wearing a
-    // different code.
-    const { spaceId, key } = await spaceWithKey("quotaspace");
-    const id = generateId();
-    const first = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", id, properties: { body: "at-ceiling" } },
-    });
-    expect(first.status).toBe(201);
-
-    // Ceiling set to exactly what the space now holds, so any genuine
-    // create is refused and only the acknowledgement can answer 200.
-    const quota = await request(ctx.app, "PUT", `/spaces/${spaceId}/quotas`, {
-      key: ctx.adminKey,
-      body: { items_limit: 1 },
-    });
-    expect(quota.status).toBe(200);
-
-    const blocked = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", properties: { body: "a genuine create" } },
-    });
-    expect(blocked.status).toBe(429);
-
-    const repeat = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", id, properties: { body: "repeat" } },
-    });
-    expect(repeat.status).toBe(200);
-    expect((await repeat.json()) as ItemBody).toMatchObject({
-      acknowledged: true,
-    });
-  });
-
   it("refuses a repeat landing on another connection's row", async () => {
     // D63. The guard engages only where the row is integration-sourced,
     // the caller's `item_source` matches it, and a *different live*
@@ -436,13 +426,13 @@ describe("the gates an acknowledgement still runs", () => {
   });
 });
 
-describe("a repeated edge create under concurrency", () => {
-  it("is acknowledged when the row appears after the pre-check", async () => {
-    // The pre-check cannot see a row that does not exist yet, so two sends
-    // of one id can both miss it and the loser of the insert reaches the
-    // trap. That is what the catch behind the pre-check is for.
+describe("the edge door's concurrency backstop", () => {
+  it("acknowledges the losing half of a race on one id", async () => {
+    // Two sends of one id can both pass the duplicate guard, and the
+    // loser of the insert reaches the store's collision trap. That is
+    // what the catch is for, and it is all the catch is for.
     //
-    // Driven by blinding the pre-check once rather than by firing two real
+    // Driven by blinding that guard once rather than by firing two real
     // requests: the test database is a single in-memory SQLite, where two
     // concurrent write transactions produce `SQLITE_BUSY` rather than the
     // collision under test. A race the harness cannot hold still is not
@@ -472,28 +462,18 @@ describe("a repeated edge create under concurrency", () => {
         .status,
     ).toBe(201);
 
-    // Two guards sit between the pre-check and the insert, and a real race
-    // can slip past either. Blind both for one request so the insert is
-    // reached against a row that is already there — which is exactly the
-    // state a lost race leaves.
+    // One guard stands between the request and the insert now, and a real
+    // race slips past it: `existsExactBatch` reads the duplicate triple
+    // inside the transaction, so a row committed after that read still
+    // collides on the primary key. Blind it once so the insert is reached
+    // against a row that is already there, which is exactly the state the
+    // loser of a race is in.
     //
-    // `existsExactBatch` is the second one: it is what refuses an exact
-    // duplicate triple with 400 before any insert, and with only the
-    // pre-check blinded that 400 is what comes back rather than the
-    // collision. Worth naming because it means the window this catch
-    // covers is narrower than "the pre-check missed".
+    // `edges.get` is deliberately left real. It is the backstop's own
+    // lookup, and blinding it would blind the thing under test.
     const store = ctx.storage.edges;
-    const realGet = store.get.bind(store);
     const realExists = store.existsExactBatch.bind(store);
-    let blindedGet = false;
     let blindedExists = false;
-    store.get = async (edgeId: string) => {
-      if (!blindedGet) {
-        blindedGet = true;
-        return null;
-      }
-      return realGet(edgeId);
-    };
     store.existsExactBatch = async (proposals, space) => {
       if (!blindedExists) {
         blindedExists = true;
@@ -508,14 +488,11 @@ describe("a repeated edge create under concurrency", () => {
         body,
       });
     } finally {
-      store.get = realGet;
       store.existsExactBatch = realExists;
     }
 
-    // Both blinds were used. Without this the test passes when the stubs
-    // are never reached, which is the state a refactor that moves the
-    // pre-check would leave — green, and measuring nothing.
-    expect(blindedGet).toBe(true);
+    // The blind was used. Without this the test passes when the stub is
+    // never reached — green, and measuring nothing.
     expect(blindedExists).toBe(true);
 
     expect(res.status).toBe(200);
@@ -590,37 +567,36 @@ describe("a repeated edge create under concurrency", () => {
 });
 
 describe("the item door's concurrency backstop", () => {
-  it("acknowledges when the row appears after the pre-check", async () => {
-    // The pre-check cannot see a row that does not exist yet, so two sends
-    // of one id can both miss it and the loser of the insert reaches the
-    // store's trap. Nothing else in this file exercises that path: every
-    // other repeat resolves at the pre-check and returns before the
-    // transaction opens.
-    //
-    // Blinded rather than raced, for the reason the edge twin gives: two
-    // concurrent writes against one in-memory SQLite deadlock rather than
-    // colliding.
+  it("acknowledges the losing half of a collision on one id", async () => {
+    // Nothing recognizes the id ahead of the write any more, so the
+    // second create is attempted and reaches the store's trap — the same
+    // path the loser of a genuine race takes, which is why this needs no
+    // blinding. Two concurrent writes against one in-memory SQLite
+    // deadlock rather than colliding, so the sequential arrival is the
+    // only version of this the harness can hold still.
     const id = generateId();
     expect((await createNote(id)).status).toBe(201);
 
+    // Counting the insert is what makes this a statement about the
+    // backstop rather than about the status code. A comparison
+    // reintroduced ahead of the transaction would answer 200 without the
+    // write ever being tried, and every other assertion here would still
+    // pass.
     const store = ctx.storage.items;
-    const realGet = store.getIncludingTrashed.bind(store);
-    let blinded = false;
-    store.getIncludingTrashed = async (itemId: string, spaceId?: string) => {
-      if (!blinded) {
-        blinded = true;
-        return null;
-      }
-      return realGet(itemId, spaceId);
+    const realCreate = store.create.bind(store);
+    let attempts = 0;
+    store.create = async (...args: Parameters<typeof realCreate>) => {
+      attempts += 1;
+      return realCreate(...args);
     };
     let res: Response;
     try {
       res = await createNote(id, { properties: { body: "the racer" } });
     } finally {
-      store.getIncludingTrashed = realGet;
+      store.create = realCreate;
     }
 
-    expect(blinded).toBe(true);
+    expect(attempts).toBe(1);
     expect(res.status).toBe(200);
     const body = (await res.json()) as ItemBody;
     expect(body.acknowledged).toBe(true);
