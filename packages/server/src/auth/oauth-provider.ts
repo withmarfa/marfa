@@ -39,6 +39,7 @@ import {
   scopesToProfilePermissions,
   PROFILE_ROWS,
   PROFILE_ROOT,
+  CAPABILITY_SCOPES,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   expandBundlesToScopes,
@@ -206,6 +207,26 @@ export function buildAllowedScopes(
       `${PROFILE_ROOT}.${row}:read`,
       `${PROFILE_ROOT}.${row}:write`,
     ]),
+    // The capability family: authority over one administrative surface,
+    // named and consented to rather than inherited from a role.
+    //
+    // **Emitted from the closed set, deliberately not through a bundle.** The
+    // shape this replaces was to put them in an off-by-default bundle so a
+    // stale client's ceiling would catch up to them. That fails twice over: a
+    // bundle-claimed capability leaves the consent screen's unclaimed-scope
+    // bucket, so it renders inside the bundle's group and inherits the
+    // bundle's tick rather than its own rule; and it makes reachability
+    // depend on a configuration, so an operator shipping no bundles has an
+    // instance whose gates can never be satisfied by anybody. The family is
+    // the platform's, so the platform publishes it.
+    //
+    // **Publishable is not grantable, and the distance between them is the
+    // whole design.** Every surface that offers one has to obtain a
+    // deliberate yes — `requiresExplicitConsent` is the rule, read by the
+    // consent screen and the device screen at their own call sites. The
+    // bundle door below still drops a capability a configuration names,
+    // which now guards the stored client ceiling rather than this list.
+    ...CAPABILITY_SCOPES,
     // The content category, the parent grant over everything a person
     // saves. Withheld until this build for one reason: both literals share
     // the type pattern `content`, which is the key both consent surfaces

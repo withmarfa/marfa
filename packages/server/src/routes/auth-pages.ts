@@ -15,8 +15,6 @@ import {
   isReservedHandle,
   canGrantRole,
   GLOBAL_TYPE_WILDCARD,
-  grantCoversScope,
-  scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
@@ -2305,7 +2303,6 @@ export function authRoutes(
       bundleScopes: bundlePublishedScopes(bundles),
       surface: "device",
     });
-    const offByDefaultOnly = [...scopesOfferedOffByDefaultOnly(bundles)];
     for (const requested of requestedScopes) {
       if (clientCeiling !== null && !clientCeiling.includes(requested)) {
         throw new MarfaError(
@@ -2313,60 +2310,25 @@ export function authRoutes(
           `Scope not registered for this client: ${requested}`,
         );
       }
-      // A third ceiling, and the one this surface cannot express.
-      //
-      // This check is load-bearing rather than belt-and-braces. The stored
-      // client ceiling above does NOT exclude off-by-default bundles: the
-      // stale-ceiling widening adds the unfiltered bundle union, before a
-      // session is resolved, so a client can legitimately arrive here with
-      // one of these scopes registered. This refusal is what stops it.
-      //
-      // The device approval screen confirms a scope list; it has no
-      // per-scope toggle, and its own copy says the rows are confirmed
-      // rather than editable. An off-by-default bundle grants only by being
-      // ticked, so on a screen with no tick there is nothing for "leaving it
-      // alone grants nothing" to mean, and approving would hand over in one
-      // click exactly what the flag exists to withhold.
-      //
-      // Refused rather than dropped, matching the two checks above and for
-      // the same reason: the response goes back to the machine that made the
-      // request, and a device code silently issued for less than was asked
-      // for becomes a token that quietly does not do the job. Refused at
-      // initiation rather than at approval so the stored row never carries
-      // the scope, which keeps the screen, the grant, the audit row and the
-      // issued token reading the same set.
-      //
-      // The question is asked backwards from the usual one, and the usual
-      // one is the bug. `grantCoversScope(held, required)` normally answers
-      // "does a held grant reach a scope somebody needs". Here the withheld
-      // set is a set of literals and the request may be a wildcard, so what
-      // matters is whether the requested scope REACHES anything withheld:
-      // membership alone let `core.*:read` sail past a set holding every
-      // literal beneath it, and one click then granted the lot.
-      //
-      // The refusal names what is being protected rather than what was
-      // asked for. A client told its own wildcard was refused learns
-      // nothing; told a withheld scope that wildcard reaches, it can narrow
-      // to a request this flow can honor.
-      //
-      // One of them, not all of them. Which scopes an operator withheld is
-      // not otherwise public — discovery advertises `scopes_supported` and
-      // says nothing about `default_on` — and this handler answers an
-      // unauthenticated caller, so joining every reached scope hands the
-      // whole withheld partition back for a single `*:read`. Naming one
-      // leaves the response actionable while keeping enumeration at one
-      // request per scope, which is already what the two refusals above
-      // cost: each names only the scope it stopped on.
-      const reachesWithheld = offByDefaultOnly.find((withheld) =>
-        grantCoversScope([requested], withheld),
-      );
-      if (reachesWithheld !== undefined) {
-        throw new MarfaError(
-          ErrorCode.INVALID_SCOPE,
-          `Scope needs an explicit approval this flow cannot offer: ${reachesWithheld}`,
-        );
-      }
     }
+    // **There was a third check here, and it is retired rather than
+    // weakened.** It refused any scope only an off-by-default bundle offers,
+    // because the approval screen confirmed a scope list with no per-scope
+    // toggle: on a screen with no tick there was nothing for "leaving it
+    // alone grants nothing" to mean, so approving handed over in one click
+    // exactly what the flag exists to withhold.
+    //
+    // That screen has toggles now, and it reads the same rule the authorize
+    // screen reads. So the premise the refusal rested on is gone, and
+    // keeping it would be the harm rather than the guard: the CLI signs in
+    // through this flow and nothing else, and the MCP server has no consent
+    // surface at all — it reads the token the CLI stored. Refusing here
+    // would leave both permanently unable to hold a capability, which is a
+    // lockout dressed as least privilege.
+    //
+    // Withholding now happens where a person can act on it: the scope
+    // arrives unticked, and `POST /auth/device/consent` grants the ticked
+    // set rather than the requested one.
 
     const deviceCodeRaw = generateToken(DEVICE_CODE_PREFIX);
     const deviceCodeHash = sha256(deviceCodeRaw);
@@ -2570,6 +2532,11 @@ export function authRoutes(
         scopes: parsedScopes,
         userCode,
         descriptions,
+        // The screen decides its own ticks from these, the same way the
+        // authorize screen does. Passed rather than read inside the
+        // renderer so both surfaces resolve the bundle set at their own
+        // call site, which is the standing convention for this pair.
+        bundles: getPermissionBundles(),
       }),
     );
   });
@@ -2605,7 +2572,30 @@ export function authRoutes(
       return c.redirect(`/auth/device?error=expired_code`, 302);
     }
 
-    if (decision === "deny") {
+    // The ticked set, intersected with what the device asked for.
+    //
+    // **An intersection rather than a substitution**, because this form is a
+    // browser surface and its fields are whoever's browser it is to edit. A
+    // hand-edited submission must not grant an app more than the client
+    // requested or more than the screen displayed, and the stored row is what
+    // every later reader treats as the request.
+    //
+    // **Nothing ticked is a denial**, the same rule the authorize screen
+    // applies to a zero-scope accept and for the same reason: a grant of
+    // nothing is not a grant, and recording one leaves a projection and a
+    // consent row standing for an app that can do nothing with them. It also
+    // keeps the two surfaces answering one question the same way.
+    const requestedScopeSet = new Set(row.scopes);
+    const approvedScopes = [
+      ...new Set(
+        formData
+          .getAll("scopes")
+          .filter((v): v is string => typeof v === "string")
+          .filter((v) => requestedScopeSet.has(v)),
+      ),
+    ];
+
+    if (decision === "deny" || approvedScopes.length === 0) {
       await storage.oauth.denyDeviceCode(row.id);
       setNoStore(c);
       return c.html(renderDeviceDecisionPage({ approved: false }));
@@ -2647,7 +2637,7 @@ export function authRoutes(
           storage,
           sessionResult.session.user,
           row.client_id,
-          row.scopes,
+          approvedScopes,
           "marfa/oauth/device",
         );
         const bound = await storage.oauth.approveDeviceCode(row.id, created.id);
@@ -2698,15 +2688,18 @@ export function authRoutes(
       details: {
         client_id: row.client_id,
         user_id: sessionResult.session.user.id,
-        // Both halves, because on a re-approval they differ and neither
-        // alone answers the question an operator brings to this row. An
-        // approval merges into the standing grant rather than replacing it,
-        // so `scopes`, what this device asked for and what its screen
-        // showed, no longer describes what the record ends up holding, and
-        // logging only that made a grant look like it acquired scopes from
-        // nowhere. `resulting_scopes` is the record after the merge. On a
-        // first-time approval the two are the same list.
+        // Three halves now, because two of them can differ in each
+        // direction and none alone answers the question an operator brings
+        // to this row. `scopes` is what this device asked for. The screen
+        // offers those as toggles, so `approved_scopes` is what the person
+        // actually ticked, which can be narrower — a narrowing is otherwise
+        // invisible, and it is the whole reason the initiation refusal could
+        // be retired. And an approval merges into the standing grant rather
+        // than replacing it, so `resulting_scopes` is the record afterwards,
+        // which can be wider than either. On a first-time approval where
+        // nothing was unticked, all three are the same list.
         scopes: row.scopes,
+        approved_scopes: approvedScopes,
         resulting_scopes: grant.scopes,
         grant_item_id: grant.id,
         source: "device",

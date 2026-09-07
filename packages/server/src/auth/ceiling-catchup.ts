@@ -60,10 +60,14 @@ export type CeilingCatchUpSurface = "authorize" | "device";
  * off-by-default bundle exists to serve. Narrowing here would defeat it.
  *
  * What keeps that safe is not this function. A ceiling is permission to ask,
- * and both surfaces that answer refuse on their own: the consent screen
- * renders the bundle unticked, and device initiation refuses the scope
- * outright. Do not delete either on the grounds that the ceiling looks
- * narrow, because it is not.
+ * and both surfaces that answer withhold on their own: each renders the
+ * scope unticked, so leaving it alone grants nothing. Do not delete either
+ * on the grounds that the ceiling looks narrow, because it is not.
+ *
+ * Device initiation used to refuse such a scope outright instead, because
+ * its approval screen had no tick to withhold with. That screen has toggles
+ * now and the refusal is retired, which changes where the withholding
+ * happens and not whether it does.
  */
 export function bundlePublishedScopes(
   bundles: readonly PermissionBundle[],

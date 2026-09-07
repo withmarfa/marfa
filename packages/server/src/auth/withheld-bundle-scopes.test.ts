@@ -1,5 +1,6 @@
 /**
- * A configured permission bundle cannot publish a scope this server withholds.
+ * A configured permission bundle cannot be the reason a capability is
+ * publishable.
  *
  * The allowlist is assembled from registry keys and is well-formed by
  * construction. A bundle's scopes are configuration: `MARFA_PERMISSION_BUNDLES`
@@ -7,6 +8,16 @@
  * way into the allowlist that does not pass a parser. It filtered on
  * `isValidScope` alone — which answers whether the grammar recognizes a literal,
  * not whether this server is willing to publish it.
+ *
+ * **What the drop protects changed, and the cases moved with it.** The
+ * allowlist now emits every capability itself, from the closed set, so the drop
+ * is no longer what decides whether one is requestable and is no longer visible
+ * in that function's output. It still decides whether a *bundle* can claim one,
+ * which is the half that mattered more: a bundle-claimed capability would
+ * inherit the bundle's `default_on` tick on the consent screen, and
+ * `bundlePublishedScopes` is written into a stored client ceiling that outlives
+ * the configuration. The reachability half is covered by
+ * `capability-scopes-reachable.test.ts`.
  *
  * **Every case here uses a CONFIGURED bundle rather than the shipped
  * defaults**, which is the population that can actually carry the defect. The
@@ -54,9 +65,19 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     expect(isWithheldFromAllowlist("capability.keys")).toBe(true);
   });
 
-  it("drops it from the OAuth scope allowlist", () => {
+  it("still warns when a bundle names one, even though it is published anyway", () => {
+    // The allowlist emits the family itself, so the literal is present
+    // whatever the bundle says and its absence can no longer be the
+    // assertion. The warning is what survives at this door, and it is what
+    // tells an operator their bundle is not doing what it looks like it does.
     const scopes = new Set(buildAllowedScopes([OPERATOR_BUNDLE]));
-    expect(scopes.has("capability.keys")).toBe(false);
+    expect(scopes.has("capability.keys")).toBe(true);
+    const named = logSpy.mock.calls.filter(
+      ([level, , data]) =>
+        level === "warn" &&
+        (data as { scope?: string } | undefined)?.scope === "capability.keys",
+    );
+    expect(named.length).toBeGreaterThanOrEqual(1);
   });
 
   it("drops it from the ceiling a stale client is widened by", () => {
@@ -95,10 +116,17 @@ describe("a configured bundle cannot publish a withheld scope", () => {
 
   it("leaves the shipped defaults exactly as they were", () => {
     // The control. If this ever fails, the drop has caught something the
-    // defaults legitimately publish.
-    const before = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
-    expect([...before].some((s) => isWithheldFromAllowlist(s))).toBe(false);
-    expect(before.has("core.note:read")).toBe(true);
+    // defaults legitimately publish. Asked of the bundles rather than of the
+    // allowlist, because the allowlist now emits the capability family from
+    // the closed set and would answer for scopes no bundle named.
+    for (const bundle of DEFAULT_PERMISSION_BUNDLES) {
+      for (const scope of bundle.scopes) {
+        expect(isWithheldFromAllowlist(scope), scope).toBe(false);
+      }
+    }
+    expect(new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES))).toContain(
+      "core.note:read",
+    );
   });
 
   it("does not withhold a scope over a type nothing has registered", () => {
