@@ -4,6 +4,7 @@ import {
   GLOBAL_TYPE_WILDCARD,
   subtreeWildcardRoot,
   typeMatchesAnyPattern,
+  typeMatchesPattern,
 } from "./type-patterns.js";
 
 // Full ISO 8601 with timezone (e.g. 2026-03-15T14:30:00Z)
@@ -344,12 +345,14 @@ const TYPE_ID_PREFIX = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/;
  * resolving to nothing.
  */
 export function isValidTypePattern(value: string): boolean {
-  if (value === "*") return true;
+  if (value === GLOBAL_TYPE_WILDCARD) return true;
   if (value.length > 128) return false;
-  if (value.endsWith(".*")) {
-    const root = value.slice(0, -2);
-    return root.length > 0 && TYPE_ID_PREFIX.test(root);
-  }
+  // `subtreeWildcardRoot` owns the decomposition, so this function and the
+  // matcher cannot come to different views of where a pattern's root ends.
+  // A trailing `.*` with nothing before it has no root, and falls through to
+  // the identifier check, which refuses it.
+  const root = subtreeWildcardRoot(value);
+  if (root !== null) return TYPE_ID_PREFIX.test(root);
   return isValidTypeIdentifier(value);
 }
 
@@ -401,9 +404,14 @@ export function resolveTypePermission(
       continue;
     }
 
+    // The root is what ranks two matching wildcards; whether the pattern
+    // matches at all is `typeMatchesPattern`'s question and is asked of it.
+    // Written out here, the parent-inclusion rule was a second copy of a rule
+    // that already has one home, and `type-patterns.ts` records what it costs
+    // when two copies of a matching rule disagree.
     const root = subtreeWildcardRoot(pattern);
     if (root === null) continue;
-    if (type !== root && !type.startsWith(`${root}.`)) continue;
+    if (!typeMatchesPattern(type, pattern)) continue;
     if (root.length > bestLength) {
       bestMatch = permission;
       bestLength = root.length;
