@@ -1414,6 +1414,17 @@ exports[`every gallery variant renders > renders 'auth/security/default' 1`] = `
         <button type="submit" class="btn btn--ghost">Sign out everywhere</button>
       </form>
     </div>
+    <p class="lsec">Delete account</p>
+        <div class="row">
+          <div class="row__main">
+            <div class="row__title">Delete this account</div>
+            <div class="row__meta">This removes the account, its space, and everything in it.</div>
+            <div class="row__meta row__meta--faint">We email you a link to confirm. Nothing is deleted until you open it.</div>
+          </div>
+          <form method="POST" action="/auth/account/delete" class="row__action">
+            <button type="submit" class="btn btn--outline btn--sm">Delete account</button>
+          </form>
+        </div>
   
   </main>
 </body>
@@ -1453,6 +1464,17 @@ exports[`every gallery variant renders > renders 'auth/security/empty' 1`] = `
         <button type="submit" class="btn btn--ghost">Sign out everywhere</button>
       </form>
     </div>
+    <p class="lsec">Delete account</p>
+        <div class="row">
+          <div class="row__main">
+            <div class="row__title">Delete this account</div>
+            <div class="row__meta">This removes the account, its space, and everything in it.</div>
+            <div class="row__meta row__meta--faint">We email you a link to confirm. Nothing is deleted until you open it.</div>
+          </div>
+          <form method="POST" action="/auth/account/delete" class="row__action">
+            <button type="submit" class="btn btn--outline btn--sm">Delete account</button>
+          </form>
+        </div>
   
   </main>
 </body>

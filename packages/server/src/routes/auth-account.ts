@@ -10,11 +10,28 @@
  *   - POST /auth/account/delete/cancel    — session-cookie cancel.
  *   - GET  /auth/account/cancel           — email-cancel-by-link.
  *
- * Dual auth on the JSON endpoints: any bearer bound to the same space as the
- * auth_user, OR a better-auth session cookie. This file asks for no space
- * permission at all; the space binding is the whole of the bearer test.
- * Email recipients click the GET endpoints, which are token-gated
- * directly — no caller credential needed.
+ * **The JSON endpoints take a session cookie and nothing else.** Deleting an
+ * account is a person's act, and the only credential that can prove a person
+ * is here is the one they signed in with. An operator deletes an account
+ * through the instance route instead, which names the account in its path.
+ *
+ * This file used to admit any bearer bound to the account holder's space,
+ * asking for no permission at all, and its docblock described a check on rank
+ * that the code never made. While nearly every credential in a space was broad
+ * anyway the two sets were almost the same; under one permission model a narrow
+ * credential is ordinary, and a consented app holding nothing but `openid` is
+ * space-bound by construction — so an app that could read nothing could make
+ * the account holder receive a genuine, correctly-signed "confirm your account
+ * deletion" email whenever it liked, and keep a live confirm token in
+ * circulation. It could not finish the deletion, which needs the emailed
+ * token, but that is not much of a fence to be standing behind.
+ *
+ * **No twelfth space permission was added for it.** None of the eleven governs
+ * deleting the account holder's account, and inventing one to fit a single
+ * route would widen the model to suit a line of code.
+ *
+ * Email recipients click the GET endpoints, which are token-gated directly —
+ * no caller credential needed.
  */
 import { randomBytes } from "node:crypto";
 import type { Context } from "hono";
@@ -42,34 +59,24 @@ function newToken(): string {
 }
 
 /**
- * Resolve the caller into an `auth_user.id`. Two paths:
+ * Resolve the signed-in person into an `auth_user.id`.
  *
- *   1. Bearer auth (api key) — any credential carrying a `space_id`,
- *      whatever it holds; no space permission is asked for. We resolve
- *      that space's `users.auth_user_id` (canonical bridge).
- *   2. Better-auth session cookie — `auth.getSession()` returns the
- *      user directly.
+ * The session cookie is the whole of it. A bearer credential is deliberately
+ * not a path here — see the note at the top of the file — and one presented to
+ * these routes resolves to nobody, so the handlers answer `UNAUTHORIZED` the
+ * same way they answer an anonymous caller. A refusal that named the missing
+ * credential would be telling an app how to get closer to a door it is not
+ * meant to reach.
  *
- * Returns null when neither resolves; route handlers throw `UNAUTHORIZED`
- * downstream.
+ * Returns null when no session resolves.
  */
 async function resolveAuthUserId(
   c: Context<AppEnv>,
-  storage: Storage,
   auth: MarfaAuth | undefined,
 ): Promise<string | null> {
-  // Bearer first.
-  const apiKey = c.get("apiKey");
-  if (apiKey?.space_id && storage.users) {
-    const userRow = await storage.users.getBySpaceId(apiKey.space_id);
-    if (userRow?.auth_user_id) return userRow.auth_user_id;
-  }
-  // Session cookie.
-  if (auth) {
-    const session = await auth.getSession(c.req.raw.headers);
-    if (session) return session.user.id;
-  }
-  return null;
+  if (!auth) return null;
+  const session = await auth.getSession(c.req.raw.headers);
+  return session?.user.id ?? null;
 }
 
 export function authAccountRoutes(
@@ -93,11 +100,11 @@ export function authAccountRoutes(
   // POST /auth/account/delete — initiate
   // -----------------------------------------------------------------------
   router.post("/account/delete", async (c) => {
-    const authUserId = await resolveAuthUserId(c, storage, auth);
+    const authUserId = await resolveAuthUserId(c, auth);
     if (!authUserId) {
       throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
-        "Account deletion requires an authenticated caller",
+        "Deleting an account is done from a signed-in session",
       );
     }
     let email: string | null = null;
@@ -160,6 +167,14 @@ export function authAccountRoutes(
       client_ip: c.var.clientIp ?? null,
     });
 
+    // A form post is a person pressing the button on the security page, and a
+    // browser handed a 202 of JSON would show them the JSON. This route takes
+    // a session and nothing else now, so every caller is a browser; the
+    // content type is only which kind of browser call it was.
+    const contentType = c.req.header("content-type") ?? "";
+    if (contentType.startsWith("application/x-www-form-urlencoded")) {
+      return c.redirect("/auth/security?notice=account_delete_sent", 302);
+    }
     return c.json({ ok: true }, 202);
   });
 
@@ -238,11 +253,11 @@ export function authAccountRoutes(
   // POST /auth/account/delete/cancel — session/bearer cancel
   // -----------------------------------------------------------------------
   router.post("/account/delete/cancel", async (c) => {
-    const authUserId = await resolveAuthUserId(c, storage, auth);
+    const authUserId = await resolveAuthUserId(c, auth);
     if (!authUserId) {
       throw new MarfaError(
         ErrorCode.UNAUTHORIZED,
-        "Account cancel requires an authenticated caller",
+        "Canceling a deletion is done from a signed-in session",
       );
     }
     const lifecycle = await accountLifecycle.getAccountLifecycle(authUserId);

@@ -2036,6 +2036,9 @@ export function authRoutes(
         grants,
         sessions,
         notice,
+        // Absent on an instance with no account-lifecycle store, where every
+        // route under `/auth/account/delete` is a 404.
+        accountDeletable: storage.accountLifecycle !== undefined,
       }),
     );
   });
@@ -3279,6 +3282,10 @@ function parseNotice(
       cannot_revoke_current: {
         kind: "error",
         text: "Use Sign out everywhere to revoke the current session.",
+      },
+      account_delete_sent: {
+        kind: "success",
+        text: "Check your email. Nothing is deleted until you open the link we sent you.",
       },
     };
   return messages[raw];

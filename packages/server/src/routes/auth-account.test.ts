@@ -5,7 +5,9 @@ import {
   markEmailVerified,
   request,
   waitForAudit,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
 
 // Each case here drives a whole account lifecycle — sign-up and sign-in are
@@ -89,6 +91,151 @@ async function signIn(
   const cookie = res.headers.get("set-cookie")?.split(";")[0] ?? null;
   return { status: res.status, cookie };
 }
+
+describe("deleting an account is a person's act", () => {
+  /**
+   * The route used to admit any bearer whose space resolved an account
+   * holder, asking for no permission at all. It could not finish a deletion —
+   * that needs the emailed token — but it could make the account holder
+   * receive a genuine, correctly signed confirmation email whenever it liked,
+   * and keep a live confirm token in circulation. Under one permission model
+   * a consented app holding nothing but `openid` is space-bound by
+   * construction, so that is not a theoretical caller.
+   *
+   * Nothing replaced it with a twelfth space permission. The session cookie
+   * is the only credential that can show a person is here.
+   */
+  async function personAndKey(
+    email: string,
+  ): Promise<{ cookie: string; key: string }> {
+    const c = ctx!;
+    await signUpAndVerify(c, email);
+    const { cookie } = await signIn(c, email);
+    expect(cookie).toBeTruthy();
+
+    // **The fixture has to satisfy the removed arm's own precondition**, or
+    // these cases pass for the wrong reason. That arm read the caller's space,
+    // looked up that space's account holder, and answered with their id — so a
+    // space-less key, or a space with no `users` row behind it, was refused
+    // before the change and would be refused after it, and the test would be
+    // saying nothing. Hosted mode is what puts a person, a space and the
+    // bridge row in place; keys mode has no user store at all.
+    const allSpaces = c.storage.spaces ? await c.storage.spaces.list() : [];
+    const spaceId = allSpaces.at(-1)?.id;
+    expect(spaceId).toBeTruthy();
+    const holder = c.storage.users
+      ? await c.storage.users.getBySpaceId(spaceId ?? "")
+      : null;
+    expect(holder?.auth_user_id).toBeTruthy();
+
+    const suffix = randomBytes(4).toString("hex");
+    const raw = `marfa_k1_bearer_${suffix}`;
+    await c.storage.keys.create(
+      {
+        label: `bearer-${suffix}`,
+        source: `account-delete-bearer-${suffix}`,
+        // The narrowest credential the model allows: bound to the space,
+        // holding nothing.
+        space_permissions: [],
+        type_permissions: {},
+        extension_permissions: {},
+        edge_permissions: {},
+        metadata_permissions: {},
+        default_tier: "library",
+        is_operator: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      spaceId,
+    );
+    return { cookie: cookie ?? "", key: raw };
+  }
+
+  it("refuses a space-bound credential holding nothing", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { key } = await personAndKey("bearer-refused@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/account/delete", {
+      key,
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(401);
+    // And no token was minted, so nothing is left in circulation.
+    expect(await readLatestVerification(ctx.storage, "account-delete:")).toBe(
+      null,
+    );
+  });
+
+  // The operator key was never admitted by the old arm either — it carries no
+  // space, so the lookup it did could not resolve. The case is here to pin
+  // that it gains no path of its own: an operator deletes an account through
+  // the instance route, which names the account in its path.
+  it("refuses the operator key, which has no person behind it", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    await personAndKey("operator-refused@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/account/delete", {
+      key: ctx.adminKey,
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("refuses a bearer canceling a deletion too", async () => {
+    // The cancel door resolved its caller the same way, so it had the same
+    // hole and gets the same answer.
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { key } = await personAndKey("bearer-cancel@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/account/delete/cancel", {
+      key,
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it("still admits the person whose account it is", async () => {
+    // The control. Same instance, same account, a session instead of a key.
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { cookie } = await personAndKey("person-admitted@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/account/delete", {
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(res.status).toBe(202);
+    expect(
+      await readLatestVerification(ctx.storage, "account-delete:"),
+    ).toBeTruthy();
+  });
+
+  it("sends a form post back to the security page rather than to JSON", async () => {
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { cookie } = await personAndKey("form-post@example.com");
+
+    const res = await request(ctx.app, "POST", "/auth/account/delete", {
+      form: {},
+      headers: { origin: ORIGIN, cookie },
+    });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(
+      "/auth/security?notice=account_delete_sent",
+    );
+  });
+});
 
 describe("account deletion routes", () => {
   it("happy path: initiate, confirm, cancel via sign-in link", async () => {

@@ -753,6 +753,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
         render: () =>
           renderSecurityPage({
             email: "jonah@example.com",
+            accountDeletable: true,
             grants: [
               {
                 id: "grant-1",
@@ -815,6 +816,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
         render: () =>
           renderSecurityPage({
             email: "jonah@example.com",
+            accountDeletable: true,
             grants: [],
             sessions: [
               {

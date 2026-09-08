@@ -55,6 +55,17 @@ interface SecurityPageParams {
   email: string;
   grants: readonly SecurityPageGrant[];
   sessions: readonly SecurityPageSession[];
+  /**
+   * Whether this instance can delete an account, which is whether it has an
+   * account-lifecycle store wired.
+   *
+   * Rendered as a flag rather than assumed, because without that store the
+   * routes are a no-op router and every path under `/auth/account/delete` is a
+   * 404 — a button leading to one is worse than no button. Defaults to false,
+   * so a caller that has not thought about it gets the page without the
+   * section rather than a broken one.
+   */
+  accountDeletable?: boolean;
   /** Optional flash banner — set by the route handlers to confirm a
    *  revoke / sign-out-all action. */
   notice?: { kind: "success" | "error"; text: string };
@@ -318,6 +329,27 @@ export function renderSecurityPage(params: SecurityPageParams): string {
       </form>
     </div>`;
 
+  // The only way a person can start deleting their own account. It used to be
+  // reachable from a bearer credential and from the command line and from no
+  // screen at all, which is backwards: it is a person's act, so it belongs on
+  // the page where a person manages their account, and nowhere a credential
+  // can reach. Nothing happens on the press but an email — the confirm link
+  // is the destructive step, and it goes to the mailbox rather than to
+  // whoever pressed the button.
+  const deleteSection = !params.accountDeletable
+    ? ""
+    : `<p class="lsec">Delete account</p>
+        <div class="row">
+          <div class="row__main">
+            <div class="row__title">Delete this account</div>
+            <div class="row__meta">This removes the account, its space, and everything in it.</div>
+            <div class="row__meta row__meta--faint">We email you a link to confirm. Nothing is deleted until you open it.</div>
+          </div>
+          <form method="POST" action="/auth/account/delete" class="row__action">
+            <button type="submit" class="btn btn--outline btn--sm">Delete account</button>
+          </form>
+        </div>`;
+
   const bodyHtml = `
     <h1 class="title">Security</h1>
     <p class="sub">Manage what has access to your account.</p>
@@ -326,6 +358,7 @@ export function renderSecurityPage(params: SecurityPageParams): string {
     ${noticeHtml}
     ${grantsSection}
     ${sessionsSection}
+    ${deleteSection}
   `;
 
   return renderAuthLayout({
