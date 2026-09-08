@@ -42,7 +42,11 @@ import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, hasSpaceAdminAuthority } from "../middleware/auth.js";
+import {
+  requireAuth,
+  hasSpaceAdminAuthority,
+  requireCapability,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import {
@@ -425,6 +429,10 @@ export function oauthStartRoutes(
         "OAuth start requires admin or platform credential",
       );
     }
+    // No integration arm on this door: it starts the upstream OAuth dance and
+    // takes a caller-supplied scope override into the authorize URL, so it is
+    // a credentials surface reached on rank and nothing else.
+    requireCapability(c, "capability.credentials");
     const connectionId = c.req.param("id");
     // Fenced on the caller's space. Rank alone does not confer
     // cross-space reach: a credential carrying a `space_id` is confined

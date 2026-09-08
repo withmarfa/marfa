@@ -145,7 +145,9 @@ export { CAPABILITY_ROOT } from "./scope-roots.js";
  *   refusal was doing this job by removing the surface.
  * - **`item_purge` is one item.** Bulk purge is `requireAdmin`, the
  *   cross-space operator tier, which is not a consentable surface — so a
- *   capability held by a space-scoped app must not reach it.
+ *   capability held by a space-scoped app must not reach it. It is also the
+ *   last of the eleven to be enforced, because Marfa Mini's Empty Bin calls
+ *   that door and gained any way to ask for the scope only in 0.8.1.
  * - **The caller resolver is not a surface.** It answers which space a
  *   request acts in, ahead of the four page pairs that are surfaces, so
  *   gating it would gate the question rather than an answer.

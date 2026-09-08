@@ -421,8 +421,20 @@ export function authMiddleware(
       // what guarantees the value is in the union at all, it narrows on
       // read and falls back loudly, so this annotation is the type
       // following the guarantee rather than restating it.
+      //
+      // **The mode is read here rather than inferred from `storage.users`, and
+      // that is the whole of this line's job.** In keys mode the projection is
+      // meant never to run, and today it does not — but only because
+      // `storage.users` is wired under `authMode === "hosted"` and nowhere
+      // else, so the invariant is held by an absence rather than by a check.
+      // Wiring a user store in keys mode for any unrelated reason would open
+      // every `requireAdmin` route to OAuth, because a keys-mode token is
+      // space-less by design and the hosted space-less refusal above has no
+      // keys-mode equivalent. `lib.ts` exports `createApp` and both storage
+      // constructors, so that configuration is constructible today with
+      // nothing objecting to it.
       let projectedRole: MarfaRole = "member";
-      if (oauthToken.userId && storage.users) {
+      if (authMode === "hosted" && oauthToken.userId && storage.users) {
         const user = await storage.users.getByAuthUserId(oauthToken.userId);
         if (user) projectedRole = user.role;
       }

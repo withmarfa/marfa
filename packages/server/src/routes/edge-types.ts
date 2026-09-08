@@ -14,6 +14,7 @@ import {
 import type { EdgeTypeSchema, FieldDefinition } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  requireCapability,
   requireSpaceAdmin,
   requireMetadataPermission,
 } from "../middleware/auth.js";
@@ -303,6 +304,7 @@ export function edgeTypeRoutes(storage: Storage) {
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {
     requireSpaceAdmin(c);
+    requireCapability(c, "capability.schema");
     const { id } = c.req.valid("param");
     if (isCoreEdgeType(id)) {
       throw new MarfaError(
