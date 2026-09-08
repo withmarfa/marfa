@@ -1,27 +1,13 @@
 # @withmarfa/runtime-test
 
-In-memory mocks of the runtime's dispatch primitives (per-connection storage, the queue) plus a `createTestHarness` helper. Used by per-Integration test suites to drive their handlers without booting the server.
+In-memory mocks of the runtime's dispatch primitives, plus `createTestHarness`, so an Integration can drive its handlers without booting the server.
 
-## When tests live here vs in the consuming package
+## What is pinned here rather than in a consuming package
 
-- **`src/harness.test.ts`** — pins the harness primitives themselves (per-connection storage isolation, retry / fail outcomes from handler results, queue drain semantics).
-- **`src/in-memory-{queue,storage}.test.ts`** — pins each in-memory primitive in isolation.
-- **`src/e2e-flow.test.ts`** — composes the runtime-sdk consumer with the harness across **two integrations in a chain** (webhook → primary handler → simulated reactive event → secondary handler). The single test that catches regressions in seam-crossings: `integration_name` envelope filter, base64 body decode at the dispatch seam, cycle metadata threading (`originating_connection_id`, `hop_count`).
+- **`harness.test.ts`** pins the harness primitives themselves: per-connection storage isolation, retry and fail outcomes from handler results, queue drain semantics.
+- **`in-memory-{queue,storage}.test.ts`** pin each primitive in isolation.
+- **`e2e-flow.test.ts`** composes a runtime-sdk consumer with the harness across two integrations in a chain, webhook to primary handler to simulated reactive event to secondary handler. It is the one test that catches regressions in seam-crossings: the envelope's integration filter, the base64 body decode at the dispatch seam, and cycle-metadata threading. The verify-and-enqueue side is pinned by the server's webhook-receipt suite; this picks up from the queue onwards.
 
-The verify+enqueue side of the webhook flow is pinned by the server's webhook-receipt suite — that covers the `integration_name` stamp at the source. `e2e-flow.test.ts` picks up where that one leaves off (queue → handler → reactive → handler).
+**A new flow that composes the same primary-to-secondary shape is another `it(...)` in that file; anything else is its own `<flow>-flow.test.ts`** with fixtures under `src/fixtures/`. Each flow file's docstring says what the test catches if reverted, so a future reader knows which production fix it guards.
 
-## Authoring new e2e flows
-
-When a new seam crossing is worth pinning end-to-end:
-
-1. Write the flow as one `it(...)` inside `e2e-flow.test.ts` if it composes the same primary→secondary shape.
-2. Otherwise, create a new `<flow>-flow.test.ts` and add a corresponding fixture under `src/fixtures/` for any per-flow handler shapes.
-3. The docstring at the top of the test file lists what the test catches if reverted, so future readers know which production fixes the test guards.
-
-## Why module-level handler registry
-
-`runtime-sdk/handlers.ts` keeps registered handlers in a module-level object. Tests call `_resetHandlers()` between phases when running multiple integrations in one test (one handler per kind per integration). The pattern is in `e2e-flow.test.ts` — `_resetHandlers()` between primary and secondary `consumeBatch` runs.
-
-## Build
-
-`tsup` produces `dist/index.js` and `dist/index.d.ts` from `src/index.ts`. The fixtures directory is intentionally not exported — fixtures are test-only.
+**Handlers live in a module-level registry**, so a test running several integrations in one file calls `_resetHandlers()` between phases. The fixtures directory is deliberately not exported: fixtures are test-only.
