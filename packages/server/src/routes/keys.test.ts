@@ -703,11 +703,17 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(res.status).toBe(201);
     const created = (await res.json()) as {
       id: string;
+      scope_enforced?: boolean;
       type_permissions: Record<string, string>;
     };
     // The no-input case is "a key like this session". The alternative default
     // is `{}`, which on a scope-enforced key reads nothing at all.
     expect(created.type_permissions["core.note"]).toBe("read");
+    // **On the response, not only in storage.** The schema documents the flag
+    // on every key shape, and a handler that builds its response object field
+    // by field can satisfy the schema's type while never sending it — which is
+    // exactly what happened, and what a storage-only assertion cannot see.
+    expect(created.scope_enforced).toBe(true);
 
     const stored = await hostedCtx.storage.keys.get(created.id);
     expect(stored?.scope_enforced).toBe(true);
@@ -854,6 +860,10 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       { key: token, body: { label: "renamed" } },
     );
     expect(renamed.status).toBe(200);
+    // The update response builds its own object too, and had the same gap.
+    expect(
+      Object.keys((await renamed.json()) as Record<string, unknown>),
+    ).toContain("scope_enforced");
 
     const revoked = await request(
       hostedCtx.app,
