@@ -41,10 +41,15 @@ export interface KeysPageKey {
    * The app that minted this key, when one did. Absent for a key the person
    * made themselves, which is what puts it in the first group.
    *
-   * The display name rather than the client id, resolved by the caller: the
-   * id is a machine string a person has no way to recognize, and a group
-   * headed by one reads as an error rather than as a heading.
+   * **Two fields because the grouping key and the heading are not the same
+   * thing.** Registration is open and `client_name` is caller-chosen, so two
+   * apps can share a display name; grouping on the name would file a second
+   * app's key under the first app's heading. The id is what identifies an app
+   * and the name is what a person can read, so one groups and the other
+   * renders. The caller resolves the name, falling back to the id when the
+   * registration is gone.
    */
+  app_id?: string;
   app_name?: string;
 }
 
@@ -203,32 +208,33 @@ export function renderKeysPage(params: KeysPageParams): string {
   // Own keys first, then one group per app that minted one. The apps are
   // ordered by name so the page does not reshuffle between loads on nothing
   // more than the order the store happened to return rows in.
-  const ownKeys = params.keys.filter((k) => k.app_name === undefined);
-  const byApp = new Map<string, KeysPageKey[]>();
+  const ownKeys = params.keys.filter((k) => k.app_id === undefined);
+  const byApp = new Map<string, { name: string; keys: KeysPageKey[] }>();
   for (const k of params.keys) {
-    if (k.app_name === undefined) continue;
-    const group = byApp.get(k.app_name);
-    if (group) group.push(k);
-    else byApp.set(k.app_name, [k]);
+    if (k.app_id === undefined) continue;
+    const name = k.app_name ?? k.app_id;
+    const group = byApp.get(k.app_id);
+    if (group) group.keys.push(k);
+    else byApp.set(k.app_id, { name, keys: [k] });
   }
-  const appNames = [...byApp.keys()].sort((a, b) => a.localeCompare(b));
+  const apps = [...byApp.values()].sort((a, b) => a.name.localeCompare(b.name));
 
   // The headings appear only once there are two groups to tell apart: a person
   // with no connected apps sees exactly the list they saw before, with no
   // section label inviting them to wonder what the other section is.
   const parts: string[] = [];
-  if (ownKeys.length === 0 && appNames.length === 0) {
+  if (ownKeys.length === 0 && apps.length === 0) {
     parts.push(
       `<p class="field__hint">You have no API keys yet. Create one with the + button.</p>`,
     );
   } else {
     if (ownKeys.length > 0) {
-      if (appNames.length > 0) parts.push(`<p class="lsec">Your keys</p>`);
+      if (apps.length > 0) parts.push(`<p class="lsec">Your keys</p>`);
       parts.push(...ownKeys.map(keyRow));
     }
-    for (const name of appNames) {
-      parts.push(`<p class="lsec">Made by ${escapeHtml(name)}</p>`);
-      parts.push(...(byApp.get(name) ?? []).map(keyRow));
+    for (const app of apps) {
+      parts.push(`<p class="lsec">Made by ${escapeHtml(app.name)}</p>`);
+      parts.push(...app.keys.map(keyRow));
     }
   }
   const keysList = parts.join("\n");

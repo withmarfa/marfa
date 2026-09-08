@@ -20,8 +20,14 @@ const own = (id: string, label: string): KeysPageKey => ({
   last_used_at: null,
 });
 
-const made = (id: string, label: string, app: string): KeysPageKey => ({
+const made = (
+  id: string,
+  label: string,
+  app: string,
+  appId = app,
+): KeysPageKey => ({
   ...own(id, label),
+  app_id: appId,
   app_name: app,
 });
 
@@ -100,6 +106,27 @@ describe("renderKeysPage grouping", () => {
     expect(html).not.toContain("You have no API keys yet");
     expect(html).toContain("Made by Notes");
     expect(html).toContain("App key");
+  });
+
+  it("keeps two apps sharing a display name apart", () => {
+    // Registration is open and `client_name` is caller-chosen, so grouping on
+    // the name would file a second app's key under the first app's heading.
+    const html = renderKeysPage({
+      email: "person@example.com",
+      keys: [
+        made("k1", "First", "Notes", "client-a"),
+        made("k2", "Second", "Notes", "client-b"),
+      ],
+    });
+    expect(html.split("Made by Notes")).toHaveLength(3);
+  });
+
+  it("heads a group with the client id when no name resolved", () => {
+    const html = renderKeysPage({
+      email: "person@example.com",
+      keys: [{ ...own("k1", "App key"), app_id: "client-unregistered" }],
+    });
+    expect(html).toContain("Made by client-unregistered");
   });
 
   it("escapes an app name, which is a string the app chose", () => {

@@ -22,6 +22,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { scopesToTypePermissions } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let narrowKey: string;
@@ -54,6 +55,64 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await ctx.cleanup();
+});
+
+describe("a creator whose own map carries denials", () => {
+  /**
+   * The hole a scope projection leaves. A creator holding the projection of
+   * `content:read` carries a global `read` and a `none` on every system type;
+   * reduced to the literals it confers that is just `*:read`, and a child
+   * asking for `{"*":"read"}` then reads as covered while resolving `read` on
+   * rows its parent is refused.
+   */
+  let contentReadKey: string;
+
+  beforeAll(async () => {
+    const raw = `marfa_k1_contentread_${Math.random().toString(36).slice(2, 12)}`;
+    await ctx.storage.keys.create(
+      {
+        label: "content-read",
+        source: "ceiling-content-read",
+        space_permissions: ["space.keys"],
+        type_permissions: scopesToTypePermissions(["content:read"]),
+        extension_permissions: {},
+        edge_permissions: {},
+        metadata_permissions: {},
+        default_tier: "library",
+        is_operator: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      "spc_ceiling",
+    );
+    contentReadKey = raw;
+  });
+
+  it("refuses a child that keeps the wildcard and drops the denials", async () => {
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: contentReadKey,
+      body: {
+        label: "denials-dropped",
+        source: "ceiling-denials-dropped",
+        type_permissions: { "*": "read" },
+      },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("still mints a child holding exactly what it holds", async () => {
+    // The control, and the case the default path takes: naming no maps at all
+    // copies the creator's, so identity has to be covered or nothing could be
+    // minted from a credential whose map denies anything.
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: contentReadKey,
+      body: { label: "same-again", source: "ceiling-same-again" },
+    });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as {
+      type_permissions: Record<string, string>;
+    };
+    expect(Object.values(body.type_permissions)).toContain("none");
+  });
 });
 
 describe("a key minting a key", () => {

@@ -590,7 +590,7 @@ export function authRoutes(
       authUserId,
       // Opt-in, and never inferred. A caller here has nobody to ask, so the
       // keys the app minted survive unless this door was told to take them.
-      revokeKeys: c.req.query("revoke_keys") === "true",
+      revokeKeys: asksToRevokeKeys(c.req.query("revoke_keys")),
       // The grant's own space rather than the caller's, which an operator key
       // resolves to undefined. Without this the sweep would read "space-less"
       // on a hosted instance and take nothing, or — with a looser filter —
@@ -1302,10 +1302,21 @@ export function authRoutes(
     for (const clientId of new Set(
       mine.map((k) => k.oauth_client_id).filter((id) => id !== undefined),
     )) {
-      const name =
-        typeof storage.oauthProvider?.getClientName === "function"
-          ? await storage.oauthProvider.getClientName(clientId)
-          : undefined;
+      let name: string | undefined;
+      try {
+        name =
+          typeof storage.oauthProvider?.getClientName === "function"
+            ? await storage.oauthProvider.getClientName(clientId)
+            : undefined;
+      } catch {
+        // **A cosmetic lookup must not take the page down.** This is the
+        // surface a person reaches to revoke a key, so it has to render during
+        // exactly the kind of incident that would break a read of the client
+        // table. The same file soft-fails the sessions list for the same
+        // reason. Falling back to the id is what a missing registration
+        // already does.
+        name = undefined;
+      }
       appNames.set(clientId, name ?? clientId);
     }
 
@@ -1314,6 +1325,7 @@ export function authRoutes(
       label: k.label,
       created_at: k.created_at,
       last_used_at: k.last_used_at,
+      app_id: k.oauth_client_id,
       app_name:
         k.oauth_client_id === undefined
           ? undefined
@@ -2115,7 +2127,7 @@ export function authRoutes(
     let revokeKeys: boolean;
     try {
       const form = await c.req.formData();
-      revokeKeys = form.get("revoke_keys") !== null;
+      revokeKeys = asksToRevokeKeys(form.get("revoke_keys"));
     } catch {
       revokeKeys = false;
     }
@@ -3303,6 +3315,21 @@ function buildSignInRedirect(params: {
 
 /** Map the `?notice=` query param on /auth/security to the flash banner
  *  the page renders. Unknown codes return `undefined` (no banner). */
+/**
+ * Whether a caller asked for the app's keys to go with its grant.
+ *
+ * **One reading for both revoke doors.** They took different ones: the API
+ * door compared to the literal `"true"`, so `?revoke_keys=1` did nothing,
+ * while the form door tested presence, so a field reading `false` swept. One
+ * parameter name meaning two things is bad on its own; the looser of the two
+ * being the destructive one is worse. An affirmative value, and nothing else,
+ * on both.
+ */
+function asksToRevokeKeys(raw: unknown): boolean {
+  if (typeof raw !== "string") return false;
+  return raw === "1" || raw === "true";
+}
+
 function parseNotice(
   raw: string | null,
 ): { kind: "success" | "error"; text: string } | undefined {

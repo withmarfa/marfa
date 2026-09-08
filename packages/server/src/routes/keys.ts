@@ -11,10 +11,10 @@ import {
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  firstReachBeyondCredential,
   firstUncoveredExtension,
   firstUncoveredScope,
   refuseUnclampableExtensions,
-  scopesHeldByMaps,
   type RequestedReach,
 } from "../auth/mint-clamp.js";
 import {
@@ -357,7 +357,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds, and a key created by an app is never widened at all — it holds what that app held, and any caller may only narrow it.",
+    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds, the operator key excepted, since running the instance sits outside the permission model. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -513,9 +513,9 @@ function refuseSessionReachAboveGrant(
  * Refuse a key-minted key that reaches past the key that minted it.
  *
  * The sibling of `refuseSessionReachAboveGrant`, asking one question of a
- * different carrier: a session holds scopes, a key holds maps, and
- * `scopesHeldByMaps` projects the second into the first so both go through
- * `grantCoversScope`.
+ * different carrier: a session holds scopes and a key holds maps, and the two
+ * are compared by the rule that fits each — see `mint-clamp.ts`, where turning
+ * the second into the first is recorded as the unsound move it is.
  *
  * **The operator key is exempt because it has nothing to be measured against.**
  * Running the instance is fenced outside the permission model, so its maps are
@@ -544,7 +544,7 @@ function refuseKeyReachAboveCreator(
     );
   }
 
-  const uncovered = firstUncoveredScope(scopesHeldByMaps(creator), requested);
+  const uncovered = firstReachBeyondCredential(creator, requested);
   if (uncovered !== null) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
@@ -574,13 +574,16 @@ function refuseKeyReachAboveCreator(
  * everyone, because the promise is a ceiling and not a fixed shape.
  *
  * The key's own current set is the ceiling, so the comparison is the one the
- * mint already makes, with `existing` in the creator's place.
+ * mint already makes, with `existing` in the creator's place — which is only
+ * true because that comparison is a map against a map. Measuring the ceiling
+ * by the literals it confers loses every `none` entry, and a `none` on the
+ * holding side is a denial rather than an absence; `mint-clamp.ts` carries
+ * the reasoning.
  */
 function refuseWideningAnAppsKey(
   existing: ApiKey,
   requested: RequestedReach,
   requestedSpacePermissions: SpacePermission[] | undefined,
-  requestedProfilePermissions: Record<string, "read" | "write"> | undefined,
 ): void {
   if (existing.oauth_client_id === undefined) return;
 
@@ -598,20 +601,7 @@ function refuseWideningAnAppsKey(
     );
   }
 
-  // Profile rows carry the same two levels as an extension namespace and are
-  // absent-means-none in the same way, so the same comparison answers both.
-  const profileRow = firstUncoveredExtension(
-    existing.profile_permissions,
-    requestedProfilePermissions,
-  );
-  if (profileRow !== null) {
-    throw new MarfaError(
-      ErrorCode.FORBIDDEN,
-      `${fixed} It does not hold the ${profileRow} profile row. Narrow it, or create a key of your own.`,
-    );
-  }
-
-  const uncovered = firstUncoveredScope(scopesHeldByMaps(existing), requested);
+  const uncovered = firstReachBeyondCredential(existing, requested);
   if (uncovered !== null) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
@@ -758,6 +748,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       edge_permissions: body.edge_permissions,
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
+      profile_permissions: body.profile_permissions,
     };
     // **The ceiling is asked of every creator, not only of a session.** A
     // session is measured against its granted scopes; a key is measured against
@@ -970,6 +961,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       edge_permissions: body.edge_permissions,
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
+      profile_permissions: body.profile_permissions,
     };
     const requestedSpacePermissions =
       body.space_permissions?.filter(isSpacePermission);
@@ -981,7 +973,6 @@ export function keyRoutes(storage: Storage, salt: string) {
       existing,
       requestedReach,
       requestedSpacePermissions,
-      body.profile_permissions,
     );
 
     if (c.get("authType") === "oauth") {

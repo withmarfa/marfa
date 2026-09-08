@@ -867,6 +867,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
                 label: "Raycast",
                 created_at: "2026-05-12T10:00:00.000Z",
                 last_used_at: "2026-06-19T08:00:00.000Z",
+                app_id: "client-raycast",
                 app_name: "Raycast",
               },
               {
@@ -874,6 +875,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
                 label: "Raycast (second device)",
                 created_at: "2026-06-01T10:00:00.000Z",
                 last_used_at: null,
+                app_id: "client-raycast",
                 app_name: "Raycast",
               },
               {
@@ -881,6 +883,7 @@ const AUTH_SCREENS: GalleryScreen[] = [
                 label: "Sync",
                 created_at: "2026-02-02T10:00:00.000Z",
                 last_used_at: "2026-06-10T08:00:00.000Z",
+                app_id: "client-obsidian",
                 app_name: "Obsidian Sync",
               },
             ],

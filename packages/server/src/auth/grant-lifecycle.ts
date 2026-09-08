@@ -34,8 +34,12 @@ import { log } from "../middleware/logger.js";
  * grant's own space; keys mode passes nothing and gets the space-less rows,
  * which on such an instance is all of them.
  *
- * `listForSpace` and `list` both exclude revoked and expired rows, so the
- * count is of keys that still work.
+ * Both arms exclude revoked rows. **They differ on expiry** — `list` also
+ * drops a key past its `expires_at` and `listForSpace` does not — and the
+ * count is currently right anyway, because the only door that stamps a
+ * lifetime is the runtime-credential mint and it never stamps an app. If an
+ * app-minted key ever gains one, this is where the offer starts overstating
+ * itself and the sweep starts touching dead rows.
  */
 export async function keysMintedByApp(
   storage: Storage,

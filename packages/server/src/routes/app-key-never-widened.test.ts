@@ -20,6 +20,7 @@
  * route that refused every patch.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { scopesToTypePermissions } from "@withmarfa/shared";
 import {
   createTestContext,
   request,
@@ -104,6 +105,31 @@ describe("editing a key an app made", () => {
     };
     expect(body.error.message).toContain("created by an app");
     expect(body.error.details?.required_scope).toBe("core.note:write");
+  });
+
+  it("refuses a wildcard that erases the denials the key carries", async () => {
+    // **The shape an ordinary grant actually produces.** `content:read`
+    // projects to a global `read` plus a `none` on every system type, and an
+    // exact entry outranks a wildcard, so those entries are denials rather
+    // than omissions. A patch to `{"*":"read"}` reads as a no-op and is a
+    // widening: it keeps the wildcard and drops what was holding it down.
+    const held = scopesToTypePermissions(["content:read"]);
+    expect(Object.values(held)).toContain("none");
+    const { id } = await seedKey("app-content-read", {
+      oauth_client_id: "client-notes",
+      type_permissions: held,
+    });
+
+    const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
+      key: editorKey,
+      body: { type_permissions: { "*": "read" } },
+    });
+    expect(res.status).toBe(403);
+
+    // And the denials are still on the row, so a refused patch did not
+    // half-apply.
+    const after = await ctx.storage.keys.get(id);
+    expect(Object.values(after?.type_permissions ?? {})).toContain("none");
   });
 
   it("allows the same edit to narrow it", async () => {
