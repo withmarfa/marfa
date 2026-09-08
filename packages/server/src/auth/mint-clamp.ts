@@ -40,6 +40,20 @@ export interface RequestedReach {
  * a grant, and asking `grantCoversScope` about a verb-less literal would send
  * a value the parser refuses into a function whose answer would then be "no"
  * for a reason that has nothing to do with breadth.
+ *
+ * **The metadata wildcard takes the bare form, and this is not cosmetic.**
+ * `metadata.*:write` does not match the sub-resource matcher — that class
+ * carries no asterisk — so it falls through to the type matcher, clears
+ * `isValidTypePattern` because `metadata` is a valid root, and parses as an
+ * item-type grant over a namespace while reading as a metadata grant.
+ * `scopes.ts` documents that hazard at the regex itself. Sending it through
+ * the clamp fails in both directions at once: a plain `content:write` grant
+ * covers it, so an app with no metadata scope at all mints a key holding
+ * `metadata.types:write`; and a genuine `metadata:write` grant does not cover
+ * it, so the honest holder is refused and told to obtain a literal that is not
+ * in the family it is asking about. `"*"` is the ordinary key here, because it
+ * is what `scopesToMetadataPermissions` writes for a bare `metadata:<verb>`
+ * grant, so this is the common path rather than an edge case.
  */
 export function scopeForEntry(
   family: "type" | "edge" | "metadata",
@@ -49,7 +63,7 @@ export function scopeForEntry(
   if (level === "none") return null;
   if (family === "type") return `${key}:${level}`;
   if (family === "edge") return `edge.${key}:${level}`;
-  return `metadata.${key}:${level}`;
+  return key === "*" ? `metadata:${level}` : `metadata.${key}:${level}`;
 }
 
 /**
@@ -61,11 +75,12 @@ export function scopeForEntry(
  * anything, and the whole point of replacing the blanket 403 was to stop
  * sending people to a reason that was not theirs.
  *
- * `extension_permissions` is deliberately not checked, because no scope
- * expresses one — the grammar has no extension family, so there is no literal
- * to compare and nothing a grant could be said to cover. The mint derives it
- * as `{}` instead, which is what the synthetic key carries, so an OAuth mint
- * cannot ask for an extension grant at all.
+ * `extension_permissions` is not checked here because it cannot be: no scope
+ * expresses one, so there is no literal to compare and nothing a grant could
+ * be said to cover. **That makes it un-clampable rather than harmless**, which
+ * is the opposite conclusion, and the route refuses the family outright for a
+ * session rather than letting an unchecked map through — see
+ * `refuseUnclampableExtensions`.
  */
 export function firstUncoveredScope(
   granted: readonly string[],
@@ -84,4 +99,28 @@ export function firstUncoveredScope(
     }
   }
   return null;
+}
+
+/**
+ * Refuse an extension map from a session, because nothing can measure one.
+ *
+ * The clamp works by turning each requested entry into a scope literal and
+ * asking whether the grant covers it. Extensions have no literal, so the only
+ * honest answers are "refuse" and "let it through unchecked" — and unchecked
+ * is real reach: `GET /items/{id}/extensions/{ns}` consults the extension map
+ * alone, with no type-permission check beside it, so `{"*":"read"}` reads
+ * every non-reserved namespace on every item in the space from a grant that
+ * conferred nothing.
+ *
+ * An empty object is accepted, because it asks for nothing.
+ */
+export function refuseUnclampableExtensions(
+  requested: RequestedReach,
+): string | null {
+  const map = requested.extension_permissions;
+  if (map === undefined || Object.keys(map).length === 0) return null;
+  return (
+    "A signed-in app cannot ask for `extension_permissions`: no scope names " +
+    "an extension namespace, so there is nothing to check the request against."
+  );
 }

@@ -10,7 +10,11 @@ import {
 import type { MarfaRole } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
-import { firstUncoveredScope } from "../auth/mint-clamp.js";
+import {
+  firstUncoveredScope,
+  refuseUnclampableExtensions,
+  type RequestedReach,
+} from "../auth/mint-clamp.js";
 import {
   requireCapability,
   requireSpaceAdmin,
@@ -382,32 +386,75 @@ const updateKeyRoute = createRoute({
  * missing: a null projection is a grant an operator deleted by hand, and losing
  * the client and user ids as well because of it would be the worse answer.
  */
-async function mintDetails(
+async function resolveGrantItemId(
   storage: Storage,
   c: Context<AppEnv>,
-  platformTierMint: boolean,
-): Promise<Record<string, unknown> | undefined> {
-  const base = platformTierMint ? { platform_tier: true } : {};
+): Promise<string | null> {
   const grant = c.get("oauthGrant");
-  if (!grant) return platformTierMint ? base : undefined;
-
-  let grantItemId: string | null = null;
   if (
-    grant.authUserId &&
-    typeof storage.oauthProvider?.findGrantItemId === "function"
+    !grant?.authUserId ||
+    typeof storage.oauthProvider?.findGrantItemId !== "function"
   ) {
-    grantItemId = await storage.oauthProvider.findGrantItemId({
+    return null;
+  }
+  try {
+    return await storage.oauthProvider.findGrantItemId({
       spaceId: c.get("apiKey")?.space_id ?? null,
       clientId: grant.clientId,
       authUserId: grant.authUserId,
     });
+  } catch {
+    // **Resolved before the key is written, and swallowed, for the same
+    // reason the audit write itself is `void`ed.** A read that throws must not
+    // decide whether a mint succeeds: past the insert the plaintext exists in
+    // exactly one place, the response, so a failure raised after it loses the
+    // key forever and leaves a live credential in the table. A null costs one
+    // hop in the trail; the client and user ids still name the app.
+    return null;
   }
+}
+
+function mintDetails(
+  c: Context<AppEnv>,
+  platformTierMint: boolean,
+  grantItemId: string | null,
+): Record<string, unknown> | undefined {
+  const base = platformTierMint ? { platform_tier: true } : {};
+  const grant = c.get("oauthGrant");
+  if (!grant) return platformTierMint ? base : undefined;
   return {
     ...base,
     client_id: grant.clientId,
     user_id: grant.authUserId,
     grant_item_id: grantItemId,
   };
+}
+
+/**
+ * Refuse a session asking to give a key reach its own grant does not cover.
+ *
+ * Shared by the mint and the update, because a clamp on one alone is not a
+ * clamp. The permission maps are writable after the fact, so a request refused
+ * at `POST` and accepted at `PATCH` a moment later leaves the ceiling exactly
+ * where it was — and `PATCH` reaches every key in the space, not only the ones
+ * this session minted.
+ */
+function refuseSessionReachAboveGrant(
+  granted: readonly string[],
+  requested: RequestedReach,
+): void {
+  const unclampable = refuseUnclampableExtensions(requested);
+  if (unclampable !== null) {
+    throw new MarfaError(ErrorCode.FORBIDDEN, unclampable);
+  }
+  const uncovered = firstUncoveredScope(granted, requested);
+  if (uncovered !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `This app was not granted ${uncovered}, so it cannot give a key reach it does not hold itself.`,
+      { required_scope: uncovered },
+    );
+  }
 }
 
 // Router
@@ -507,26 +554,18 @@ export function keyRoutes(storage: Storage, salt: string) {
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
     };
+    // All four families, so naming one does not quietly take the other three
+    // off the derive path and hand them through unmeasured.
     const namesNoReach =
       requested.type_permissions === undefined &&
       requested.edge_permissions === undefined &&
-      requested.metadata_permissions === undefined;
+      requested.metadata_permissions === undefined &&
+      requested.extension_permissions === undefined;
 
+    // Checked before the derive below, because the derived case cannot exceed
+    // anything: it is a copy of what the session already holds.
     if (mintingFromSession) {
-      // Asking for more than the grant covers is refused by name, so a client
-      // can narrow toward something that will work. Checked before the derive
-      // below, because the derived case cannot exceed anything.
-      const uncovered = firstUncoveredScope(
-        callerGrant?.scopes ?? [],
-        requested,
-      );
-      if (uncovered !== null) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `This app was not granted ${uncovered}, so it cannot mint a key that reaches it.`,
-          { required_scope: uncovered },
-        );
-      }
+      refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
     }
 
     const derivedFromSession = mintingFromSession && namesNoReach;
@@ -596,6 +635,10 @@ export function keyRoutes(storage: Storage, salt: string) {
       );
     }
 
+    // Resolved ahead of the write, so nothing between the insert and the
+    // response can fail and take the plaintext with it.
+    const grantItemId = await resolveGrantItemId(storage, c);
+
     const stored = await storage.keys.create(
       {
         label: body.label.trim(),
@@ -632,7 +675,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       action: isBootstrap ? "key.bootstrap" : "key.create",
       resource_type: "key",
       resource_id: stored.id,
-      details: await mintDetails(storage, c, platformTierMint),
+      details: mintDetails(c, platformTierMint, grantItemId),
     });
 
     return c.json(
@@ -736,6 +779,21 @@ export function keyRoutes(storage: Storage, salt: string) {
     // of any rank may only address keys inside its own space.
     if (key.space_id && existing.space_id !== key.space_id) {
       throw new MarfaError(ErrorCode.API_KEY_NOT_FOUND, `Key ${id} not found`);
+    }
+
+    // **The same ceiling as the mint, because this door reaches further.** A
+    // clamp applied only at `POST` is not a clamp at all: the permission maps
+    // are writable here a moment later, and this route addresses every key in
+    // the caller's space rather than only the ones the session minted. So a
+    // session refused a wide key at the mint could have widened an existing
+    // one instead — including a key it did not create.
+    if (c.get("authType") === "oauth") {
+      refuseSessionReachAboveGrant(c.get("oauthGrant")?.scopes ?? [], {
+        type_permissions: body.type_permissions,
+        edge_permissions: body.edge_permissions,
+        metadata_permissions: body.metadata_permissions,
+        extension_permissions: body.extension_permissions,
+      });
     }
 
     const updated = await storage.keys.update(id, {
