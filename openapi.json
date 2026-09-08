@@ -20733,7 +20733,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
+        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. A signed-in app must hold `capability.keys`, and the key it mints may not reach past what its own grant covers — a request for more is refused naming the scope. Such a key is `scope_enforced`: its permission maps decide what it reaches and its role does not override them. Omitting the maps mints a key matching the session's own reach rather than an empty one. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
         "security": [
           {
             "bearerAuth": []
@@ -20863,6 +20863,10 @@
                     },
                     "is_platform": {
                       "type": "boolean"
+                    },
+                    "scope_enforced": {
+                      "type": "boolean",
+                      "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                     },
                     "type_permissions": {
                       "type": "object",
@@ -21056,7 +21060,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or space_admin, is an OAuth access token, or requested a role above its own.",
+            "description": "Caller is not an admin or space_admin, requested a role above its own, or is a signed-in app that was not granted `capability.keys` or asked for reach its grant does not cover. The last two name the missing scope in `details.required_scope`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21227,6 +21231,10 @@
                           },
                           "is_platform": {
                             "type": "boolean"
+                          },
+                          "scope_enforced": {
+                            "type": "boolean",
+                            "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                           },
                           "type_permissions": {
                             "type": "object",
@@ -21758,6 +21766,10 @@
                     },
                     "is_platform": {
                       "type": "boolean"
+                    },
+                    "scope_enforced": {
+                      "type": "boolean",
+                      "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                     },
                     "type_permissions": {
                       "type": "object",
@@ -37925,6 +37937,10 @@
                     },
                     "is_platform": {
                       "type": "boolean"
+                    },
+                    "scope_enforced": {
+                      "type": "boolean",
+                      "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                     },
                     "type_permissions": {
                       "type": "object",

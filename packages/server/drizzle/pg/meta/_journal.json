@@ -715,6 +715,13 @@
       "when": 1788598401000,
       "tag": "0101_enrichment_queue_by_arrival",
       "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1788823816322,
+      "tag": "0102_api_keys_scope_enforced",
+      "breakpoints": true
     }
   ]
 }

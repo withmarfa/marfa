@@ -1,3 +1,4 @@
+import { extensionLabelOf } from "../auth/extension-label.js";
 import { filterExtensionsByPermission } from "@withmarfa/shared";
 import type { ApiKey, Metadata } from "@withmarfa/shared";
 import { roleBypassesPermissionMaps } from "../middleware/auth.js";
@@ -30,7 +31,7 @@ export function filterMetadataForCaller(
     extensions: filterExtensionsByPermission(
       metadata.extensions,
       apiKey?.extension_permissions,
-      apiKey?.label ?? "",
+      extensionLabelOf(apiKey),
       false,
     ),
   };

@@ -1,3 +1,4 @@
+import { extensionLabelOf } from "../auth/extension-label.js";
 import { filterExtensionsByPermission } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
@@ -29,7 +30,7 @@ export async function hydrateExtensionsForItems(
       filterExtensionsByPermission(
         extensions,
         apiKey?.extension_permissions,
-        apiKey?.label ?? "",
+        extensionLabelOf(apiKey),
         false,
       ),
     );

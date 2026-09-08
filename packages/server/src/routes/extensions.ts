@@ -10,6 +10,7 @@
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
+import { extensionLabelOf } from "../auth/extension-label.js";
 import {
   MarfaError,
   ErrorCode,
@@ -331,7 +332,7 @@ export function extensionRoutes(storage: Storage) {
     const filtered = filterExtensionsByPermission(
       extensions,
       apiKey?.extension_permissions,
-      apiKey?.label ?? "",
+      extensionLabelOf(apiKey),
       roleBypassesPermissionMaps(apiKey),
     );
 
@@ -357,7 +358,7 @@ export function extensionRoutes(storage: Storage) {
       : resolveExtensionPermission(
           namespace,
           apiKey?.extension_permissions,
-          apiKey?.label ?? "",
+          extensionLabelOf(apiKey),
         );
     if (perm === "none") {
       throw new MarfaError(
@@ -423,7 +424,7 @@ export function extensionRoutes(storage: Storage) {
         : resolveExtensionPermission(
             namespace,
             apiKey?.extension_permissions,
-            apiKey?.label ?? "",
+            extensionLabelOf(apiKey),
           );
       if (perm !== "write") {
         throw new MarfaError(
@@ -515,12 +516,12 @@ export function extensionRoutes(storage: Storage) {
         `Namespace "${namespace}" is reserved`,
       );
     } else {
-      const isOwner = apiKey?.label === namespace;
+      const isOwner = extensionLabelOf(apiKey) === namespace;
       if (!roleBypassesPermissionMaps(apiKey) && !isOwner) {
         const perm = resolveExtensionPermission(
           namespace,
           apiKey?.extension_permissions,
-          apiKey?.label ?? "",
+          extensionLabelOf(apiKey),
         );
         if (perm !== "write") {
           throw new MarfaError(

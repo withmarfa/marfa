@@ -63,10 +63,14 @@ async function revokeAccessTokens(clientId: string): Promise<void> {
 describe("a revoked OAuth access token", () => {
   it("stops authenticating, though its expiry has not passed", async () => {
     const space = await spaces().create("revoked-token-space");
-    const { token, clientId } = await seedOauthBearer(ctx.storage, [], {
-      spaceId: space.id,
-      userRole: "instance_admin",
-    });
+    // `capability.keys` because the probe below uses `/keys` to ask whether
+    // the token authenticates at all. The question is revocation; the door is
+    // incidental, and it now wants the scope.
+    const { token, clientId } = await seedOauthBearer(
+      ctx.storage,
+      ["capability.keys"],
+      { spaceId: space.id, userRole: "instance_admin" },
+    );
 
     // The token is live: an hour of expiry left, and it authenticates.
     const before = await request(ctx.app, "GET", "/keys", { key: token });
@@ -83,10 +87,14 @@ describe("a revoked OAuth access token", () => {
 
   it("is refused by the store itself, not only at the route", async () => {
     const space = await spaces().create("revoked-store-space");
-    const { token, clientId } = await seedOauthBearer(ctx.storage, [], {
-      spaceId: space.id,
-      userRole: "instance_admin",
-    });
+    // `capability.keys` because the probe below uses `/keys` to ask whether
+    // the token authenticates at all. The question is revocation; the door is
+    // incidental, and it now wants the scope.
+    const { token, clientId } = await seedOauthBearer(
+      ctx.storage,
+      ["capability.keys"],
+      { spaceId: space.id, userRole: "instance_admin" },
+    );
 
     const { hashApiKey } = await import("../middleware/auth.js");
     const { TEST_API_KEY_SALT } = await import("../test-utils.js");

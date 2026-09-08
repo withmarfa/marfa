@@ -65,6 +65,14 @@ function archiveExtensions(
   if (typeof extensions !== "object" || extensions === null) return {};
   const out: Record<string, Record<string, unknown>> = {};
   for (const [namespace, data] of Object.entries(extensions)) {
+    // An empty namespace is meaningless on every read path and forgeable only
+    // here: nothing else in the platform creates one, because every write door
+    // takes it from a route pattern that will not match an empty segment. It
+    // is dropped rather than restored because a credential holding no implicit
+    // namespace is represented by the empty string, so an item carrying one
+    // would be readable by exactly the credentials that hold nothing — see
+    // `auth/extension-label.ts`.
+    if (namespace === "") continue;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
       out[namespace] = data as Record<string, unknown>;
     }

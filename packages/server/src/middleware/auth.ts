@@ -1307,8 +1307,31 @@ export function requireCapability(
   c: Context<AppEnv>,
   capability: CapabilityScope,
 ): void {
-  checkAuth(c.get("apiKey"));
-  if (c.get("authType") !== "oauth") return;
+  const key = c.get("apiKey");
+  checkAuth(key);
+  if (c.get("authType") !== "oauth") {
+    // **A scope-enforced key is a grant in key form, and it carries no scope
+    // list.** Its permission maps were projected from a grant at mint time and
+    // the literals themselves were not kept, so there is no way to ask whether
+    // it holds this capability — and the docblock above says what to do when
+    // the answer cannot be read: treat it as not granted.
+    //
+    // Waving it through instead re-opens the escalation the keys doors exist
+    // to close, in two steps rather than one. A session mints a `space_admin`
+    // key, which is a sideways grant and permitted; that key is not an OAuth
+    // caller, so it meets none of these gates, and it mints again with no
+    // clamp and no `scope_enforced` stamp. The second key bypasses every
+    // permission map on every route, from a grant that conferred no data-plane
+    // scope at all, and outlives it.
+    if (key?.scope_enforced === true) {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        `A scope-enforced credential cannot be used for ${capability}: it carries permissions rather than the scopes they came from, so the grant behind it cannot be read. Use the app session itself.`,
+        { required_scope: capability },
+      );
+    }
+    return;
+  }
   if (hasCapability(c.get("oauthGrant")?.scopes ?? [], capability)) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,

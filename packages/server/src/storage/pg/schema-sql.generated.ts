@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     is_runtime_credential boolean DEFAULT false NOT NULL,
     connection_id text,
     expires_at text,
-    item_source text
+    item_source text,
+    scope_enforced boolean DEFAULT false NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.audit_log (

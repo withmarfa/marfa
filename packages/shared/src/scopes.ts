@@ -133,14 +133,18 @@ export { CAPABILITY_ROOT } from "./scope-roots.js";
  * because each is a boundary that already exists in the routes and would be
  * lost by wiring a capability check onto the shared authority helper:
  *
- * - **Minting an API key stays closed to OAuth callers outright.** The route
- *   refuses an OAuth bearer before any permission question, because a key is
- *   a durable credential that is not held to a token's scopes. Without that
- *   refusal `keys` would be the largest escalation in the set: an app could
- *   mint itself a permanent unscoped credential and no longer need the grant
- *   at all. The capability names who may manage keys, never who may escape
- *   the scope system.
- * - **`item_purge` is one item.** Bulk purge is platform-only today, and a
+ * - **`keys` names who may manage keys, never who may escape the scope
+ *   system.** A key is a durable credential and an app that could mint an
+ *   unscoped one would no longer need its grant at all, so the capability is
+ *   necessary for the mint and nowhere near sufficient. The route holds a
+ *   session to the reach its own grant covers, refusing by name, and stamps
+ *   `scope_enforced` on what it produces so the key stays held to its
+ *   permission maps rather than to its role. Both halves, or the clamp lasts
+ *   until the key is first used. `server/src/auth/mint-clamp.ts` carries the
+ *   reasoning; the route used to refuse an OAuth bearer outright, and that
+ *   refusal was doing this job by removing the surface.
+ * - **`item_purge` is one item.** Bulk purge is `requireAdmin`, the
+ *   cross-space operator tier, which is not a consentable surface — so a
  *   capability held by a space-scoped app must not reach it.
  * - **The caller resolver is not a surface.** It answers which space a
  *   request acts in, ahead of the four page pairs that are surfaces, so

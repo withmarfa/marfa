@@ -834,6 +834,57 @@ describe("POST /admin/restore-archive — the items it writes", () => {
    * Asserted on the log as well as the emitter, because the log is what a
    * client that was away reads.
    */
+  it("drops an empty extension namespace rather than restoring it", async () => {
+    // A namespace is a path segment everywhere else, so no ordinary write can
+    // create an empty one — but a restore copies the keys it is handed. That
+    // matters because the empty string is how a credential holding no implicit
+    // namespace is represented (`auth/extension-label.ts`), so an item
+    // carrying one would be readable by exactly the credentials that hold
+    // nothing.
+    const source = `archive-empty-ns-${Math.random().toString(36).slice(2, 8)}`;
+    const itemId = "019537a0-7b80-7000-8000-0000000001f0";
+
+    const archive = await buildArchive(
+      {
+        version: 1,
+        format: "marfa-archive-v1",
+        created_at: new Date().toISOString(),
+        item_count: 1,
+        blob_count: 0,
+        blobs: {},
+      },
+      [
+        JSON.stringify({
+          item: {
+            id: itemId,
+            type: "core.note",
+            properties: { body: "forged namespace" },
+            source,
+            source_id: "empty-ns-1",
+          },
+          metadata: {
+            tags: [],
+            extensions: { "": { forged: true }, "app.kept": { ok: true } },
+          },
+        }),
+      ],
+      [],
+    );
+
+    const res = await ctx.app.request("/admin/restore-archive", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.adminKey}`,
+        "Content-Type": "application/gzip",
+      },
+      body: new Uint8Array(archive),
+    });
+    expect(res.status).toBe(200);
+
+    const stored = await ctx.storage.metadata.getExtensions(itemId);
+    expect(Object.keys(stored)).toEqual(["app.kept"]);
+  });
+
   it("announces the modification time its own extensions write left", async () => {
     const source = `archive-ext-${Math.random().toString(36).slice(2, 8)}`;
     const itemId = "019537a0-7b80-7000-8000-000000000121";

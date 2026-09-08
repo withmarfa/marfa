@@ -17,6 +17,7 @@ import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { KeyResponseSchema } from "./_schemas.js";
+import { extensionLabelOf } from "../auth/extension-label.js";
 
 let ctx: TestContext;
 
@@ -639,13 +640,17 @@ describe("bootstrap sentinel", () => {
   );
 });
 
-describe("POST /keys — OAuth caller block", () => {
-  // An OAuth app granted only `openid` but whose user is a space_admin
-  // must NOT be able to mint a full, non-scope-enforced API key — that
-  // would escalate a narrow grant past the consent/scope model. Read and
-  // management reach via the role projection stays intact.
+describe("POST /keys — a session mints, clamped to its own grant", () => {
+  // The blanket refusal that used to stand here did two jobs: it withheld the
+  // permission, and it prevented the escalation a mint makes possible. Both
+  // still hold, through three things that can fail independently — the
+  // capability gate, the breadth clamp, and `scope_enforced` — so each gets
+  // its own case rather than one test standing for all three.
   let hostedCtx: TestContext;
   let spaceId: string;
+
+  const KEYS = "capability.keys";
+  const grantScopes = (...extra: string[]) => ["openid", KEYS, ...extra];
 
   beforeAll(async () => {
     hostedCtx = await createTestContext({ authMode: "hosted" });
@@ -657,47 +662,514 @@ describe("POST /keys — OAuth caller block", () => {
     await hostedCtx.cleanup();
   });
 
-  it("rejects an OAuth token (space_admin user) from minting a key", async () => {
+  it("refuses every keys door to a session that was not granted the capability", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
       userRole: "space_admin",
       spaceId,
     });
+    const doors: [string, string, unknown?][] = [
+      ["GET", "/keys"],
+      ["POST", "/keys", { label: "x", source: "x", role: "member" }],
+      ["DELETE", "/keys/key_whatever"],
+      ["PATCH", "/keys/key_whatever", { label: "renamed" }],
+    ];
+    for (const [method, path, body] of doors) {
+      const res = await request(hostedCtx.app, method, path, {
+        key: token,
+        ...(body === undefined ? {} : { body }),
+      });
+      expect(res.status, `${method} ${path}`).toBe(403);
+      const err = (await res.json()) as {
+        error: { code: string; details?: { required_scope?: string } };
+      };
+      expect(err.error.code).toBe("forbidden");
+      // The refusal names the literal. A client told only "forbidden" on an
+      // administrative surface reads it as the role, which is not what
+      // refused it, and cannot narrow toward a scope nobody named.
+      expect(err.error.details?.required_scope).toBe(KEYS);
+    }
+  });
+
+  it("lets a granted session mint, and the key matches the session's own reach", async () => {
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "like me", source: "like-me", role: "member" },
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as {
+      id: string;
+      type_permissions: Record<string, string>;
+    };
+    // The no-input case is "a key like this session". The alternative default
+    // is `{}`, which on a scope-enforced key reads nothing at all.
+    expect(created.type_permissions["core.note"]).toBe("read");
+
+    const stored = await hostedCtx.storage.keys.get(created.id);
+    expect(stored?.scope_enforced).toBe(true);
+    expect(stored?.space_id).toBe(spaceId);
+    expect(stored?.is_platform).toBe(false);
+  });
+
+  it("refuses reach the grant does not cover, and names the literal", async () => {
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
+    );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
       body: {
-        label: "exfil",
-        source: "exfil",
-        role: "space_admin",
-        type_permissions: { "*": "write" },
+        label: "wider",
+        source: "wider",
+        role: "member",
+        type_permissions: { "core.note": "write" },
       },
     });
     expect(res.status).toBe(403);
-    const err = (await res.json()) as { error: { code: string } };
-    expect(err.error.code).toBe("forbidden");
+    const err = (await res.json()) as {
+      error: { details?: { required_scope?: string } };
+    };
+    // `core.note:read` does not cover `core.note:write`: the verb ranks.
+    expect(err.error.details?.required_scope).toBe("core.note:write");
   });
 
-  it("rejects an OAuth token (admin user) from minting a key", async () => {
-    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
+  it("accepts reach a wildcard in the grant covers", async () => {
+    // The clamp asks `grantCoversScope`, not a string comparison. Five earlier
+    // hand-rolled versions of this question disagreed with the real rule, so
+    // the case that would pass a naive membership test is the one worth
+    // pinning.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.*:write"),
+      { userRole: "space_admin", spaceId },
+    );
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "under a wildcard",
+        source: "under-wildcard",
+        role: "member",
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
+  it("still refuses a role above the session's own", async () => {
+    // Role is a separate axis and the capability does not touch it: a granted
+    // session may spend its role, never exceed it.
+    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
+      userRole: "member",
+      spaceId,
+    });
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "up", source: "up", role: "space_admin" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("never mints a platform key from a session, whatever the body asks", async () => {
+    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
       userRole: "instance_admin",
       spaceId,
     });
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
-      body: { label: "x", source: "x", role: "space_admin" },
+      body: {
+        label: "platform",
+        source: "platform",
+        role: "member",
+        is_platform: true,
+      },
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(created.id);
+    // `is_platform` is an operator-tier flag exclusive to API keys; the
+    // synthetic OAuth principal never carries it, so the escalation clamp
+    // above it coerces the request to false.
+    expect(stored?.is_platform).toBe(false);
+  });
+
+  it("records the grant on the audit row, so a revoked app leads to its keys", async () => {
+    const { token, clientId } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "audited", source: "audited", role: "member" },
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { id: string };
+
+    const audits = await waitForAudit(
+      () => hostedCtx.storage.audit.list({ action: "key.create" }),
+      (r) => r.data.some((row) => row.resource_id === created.id),
+    );
+    const row = audits.data.find((r) => r.resource_id === created.id);
+    expect(row).toBeTruthy();
+    const details = row?.details;
+    // The key outlives the token that minted it, and `key_id` names the
+    // synthetic principal — whose id is the access token's. These are the
+    // identifiers still resolvable an hour later.
+    expect(details?.client_id).toBe(clientId);
+    expect(details?.user_id).toBeTruthy();
+    expect("grant_item_id" in (details ?? {})).toBe(true);
+  });
+
+  it("lets a granted session read, revoke and rename", async () => {
+    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
+      userRole: "space_admin",
+      spaceId,
+    });
+    const raw = "marfa_k1_sess_" + Math.random().toString(36).slice(2);
+    const target = await hostedCtx.storage.keys.create(
+      {
+        label: "target",
+        source: "target-" + Math.random().toString(36).slice(2),
+        role: "member",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      spaceId,
+    );
+
+    const list = await request(hostedCtx.app, "GET", "/keys", { key: token });
+    expect(list.status).toBe(200);
+
+    const renamed = await request(
+      hostedCtx.app,
+      "PATCH",
+      `/keys/${target.id}`,
+      { key: token, body: { label: "renamed" } },
+    );
+    expect(renamed.status).toBe(200);
+
+    const revoked = await request(
+      hostedCtx.app,
+      "DELETE",
+      `/keys/${target.id}`,
+      { key: token },
+    );
+    expect(revoked.status).toBe(200);
+  });
+
+  it("refuses a session a role above member, which no scope can measure", async () => {
+    // `canGrantRole` permits this: a space_admin user's app asking for
+    // space_admin travels sideways, not up. The axis it does not measure is
+    // the one that matters — the session's own principal is scope-enforced, so
+    // its effective authority is its maps, while a key carrying rank opens
+    // audit, credentials, connections and the schema doors on rank alone.
+    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
+      userRole: "space_admin",
+      spaceId,
+    });
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "ranked", source: "ranked", role: "space_admin" },
     });
     expect(res.status).toBe(403);
   });
 
-  it("still lets an OAuth space_admin token READ keys (intended reach preserved)", async () => {
-    const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
-      userRole: "space_admin",
+  it("refuses a key minted from a session when it tries to mint again", async () => {
+    // **The second half of the two-step escalation, kept even though the first
+    // half is now refused above.** The two defences are independent: the role
+    // refusal stops a session asking for rank, and this stops any
+    // scope-enforced credential reaching a capability door at all. If the role
+    // rule were ever relaxed — a deployment wanting session-minted admin keys,
+    // say — this is what would still be standing between that key and an
+    // unclamped, unstamped second key with full reach.
+    const raw = "marfa_k1_enf_" + Math.random().toString(36).slice(2);
+    const enforced = await hostedCtx.storage.keys.create(
+      {
+        label: "as if minted from a session",
+        source: "enforced-" + Math.random().toString(36).slice(2),
+        role: "space_admin",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+        scope_enforced: true,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
       spaceId,
-    });
-    const res = await request(hostedCtx.app, "GET", "/keys", { key: token });
-    expect(res.status).toBe(200);
+    );
+    expect(
+      (await hostedCtx.storage.keys.get(enforced.id))?.scope_enforced,
+    ).toBe(true);
+
+    // Its rank would open every one of these doors. The stamp closes them.
+    for (const [method, path, body] of [
+      ["GET", "/keys", undefined],
+      [
+        "POST",
+        "/keys",
+        {
+          label: "step two",
+          source: "step-two",
+          role: "space_admin",
+          type_permissions: { "*": "write" },
+        },
+      ],
+      ["DELETE", `/keys/${enforced.id}`, undefined],
+      ["PATCH", `/keys/${enforced.id}`, { label: "renamed" }],
+    ] as [string, string, unknown][]) {
+      const res = await request(hostedCtx.app, method, path, {
+        key: raw,
+        ...(body === undefined ? {} : { body }),
+      });
+      expect(res.status, `${method} ${path}`).toBe(403);
+    }
   });
 
-  it("still lets an API-key space_admin mint a key (block keys on authType, not role)", async () => {
+  it("clamps the update door, which reaches keys the session never minted", async () => {
+    // A clamp at the mint alone is not a clamp: the maps are writable a moment
+    // later, and this door addresses every key in the space.
+    const raw = "marfa_k1_victim_" + Math.random().toString(36).slice(2);
+    const victim = await hostedCtx.storage.keys.create(
+      {
+        label: "someone else's key",
+        source: "victim-" + Math.random().toString(36).slice(2),
+        role: "member",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      spaceId,
+    );
+
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const widen = await request(hostedCtx.app, "PATCH", `/keys/${victim.id}`, {
+      key: token,
+      body: { type_permissions: { "*": "write" } },
+    });
+    expect(widen.status).toBe(403);
+
+    // At the ceiling, the same door still works.
+    const within = await request(hostedCtx.app, "PATCH", `/keys/${victim.id}`, {
+      key: token,
+      body: { type_permissions: { "core.note": "read" } },
+    });
+    expect(within.status).toBe(200);
+  });
+
+  it("refuses an extension map from a session, at both doors", async () => {
+    // Nothing can measure one: no scope names an extension namespace, so the
+    // only answers are refuse and let-through-unchecked. Unchecked is real
+    // reach — the extension read door consults this map alone, with no
+    // type-permission check beside it.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const minted = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "ext",
+        source: "ext",
+        role: "member",
+        type_permissions: {},
+        extension_permissions: { "*": "write" },
+      },
+    });
+    expect(minted.status).toBe(403);
+
+    const raw = "marfa_k1_extt_" + Math.random().toString(36).slice(2);
+    const target = await hostedCtx.storage.keys.create(
+      {
+        label: "ext target",
+        source: "ext-target-" + Math.random().toString(36).slice(2),
+        role: "member",
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+      },
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      spaceId,
+    );
+    const patched = await request(
+      hostedCtx.app,
+      "PATCH",
+      `/keys/${target.id}`,
+      {
+        key: token,
+        body: { extension_permissions: { "*": "write" } },
+      },
+    );
+    expect(patched.status).toBe(403);
+  });
+
+  it("names one family and still gets none of the other three for free", async () => {
+    // `namesNoReach` reads all four families. The grant below projects a
+    // non-empty edge map as well as a type map, so the derive path has
+    // something to hand over — without which this assertion would pass
+    // whether or not the condition were right, which is what the first
+    // version of it did.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read", "edge.about:read"),
+      { userRole: "space_admin", spaceId },
+    );
+
+    // The derive path does hand the edge map over when nothing is named.
+    const derived = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "derived", source: "derived-edges", role: "member" },
+    });
+    expect(derived.status).toBe(201);
+    const derivedKey = await hostedCtx.storage.keys.get(
+      ((await derived.json()) as { id: string }).id,
+    );
+    expect(derivedKey?.edge_permissions?.about).toBe("read");
+
+    // Naming one family takes the derive path off for all of them.
+    const partial = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "partial",
+        source: "partial",
+        role: "member",
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(partial.status).toBe(201);
+    const partialKey = await hostedCtx.storage.keys.get(
+      ((await partial.json()) as { id: string }).id,
+    );
+    expect(partialKey?.type_permissions["core.note"]).toBe("read");
+    expect(partialKey?.edge_permissions ?? {}).toEqual({});
+    expect(partialKey?.metadata_permissions ?? {}).toEqual({});
+    expect(partialKey?.extension_permissions ?? {}).toEqual({});
+  });
+
+  it("takes the derive path off whichever family is named", async () => {
+    // Symmetric to the case above, and it is the one that catches a term
+    // going missing from `namesNoReach`: naming only the edge family must
+    // stop the type map deriving too, or a caller asking for a narrow key
+    // silently receives the session's own reach instead.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read", "edge.about:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "edges only",
+        source: "edges-only",
+        role: "member",
+        edge_permissions: {},
+      },
+    });
+    expect(res.status).toBe(201);
+    const stored = await hostedCtx.storage.keys.get(
+      ((await res.json()) as { id: string }).id,
+    );
+    expect(stored?.type_permissions ?? {}).toEqual({});
+    expect(stored?.edge_permissions ?? {}).toEqual({});
+  });
+
+  it("does not let a session-minted key claim a namespace by its label", async () => {
+    // `label` is read as identity, the same way `source` is: a namespace
+    // equal to the key's label is granted write implicitly. A session chooses
+    // its key's label, so without the stamp being consulted an app could name
+    // another vendor's namespace and read it on every item in the space,
+    // durably and after the app was revoked.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const minted = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "com.othervendor.sync",
+        source: "vendor-probe",
+        role: "member",
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(minted.status).toBe(201);
+    const key = await hostedCtx.storage.keys.get(
+      ((await minted.json()) as { id: string }).id,
+    );
+    expect(key?.scope_enforced).toBe(true);
+    // The stored map is empty, and the label must not stand in for one.
+    expect(key?.extension_permissions ?? {}).toEqual({});
+    expect(extensionLabelOf(key ?? undefined)).toBe("");
+    // A key minted the ordinary way still claims its own namespace.
+    expect(
+      extensionLabelOf({
+        label: "com.othervendor.sync",
+        scope_enforced: false,
+      }),
+    ).toBe("com.othervendor.sync");
+  });
+
+  it("measures a metadata wildcard on the metadata axis, not the type axis", async () => {
+    // `metadata.*:write` is well-formed on the WRONG axis: it misses the
+    // sub-resource matcher, clears `isValidTypePattern` because `metadata` is
+    // a valid root, and parses as an item-type grant. A plain content grant
+    // then covers it, so this case is a fail-open unless the bare form is
+    // used — and `"*"` is the ordinary key, since it is what a bare
+    // `metadata:<verb>` grant projects to.
+    const contentOnly = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("content:write"),
+      { userRole: "space_admin", spaceId },
+    );
+    const refused = await request(hostedCtx.app, "POST", "/keys", {
+      key: contentOnly.token,
+      body: {
+        label: "meta up",
+        source: "meta-up",
+        role: "member",
+        metadata_permissions: { "*": "write" },
+      },
+    });
+    expect(refused.status).toBe(403);
+    const err = (await refused.json()) as {
+      error: { details?: { required_scope?: string } };
+    };
+    expect(err.error.details?.required_scope).toBe("metadata:write");
+
+    // And the honest holder is not refused, which the broken literal also got
+    // wrong — in the other direction.
+    const metaHolder = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("metadata:write"),
+      { userRole: "space_admin", spaceId },
+    );
+    const allowed = await request(hostedCtx.app, "POST", "/keys", {
+      key: metaHolder.token,
+      body: {
+        label: "meta ok",
+        source: "meta-ok",
+        role: "member",
+        metadata_permissions: { "*": "write" },
+      },
+    });
+    expect(allowed.status).toBe(201);
+  });
+
+  it("still lets an API-key space_admin mint, with no capability anywhere", async () => {
+    // The gate returns immediately for a non-OAuth caller, so nothing about a
+    // keys-mode or API-key deployment changes. This is the case that says so.
     const raw = "marfa_k1_ta_" + Math.random().toString(36).slice(2);
     await hostedCtx.storage.keys.create(
       {
@@ -716,6 +1188,12 @@ describe("POST /keys — OAuth caller block", () => {
       body: { label: "minted", source: "minted", role: "member" },
     });
     expect(res.status).toBe(201);
+    const created = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(created.id);
+    // And its key is not scope-enforced: an API-key mint keeps `{}` and its
+    // role decides, exactly as before.
+    expect(stored?.scope_enforced).toBe(false);
+    expect(stored?.type_permissions).toEqual({});
   });
 });
 

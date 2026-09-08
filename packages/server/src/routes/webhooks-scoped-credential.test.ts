@@ -49,13 +49,15 @@ interface ErrorBody {
 describe("POST /webhooks and a scope-enforced credential", () => {
   it("refuses one that projects space_admin", async () => {
     const space = await spaces().create("scoped-webhook-space");
-    const { token } = await seedOauthBearer(ctx.storage, [], {
+    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
       spaceId: space.id,
       userRole: "space_admin",
     });
 
     // The role gate admits it — that is the point. The refusal has to
-    // come from the scope flag, not from the role.
+    // come from the scope flag, not from the role. `capability.keys` is
+    // granted only so the probe reaches that role check; it buys no
+    // data-plane reach, so what the webhook door sees is unchanged.
     const keysRes = await request(ctx.app, "GET", "/keys", { key: token });
     expect(keysRes.status).toBe(200);
 
@@ -101,7 +103,7 @@ describe("POST /webhooks and a scope-enforced credential", () => {
     expect(created.status).toBe(201);
     const webhookId = ((await created.json()) as { id: string }).id;
 
-    const { token } = await seedOauthBearer(ctx.storage, [], {
+    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
       spaceId: space.id,
       userRole: "space_admin",
     });
@@ -147,7 +149,7 @@ describe("POST /webhooks and a scope-enforced credential", () => {
     expect(created.status).toBe(201);
     const webhookId = ((await created.json()) as { id: string }).id;
 
-    const { token } = await seedOauthBearer(ctx.storage, [], {
+    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
       spaceId: space.id,
       userRole: "space_admin",
     });
