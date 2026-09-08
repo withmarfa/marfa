@@ -52,23 +52,27 @@ async function signUp(
 }
 
 /**
- * Mint a bearer inside a space. `role` is the axis under test in the write
- * gate: `admin` bypasses the permission maps but never the platform gate,
- * `member` is bound by `type_permissions`.
+ * Mint a bearer inside a space, granted the whole of the ordinary data plane.
+ *
+ * The wildcard is deliberately as wide as a space credential can be: the write
+ * gate under test is the reserved-namespace one, which reads `is_operator` and
+ * never the maps, so a credential that reaches every ordinary type and is
+ * still refused here is what makes the refusal mean something.
  */
-async function mintKey(
-  storage: Storage,
-  spaceId: string,
-  role: "instance_admin" | "member",
-): Promise<string> {
-  const raw = `marfa_k1_test_${Math.random().toString(36).slice(2, 14)}`;
+async function mintKey(storage: Storage, spaceId: string): Promise<string> {
+  const suffix = Math.random().toString(36).slice(2, 14);
+  const raw = `marfa_k1_test_${suffix}`;
   await storage.keys.create(
     {
-      label: `test-${role}`,
-      source: `test-${role}`,
-      role,
+      label: `test-space-key-${suffix}`,
+      source: `test-space-key-${suffix}`,
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
+      // Category 2 is its own axis and a wildcard on the type map does not
+      // reach it. A key used to arrive there through its role; with the role
+      // gone the map is the only route, so a fixture that reads the profile
+      // has to hold it.
+      profile_permissions: { "*": "write" },
     },
     hashApiKey(raw, SALT),
     spaceId,
@@ -183,7 +187,7 @@ describe("account-holder provisioning", () => {
       authAllowSignup: true,
     });
     const { spaceId } = await signUp(ctx, "holder-profile@example.com");
-    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
+    const key = await mintKey(ctx.storage, spaceId);
 
     const res = await request(ctx.app, "GET", "/profile/me", { key });
     expect(res.status).toBe(200);
@@ -204,7 +208,7 @@ describe("account-holder edges", () => {
       authAllowSignup: true,
     });
     const { spaceId } = await signUp(ctx, "holder-edge@example.com");
-    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
+    const key = await mintKey(ctx.storage, spaceId);
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -265,7 +269,7 @@ describe("account-holder edges", () => {
       authAllowSignup: true,
     });
     const { spaceId } = await signUp(ctx, "holder-unfixed@example.com");
-    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
+    const key = await mintKey(ctx.storage, spaceId);
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -364,7 +368,7 @@ describe("account-holder lifecycle", () => {
       ctx,
       "holder-delete@example.com",
     );
-    const key = await mintKey(ctx.storage, spaceId, "instance_admin");
+    const key = await mintKey(ctx.storage, spaceId);
 
     const profile = (await (
       await request(ctx.app, "GET", "/profile/me", { key })
@@ -413,7 +417,7 @@ describe("account-holder write gate", () => {
       authAllowSignup: true,
     });
     const { spaceId } = await signUp(ctx, "holder-gate@example.com");
-    const memberKey = await mintKey(ctx.storage, spaceId, "member");
+    const spaceKey = await mintKey(ctx.storage, spaceId);
 
     const page = await ctx.storage.items.list({
       spaceId,
@@ -425,7 +429,7 @@ describe("account-holder write gate", () => {
     // A wildcard `type_permissions` grant is deliberately not enough: the
     // reserved-namespace gate runs ahead of the permission maps.
     const create = await request(ctx.app, "POST", "/items", {
-      key: memberKey,
+      key: spaceKey,
       body: { type: ACCOUNT_HOLDER_TYPE, properties: {} },
     });
     expect(create.status).toBe(403);
@@ -434,13 +438,13 @@ describe("account-holder write gate", () => {
     ).toBe("type_not_permitted");
 
     const patch = await request(ctx.app, "PATCH", `/items/${holderId}`, {
-      key: memberKey,
+      key: spaceKey,
       body: { properties: { spoofed: true } },
     });
     expect(patch.status).toBe(403);
 
     const del = await request(ctx.app, "DELETE", `/items/${holderId}`, {
-      key: memberKey,
+      key: spaceKey,
     });
     expect(del.status).toBe(403);
 

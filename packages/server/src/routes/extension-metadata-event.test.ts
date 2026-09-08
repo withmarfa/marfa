@@ -190,11 +190,10 @@ describe("the space a metadata.changed frame is delivered in", () => {
       {
         label: `extspace-${suffix}`,
         source: `extspace-${suffix}`,
-        role: "member",
         type_permissions: {},
         extension_permissions: { reader: "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(memberKey, TEST_API_KEY_SALT),
       spaceA.id,
@@ -265,7 +264,6 @@ describe("the reserved connection namespaces", () => {
       {
         label: `extruntime-${suffix}`,
         source: `extruntime-${suffix}`,
-        role: "member",
         type_permissions: {},
         connection_id: connection.id,
         expires_at: new Date(Date.now() + 600_000).toISOString(),

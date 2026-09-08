@@ -23,17 +23,19 @@ import type { ApiKey } from "@withmarfa/shared";
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
 /**
- * Reserved extension namespaces are the metadata-layer twin of the
- * reserved *type* namespaces, which `checkTypeAccess` gates on
- * `is_platform` rather than on rank. Read them the same way: platform
- * authority, or an explicit platform credential — never rank alone. A
- * space-bound `admin` (the shape `POST /admin/spaces/{id}/keys` mints)
- * is admin within one space, not a platform principal, so it does not
- * qualify to write platform-internal namespaces.
+ * Reserved extension namespaces are the metadata-layer twin of the reserved
+ * *type* namespaces, which `checkTypeAccess` gates the same way: the instance
+ * tier and nothing else. A credential bound to a space is inside the
+ * permission model whatever it holds, and these namespaces sit outside it.
+ *
+ * One term rather than two. `is_operator` beside `hasOperatorAuthority` reads
+ * as a widening and is not one: the pair is only separable for a key carrying
+ * the flag *and* a space binding, which the row constraint on `api_keys`
+ * refuses outright.
  */
 function mayWriteReservedNamespace(apiKey: ApiKey | undefined): boolean {
   if (!apiKey) return false;
-  return hasPlatformAuthority(apiKey) || apiKey.is_platform;
+  return hasOperatorAuthority(apiKey);
 }
 
 import {
@@ -43,8 +45,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
-  roleBypassesPermissionMaps,
-  hasPlatformAuthority,
+  hasOperatorAuthority,
   requireRowWritable,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -333,7 +334,7 @@ export function extensionRoutes(storage: Storage) {
       extensions,
       apiKey?.extension_permissions,
       extensionLabelOf(apiKey),
-      roleBypassesPermissionMaps(apiKey),
+      false,
     );
 
     return c.json({ extensions: filtered }, 200);
@@ -353,13 +354,11 @@ export function extensionRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
 
-    const perm = roleBypassesPermissionMaps(apiKey)
-      ? "write"
-      : resolveExtensionPermission(
-          namespace,
-          apiKey?.extension_permissions,
-          extensionLabelOf(apiKey),
-        );
+    const perm = resolveExtensionPermission(
+      namespace,
+      apiKey?.extension_permissions,
+      extensionLabelOf(apiKey),
+    );
     if (perm === "none") {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
@@ -419,13 +418,11 @@ export function extensionRoutes(storage: Storage) {
     }
 
     if (namespace !== RUNTIME_NAMESPACE) {
-      const perm = roleBypassesPermissionMaps(apiKey)
-        ? "write"
-        : resolveExtensionPermission(
-            namespace,
-            apiKey?.extension_permissions,
-            extensionLabelOf(apiKey),
-          );
+      const perm = resolveExtensionPermission(
+        namespace,
+        apiKey?.extension_permissions,
+        extensionLabelOf(apiKey),
+      );
       if (perm !== "write") {
         throw new MarfaError(
           ErrorCode.FORBIDDEN,
@@ -517,7 +514,7 @@ export function extensionRoutes(storage: Storage) {
       );
     } else {
       const isOwner = extensionLabelOf(apiKey) === namespace;
-      if (!roleBypassesPermissionMaps(apiKey) && !isOwner) {
+      if (!isOwner) {
         const perm = resolveExtensionPermission(
           namespace,
           apiKey?.extension_permissions,

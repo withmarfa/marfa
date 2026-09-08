@@ -21,11 +21,10 @@
  * multi-batch migration does not call out once per edge it moves.
  *
  * Authorization mirrors single-edge `POST /edges`: the caller needs write
- * on the source item's type AND write on the edge type (admin /
- * space_admin bypass both). Operates only within the caller's space —
- * every storage query is threaded with `key.space_id`, so a space-scoped
- * caller can neither resolve nor mutate another space's edges. Same
- * 5000-edge cap as items.bulk.
+ * on the source item's type AND write on the edge type. Operates only
+ * within the caller's space — every storage query is threaded with
+ * `key.space_id`, so a space-scoped caller can neither resolve nor mutate
+ * another space's edges. Same 5000-edge cap as items.bulk.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -101,7 +100,7 @@ const edgesBulkRoute = createRoute({
   tags: ["Edges"],
   summary: "Bulk upsert edges",
   description:
-    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and edge type (admin / space_admin bypass; members need both per-type permissions), and operates only within the caller's space.",
+    "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type, and operates only within the caller's space.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -197,11 +196,11 @@ async function processBulkEdge(
     existingByTriple: Map<string, Edge>;
     /**
      * Per-edge write authorization, mirroring single-edge `POST /edges`:
-     * write on the source item's type AND write on the edge type. Admin /
-     * space_admin bypass both. The source item is resolved space-scoped,
-     * so a cross-space source returns `null` and the edge-type gate alone
-     * applies (matching `PATCH /edges/:id`, where a trashed/cross-space
-     * source skips the type gate but RLS remains the data-plane fence).
+     * write on the source item's type AND write on the edge type. The
+     * source item is resolved space-scoped, so a cross-space source returns
+     * `null` and the edge-type gate alone applies (matching
+     * `PATCH /edges/:id`, where a trashed/cross-space source skips the type
+     * gate but RLS remains the data-plane fence).
      * Throws on denial; the caller routes that to an `errored` outcome /
      * atomic rollback.
      */
@@ -386,9 +385,9 @@ export function edgesBulkRoutes(storage: Storage) {
 
   router.openapi(edgesBulkRoute, async (c) => {
     // Authenticated + per-edge dual gate (source-type write + edge-type
-    // write), mirroring single-edge `POST /edges`. admin / space_admin
-    // bypass both gates. Space scoping is threaded through every storage
-    // query below so a space-scoped caller stays inside its own space.
+    // write), mirroring single-edge `POST /edges`. Space scoping is
+    // threaded through every storage query below so a space-scoped caller
+    // stays inside its own space.
     requireAuth(c);
     const checkEdgeWrite = (
       sourceType: string | null,

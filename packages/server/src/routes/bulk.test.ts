@@ -540,17 +540,21 @@ describe("POST /items/bulk", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
-  it("admits a member with write on the item's type (matches POST /items)", async () => {
-    // Bulk write authorization mirrors single-item POST /items: a member
+  it("admits a credential with write on the item's type (matches POST /items)", async () => {
+    // Bulk write authorization mirrors single-item POST /items: a credential
     // holding write on the type can bulk-create it.
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    //
+    // `is_operator` is what the schema demands of a space-less key in keys
+    // mode. It opens the reserved namespaces and nothing else, so the type
+    // map is still what decides `core.note`.
+    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
-        label: "bulk-member-allowed",
-        source: `bulk-member-ok-${rawKey.slice(-6)}`,
-        role: "member",
+        label: "bulk-scoped-allowed",
+        source: `bulk-scoped-ok-${rawKey.slice(-6)}`,
         type_permissions: { "core.note": "write" },
+        is_operator: true,
       },
       keyHash,
     );
@@ -558,7 +562,7 @@ describe("POST /items/bulk", () => {
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: rawKey,
       body: {
-        items: [{ type: "core.note", properties: { body: "member-ok" } }],
+        items: [{ type: "core.note", properties: { body: "scoped-ok" } }],
       },
     });
     expect(res.status).toBe(200);
@@ -566,17 +570,17 @@ describe("POST /items/bulk", () => {
     expect(body.counts.created).toBe(1);
   });
 
-  it("rejects a member without write on the item's type (atomic 400)", async () => {
+  it("rejects a credential without write on the item's type (atomic 400)", async () => {
     // No type_permissions → no writable types. The atomic pre-check aborts
     // the whole batch with bulk_atomic_rollback carrying type_not_permitted.
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
-        label: "bulk-member-denied",
-        source: `bulk-member-no-${rawKey.slice(-6)}`,
-        role: "member",
+        label: "bulk-scoped-denied",
+        source: `bulk-scoped-no-${rawKey.slice(-6)}`,
         type_permissions: {},
+        is_operator: true,
       },
       keyHash,
     );
@@ -596,14 +600,14 @@ describe("POST /items/bulk", () => {
   });
 
   it("surfaces a per-item type_not_permitted error in non-atomic mode", async () => {
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
-        label: "bulk-member-mixed",
-        source: `bulk-member-mix-${rawKey.slice(-6)}`,
-        role: "member",
+        label: "bulk-scoped-mixed",
+        source: `bulk-scoped-mix-${rawKey.slice(-6)}`,
         type_permissions: { "core.note": "write" },
+        is_operator: true,
       },
       keyHash,
     );

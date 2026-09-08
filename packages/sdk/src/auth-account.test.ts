@@ -1,3 +1,4 @@
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createHmac } from "node:crypto";
 import { MarfaClient } from "./client.js";
@@ -23,10 +24,13 @@ async function mintFreshBearer(fixture: HostedModeFixture): Promise<string> {
     {
       label: `sdk-recovery-${suffix}`,
       source: `sdk-recovery-${suffix}`,
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
+      extension_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
     },
     hash,
     fixture.spaceId,

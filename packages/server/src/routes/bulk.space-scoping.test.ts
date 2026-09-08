@@ -22,6 +22,7 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -37,11 +38,11 @@ async function mintSpaceAdmin(label: string, spaceId: string): Promise<string> {
     {
       label,
       source: `${label}-${suffix}`,
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,

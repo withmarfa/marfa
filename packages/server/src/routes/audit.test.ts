@@ -8,6 +8,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { parseTrustedProxyCidrs } from "../middleware/client-ip.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -318,10 +319,10 @@ describe("GET /audit", () => {
       {
         label: "space-a-admin",
         source: "space-a-admin",
-        role: "instance_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(spaceAKey, TEST_API_KEY_SALT),
       "space-a",

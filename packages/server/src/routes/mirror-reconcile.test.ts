@@ -66,7 +66,6 @@ beforeAll(async () => {
     {
       label: "reconcile-owner",
       source: `reconcile-owner-${String(Math.random()).slice(2)}`,
-      role: "member",
       type_permissions: { "core.bookmark": "write" },
       connection_id: "conn_mirror_reconcile",
       expires_at: new Date(Date.now() + 600_000).toISOString(),

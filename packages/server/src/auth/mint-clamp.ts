@@ -1,13 +1,23 @@
 /**
- * Clamping an OAuth-minted key to the reach the session itself holds.
+ * Clamping a minted key to the reach its creator itself holds.
  *
  * `POST /keys` used to refuse an OAuth caller outright, and that refusal was
  * the enforcement: a session could not mint, so it could not mint something
  * wider than itself. Replacing it with `space.keys` removes the refusal
  * and leaves the escalation, so the clamp is what takes its place. Without it
- * an app granted `core.note:read` plus the capability could mint a
- * `space_admin` key that bypasses the permission maps entirely — a durable
- * credential wider than the grant it came from, and one that outlives it.
+ * an app granted `core.note:read` plus the permission could mint a key whose
+ * own maps reach every type — a durable credential wider than the grant it
+ * came from, and one that outlives it.
+ *
+ * **The same is true of a key minted by a key, and that half is newer.** While
+ * a role admitted a credential past its own maps, every caller that could
+ * reach this route already reached everything, so "wider than its creator" had
+ * nothing to bite on. Under one permission model a narrow credential is an
+ * ordinary thing: a key holding `space.keys` and read on one type is a
+ * coherent credential, and nothing about holding the permission to mint says
+ * anything about how far what it mints may reach. So the ceiling is asked of
+ * every creator, and `scopesHeldByMaps` is what lets a key's own maps be
+ * compared by the same rule a grant is.
  *
  * **Every comparison goes through `grantCoversScope`.** It is the platform's
  * own answer to "does this grant reach that", it understands wildcards,
@@ -64,6 +74,63 @@ export function scopeForEntry(
   if (family === "type") return `${key}:${level}`;
   if (family === "edge") return `edge.${key}:${level}`;
   return key === "*" ? `metadata:${level}` : `metadata.${key}:${level}`;
+}
+
+/**
+ * The scope literals a credential's own permission maps confer.
+ *
+ * A session arrives holding scopes and a key arrives holding maps, and the
+ * ceiling has to be the same question of both. Projecting the maps back into
+ * literals is what makes that possible: from here on there is one comparison,
+ * through `grantCoversScope`, rather than a second hand-rolled rule for keys —
+ * which is the sixth hand-rolled comparison this file's own header warns
+ * against writing.
+ *
+ * Lossy in exactly one direction, and safely. A map entry at `none` produces
+ * no literal, so it confers nothing, which is what `none` means. Extensions
+ * are absent because no literal expresses one; they are clamped by the direct
+ * map comparison in `firstUncoveredExtension` instead, which a key's creator
+ * can answer and a grant cannot.
+ */
+export function scopesHeldByMaps(held: RequestedReach): string[] {
+  const scopes: string[] = [];
+  const families = [
+    ["type", held.type_permissions],
+    ["edge", held.edge_permissions],
+    ["metadata", held.metadata_permissions],
+  ] as const;
+  for (const [family, map] of families) {
+    for (const [key, level] of Object.entries(map ?? {})) {
+      const scope = scopeForEntry(family, key, level);
+      if (scope !== null) scopes.push(scope);
+    }
+  }
+  return scopes;
+}
+
+/**
+ * The first extension namespace the creator does not hold at the level asked
+ * for, or null when it holds them all.
+ *
+ * **A key's creator can be asked this and a session cannot**, which is why the
+ * family is refused outright for a session and compared directly here. A grant
+ * carries no literal for an extension namespace, so there is nothing to
+ * compare it against; a key carries a map of exactly the same shape as the one
+ * being requested, so the comparison is a lookup.
+ *
+ * `write` covers `read`, matching every other family. A namespace absent from
+ * the creator's map is not held at any level.
+ */
+export function firstUncoveredExtension(
+  held: Record<string, ExtensionPermission> | undefined,
+  requested: Record<string, ExtensionPermission> | undefined,
+): string | null {
+  for (const [namespace, level] of Object.entries(requested ?? {})) {
+    const mine = held?.[namespace] ?? held?.["*"];
+    if (mine === undefined) return namespace;
+    if (level === "write" && mine !== "write") return namespace;
+  }
+  return null;
 }
 
 /**

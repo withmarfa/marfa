@@ -14,7 +14,7 @@
  *
  * Every sibling operation agrees — `POST /connections/install`,
  * `POST /connections/:id/configure` and `POST /connections/:id/uninstall`
- * are all `requireSpaceAdmin`, and the configure route's own comment says
+ * are all `requireAuth`, and the configure route's own comment says
  * it matches the install routes. The HTML install pair was the one that
  * never got the gate, so a member key holding nothing but
  * `system.integration: read` could provision an integration into its own
@@ -29,6 +29,7 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import type { SpacePermission } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -72,15 +73,16 @@ async function registerIntegration(name: string): Promise<string> {
 
 async function mintKey(
   spaceId: string,
-  role: "member" | "space_admin",
+  name: string,
+  spacePermissions: SpacePermission[],
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
     key: ctx.adminKey,
     body: {
-      label: `install-authority-${role}-${suffix}`,
-      source: `install-authority-${role}-${suffix}`,
-      role,
+      label: `install-authority-${name}-${suffix}`,
+      source: `install-authority-${name}-${suffix}`,
+      space_permissions: spacePermissions,
       default_tier: "library",
       type_permissions: { "system.integration": "read" },
       extension_permissions: {},
@@ -104,12 +106,12 @@ function installRequest(integrationId: string, key: string): Request {
   });
 }
 
-describe("the bearer install path refuses below space-admin", () => {
-  it("refuses a member key installing an integration", async () => {
+describe("the bearer install path refuses a key without `space.connections`", () => {
+  it("refuses a key holding no space permissions installing an integration", async () => {
     if (!ctx.storage.spaces) return;
     const id = await registerIntegration("acme/install-authority-refused");
     const space = await ctx.storage.spaces.create("install-authority-refused");
-    const memberKey = await mintKey(space.id, "member");
+    const memberKey = await mintKey(space.id, "narrow", []);
 
     const res = await ctx.app.fetch(installRequest(id, memberKey));
     expect(res.status).toBe(403);
@@ -126,7 +128,7 @@ describe("the bearer install path refuses below space-admin", () => {
     if (!ctx.storage.spaces) return;
     const id = await registerIntegration("acme/install-authority-allowed");
     const space = await ctx.storage.spaces.create("install-authority-allowed");
-    const adminKey = await mintKey(space.id, "space_admin");
+    const adminKey = await mintKey(space.id, "granted", ["space.connections"]);
 
     const res = await ctx.app.fetch(installRequest(id, adminKey));
     expect(res.status).toBe(200);

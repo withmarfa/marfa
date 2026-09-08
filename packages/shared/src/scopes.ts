@@ -137,17 +137,19 @@ export { SPACE_ROOT } from "./scope-roots.js";
  *   system.** A key is a durable credential and an app that could mint an
  *   unscoped one would no longer need its grant at all, so the capability is
  *   necessary for the mint and nowhere near sufficient. The route holds a
- *   session to the reach its own grant covers, refusing by name, and stamps
- *   `scope_enforced` on what it produces so the key stays held to its
- *   permission maps rather than to its role. Both halves, or the clamp lasts
+ *   session to the reach its own grant covers, refusing by name, and records
+ *   the app that minted it, so the key is recognizable later as an app's
+ *   rather than a person's. Both halves, or the clamp lasts
  *   until the key is first used. `server/src/auth/mint-clamp.ts` carries the
  *   reasoning; the route used to refuse an OAuth bearer outright, and that
  *   refusal was doing this job by removing the surface.
- * - **`item_purge` is one item.** Bulk purge is `requireAdmin`, the
- *   cross-space operator tier, which is not a consentable surface — so a
- *   capability held by a space-scoped app must not reach it. It is also the
- *   last of the eleven to be enforced, because Marfa Mini's Empty Bin calls
- *   that door and gained any way to ask for the scope only in 0.8.1.
+ * - **`item_purge` covers both purge doors.** The bulk one asks for it as the
+ *   single-row one does: the same act on more rows, and a caller that may
+ *   destroy one row irrecoverably may destroy a hundred. A second, stricter
+ *   gate there would only mean the permission a person granted did not mean
+ *   what the consent screen said. The bulk door narrows its match set by the
+ *   caller's own type permissions on top, so holding this reaches exactly the
+ *   rows the credential could already write.
  * - **The caller resolver is not a surface.** It answers which space a
  *   request acts in, ahead of the four page pairs that are surfaces, so
  *   gating it would gate the question rather than an answer.
@@ -265,15 +267,12 @@ export function requiresExplicitConsent(scope: string): boolean {
  * said yes to a token holding no capability at all. That function now refuses
  * a capability outright, and this one is what replaces it.
  *
- * **Nothing can call this from a route yet, and the missing piece is a
- * carrier rather than a helper.** `ApiKey` has no scope list and the request
- * context carries none: the bearer middleware projects a token's scopes into
- * the three permission maps and keeps nothing else, and a capability
- * deliberately enters none of those. So a gate reaching for this has no
- * `held` to pass, and the change that wires the first gate has to thread the
- * granted scopes onto the request before it can use this at all. Stated here
- * because the shape of the fix is not obvious from the signature, and
- * because the wrong repair is to relax one of the three projections.
+ * **Both kinds of credential reach it through one carrier.** A key holds its
+ * set on `space_permissions`; a sign-in holds it on the grant the request
+ * carries. Neither enters the content permission maps, deliberately, because a
+ * space permission names a surface rather than a type — so the wrong repair,
+ * if this ever seems not to reach far enough, is to project one into those
+ * maps. `server/src/middleware/auth.ts` picks the carrier and calls this once.
  */
 export function hasSpacePermission(
   held: readonly string[],
@@ -766,7 +765,7 @@ export function expandWildcardScopes(
  * - **`marfa.*` reads but does not write.** Those types are family
  *   `integration`, so they are squarely in the category and their reads are
  *   unrestricted. But the middleware refuses every `marfa.*` write from a
- *   credential that is not `is_platform` or a manifest-granted runtime
+ *   credential that is not `is_operator` or a manifest-granted runtime
  *   credential, and an OAuth token is neither. **A parent must never claim
  *   what a hard gate will refuse**: a grant that reads as covering a write
  *   nothing will ever permit is a consent screen telling a person something

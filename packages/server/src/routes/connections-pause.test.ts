@@ -73,10 +73,10 @@ async function ownerKey(spaceId: string): Promise<string> {
     },
   });
   expect(res.status).toBe(201);
-  const body = (await res.json()) as { key: string; is_platform?: boolean };
+  const body = (await res.json()) as { key: string; is_operator?: boolean };
   // The premise of the test: this key must NOT be a platform credential,
   // or it would bypass the very gate that made pause unusable.
-  expect(body.is_platform ?? false).toBe(false);
+  expect(body.is_operator ?? false).toBe(false);
   return body.key;
 }
 

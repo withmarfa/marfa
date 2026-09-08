@@ -3,17 +3,18 @@
  *
  * No minting path may issue a credential whose authority exceeds, on any
  * axis, the authority of the principal or governing declaration that
- * authorized the mint — role at or below the caller's rank
- * (`canGrantRole`); `is_platform` only from a platform caller; space
- * binding inherited from the caller or the resource being minted for,
- * never chosen by the request and never absent on a hosted deployment;
- * and permission or scope breadth at or below the caller's own grant,
- * the governing manifest, or the explicitly requested scope set. The
- * one-shot bootstrap seed is the sole stated exception.
+ * authorized the mint — space permissions at or below the creator's own
+ * set; `is_operator` only from an operator caller, and only for another
+ * operator key; space binding inherited from the caller or the resource
+ * being minted for, never chosen by the request and never absent on a
+ * hosted deployment; and content breadth at or below the caller's own
+ * grant, the governing manifest, or the explicitly requested scope set.
+ * The three seeds the design names are the stated exceptions, because no
+ * creator set exists above them to be bounded by.
  *
- * Enforcement lives where each axis is checked — `canGrantRole` at
- * `POST /keys`, the platform clamp there too, `assertMintableSpaceScope`
- * on the runtime-credential paths, `manifest-permissions.ts` for their
+ * Enforcement lives where each axis is checked — the creator ceiling and
+ * the operator rule at `POST /keys`, `assertMintableSpaceScope` on the
+ * runtime-credential paths, `manifest-permissions.ts` for their
  * breadth — but the CEILING VALUES for the paths that are configuration
  * rather than code live here, so the plugin options and the DCR mirror
  * cannot drift apart. `routes/credential-mint-doors.test.ts` is the

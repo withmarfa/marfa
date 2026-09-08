@@ -1,5 +1,5 @@
 /**
- * Who is calling a space-admin HTML surface, and from where.
+ * Who is calling a space-scoped HTML surface, and from where.
  *
  * Most of the data plane is bearer-only: `/items` with only a session cookie
  * is a 401, deliberately. But a few routes render a page a person is meant to
@@ -14,18 +14,10 @@
  * minted. It resolves that person's space rather than reading one off a key.
  */
 import type { Context } from "hono";
-import {
-  ErrorCode,
-  MarfaError,
-  parseMarfaRole,
-  ROLE_RANK,
-} from "@withmarfa/shared";
+import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { SpacePermission } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  hasSpaceAdminAuthority,
-  requireSpacePermission,
-} from "../middleware/auth.js";
+import { requireSpacePermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 
@@ -43,8 +35,8 @@ export interface SpaceCaller {
 }
 
 /**
- * Resolve a caller holding space-admin authority, from a bearer token or a
- * Better Auth session.
+ * Resolve the caller of a space-scoped surface, from a bearer token or a
+ * Better Auth session, and hold it to the permission that surface requires.
  *
  * Returns a `Response` when the caller has to go somewhere before it can
  * answer: an unauthenticated browser navigation is sent to sign-in with a
@@ -52,7 +44,7 @@ export interface SpaceCaller {
  * yet is a dead end. A request that presented an `Authorization` header and
  * failed still gets the 401 it asked for.
  */
-export async function resolveSpaceAdminCaller(
+export async function resolveSpaceCaller(
   c: Context<AppEnv>,
   storage: Storage,
   auth: MarfaAuth | undefined,
@@ -61,23 +53,18 @@ export async function resolveSpaceAdminCaller(
 ): Promise<SpaceCaller | Response> {
   const apiKey = c.get("apiKey");
   if (apiKey) {
-    if (!hasSpaceAdminAuthority(apiKey) && !apiKey.is_platform) {
-      throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
-    }
-    // **The capability belongs here rather than at the five call sites.** This
+    // **The permission belongs here rather than at the five call sites.** This
     // resolver is not itself a surface — it answers which space a request acts
-    // in, which is why it carries no capability of its own — but everything it
-    // admits is one, and admitting on space-admin rank is reachable by an OAuth
-    // bearer through the projected role. Gating the callers one at a time is
-    // what left the `GET` half of a door open while its `POST` twin, one
-    // function away in the same file, was closed. A required parameter means a
-    // new surface cannot be added without answering the question.
+    // in, which is why it carries none of its own — but everything it admits is
+    // one. Gating the callers one at a time is what left the `GET` half of a
+    // door open while its `POST` twin, one function away in the same file, was
+    // closed. A required parameter means a new surface cannot be added without
+    // answering the question.
     //
-    // The bearer branch only. A browser session below carries no `apiKey`, so
-    // `requireSpacePermission` would answer 401 to a person who is signed in — and
-    // there is no grant behind a session for a capability to have been ticked
-    // on, because these pages are part of the consent surface rather than
-    // something reached through it.
+    // It is also the whole gate now. There used to be a rank test in front of
+    // it, admitting a space admin or an operator flag before the permission was
+    // consulted at all; a bearer that cleared the rank and held nothing reached
+    // every surface behind this resolver. One question, asked once.
     requireSpacePermission(c, permission);
     return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
   }
@@ -92,28 +79,21 @@ export async function resolveSpaceAdminCaller(
       if (!storage.users) {
         return { apiKeyId: `auth_user:${session.user.id}`, spaceId: undefined };
       }
-      // Being signed in is not authority. The bearer branch above has
-      // always required space-admin rank; this branch required only a
-      // session, so any member of a space could install an integration
-      // or rewrite its configuration by opening the page. Sign-up
-      // provisions the account holder as `space_admin`, so an ordinary
-      // owner is unaffected — what this refuses is a member of someone
-      // else's space, and a session with no space record at all.
+      // Being signed in is not authority: what a session buys is a space to
+      // act in, and that space has to resolve.
       const user = await storage.users.getByAuthUserId(session.user.id);
-      // Rank lookup on a parsed role, never on the raw one. An unknown
-      // role makes `ROLE_RANK[...]` undefined, and `undefined < 2` is
-      // false, so the comparison admits exactly what it means to refuse.
-      // The store narrows on read, so this is belt and braces, but it is
-      // the difference between failing open and failing closed for a
-      // caller constructed some other way.
-      if (
-        !user ||
-        ROLE_RANK[parseMarfaRole(user.role)] < ROLE_RANK.space_admin
-      ) {
-        throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
-      }
-      // An unresolved space is refused, never passed on. See `SpaceCaller`.
-      if (!user.space_id) {
+      // **A signed-in person whose account resolves to a space is admitted,
+      // and that is the whole test.** One account holds one space and the
+      // first person in it holds everything, so a rank comparison here was
+      // asking which of three kinds of person this was and always getting the
+      // same answer. What a person may do is their permission set; these pages
+      // are part of the consent surface rather than something reached through
+      // it, so there is no grant behind the session for a permission to have
+      // been ticked on.
+      //
+      // An unresolved account, or one with no space, is refused rather than
+      // passed on. See `SpaceCaller`.
+      if (!user?.space_id) {
         throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
       }
       return {

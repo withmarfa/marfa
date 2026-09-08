@@ -39,7 +39,6 @@ async function mintKey(
   label: string,
   spaceId: string,
   opts: {
-    role?: "space_admin" | "member";
     type_permissions?: Record<string, "read" | "write">;
     edge_permissions?: Record<string, "read" | "write">;
   } = {},
@@ -50,11 +49,13 @@ async function mintKey(
     {
       label,
       source: `${label}-${suffix}`,
-      role: opts.role ?? "space_admin",
+      // No space permission is named because no door here asks for one: the
+      // item read, the edge writes and the neighbor hydration are all decided
+      // by the two maps below.
       default_tier: "library",
       type_permissions: opts.type_permissions ?? { "*": "write" },
       edge_permissions: opts.edge_permissions ?? { "*": "write" },
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,
@@ -137,7 +138,6 @@ beforeAll(async () => {
   adminA = await mintKey("detail-admin-a", spaceA);
   adminB = await mintKey("detail-admin-b", spaceB);
   noteReaderA = await mintKey("detail-note-reader-a", spaceA, {
-    role: "member",
     type_permissions: { "core.note": "read" },
     edge_permissions: { "*": "read" },
   });

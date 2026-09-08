@@ -1,6 +1,6 @@
 /**
  * `/admin/*` operator surface. Every route in this file is platform-
- * admin only (`requireAdmin` enforces). The CLI's `my platform` command
+ * admin only (`requireOperatorKey` enforces). The CLI's `my platform` command
  * tree is the canonical consumer; the routes are also reachable directly
  * via the SDK's `client.admin` namespace.
  *
@@ -37,12 +37,12 @@ import { createRoute, z } from "@hono/zod-openapi";
 import {
   ErrorCode,
   MarfaError,
-  parseMarfaRole,
   SPACE_STATUSES,
+  SPACE_PERMISSIONS,
 } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
+import type { ApiKey, SpacePermission } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { hashApiKey, requireAdmin } from "../middleware/auth.js";
+import { hashApiKey, requireOperatorKey } from "../middleware/auth.js";
 import type { CreateEmailAccountResult, MarfaAuth } from "../auth/instance.js";
 import { assertUnreservedSource } from "./keys.js";
 import type { Storage } from "../storage/interface.js";
@@ -56,7 +56,6 @@ import {
 import { publish, publishEdge } from "../pubsub.js";
 import type { Edge, Item } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
-import { RoleRequestSchema } from "./role-schema.js";
 import { KeyResponseSchema, QuotaSchema } from "./_schemas.js";
 
 // ---------------------------------------------------------------------------
@@ -121,16 +120,23 @@ const ApiKeySummarySchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.string(),
-  is_platform: z.boolean(),
+  is_operator: z.boolean(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });
 
+/**
+ * The whole of a family, in the form that stays true as the vocabulary grows.
+ * Written once so the five families a seeded key takes cannot drift apart.
+ */
+const EVERYTHING = { "*": "write" } as const;
+
 const CreateSpaceKeyBodySchema = z.object({
   label: z.string().min(1, "label is required"),
   source: z.string().min(1, "source display name is required").max(200),
-  role: RoleRequestSchema.optional(),
+  space_permissions: z
+    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
+    .optional(),
   default_tier: z.enum(["library", "feed"]).optional(),
   type_permissions: z
     .record(z.string(), z.enum(["read", "write", "none"]))
@@ -140,6 +146,9 @@ const CreateSpaceKeyBodySchema = z.object({
     .optional(),
   edge_permissions: z.record(z.string(), z.enum(["read", "write"])).optional(),
   metadata_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  profile_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
 });
@@ -590,8 +599,7 @@ function apiKeySummary(key: ApiKey): z.infer<typeof ApiKeySummarySchema> {
     id: key.id,
     label: key.label,
     source: key.source,
-    role: key.role,
-    is_platform: key.is_platform,
+    is_operator: key.is_operator,
     created_at: key.created_at,
     last_used_at: key.last_used_at,
   };
@@ -734,7 +742,7 @@ const createAccountRoute = createRoute({
   tags: ["Admin"],
   summary: "Create an account",
   description:
-    "Creates an email + password account, already verified, with its own space and `space_admin` on it — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
+    "Creates an email + password account, already verified, with its own space, which it solely owns — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -995,7 +1003,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   }
 
   router.openapi(createSpaceRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     // A single-space deployment has no space store at all. `NOT_FOUND`
     // rather than a dedicated code, matching every sibling route here: the
     // resource does not exist on this instance.
@@ -1025,7 +1033,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(listSpacesRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     if (!storage.spaces) {
       return c.json({ data: [] }, 200);
     }
@@ -1036,7 +1044,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(showSpaceRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const { id } = c.req.valid("param");
     if (!storage.spaces) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
@@ -1067,7 +1075,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(suspendSpaceRoute, async (c) => {
-    const actor = requireAdmin(c);
+    const actor = requireOperatorKey(c);
     const { id } = c.req.valid("param");
     if (!storage.spaces) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
@@ -1095,7 +1103,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(unsuspendSpaceRoute, async (c) => {
-    const actor = requireAdmin(c);
+    const actor = requireOperatorKey(c);
     const { id } = c.req.valid("param");
     if (!storage.spaces) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
@@ -1121,7 +1129,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(spaceMetricsRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const { id } = c.req.valid("param");
     if (!storage.spaces) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
@@ -1158,7 +1166,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(listSpaceKeysRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const { id } = c.req.valid("param");
     if (!storage.spaces) {
       throw new MarfaError(ErrorCode.NOT_FOUND, "Space store not available");
@@ -1172,7 +1180,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(createSpaceKeyRoute, async (c) => {
-    const actor = requireAdmin(c);
+    const actor = requireOperatorKey(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
     if (!storage.spaces) {
@@ -1190,17 +1198,30 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       {
         label: body.label.trim(),
         source: body.source.trim(),
-        // The request schema still accepts the retiring word; the stored
-        // row must not.
-        role: parseMarfaRole(body.role, "member"),
         default_tier: body.default_tier,
+        // **A mint into a named space is a seed, not a bounded creation.**
+        // No creator set fences it — the operator key holds nothing to hand
+        // down — so it takes everything in that space unless the request
+        // names less, which is the design's rule for the three creations that
+        // have no ceiling above them.
+        //
+        // **Every family defaults, not only the permission list.** The maps
+        // could be left empty while a role decided a key's reach; they are the
+        // whole of it now, so a seed that filled in the eleven and left the
+        // content maps at `{}` would hand back a credential that administers a
+        // space it cannot read a row of. The wildcard form rather than an
+        // enumeration of today's types, for the reason the backfill takes it:
+        // a type registered tomorrow is inside "everything in that space".
+        space_permissions: (body.space_permissions ??
+          SPACE_PERMISSIONS) as SpacePermission[],
         // This route deliberately cannot create platform credentials. Its
         // purpose is issuing a credential whose authority is confined to id.
-        is_platform: false,
-        type_permissions: body.type_permissions ?? {},
-        extension_permissions: body.extension_permissions,
-        edge_permissions: body.edge_permissions,
-        metadata_permissions: body.metadata_permissions,
+        is_operator: false,
+        type_permissions: body.type_permissions ?? EVERYTHING,
+        extension_permissions: body.extension_permissions ?? EVERYTHING,
+        edge_permissions: body.edge_permissions ?? EVERYTHING,
+        metadata_permissions: body.metadata_permissions ?? EVERYTHING,
+        profile_permissions: body.profile_permissions ?? EVERYTHING,
       },
       hashApiKey(rawKey, opts.apiKeySalt),
       id,
@@ -1222,9 +1243,9 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
         key: rawKey,
         label: stored.label,
         source: stored.source,
-        role: stored.role,
+        space_permissions: stored.space_permissions,
         default_tier: stored.default_tier,
-        is_platform: stored.is_platform,
+        is_operator: stored.is_operator,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,
@@ -1237,7 +1258,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(accountDeletionPurgeNowRoute, async (c) => {
-    const actor = requireAdmin(c);
+    const actor = requireOperatorKey(c);
     // Construct an ad-hoc purger — the long-lived singleton in
     // `index.ts` carries its own timer + coordination lock; this
     // one-shot doesn't need either of those wired in (intervalMs is
@@ -1269,7 +1290,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(deleteSpaceRoute, async (c) => {
-    const actor = requireAdmin(c);
+    const actor = requireOperatorKey(c);
     const { id } = c.req.valid("param");
     const { confirm } = c.req.valid("json");
 
@@ -1350,7 +1371,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(createAccountRoute, async (c) => {
-    const actor = requireAdmin(c);
+    const actor = requireOperatorKey(c);
     const auth = opts.auth;
     const users = storage.users;
     // Keys mode has no auth server and no users table. The same code and
@@ -1371,8 +1392,8 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     });
     if (!outcome.ok) throw accountCreationRefusal(outcome);
 
-    // The space, the handle and the `space_admin` role are the sign-up
-    // provisioning hook's work, and it runs inside the create above.
+    // The space and the handle are the sign-up provisioning hook's work,
+    // and it runs inside the create above.
     // Reading the row back is what turns "the hook is wired" into "the
     // hook ran for this account" — and the space id is half the answer
     // the caller asked for.
@@ -1422,7 +1443,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(deleteAccountRoute, async (c) => {
-    const actor = requireAdmin(c);
+    const actor = requireOperatorKey(c);
     const { id } = c.req.valid("param");
     const { confirm } = c.req.valid("json");
 
@@ -1491,7 +1512,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
   });
 
   router.openapi(deleteOAuthClientRoute, async (c) => {
-    const key = requireAdmin(c);
+    const key = requireOperatorKey(c);
     const { client_id: clientId } = c.req.valid("param");
     const { confirm } = c.req.valid("json");
     // The id, not a name: the space delete confirms on the id for the same

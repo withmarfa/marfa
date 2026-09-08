@@ -23,11 +23,10 @@
  * the point: this is the failure that sits unnoticed rather than the one
  * that pages someone.
  *
- * **This defaults to `suspended`, and `storedRole` defaults to `member`.
- * Those look inconsistent and are the same rule.** Both fail toward less
- * capability. A role has a lattice to fall down, so the answer is the
- * least authority in it; a status has a direction to lean, so the answer
- * is the more restrictive end.
+ * **This defaults to `suspended`, which is the restrictive end.** A value
+ * nothing recognizes says the row is in a state this build cannot reason
+ * about, and the only safe reading of that is the one that withholds
+ * rather than the one that admits.
  *
  * **The cost of leaning that way, stated rather than skipped.** The
  * motivating case is a hand-repair typing `"Suspended"`, where the old
@@ -38,7 +37,7 @@
  *
  * The argument is that the two outcomes are not equally recoverable. A
  * wrongly-suspended space returns a loud 403 naming its reason, reads
- * still pass, platform-admin keys bypass the gate entirely, the error log
+ * still pass, the operator key bypasses the gate entirely, the error log
  * names the row and the true stored string, and
  * `POST /admin/spaces/{id}/unsuspend` overwrites the column
  * unconditionally. A wrongly-active space produces no signal at all, and

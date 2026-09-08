@@ -46,7 +46,7 @@ import {
 } from "../storage/merge-properties.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  requireAdmin,
+  requireSpacePermission,
   requireAuth,
   requireTypeAccess,
   requireEdgePermission,
@@ -59,7 +59,7 @@ import {
   itemProvenanceSource,
   writerConnectionOf,
   getTypeFilter,
-  hasPlatformAuthority,
+  hasOperatorAuthority,
   INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
@@ -191,7 +191,7 @@ const bulkRoute = createRoute({
   tags: ["Items"],
   summary: "Bulk upsert items",
   description:
-    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`.",
+    "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them — and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -504,8 +504,8 @@ async function processBulkItem(
     retype: boolean;
     /**
      * Per-item write authorization. Mirrors the single-item `POST /items`
-     * gate (`requireTypeAccess(c, type, "write")`): admin / space_admin
-     * bypass; a member must hold write on the item's type. Throws
+     * gate (`requireTypeAccess(c, type, "write")`): the credential must hold
+     * write on the item's type, and nothing bypasses that. Throws
      * `TYPE_NOT_PERMITTED` (403) which surfaces as a per-item `errored`
      * outcome in best-effort mode and aborts the batch in atomic mode.
      *
@@ -1002,9 +1002,9 @@ export function bulkRoutes(storage: Storage) {
   // POST /items/bulk — list-in
   router.openapi(bulkRoute, async (c) => {
     // Authenticated + per-item type-write authorization, mirroring the
-    // single-item `POST /items` gate. admin / space_admin bypass type
-    // permissions; a member must hold write on each item's type. space
-    // scoping is threaded through every storage call below via `spaceId`.
+    // single-item `POST /items` gate: the credential must hold write on each
+    // item's type, and nothing bypasses that. Space scoping is threaded
+    // through every storage call below via `spaceId`.
     requireAuth(c);
     const checkWrite = (raw: { type: string; properties?: unknown }): void => {
       requireTypeAccess(c, raw.type, "write");
@@ -1256,11 +1256,16 @@ export function bulkRoutes(storage: Storage) {
       MAX_BULK_ACTION_ITEMS_HARD,
     );
 
-    // Purge is admin-only (hard 403). Every other action falls back to
-    // type-permission narrowing via computeTypeFilter — non-admin callers
-    // see their match set auto-reduced to writable types.
+    // **Purge asks for `space.item_purge`, the same permission the single-item
+    // door asks for.** It is the same act on more rows, and a caller that may
+    // destroy one row irrecoverably may destroy a hundred; a second, stricter
+    // gate here would only mean the permission a person granted did not mean
+    // what the consent screen said. Every other action falls back to
+    // type-permission narrowing via `computeTypeFilter`, so a caller holding
+    // less sees its match set reduced rather than refused.
     if (action === "purge") {
-      requireAdmin(c);
+      requireAuth(c);
+      requireSpacePermission(c, "space.item_purge");
       if (body.confirm !== "PURGE") {
         throw new MarfaError(
           ErrorCode.BULK_CONFIRMATION_REQUIRED,
@@ -1355,8 +1360,11 @@ export function bulkRoutes(storage: Storage) {
     // `PATCH /items/{id}` refuses the same key on the same row. This door
     // runs no per-row permission check, so the filter is the whole of it.
     //
-    // Purge already rejected non-admin above, and admin bypasses the maps,
-    // so this is a no-op for an admin caller regardless of level.
+    // **Purge narrows here too, and that is new.** It used to be a no-op for
+    // the only callers who reached purge, because a rank admitted them past
+    // their maps. Under one model a caller purges what it may write: holding
+    // `space.item_purge` says a credential may destroy rows irrecoverably, and
+    // its type permissions say which.
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(
       c,
       "write",
@@ -1519,8 +1527,8 @@ export function bulkRoutes(storage: Storage) {
     // deliberately. They are neither the write D63 ruled on nor the destroy
     // D64 ruled on, and widening to them here would be this change deciding
     // a question nobody has put.
-    // `purge` is absent deliberately: it is `requireAdmin` above, so no
-    // runtime credential reaches it and narrowing it would be unreachable.
+    // `purge` is absent deliberately: it asks for `space.item_purge` above,
+    // which no runtime credential holds, so narrowing it would be unreachable.
     const narrowsOnProvenance = patch !== undefined || action === "transition";
     if (narrowsOnProvenance && matched.length > 0) {
       const mine =
@@ -1655,20 +1663,16 @@ export function bulkRoutes(storage: Storage) {
 
 // Who may read or cancel a job, in the order the checks run:
 //
-//   - an unbound admin, which is platform authority, reaches any job;
-//   - a space-bound admin reaches every job in its own space, and is
-//     cloaked from the rest;
+//   - the operator key reaches any job, which is what the instance tier is;
 //   - anyone else reaches only jobs their own credential created, since
 //     within a space separate credentials do not observe each other's
-//     bulk_action jobs.
+//     bulk_action jobs;
+//   - a job in another space is cloaked as absent rather than refused.
 //
-// The role alone is not platform authority: `POST /admin/spaces/:id/keys`
-// mints admin keys bound to one space, and `getById` applies no space
-// filter, so trusting the role by itself hands a bound key every other
-// space's jobs. Postgres row-level security already fences spaceed rows
-// independently, but it cannot fence the null-space slice, and every
-// purge job is null-space because purge is platform-gated. This function
-// is the fence that covers both, and the only one on SQLite.
+// `bulkActionJobs.getById` applies no space filter, so this function is the
+// whole fence. Postgres row-level security fences space-scoped rows
+// independently but cannot fence the null-space slice, and this is the only
+// fence at all on SQLite.
 function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   const apiKey = c.get("apiKey");
   if (!apiKey) {
@@ -1677,16 +1681,25 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   // Platform authority reaches every job: `bulkActionJobs.getById` is
   // deliberately unscoped, so this is the only fence, and a purge job
   // carries no space at all.
-  if (hasPlatformAuthority(apiKey)) return;
-  if (apiKey.role === "instance_admin") {
-    if (apiKey.space_id === job.space_id) return;
-    // Cloaked as absent rather than refused, so a cross-space probe
-    // cannot enumerate job ids. Matches the treatment of `/keys/:id`.
-    // The credential branch below keeps its 403: within one space the
-    // job's existence is not a secret, only its contents.
+  if (hasOperatorAuthority(apiKey)) return;
+  // **A job belongs to the credential that started it, and to nothing else.**
+  // There used to be a rank arm above this one, admitting an admin to any job
+  // in its own space; with rank retired there is no space permission that says
+  // "read another credential's bulk jobs", and inventing one to preserve the
+  // arm would be widening the model to fit a line rather than the other way
+  // round. What is left is the narrower half that was always here.
+  if (job.api_key_id && apiKey.id === job.api_key_id) return;
+  // Cloaked as absent rather than refused when the job is not even in this
+  // caller's space, so a cross-space probe cannot enumerate job ids. Matches
+  // the treatment of `/keys/:id`. Within one space the job's existence is not
+  // a secret, only its contents, so that case keeps its 403.
+  // Normalized, because the two sides spell "no space" differently: a caller's
+  // is `undefined` and a row's is `null`, so a space-less caller reading a
+  // space-less job took the cloaked-404 arm and the 403 below was unreachable
+  // on a single-space instance.
+  if ((apiKey.space_id ?? null) !== (job.space_id ?? null)) {
     throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
   }
-  if (job.api_key_id && apiKey.id === job.api_key_id) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
     "This job belongs to a different credential",

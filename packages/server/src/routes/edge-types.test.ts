@@ -32,13 +32,20 @@ interface ErrorBody {
   error: { code: string };
 }
 
-async function createMemberKey(label: string): Promise<string> {
+/**
+ * A key that reaches items and edges freely but holds nothing on the two doors
+ * that guard the edge-type registry: no `metadata.edge_types:write` for
+ * registration, and no `space.schema` for deletion. `space_permissions` is
+ * named explicitly because omitting it mints a copy of the caller's set, which
+ * here is all eleven.
+ */
+async function createNarrowKey(label: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.adminKey,
     body: {
       label,
       source: `${label}-${Math.random().toString(36).slice(2, 10)}`,
-      role: "member",
+      space_permissions: [],
       default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
@@ -62,9 +69,9 @@ describe("Edge-type endpoints — auth gate", () => {
   });
 });
 
-describe("Edge-type endpoints — admin gate", () => {
-  it("POST /edge-types rejects non-admin keys with 403", async () => {
-    const memberKey = await createMemberKey("et-post-member");
+describe("Edge-type endpoints — schema gate", () => {
+  it("POST /edge-types rejects a key without metadata.edge_types:write", async () => {
+    const memberKey = await createNarrowKey("et-post-member");
     const res = await request(ctx.app, "POST", "/edge-types", {
       key: memberKey,
       body: { id: `${NS}.admin-gate`, cardinality: "many-to-many" },
@@ -74,8 +81,8 @@ describe("Edge-type endpoints — admin gate", () => {
     expect(body.error.code).toBe("forbidden");
   });
 
-  it("DELETE /edge-types/:id rejects non-admin keys with 403", async () => {
-    const memberKey = await createMemberKey("et-delete-member");
+  it("DELETE /edge-types/:id rejects a key without space.schema", async () => {
+    const memberKey = await createNarrowKey("et-delete-member");
     const res = await request(ctx.app, "DELETE", `/edge-types/${NS}.x`, {
       key: memberKey,
     });

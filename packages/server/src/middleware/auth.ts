@@ -15,12 +15,7 @@ import {
   profilePermissionCovers,
   hasSpacePermission,
 } from "@withmarfa/shared";
-import type {
-  ApiKey,
-  SpacePermission,
-  MarfaRole,
-  TypeFilter,
-} from "@withmarfa/shared";
+import type { ApiKey, SpacePermission, TypeFilter } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import type { AppConfig } from "../config.js";
 
@@ -318,7 +313,7 @@ export function authMiddleware(
     // had a key. The gate is a persistent `settings.bootstrapped`
     // sentinel, NOT a live `keys.count() === 0` check — revoking every
     // key must not re-open bootstrap (would let an unauthenticated
-    // caller mint an admin key and take over the instance).
+    // caller mint the operator key and take over the instance).
     if (c.req.method === "POST" && c.req.path === "/keys") {
       const bootstrapped = await storage.settings.get("bootstrapped");
       if (bootstrapped !== "true") {
@@ -409,48 +404,29 @@ export function authMiddleware(
       const createdAtIso = oauthToken.createdAtMs
         ? new Date(oauthToken.createdAtMs).toISOString()
         : new Date().toISOString();
-      // Project the underlying user's role onto the synthetic principal
-      // so admin-gated routes (`/keys`, `/admin/*`) work for
-      // OAuth-authenticated admins. `is_platform` stays hardcoded false
-      // — platform-admin is an operator-tier flag exclusive to API keys
-      // with explicit `is_platform: true`; OAuth tokens never claim it.
-      // Falls back to `member` when no `users` row maps to the
-      // auth_user (an unmapped auth_user, or a token whose user was
-      // hard-deleted mid-session).
-      // `MarfaRole` rather than the union spelled out again. The store is
-      // what guarantees the value is in the union at all, it narrows on
-      // read and falls back loudly, so this annotation is the type
-      // following the guarantee rather than restating it.
-      //
-      // **The mode is read here rather than inferred from `storage.users`, and
-      // that is the whole of this line's job.** In keys mode the projection is
-      // meant never to run, and today it does not — but only because
-      // `storage.users` is wired under `authMode === "hosted"` and nowhere
-      // else, so the invariant is held by an absence rather than by a check.
-      // Wiring a user store in keys mode for any unrelated reason would open
-      // every `requireAdmin` route to OAuth, because a keys-mode token is
-      // space-less by design and the hosted space-less refusal above has no
-      // keys-mode equivalent. `lib.ts` exports `createApp` and both storage
-      // constructors, so that configuration is constructible today with
-      // nothing objecting to it.
-      let projectedRole: MarfaRole = "member";
-      if (authMode === "hosted" && oauthToken.userId && storage.users) {
-        const user = await storage.users.getByAuthUserId(oauthToken.userId);
-        if (user) projectedRole = user.role;
-      }
+      // **No role is projected, because there is no role.** One account holds
+      // one space and the first person in it holds everything, so a column
+      // saying which of three kinds of person this is carried no information
+      // that the permission set does not carry better. What the app may do is
+      // the grant, which travels beside this principal rather than inside it.
       c.set("apiKey", {
         id: oauthToken.id,
         space_id: oauthSpaceId,
         label: `oauth:${grantHandle}`,
         source: `oauth:${grantHandle}`,
-        role: projectedRole,
         default_tier: "library",
-        is_platform: false,
-        // OAuth tokens are limited to their granted scopes on the data
-        // plane — the role bypass does not apply. The user's role is the
-        // ceiling on what they could grant, not a full-access pass for the
-        // app. See `roleBypassesPermissionMaps`.
-        scope_enforced: true,
+        // **An operator key is never derivable from a sign-in.** Running the
+        // instance sits outside the permission model, so no consent screen can
+        // offer it and no grant can reach it.
+        is_operator: false,
+        // The space permissions the door reads come from the grant beside this
+        // principal rather than from here, because a grant is the live answer
+        // and a projection would be a copy of it taken at request time.
+        //
+        // The client is named on the principal because one thing downstream
+        // needs to know an app chose this credential's label rather than an
+        // operator: see `extensionLabelOf`.
+        oauth_client_id: oauthToken.clientId,
         type_permissions: typePermissions,
         extension_permissions: {},
         edge_permissions: edgePermissions,
@@ -524,22 +500,22 @@ export function authMiddleware(
  *
  * `oauth:` is read as authority. `actsAsConnection` compares against it
  * on the three routes a Connection operates on itself, and the cycle
- * resolver derives an event's origin from it. Without the reservation a
- * space admin could mint a plain `member` key sourced
- * `oauth:<something>` and be read later as a Connection it has no
- * binding to. The comparison is currently unsatisfiable for the reason
- * given on `actsAsConnection`, which makes this a fence around an
- * identity that is meant to work rather than one that does, and it has
- * to hold before that is corrected rather than after.
+ * resolver derives an event's origin from it. Without the reservation
+ * any caller that may mint a key could source one `oauth:<something>`
+ * and be read later as a Connection it has no binding to. The comparison
+ * is currently unsatisfiable for the reason given on `actsAsConnection`,
+ * which makes this a fence around an identity that is meant to work rather
+ * than one that does, and it has to hold before that is corrected rather
+ * than after.
  *
  * `integration:` is read as provenance. No route reads it as identity:
  * `itemProvenanceSource` stamps it onto rows an integration writes, and
  * `permitsMirrorWrite` then admits only a credential whose `item_source`
- * matches. A forged one would let a member claim to be the owning
+ * matches. A forged one would let any credential claim to be the owning
  * integration of a mirrored row and write over a corpus it does not own.
  *
- * Either way the shape is the same as lifting `role` out of the body: a
- * field the request controls, read later as something it earned.
+ * Either way the shape is the same: a field the request controls, read
+ * later as something it earned.
  *
  * The legitimate holders never pass through the mint routes. Runtime
  * credentials are created at the storage layer by the per-dispatch
@@ -568,110 +544,46 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
 }
 
 /**
- * Platform-admin gate. Guards the surfaces whose authority is instance-wide
+ * Operator gate. Guards the surfaces whose authority is instance-wide
  * rather than space-bounded: space CRUD, cross-space quota writes,
  * instance metrics, the audit log, archive restore, blob reconciliation.
  *
- * Platform authority is authority that is NOT confined to a space, so the
- * gate tests two things: the `admin` role AND the absence of a space
- * binding. Role alone is not sufficient. A credential can legitimately
- * carry `role: "instance_admin"` while bound to a single space — `POST
- * /admin/spaces/{id}/keys` mints exactly that, and describes the result as
- * a credential "whose authority is confined to id". Admitting it here would
- * hand a space-scoped principal the cross-space surface, contradicting
- * the route that issued it.
+ * Operator authority is authority that is NOT confined to a space, so the
+ * gate tests two things: `is_operator` AND the absence of a space binding.
+ * The flag alone is not sufficient, and `hasOperatorAuthority` below is
+ * where that pair is asked and why.
  *
  * Consequence for callers: a key that passes this gate always has
- * `space_id === undefined`. Routes needing a space-bounded admin want
- * `checkSpaceAdmin` instead, and must thread `key.space_id` per its
- * contract.
+ * `space_id === undefined`. A surface that belongs inside a space wants
+ * `requireSpacePermission` instead, and must thread `key.space_id` into
+ * every storage call it makes.
  */
-export function checkAdmin(apiKey: ApiKey | undefined): ApiKey {
+export function checkOperatorKey(apiKey: ApiKey | undefined): ApiKey {
   const key = checkAuth(apiKey);
-  if (!hasPlatformAuthority(key)) {
-    throw new MarfaError(ErrorCode.FORBIDDEN, "Platform admin access required");
+  if (!hasOperatorAuthority(key)) {
+    throw new MarfaError(ErrorCode.FORBIDDEN, "Operator key required");
   }
   return key;
 }
 
 /**
- * Predicate form of `checkAdmin`'s test, for the handful of routes that
- * need the answer as a boolean rather than a throw (they combine it with
- * an integration-credential branch, or use it to widen a space filter).
+ * Predicate form of `checkOperatorKey`'s test, for the handful of routes that
+ * need the answer as a boolean rather than a throw (they combine it with an
+ * integration-credential branch, or use it to widen a space filter).
  *
- * Exported so no callsite re-derives it. A hand-rolled `role === "instance_admin"`
- * silently readmits the space-bound admin this gate exists to exclude,
- * and the two definitions then drift apart with nothing to catch it.
+ * **Running the instance is not a permission**, which is why this reads two
+ * fields on the row rather than a member of the permission set. The operator
+ * key is fenced outside the model deliberately: it is never offered on a
+ * consent screen, never derivable from a sign-in, and never needed by an app.
+ *
+ * The space test is half the gate rather than a detail. `POST
+ * /admin/spaces/{id}/keys` mints a credential "whose authority is confined to
+ * id", and such a key carries no operator flag — but a hand-rolled
+ * `is_operator` alone would readmit anything that ever gained one while bound
+ * to a space, so the two fields are asked together, here, once.
  */
-export function hasPlatformAuthority(key: ApiKey): boolean {
-  return key.role === "instance_admin" && !key.space_id;
-}
-
-/**
- * Predicate form of `checkSpaceAdmin`'s test: admin-shaped authority
- * within whatever scope the credential is bound to. Says nothing about
- * which space — the caller still owes the space fence on every storage
- * call, exactly as `checkSpaceAdmin` documents.
- */
-export function hasSpaceAdminAuthority(key: ApiKey): boolean {
-  return key.role === "instance_admin" || key.role === "space_admin";
-}
-
-/**
- * Space-bounded admin gate. Admits both `admin` (platform admin, full
- * instance authority) and `space_admin` (space-bounded admin within
- * own `space_id`). Used for routes that genuinely belong inside a
- * space — own keys, webhooks, types, connections, extensions, blobs,
- * export. Routes that need platform authority (system config, cross-space
- * ops, platform-credential mint) keep `checkAdmin` / `requireAdmin`.
- *
- * Cross-space safety is the route's responsibility:
- *   - Routes that take a path id (`/webhooks/:id`, `/keys/:id`) must pass
- *     `key.space_id` into the storage lookup so a space_admin
- *     attempting to address another space's resource gets a 404.
- *   - Routes that list resources must pass `key.space_id` into the list
- *     query so space_admins see only their own.
- *   - Routes that create resources must stamp the new resource's
- *     `space_id` from `key.space_id` (the storage layer typically does
- *     this; verify on each callsite).
- *
- * The DB-layer Postgres RLS policies enforce space isolation
- * independently; the application layer is the additional fence and
- * every space_admin-accepting route must thread `space_id` correctly.
- */
-export function checkSpaceAdmin(apiKey: ApiKey | undefined): ApiKey {
-  const key = checkAuth(apiKey);
-  if (!hasSpaceAdminAuthority(key)) {
-    throw new MarfaError(ErrorCode.FORBIDDEN, "Admin access required");
-  }
-  return key;
-}
-
-/**
- * Whether a credential skips the per-resource permission maps (type / edge /
- * metadata) by virtue of its role. `admin` and `space_admin` keys are
- * admin-shaped within their scope and bypass the maps — EXCEPT
- * `scope_enforced` credentials (OAuth-derived synthetic keys), which are
- * held to exactly the scopes the user granted the app. A user's role is the
- * ceiling on what an app can be granted, not an automatic full-access pass
- * for every app they sign into. Role gates (`requireSpaceAdmin` /
- * `requireAdmin`) still consult the projected role regardless of this flag —
- * only the data-plane permission-map checks honor it.
- *
- * Exported because the extension-permission surface (`extension_permissions`,
- * which has no `require*` helper of its own) makes the same decision inline.
- * A hand-rolled `role === "instance_admin"` there is wrong twice over: it hands an
- * OAuth app the full extension surface whenever the signed-in user happens
- * to be an admin, and it withholds it from the space_admin every hosted
- * sign-up is provisioned as.
- *
- * Accepts `undefined` so anonymous-capable routes can call it directly; a
- * missing credential bypasses nothing.
- */
-export function roleBypassesPermissionMaps(key: ApiKey | undefined): boolean {
-  if (!key) return false;
-  if (key.scope_enforced) return false;
-  return key.role === "instance_admin" || key.role === "space_admin";
+export function hasOperatorAuthority(key: ApiKey): boolean {
+  return key.is_operator && !key.space_id;
 }
 
 /**
@@ -695,13 +607,13 @@ export function roleBypassesPermissionMaps(key: ApiKey | undefined): boolean {
  *
  * **The map is read directly rather than resolved, and that is the whole
  * safety of the third arm.** `resolveTypePermission` honours wildcards, so
- * any member key holding `"*": "write"` would otherwise cross the reserved
+ * any credential holding `"*": "write"` would otherwise cross the reserved
  * boundary. Only an exact literal qualifies. `system.*` keeps the blanket
  * refusal beyond the activity carve-out: nothing projects a system-type
  * write.
  */
 export function mayWriteReserved(key: ApiKey, type: string): boolean {
-  if (key.is_platform) return true;
+  if (key.is_operator) return true;
   const tier = classifyNamespace(type);
   if (tier !== "system" && tier !== "marfa") return true;
   if (key.is_runtime_credential !== true) return false;
@@ -716,19 +628,21 @@ export function checkTypeAccess(
 ): void {
   const key = checkAuth(apiKey);
 
-  // Platform-credential gate. Writes to `system.*` (and the internal-only
-  // `marfa.*`) require `is_platform: true` independent of role — space
-  // admins are admin-shaped within their space but are NOT platform-
-  // shaped by default; only the bootstrap admin and credentials it
-  // mints with `is_platform: true` may write platform-internal items.
+  // Operator gate. Writes to `system.*` (and the internal-only `marfa.*`)
+  // require `is_operator: true`, which is the instance tier and nothing a
+  // space-bound credential can hold. It is a fence rather than a route: the
+  // operator key's own maps are empty, so in practice the platform's own
+  // machinery writes these rows through the storage layer rather than through
+  // a credential at all.
   //
   // `core.*` writes are NOT gated here — core types are user-facing
-  // (core.note, core.task, core.bookmark) and space admins write them
-  // routinely; only registration of new core types is platform-gated
-  // (see `routes/types.ts:331`).
+  // (core.note, core.task, core.bookmark) and ordinary credentials write them
+  // routinely. Registering a new one is a different matter: `routes/types.ts`
+  // refuses a reserved root to every credential, the operator key included,
+  // because the shipped vocabulary is a property of the build.
   //
   // Reads to `system.*` / `marfa.*` are unrestricted (filtered by space
-  // scoping at the storage layer); only writes need `is_platform`.
+  // scoping at the storage layer); only writes need `is_operator`.
   //
   // Carve-out: runtime credentials (`is_runtime_credential: true`) may
   // write `system.activity`. That's the integration's status-reporting
@@ -748,11 +662,6 @@ export function checkTypeAccess(
       );
     }
   }
-
-  // admin / space_admin bypass type_permissions — admin-shaped within the
-  // space, with RLS + app-layer scoping as the isolation boundary. OAuth
-  // (`scope_enforced`) keys do NOT bypass: they're held to granted scopes.
-  if (roleBypassesPermissionMaps(key)) return;
 
   const resolved = resolveTypePermission(type, key.type_permissions);
   if (resolved === "none") {
@@ -823,16 +732,13 @@ export function computeTypeFilter(
    */
   level: "read" | "write" = "read",
 ): TypeFilter {
-  // OAuth (`scope_enforced`) keys do NOT bypass: they are held to their
-  // granted scopes, which project into this same map.
+  // Nothing bypasses this map. A sign-in's granted scopes project into the
+  // same `type_permissions`, so one shape of credential arrives here and the
+  // map is the whole answer.
   // A fresh object each time rather than one shared constant: these travel
   // into storage filters, and a shared literal is a mutation hazard nobody
   // would think to look for.
   if (!apiKey) return { allowed: undefined, excluded: [] };
-  if (roleBypassesPermissionMaps(apiKey)) {
-    return { allowed: undefined, excluded: [] };
-  }
-
   const allowed: string[] = [];
   const excluded: string[] = [];
   for (const [pattern, permission] of Object.entries(apiKey.type_permissions)) {
@@ -864,18 +770,8 @@ export function requireAuth(c: Context<AppEnv>): ApiKey {
   return checkAuth(c.get("apiKey"));
 }
 
-export function requireAdmin(c: Context<AppEnv>): ApiKey {
-  return checkAdmin(c.get("apiKey"));
-}
-
-/**
- * Space-bounded admin gate. Admits `admin` (platform) OR `space_admin`
- * (space-bounded). See `checkSpaceAdmin` for the safety contract:
- * the calling route MUST thread `key.space_id` into storage queries so a
- * space_admin cannot reach another space's resources via path id.
- */
-export function requireSpaceAdmin(c: Context<AppEnv>): ApiKey {
-  return checkSpaceAdmin(c.get("apiKey"));
+export function requireOperatorKey(c: Context<AppEnv>): ApiKey {
+  return checkOperatorKey(c.get("apiKey"));
 }
 
 export function requireTypeAccess(
@@ -908,9 +804,9 @@ export function requireTypeAccess(
  * the synthetic key an OAuth access token produces is sourced
  * `oauth:<clientId>:<userId>`, a stable grant handle rather than a
  * Connection id, and a Connection id is a UUIDv7 carrying no colon, so
- * the two can never be equal. Such a caller reaches these routes only
- * through `hasSpaceAdminAuthority`, on the role projected from the
- * consenting user, which means a grant held by a member is refused.
+ * the two can never be equal. Such a caller reaches these routes only by
+ * holding the space permission each one asks for, so a grant that was not
+ * given it is refused before this arm is consulted at all.
  * Correcting it means resolving a grant to its Connection, which
  * changes who can reach three live routes and needs its own
  * verification rather than riding along here.
@@ -1071,7 +967,7 @@ export const INTEGRATION_SOURCE_PREFIX = "integration:";
  * integration's mirror of an external record, and the owning integration
  * re-syncing (a credential whose item_source matches the row's source)
  * is the only legitimate writer of its properties. Everyone else,
- * platform admins included, is refused toward promotion: two write
+ * operator keys included, is refused toward promotion: two write
  * paths onto one mirror is how user edits and re-syncs silently clobber
  * each other. Lifecycle transitions, tags, and extensions stay user
  * gestures — they do not edit the copy, so they do not answer to this.
@@ -1219,12 +1115,9 @@ export function requireRowWritable(
 }
 
 /**
- * Enforces a per-edge-type permission check. Admin and space_admin
- * keys always pass (space_admin is admin-shaped within its space —
- * see `checkTypeAccess` for the layered-helper rationale). Non-admin
- * keys (member + OAuth-derived synthetic keys) need either the
- * specific edge-type permission or the `*` wildcard at the requested
- * level (write covers read).
+ * Enforces a per-edge-type permission check. Every credential needs either
+ * the specific edge-type permission or the `*` wildcard at the requested
+ * level (write covers read), and nothing passes without one.
  *
  * Throws EDGE_PERMISSION_DENIED (403) on failure — the discriminator
  * code lets SDK clients route `forbidden` differently from
@@ -1236,7 +1129,6 @@ export function requireEdgePermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  if (roleBypassesPermissionMaps(apiKey)) return;
   if (edgePermissionCovers(apiKey.edge_permissions, edgeType, level)) return;
   throw new MarfaError(
     ErrorCode.EDGE_PERMISSION_DENIED,
@@ -1246,10 +1138,9 @@ export function requireEdgePermission(
 }
 
 /**
- * Enforces a per-metadata-sub-resource permission check. Admin keys
- * always pass. Non-admin keys (including OAuth-derived synthetic keys)
- * need either the specific sub-resource permission or the `*` wildcard
- * at the requested level (write covers read).
+ * Enforces a per-metadata-sub-resource permission check. Every credential
+ * needs either the specific sub-resource permission or the `*` wildcard at
+ * the requested level (write covers read), and nothing passes without one.
  *
  * Throws FORBIDDEN (403) on failure with the missing scope name in the
  * error details so SDK clients can surface a precise re-auth prompt.
@@ -1260,15 +1151,13 @@ export function requireMetadataPermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  // Same admin-tier shape as `requireEdgePermission`: space_admin is
-  // admin-shaped within its space for metadata mutations too — except
-  // OAuth (`scope_enforced`) keys, which must carry the granted scope
-  // (`metadata.types:write` / `metadata.edge_types:write`). Namespace
+  // The same shape as `requireEdgePermission`, and for the same reason: a
+  // credential's map is the whole of what it may reach, whether it was minted
+  // as a key or projected from a grant. Namespace
   // rules are the route's, not this gate's: reserved roots (`core.*`,
   // `system.*`, `marfa.*`) are refused at registration for every
-  // credential, platform included, and publisher namespaces bind to the
+  // credential, operator included, and publisher namespaces bind to the
   // caller's claimed handle in hosted mode.
-  if (roleBypassesPermissionMaps(apiKey)) return;
   if (metadataPermissionCovers(apiKey.metadata_permissions, subresource, level))
     return;
   throw new MarfaError(
@@ -1279,17 +1168,37 @@ export function requireMetadataPermission(
 }
 
 /**
- * Authority over one administrative surface, asked of the grant rather than
- * of the role.
+ * Predicate form of {@link requireSpacePermission}, for the doors that combine
+ * a permission with an arm of their own.
  *
- * **An API-key caller passes through unchanged, and that is the whole reason
- * this can be added to a live gate without a migration for anybody.** A
- * capability literal reaches no permission map, so it means nothing on an API
- * key: the family exists to name what a person handed an app, and an API key
- * is the person's own credential rather than an app's. Refusing one here would
- * break a self-host in keys mode, where no OAuth principal reaches a role gate
- * at all, and every CLI admin command — for no gain, since a key's authority
- * is already bounded by the role lattice, the platform flag and its space.
+ * The connection surfaces are the reason it exists: a caller reaches them
+ * either by holding the space permission or by *being* the connection, as an
+ * OAuth grant or as a runtime credential stamped with the connection id. That
+ * is an `||`, not a gate, so it needs an answer rather than a throw.
+ *
+ * Exported so no call site re-derives it. The two forms read the same list
+ * through the same helper, which is what keeps a predicate from drifting into
+ * a second, laxer definition of the same question.
+ */
+export function holdsSpacePermission(
+  c: Context<AppEnv>,
+  permission: SpacePermission,
+): boolean {
+  const key = c.get("apiKey");
+  if (!key) return false;
+  const held =
+    c.get("authType") === "oauth"
+      ? (c.get("oauthGrant")?.scopes ?? [])
+      : (key.space_permissions ?? []);
+  return hasSpacePermission(held, permission);
+}
+
+/**
+ * Authority over one administrative surface, asked of the credential's own
+ * permission set. A key carries its space permissions on its row and a
+ * sign-in carries them on its grant; nothing here reads what kind of
+ * credential arrived, and nothing admits a caller that was never handed the
+ * permission.
  *
  * **A bootstrap caller is refused here, and its protection is the route's
  * rather than this function's.** Bootstrap presents no credential at all:
@@ -1300,54 +1209,41 @@ export function requireMetadataPermission(
  * on that route already is. Do not weaken this to admit the shape; put the
  * call in the right place.
  *
- * **So this is added beside an existing authority check, never instead of
- * one.** The role gate answers whether this principal may act on the surface;
- * this answers whether the app was told it could. Both have to hold, and the
- * order does not matter, but dropping the first would let a member's app reach
- * a surface a member may not.
+ * **This is the whole of the check on the surface, not a second half.**
+ * Nothing admits a caller to an administrative door on what kind of
+ * credential it is, so a door that should ask this and does not stands open
+ * to any authenticated caller. No scan can find one either, because
+ * `requireAuth` sits on nearly every handler and leaves no signature to key
+ * on; `routes/space-permission-door-census.test.ts` holds the doors that do
+ * ask to asking for the right surface.
  *
  * **A missing carrier fails closed.** An OAuth request that reached a gate
  * with no `oauthGrant` set is a defect in the bearer middleware, and the safe
  * reading of "I cannot tell what was granted" is "nothing was".
  *
  * The refusal names the literal that would satisfy it, in the message and in
- * `details`. A generic 403 on an administrative surface sends the reader to
- * the role, which is not what refused them, and a client cannot narrow toward
- * a scope nobody told it about.
+ * `details`. A generic 403 on an administrative surface leaves the reader
+ * nothing to act on, and a client cannot narrow toward a scope nobody told it
+ * about.
  */
 export function requireSpacePermission(
   c: Context<AppEnv>,
   permission: SpacePermission,
 ): void {
-  const key = c.get("apiKey");
-  checkAuth(key);
-  if (c.get("authType") !== "oauth") {
-    // **A scope-enforced key is a grant in key form, and it carries no scope
-    // list.** Its permission maps were projected from a grant at mint time and
-    // the literals themselves were not kept, so there is no way to ask whether
-    // it holds this capability — and the docblock above says what to do when
-    // the answer cannot be read: treat it as not granted.
-    //
-    // Waving it through instead re-opens the escalation the keys doors exist
-    // to close, in two steps rather than one. A session mints a `space_admin`
-    // key, which is a sideways grant and permitted; that key is not an OAuth
-    // caller, so it meets none of these gates, and it mints again with no
-    // clamp and no `scope_enforced` stamp. The second key bypasses every
-    // permission map on every route, from a grant that conferred no data-plane
-    // scope at all, and outlives it.
-    if (key?.scope_enforced === true) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `A scope-enforced credential cannot be used for ${permission}: it carries permissions rather than the scopes they came from, so the grant behind it cannot be read. Use the app session itself.`,
-        { required_scope: permission },
-      );
-    }
-    return;
-  }
-  if (hasSpacePermission(c.get("oauthGrant")?.scopes ?? [], permission)) return;
+  const key = checkAuth(c.get("apiKey"));
+  // **One question, asked of one list, whichever kind of credential arrived.**
+  // A key carries its space permissions on its row and a sign-in carries them
+  // on its grant, and both are the literals themselves — so the door does not
+  // branch on what it is looking at, and there is no second implementation to
+  // drift.
+  const held =
+    c.get("authType") === "oauth"
+      ? (c.get("oauthGrant")?.scopes ?? [])
+      : (key.space_permissions ?? []);
+  if (hasSpacePermission(held, permission)) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
-    `This app was not granted ${permission}`,
+    `This credential does not hold ${permission}`,
     { required_scope: permission },
   );
 }
@@ -1355,12 +1251,11 @@ export function requireSpacePermission(
 /**
  * Category 2 of the permission model, Your profile.
  *
- * Deliberately the same shape as {@link requireMetadataPermission}, including
- * the role bypass, because the distinction that matters is not which endpoint
- * a caller chose but what it holds. `roleBypassesPermissionMaps` returns false
- * for a `scope_enforced` key, so a first-party credential resolving to a space
- * passes as it always has while an OAuth access token must carry
- * `profile:<verb>` or `profile.<row>:<verb>`.
+ * Deliberately the same shape as {@link requireMetadataPermission}, because
+ * the distinction that matters is not which endpoint a caller chose but what
+ * it holds. A key carries `profile_permissions` on its row and a sign-in
+ * carries `profile:<verb>` or `profile.<row>:<verb>` on its grant; both are
+ * read through one map, and neither has anything to bypass it with.
  *
  * **The category is levelled, so `read` is a level rather than a baseline.** A
  * token holding nothing here may not read a name or an email address, which is
@@ -1373,7 +1268,6 @@ export function requireProfilePermission(
   level: "read" | "write",
 ): void {
   const apiKey = checkAuth(c.get("apiKey"));
-  if (roleBypassesPermissionMaps(apiKey)) return;
   if (profilePermissionCovers(apiKey.profile_permissions, row, level)) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,

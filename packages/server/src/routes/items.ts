@@ -38,7 +38,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { assertTypeFilter } from "./_type-filter.js";
 import {
   requireAuth,
-  requireSpaceAdmin,
+  requireSpacePermission,
   requireTypeAccess,
   isOwnConnectionRead,
   itemProvenanceSource,
@@ -3248,7 +3248,8 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
 
-    requireSpaceAdmin(c);
+    requireAuth(c);
+    requireSpacePermission(c, "space.item_purge");
     const spaceId = c.get("apiKey")?.space_id;
     // Read before removing. This door used to purge without ever looking at
     // the row, so it could not have known a connection from a note.
@@ -3285,7 +3286,7 @@ export function itemRoutes(storage: Storage) {
     }
 
     // **No D64 provenance guard here**, and that is a finding rather than an
-    // omission: this door is `requireSpaceAdmin` and a runtime credential is
+    // omission: this door is `requireAuth` and a runtime credential is
     // a member, so an integration is refused `forbidden` above and never
     // reaches the point where provenance would be consulted. A guard here
     // would be unreachable code no test could pin, which is worse than none

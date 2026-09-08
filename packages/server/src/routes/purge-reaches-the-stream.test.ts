@@ -206,6 +206,6 @@ describe("a purge reaches the stream", () => {
         events: ["item.purged"],
       },
     });
-    expect(res.status).toBe(201);
+    expect(res.status, await res.clone().text()).toBe(201);
   });
 });

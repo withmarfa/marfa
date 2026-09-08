@@ -23,6 +23,7 @@ import { performInstall } from "../connections/install-pipeline.js";
 import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { IntegrationManifest } from "@withmarfa/shared";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -68,7 +69,7 @@ async function installFresh(): Promise<{
 }> {
   const adminKey = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.role === "instance_admin"));
+    .then((keys) => keys.find((k) => k.is_operator));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
   const integrationName = `acme/uninstall-route-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -170,20 +171,22 @@ describe("POST /connections/install — auth", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects non-admin (member) callers with 403", async () => {
+  it("rejects a caller without space.connections with 403", async () => {
     const integration = await createIntegration();
-    const memberKeyRes = await request(ctx.app, "POST", "/keys", {
+    const unprivilegedKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
-        label: "install-member",
-        source: `install-member-${Date.now().toString()}`,
-        role: "member",
+        label: "install-unprivileged",
+        source: `install-unprivileged-${Date.now().toString()}`,
+        space_permissions: [],
       },
     });
-    const memberKey = ((await memberKeyRes.json()) as { key: string }).key;
+    const unprivilegedKey = (
+      (await unprivilegedKeyRes.json()) as { key: string }
+    ).key;
 
     const res = await request(ctx.app, "POST", "/connections/install", {
-      key: memberKey,
+      key: unprivilegedKey,
       body: { integration_id: integration.id },
     });
     expect(res.status).toBe(403);
@@ -274,10 +277,10 @@ describe("POST /connections/install — error mapping", () => {
   });
 });
 
-describe("POST /connections/install — platform-scoped manifest, space_admin caller", () => {
-  // Without `includePlatformScoped`, manifests registered by a platform credential are invisible to
-  // space_admin callers (space_id IS NULL rows don't match). Pin success + space-stamping invariant.
-  it("space_admin can install a platform-scoped manifest; resulting connection lands in caller space", async () => {
+describe("POST /connections/install — platform-scoped manifest, space-bound caller", () => {
+  // Without `includePlatformScoped`, manifests registered by an operator credential are invisible
+  // to a space-bound caller (space_id IS NULL rows don't match). Pin success + space-stamping invariant.
+  it("a space-bound caller can install a platform-scoped manifest; the connection lands in its space", async () => {
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-conn-install");
     const integration = await createIntegration(); // space_id: null
@@ -289,9 +292,9 @@ describe("POST /connections/install — platform-scoped manifest, space_admin ca
       {
         label: `t234-tadmin-${suffix}`,
         source: `t234-tadmin-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hash,
       space.id,
@@ -323,23 +326,25 @@ describe("POST /connections/:id/uninstall — auth", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects non-admin (member) callers with 403", async () => {
+  it("rejects a caller without space.connections with 403", async () => {
     const installed = await installFresh();
-    const memberKeyRes = await request(ctx.app, "POST", "/keys", {
+    const unprivilegedKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
-        label: "uninstall-member",
-        source: `uninstall-member-${Date.now().toString()}`,
-        role: "member",
+        label: "uninstall-unprivileged",
+        source: `uninstall-unprivileged-${Date.now().toString()}`,
+        space_permissions: [],
       },
     });
-    const memberKey = ((await memberKeyRes.json()) as { key: string }).key;
+    const unprivilegedKey = (
+      (await unprivilegedKeyRes.json()) as { key: string }
+    ).key;
 
     const res = await request(
       ctx.app,
       "POST",
       `/connections/${installed.connectionId}/uninstall`,
-      { key: memberKey },
+      { key: unprivilegedKey },
     );
     expect(res.status).toBe(403);
   });
@@ -508,7 +513,7 @@ async function installItemEventConnection(): Promise<{
 }> {
   const adminKey = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.role === "instance_admin"));
+    .then((keys) => keys.find((k) => k.is_operator));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
   const integrationName = `acme/preview-event-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -547,19 +552,21 @@ describe("POST /connections/preview-event — auth", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects non-admin (member) callers with 403", async () => {
-    const memberKeyRes = await request(ctx.app, "POST", "/keys", {
+  it("rejects a caller without space.connections with 403", async () => {
+    const unprivilegedKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
-        label: "preview-member",
-        source: `preview-member-${Date.now().toString()}`,
-        role: "member",
+        label: "preview-unprivileged",
+        source: `preview-unprivileged-${Date.now().toString()}`,
+        space_permissions: [],
       },
     });
-    const memberKey = ((await memberKeyRes.json()) as { key: string }).key;
+    const unprivilegedKey = (
+      (await unprivilegedKeyRes.json()) as { key: string }
+    ).key;
 
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: memberKey,
+      key: unprivilegedKey,
       body: {
         item_id: "00000000-0000-7000-8000-000000000000",
         event_type: "created",

@@ -47,7 +47,14 @@ beforeAll(async () => {
     `/admin/spaces/${spaceId}/keys`,
     {
       key: ctx.adminKey,
-      body: { label: "purger", source: "purger", role: "space_admin" },
+      // Reaches every type in its space and is still not the instance tier,
+      // which is the whole shape this file is about: the reserved namespace
+      // is fenced off a space credential however wide its maps are.
+      body: {
+        label: "purger",
+        source: "purger",
+        type_permissions: { "*": "write" },
+      },
     },
   );
   const keyBody = (await keyRes.json()) as { key: string };

@@ -85,12 +85,10 @@ async function integrationItem(name: string): Promise<string> {
   return item.id;
 }
 
-async function adminKeyId(): Promise<string> {
-  const admin = (await ctx.storage.keys.list()).find(
-    (k) => k.role === "instance_admin",
-  );
-  if (!admin) throw new Error("admin key not found in test ctx");
-  return admin.id;
+async function operatorKeyId(): Promise<string> {
+  const operator = (await ctx.storage.keys.list()).find((k) => k.is_operator);
+  if (!operator) throw new Error("operator key not found in test ctx");
+  return operator.id;
 }
 
 describe("install-pipeline — the space fence outlives the mint it guarded", () => {
@@ -99,7 +97,7 @@ describe("install-pipeline — the space fence outlives the mint it guarded", ()
     const integrationId = await integrationItem(name);
     await expect(
       performInstall(ctx.storage, {
-        apiKeyId: await adminKeyId(),
+        apiKeyId: await operatorKeyId(),
         spaceId: undefined,
         authMode: "hosted",
         integrationItemId: integrationId,

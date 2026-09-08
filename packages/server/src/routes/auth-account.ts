@@ -10,8 +10,9 @@
  *   - POST /auth/account/delete/cancel    — session-cookie cancel.
  *   - GET  /auth/account/cancel           — email-cancel-by-link.
  *
- * Dual auth on the JSON endpoints: bearer (space_admin / admin in
- * the same space as the auth_user) OR better-auth session cookie.
+ * Dual auth on the JSON endpoints: any bearer bound to the same space as the
+ * auth_user, OR a better-auth session cookie. This file asks for no space
+ * permission at all; the space binding is the whole of the bearer test.
  * Email recipients click the GET endpoints, which are token-gated
  * directly — no caller credential needed.
  */
@@ -43,8 +44,9 @@ function newToken(): string {
 /**
  * Resolve the caller into an `auth_user.id`. Two paths:
  *
- *   1. Bearer auth (api key) — space_admin or admin in a space.
- *      We resolve the space's `users.auth_user_id` (canonical bridge).
+ *   1. Bearer auth (api key) — any credential carrying a `space_id`,
+ *      whatever it holds; no space permission is asked for. We resolve
+ *      that space's `users.auth_user_id` (canonical bridge).
  *   2. Better-auth session cookie — `auth.getSession()` returns the
  *      user directly.
  *

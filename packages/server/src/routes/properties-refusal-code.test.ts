@@ -53,7 +53,6 @@ beforeAll(async () => {
     {
       label: "properties-refusal",
       source: "properties-refusal",
-      role: "member",
       type_permissions: { "*": "write" },
       connection_id: CONNECTION_ID,
       expires_at: new Date(Date.now() + 600_000).toISOString(),

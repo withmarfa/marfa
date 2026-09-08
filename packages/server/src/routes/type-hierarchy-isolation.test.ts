@@ -46,7 +46,6 @@ async function newSpace(
   c: TestContext,
   label: string,
   permissions: Record<string, "read" | "write" | "none">,
-  role: "space_admin" | "member" = "space_admin",
 ): Promise<{ spaceId: string; key: string }> {
   const spaces = c.storage.spaces;
   // Hosted mode always wires the space store; a keys-mode context would not,
@@ -61,11 +60,10 @@ async function newSpace(
     {
       label: `${label}-${suffix}`,
       source: `test-${suffix}`,
-      role,
       type_permissions: permissions,
       metadata_permissions: { types: "write" },
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     space.id,
@@ -136,11 +134,10 @@ describe("declared descendants stay inside their own space", () => {
       {
         label: `notes-only-${suffix}`,
         source: `test-scoped-${suffix}`,
-        role: "member",
         type_permissions: { "core.note.*": "read" },
         metadata_permissions: { types: "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(scoped, TEST_API_KEY_SALT),
       alpha.spaceId,
@@ -199,10 +196,12 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
       {
         label: `deny-${suffix}`,
         source: `test-deny-${suffix}`,
-        role: "member",
         type_permissions: { "user.*": "none", "core.note.*": "read" },
         default_tier: "library",
-        is_platform: false,
+        // A space-less key is an operator key, which the row constraint
+        // enforces. The permission map is what this case is about, and an
+        // operator reads past none of it.
+        is_operator: true,
       },
       hashApiKey(scoped, TEST_API_KEY_SALT),
     );

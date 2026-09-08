@@ -791,6 +791,8 @@ const RUNTIME_TTL_MS = 600_000;
  * `created_at` or plant a NULL `expires_at` — a legacy row's shape can only
  * be reproduced by writing it directly.
  */
+const RUNTIME_CREDENTIAL_SPACE = "space-runtime-credential-reaper";
+
 async function seedRuntimeCredential(opts: {
   id: string;
   createdAt: Date;
@@ -801,14 +803,16 @@ async function seedRuntimeCredential(opts: {
     {
       label: `reaper ${opts.id}`,
       source: `reaper:${opts.id}`,
-      role: "member",
       type_permissions: {},
       connection_id: `conn_${opts.id}`,
       expires_at: new Date(FIXED_NOW.getTime() + RUNTIME_TTL_MS).toISOString(),
       item_source: runtimeCredentialItemSource({ name: `acme.fixture-` }),
     },
     hashApiKey(`marfa_k1_${opts.id}`, TEST_API_KEY_SALT),
-    undefined,
+    // A runtime credential is minted for a Connection, and a Connection lives
+    // in a space. The mint stamps `is_operator: false` unconditionally, so the
+    // row constraint requires one.
+    RUNTIME_CREDENTIAL_SPACE,
   );
   const createdIso = opts.createdAt.toISOString();
   const expiresIso =
@@ -959,10 +963,11 @@ describe("RuntimeCredentialReaper.runOnce — legacy NULL-expiry drain", () => {
         {
           label: "human",
           source: "human",
-          role: "instance_admin",
           type_permissions: { "*": "write" },
           default_tier: "library",
-          is_platform: false,
+          // Space-less and operator go together: the row constraint holds the
+          // pair, so a human key on a keys-mode instance is an operator key.
+          is_operator: true,
         },
         hashApiKey("marfa_k1_human_reaper", TEST_API_KEY_SALT),
       )
@@ -1039,10 +1044,11 @@ describe("KeyStore.countRuntimeCredentials — operator visibility", () => {
       {
         label: "human-count",
         source: "human-count",
-        role: "instance_admin",
         type_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        // Space-less and operator go together: the row constraint holds the
+        // pair, so a human key on a keys-mode instance is an operator key.
+        is_operator: true,
       },
       hashApiKey("marfa_k1_human_count", TEST_API_KEY_SALT),
     );
@@ -1202,10 +1208,11 @@ describe("KeyStore.list / count — expired credentials are not live", () => {
       {
         label: "human-live",
         source: "human-live",
-        role: "instance_admin",
         type_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        // Space-less and operator go together: the row constraint holds the
+        // pair, so a human key on a keys-mode instance is an operator key.
+        is_operator: true,
       },
       hashApiKey("marfa_k1_human_live_list", TEST_API_KEY_SALT),
     );
@@ -1368,8 +1375,8 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
       {
         label: "old revoked",
         source: "probe:old",
-        role: "member",
         type_permissions: {},
+        is_operator: true,
       },
       hashApiKey(`marfa_k1_oldRevoked`, TEST_API_KEY_SALT),
     );
@@ -1377,8 +1384,8 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
       {
         label: "young revoked",
         source: "probe:young",
-        role: "member",
         type_permissions: {},
+        is_operator: true,
       },
       hashApiKey(`marfa_k1_youngRevoked`, TEST_API_KEY_SALT),
     );
@@ -1386,8 +1393,8 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
       {
         label: "live",
         source: "probe:live",
-        role: "member",
         type_permissions: {},
+        is_operator: true,
       },
       hashApiKey(`marfa_k1_live`, TEST_API_KEY_SALT),
     );

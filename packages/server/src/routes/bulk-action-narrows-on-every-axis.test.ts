@@ -7,6 +7,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import type { SpacePermission } from "@withmarfa/shared";
 
 /**
  * `POST /items/bulk-actions` narrows on every axis a read narrows on.
@@ -40,20 +41,22 @@ let readerWriterKey: string;
 /** A source the space's `source_filter` approves, and one it does not. */
 let trustedKey: string;
 let untrustedKey: string;
+/** Holds `space.item_purge`, and write on bookmarks but only read on notes. */
+let purgerKey: string;
 
 async function mintKey(
   label: string,
   source: string,
   typePermissions: Record<string, "read" | "write">,
-  role: "instance_admin" | "space_admin" | "member",
+  spacePermissions: SpacePermission[] = [],
 ): Promise<string> {
   const raw = `marfa_k1_axes_${Math.random().toString(36).slice(2, 12)}`;
   await ctx.storage.keys.create(
     {
       label,
       source,
-      role,
       type_permissions: typePermissions,
+      space_permissions: spacePermissions,
       default_tier: "library",
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
@@ -100,10 +103,19 @@ beforeAll(async () => {
     "reads-notes-writes-bookmarks",
     "reader-writer",
     { "core.note": "read", "core.bookmark": "write" },
-    "member",
   );
-  trustedKey = await mintKey("trusted", "trusted", {}, "space_admin");
-  untrustedKey = await mintKey("untrusted", "untrusted", {}, "space_admin");
+  // Write across the board, named rather than implied: these two exist to
+  // isolate the source axis, so the type axis must never be what narrows
+  // them. An empty map would withhold every row and pass the absences below
+  // for the wrong reason.
+  trustedKey = await mintKey("trusted", "trusted", { "*": "write" });
+  untrustedKey = await mintKey("untrusted", "untrusted", { "*": "write" });
+  purgerKey = await mintKey(
+    "purges-bookmarks-reads-notes",
+    "purger",
+    { "core.note": "read", "core.bookmark": "write" },
+    ["space.item_purge"],
+  );
 
   await ctx.storage.spaces!.updateConfig(spaceId, {
     enforcement: {
@@ -136,6 +148,45 @@ describe("the match set narrows to what the caller may write", () => {
 
     const ids = await matchedIds(readerWriterKey, { tags: [marker] });
 
+    expect(ids).toContain(bookmarkId);
+    expect(ids).not.toContain(noteId);
+  });
+
+  it("narrows purge too, which it never used to", async () => {
+    // **Purge was the one action this filter did not reach**, because the only
+    // callers who got past its gate were admitted past their maps by a rank as
+    // well. Under one model `space.item_purge` says a credential may destroy
+    // rows irrecoverably and its type permissions say which, so the filter
+    // decides here exactly as it does for every other action.
+    const marker = `pg${Math.random().toString(36).slice(2, 8)}`;
+    const noteId = await seed(
+      trustedKey,
+      "core.note",
+      { body: "readable" },
+      marker,
+    );
+    const bookmarkId = await seed(
+      trustedKey,
+      "core.bookmark",
+      { title: "writable" },
+      marker,
+    );
+
+    const { initialStatus, result } = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter: { tags: [marker] },
+        dry_run: true,
+      },
+      purgerKey,
+    );
+    expect(initialStatus).toBe(200);
+    const ids = result?.ids ?? [];
+
+    // The pair, as everywhere else here: the absence alone would pass on a
+    // match set that came back empty for any reason at all.
     expect(ids).toContain(bookmarkId);
     expect(ids).not.toContain(noteId);
   });
@@ -181,18 +232,17 @@ describe("the match set narrows to what the caller may write", () => {
     expect(patched.status).toBe(403);
   });
 
-  it("leaves an admin caller's reach unchanged", async () => {
+  it("leaves a caller holding write on the type unchanged", async () => {
     const marker = `ad${Math.random().toString(36).slice(2, 8)}`;
     const noteId = await seed(
       trustedKey,
       "core.note",
-      { body: "admin-reachable" },
+      { body: "reachable" },
       marker,
     );
 
-    // `space_admin` bypasses the permission maps entirely, so the level this
-    // door now asks for changes nothing for it. Without this case the fix
-    // could have narrowed every caller and still passed.
+    // The permissive direction. Without this case the fix could have
+    // narrowed every caller and still passed the refusal above.
     const ids = await matchedIds(trustedKey, { tags: [marker] });
     expect(ids).toContain(noteId);
   });
@@ -236,7 +286,7 @@ describe("the match set narrows on the space's source filter", () => {
     expect(ids).toContain(bookmark);
   });
 
-  it("narrows a space admin on source while not narrowing it on type", async () => {
+  it("narrows a broadly-granted credential on source but not on type", async () => {
     const marker = `sa${Math.random().toString(36).slice(2, 8)}`;
     const trustedNote = await seed(
       trustedKey,
@@ -252,15 +302,14 @@ describe("the match set narrows on the space's source filter", () => {
     );
 
     // The two axes answer differently for one credential, and nothing else
-    // in this file says so on a single subject. `space_admin` bypasses the
-    // permission maps, so the type axis never narrows it — it holds no
-    // explicit grant on `core.note` and reaches the row anyway. The source
-    // filter is not a permission map and has no such bypass, so the same
-    // credential in the same call is narrowed by it.
+    // in this file says so on a single subject. This key holds `"*": "write"`,
+    // so the type axis never narrows it. The source filter is not a
+    // permission map and no grant satisfies it, so the same credential in the
+    // same call is narrowed by it.
     //
     // Worth pinning together because the asymmetry is easy to state
-    // backwards: "admins are unaffected" is true of one axis and false of
-    // the other, and the published page said the wrong one until a review
+    // backwards: "a broad grant is unaffected" is true of one axis and false
+    // of the other, and the published page said the wrong one until a review
     // caught it.
     const ids = await matchedIds(trustedKey, { tags: [marker] });
 

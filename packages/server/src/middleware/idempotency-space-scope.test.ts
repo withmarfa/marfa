@@ -40,7 +40,10 @@ afterAll(async () => {
 async function spaceKey(spaceId: string, label: string): Promise<string> {
   const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
     key: ctx.adminKey,
-    body: { label, source: label, role: "space_admin" },
+    // The type grant is named rather than implied: a rank used to bypass the
+    // permission maps and there is no rank now, so a key that names nothing
+    // reaches nothing.
+    body: { label, source: label, type_permissions: { "*": "write" } },
   });
   expect(res.status).toBe(201);
   return ((await res.json()) as { key: string }).key;

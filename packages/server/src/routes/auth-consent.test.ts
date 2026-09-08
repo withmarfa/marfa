@@ -505,7 +505,6 @@ describe("GET /auth/authorize (consent page)", () => {
       {
         label: "handle-offer",
         source: "test",
-        role: "member",
         type_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
       },

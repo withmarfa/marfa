@@ -68,7 +68,14 @@ interface SyncKey {
   source: string;
 }
 
-/** A member credential whose stamped `source` fixes its natural-key space. */
+/**
+ * A credential whose stamped `source` fixes its natural-key space.
+ *
+ * `is_operator` is the schema's requirement of a space-less key in keys
+ * mode. It reaches the reserved namespaces and nothing else: both maps below
+ * still decide every type and every `acme.*` namespace this credential
+ * touches, which is what each case here asserts.
+ */
 async function syncCredential(options: {
   types: Record<string, "read" | "write">;
   extensions: Record<string, "read" | "write">;
@@ -80,10 +87,10 @@ async function syncCredential(options: {
     {
       label: `sync-${suffix}`,
       source,
-      role: "member",
       type_permissions: options.types,
       extension_permissions: options.extensions,
       default_tier: "library",
+      is_operator: true,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );

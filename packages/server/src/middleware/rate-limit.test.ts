@@ -1,4 +1,5 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
@@ -83,7 +84,10 @@ async function buildCtx(): Promise<Ctx> {
     {
       label: "rl-admin",
       source: `rl-admin-${suffix}`,
-      role: "instance_admin",
+      // Space-less and operator go together: the row constraint holds the
+      // pair, and the maps have to be named because nothing bypasses them.
+      is_operator: true,
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },
@@ -118,7 +122,8 @@ async function makeMemberKey(ctx: Ctx, label: string): Promise<string> {
     body: JSON.stringify({
       label,
       source: `${label}-${suffix}`,
-      role: "member",
+      // Narrow on every axis the caller could have handed down.
+      space_permissions: [],
       default_tier: "feed",
       type_permissions: { "*": "read" },
       extension_permissions: {},
@@ -294,7 +299,10 @@ async function buildAggCtx(): Promise<Ctx> {
     {
       label: "rl-agg-admin",
       source: `rl-agg-admin-${suffix}`,
-      role: "instance_admin",
+      // Space-less and operator go together: the row constraint holds the
+      // pair, and the maps have to be named because nothing bypasses them.
+      is_operator: true,
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },

@@ -15,8 +15,8 @@
  * fence and Postgres RLS can hide system rows independently, so the route
  * passes with the filter broken.
  *
- * The `scope_enforced` interaction is not the subject here — see
- * `auth-scope-enforced.test.ts` for the role-bypass axis.
+ * How a sign-in's granted scopes reach this same map is not the subject
+ * here; `oauth-scope-enforcement.test.ts` covers that projection.
  */
 import { describe, it, expect } from "vitest";
 import {
@@ -29,8 +29,9 @@ import { checkTypeAccess, computeTypeFilter } from "./auth.js";
 
 const OWN_SPACE = "space-own";
 
-// A member key: no role bypass, so the permission map is what decides.
-function memberKey(
+// An ordinary space key: the permission map is the only thing that decides,
+// because nothing bypasses it.
+function spaceKey(
   type_permissions: Record<string, TypePermission>,
   spaceId: string = OWN_SPACE,
 ): ApiKey {
@@ -39,9 +40,8 @@ function memberKey(
     space_id: spaceId,
     label: "test",
     source: "test",
-    role: "member",
     default_tier: "library",
-    is_platform: false,
+    is_operator: false,
     type_permissions,
     extension_permissions: {},
     edge_permissions: {},
@@ -70,8 +70,8 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     );
     expect(resolveTypePermission("core.note", withExclusion)).toBe("read");
 
-    const before = computeTypeFilter(memberKey(granted));
-    const after = computeTypeFilter(memberKey(withExclusion));
+    const before = computeTypeFilter(spaceKey(granted));
+    const after = computeTypeFilter(spaceKey(withExclusion));
 
     // Without the entry: byte-identical to what this credential shape has
     // always produced.
@@ -91,7 +91,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     // The divergence this exists to close: the point check refuses the type
     // the filter must also withhold, and admits the one it must keep.
     expect(() => {
-      checkTypeAccess(memberKey(withExclusion), "system.credential", "read");
+      checkTypeAccess(spaceKey(withExclusion), "system.credential", "read");
     }).toThrow();
     expect(matchesTypeFilter("system.credential", after)).toBe(false);
     expect(matchesTypeFilter("core.note", after)).toBe(true);
@@ -102,7 +102,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       [GLOBAL_TYPE_WILDCARD]: "read",
       "system.*": "none",
     };
-    const filter = computeTypeFilter(memberKey(perms));
+    const filter = computeTypeFilter(spaceKey(perms));
     expect(filter.excluded).toEqual(["system.*"]);
     expect(matchesTypeFilter("core.note", filter)).toBe(true);
     expect(matchesTypeFilter("system.credential", filter)).toBe(false);
@@ -117,7 +117,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       "user.*": "read",
       "user.secret": "none",
     };
-    const filter = computeTypeFilter(memberKey(perms));
+    const filter = computeTypeFilter(spaceKey(perms));
     expect(filter).toEqual({ allowed: ["user.*"], excluded: ["user.secret"] });
     expect(matchesTypeFilter("user.diary", filter)).toBe(true);
     expect(matchesTypeFilter("user.secret", filter)).toBe(false);
@@ -134,14 +134,14 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     };
     expect(resolveTypePermission("user.secret", perms)).toBe("read");
 
-    const filter = computeTypeFilter(memberKey(perms));
+    const filter = computeTypeFilter(spaceKey(perms));
     expect(matchesTypeFilter("user.secret", filter)).toBe(true);
     expect(matchesTypeFilter("user.diary", filter)).toBe(false);
   });
 
   it("leaves a narrow grant untouched when nothing is excluded", () => {
     const perms: Record<string, TypePermission> = { "core.*": "read" };
-    expect(computeTypeFilter(memberKey(perms))).toEqual({
+    expect(computeTypeFilter(spaceKey(perms))).toEqual({
       allowed: ["core.*"],
       excluded: [],
     });
@@ -150,12 +150,12 @@ describe("computeTypeFilter — explicit no-access entries", () => {
   it("returns an empty allow-list when nothing at all is granted", () => {
     // `allowed: []` means "no items visible", not "all items" — both
     // dialects compile it to `1=0`. Distinct from `allowed: undefined`,
-    // which is the role bypass below.
+    // which is the no-credential case below.
     const perms: Record<string, TypePermission> = {
       [GLOBAL_TYPE_WILDCARD]: "none",
       "core.note": "none",
     };
-    const filter = computeTypeFilter(memberKey(perms));
+    const filter = computeTypeFilter(spaceKey(perms));
     expect(filter.allowed).toEqual([]);
     expect(matchesTypeFilter("core.note", filter)).toBe(false);
   });
@@ -172,7 +172,7 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     // byte-identical either way, so a suite built on `{a: "read", b:
     // "write"}` proves the level and says nothing about the exclusion. The
     // wildcard beside the literal is what makes the two arms differ.
-    const key = memberKey({ "*": "write", "user.secret": "read" });
+    const key = spaceKey({ "*": "write", "user.secret": "read" });
 
     expect(computeTypeFilter(key, "write")).toEqual({
       allowed: ["*"],
@@ -185,13 +185,6 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       allowed: ["*", "user.secret"],
       excluded: [],
     });
-  });
-
-  it("does not restrict a role that bypasses the permission maps", () => {
-    const key = { ...memberKey({}), role: "space_admin" as const };
-    const filter = computeTypeFilter(key);
-    expect(filter.allowed).toBeUndefined();
-    expect(matchesTypeFilter("system.credential", filter)).toBe(true);
   });
 
   it("hands back a fresh object each call, never a shared one", () => {
@@ -214,8 +207,8 @@ describe("computeTypeFilter — explicit no-access entries", () => {
       [GLOBAL_TYPE_WILDCARD]: "read",
       "system.credential": "none",
     };
-    expect(computeTypeFilter(memberKey(perms, "space-own"))).toEqual(
-      computeTypeFilter(memberKey(perms, "space-other")),
+    expect(computeTypeFilter(spaceKey(perms, "space-own"))).toEqual(
+      computeTypeFilter(spaceKey(perms, "space-other")),
     );
   });
 });

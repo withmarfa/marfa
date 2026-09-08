@@ -31,18 +31,15 @@
  *   - `routes/connection-proxy.ts:readCredentialConfig` — both kinds;
  *     reads the upstream URL + decrypts the bearer / refreshes tokens.
  *
- * Auth: `requireSpaceAdmin` — space admins set up their own provider
- * credentials. The route calls `storage.items.create` directly, which
- * bypasses the `POST /items` `is_platform` gate on `system.*` writes;
- * the admin-gated route surface is the access-control boundary.
+ * Auth: `requireAuth` plus `space.credentials` — a space sets up its own
+ * provider credentials. The route calls `storage.items.create` directly,
+ * which bypasses the `POST /items` `is_operator` gate on `system.*`
+ * writes; the permission on these routes is the access-control boundary.
  */
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireSpacePermission,
-  requireSpaceAdmin,
-} from "../middleware/auth.js";
+import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -182,7 +179,7 @@ const createOAuthProviderCredentialRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin or space_admin.",
+      description: "Caller does not hold `space.credentials`.",
     },
   },
 });
@@ -228,7 +225,7 @@ const deleteCredentialRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin or space_admin.",
+      description: "Caller does not hold `space.credentials`.",
     },
     404: {
       content: {
@@ -301,7 +298,7 @@ const createApiTokenCredentialRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin or space_admin.",
+      description: "Caller does not hold `space.credentials`.",
     },
   },
 });
@@ -314,7 +311,7 @@ export function credentialRoutes(storage: Storage) {
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(createOAuthProviderCredentialRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.credentials");
     const body = c.req.valid("json");
 
@@ -366,7 +363,7 @@ export function credentialRoutes(storage: Storage) {
   });
 
   r.openapi(createApiTokenCredentialRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.credentials");
     const body = c.req.valid("json");
 
@@ -412,7 +409,7 @@ export function credentialRoutes(storage: Storage) {
   });
 
   r.openapi(deleteCredentialRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.credentials");
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {

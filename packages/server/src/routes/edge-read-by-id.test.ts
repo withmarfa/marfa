@@ -28,8 +28,8 @@ let ctx: TestContext;
 
 const spaceA = `edge-read-a-${Math.random().toString(36).slice(2, 10)}`;
 const spaceB = `edge-read-b-${Math.random().toString(36).slice(2, 10)}`;
-let adminA: string;
-let adminB: string;
+let keyA: string;
+let keyB: string;
 
 interface EdgeBody {
   edge: {
@@ -51,7 +51,6 @@ interface ErrorBody {
 async function mintKey(
   spaceId: string,
   over: {
-    role?: "space_admin" | "member";
     type_permissions?: Record<string, "read" | "write" | "none">;
     edge_permissions?: Record<string, "read" | "write">;
   } = {},
@@ -62,11 +61,10 @@ async function mintKey(
     {
       label: `edge-read-${suffix}`,
       source: `edge-read-${suffix}`,
-      role: over.role ?? "space_admin",
       default_tier: "library",
       type_permissions: over.type_permissions ?? { "*": "write" },
       edge_permissions: over.edge_permissions ?? { "*": "write" },
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,
@@ -106,8 +104,8 @@ async function createEdge(
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  adminA = await mintKey(spaceA);
-  adminB = await mintKey(spaceB);
+  keyA = await mintKey(spaceA);
+  keyB = await mintKey(spaceB);
 });
 
 afterAll(async () => {
@@ -116,8 +114,8 @@ afterAll(async () => {
 
 describe("GET /edges/:id", () => {
   it("returns the edge the create route returned", async () => {
-    const { id, source, target } = await createEdge(adminA);
-    const res = await request(ctx.app, "GET", `/edges/${id}`, { key: adminA });
+    const { id, source, target } = await createEdge(keyA);
+    const res = await request(ctx.app, "GET", `/edges/${id}`, { key: keyA });
     expect(res.status).toBe(200);
     const data = (await res.json()) as EdgeBody;
     expect(data.edge.id).toBe(id);
@@ -135,12 +133,12 @@ describe("GET /edges/:id", () => {
     // says so from outside the type system: a field present on one read and
     // absent from the other is exactly the drift that made the wire shape
     // worth consolidating.
-    const { id, source } = await createEdge(adminA);
+    const { id, source } = await createEdge(keyA);
     const direct = (await (
-      await request(ctx.app, "GET", `/edges/${id}`, { key: adminA })
+      await request(ctx.app, "GET", `/edges/${id}`, { key: keyA })
     ).json()) as EdgeBody;
     const viaItem = (await (
-      await request(ctx.app, "GET", `/items/${source}/edges`, { key: adminA })
+      await request(ctx.app, "GET", `/items/${source}/edges`, { key: keyA })
     ).json()) as { data: EdgeBody["edge"][] };
     const listed = viaItem.data.find((e) => e.id === id);
     expect(listed).toBeDefined();
@@ -155,14 +153,14 @@ describe("GET /edges/:id", () => {
       ctx.app,
       "GET",
       "/edges/019d0000-0000-7000-a000-00000000dead",
-      { key: adminA },
+      { key: keyA },
     );
     expect(res.status).toBe(404);
     expect(((await res.json()) as ErrorBody).error.code).toBe("edge_not_found");
   });
 
   it("rejects an unauthenticated read", async () => {
-    const { id } = await createEdge(adminA);
+    const { id } = await createEdge(keyA);
     const res = await request(ctx.app, "GET", `/edges/${id}`);
     expect(res.status).toBe(401);
   });
@@ -170,16 +168,15 @@ describe("GET /edges/:id", () => {
   it("404s across a space boundary rather than 403ing", async () => {
     // The cloak update and delete already apply. A space-scoped caller must
     // not learn that another space's edge exists, and a 403 would say so.
-    const { id } = await createEdge(adminA);
-    const res = await request(ctx.app, "GET", `/edges/${id}`, { key: adminB });
+    const { id } = await createEdge(keyA);
+    const res = await request(ctx.app, "GET", `/edges/${id}`, { key: keyB });
     expect(res.status).toBe(404);
     expect(((await res.json()) as ErrorBody).error.code).toBe("edge_not_found");
   });
 
   it("refuses a caller without read on the source item's type", async () => {
-    const { id } = await createEdge(adminA);
+    const { id } = await createEdge(keyA);
     const key = await mintKey(spaceA, {
-      role: "member",
       type_permissions: { "core.file": "read" },
       edge_permissions: { "*": "read" },
     });
@@ -188,9 +185,8 @@ describe("GET /edges/:id", () => {
   });
 
   it("refuses a caller without read on the edge type", async () => {
-    const { id } = await createEdge(adminA);
+    const { id } = await createEdge(keyA);
     const key = await mintKey(spaceA, {
-      role: "member",
       type_permissions: { "*": "read" },
       edge_permissions: { "in-thread": "read" },
     });
@@ -207,16 +203,15 @@ describe("GET /edges/:id", () => {
     // and the gate is written `if (srcItem)` -- so a null source skips the
     // check rather than failing it. Without this, trashing an item would
     // turn a refusal into a disclosure of what it is related to.
-    const { id, source } = await createEdge(adminA);
+    const { id, source } = await createEdge(keyA);
     const trashed = await request(
       ctx.app,
       "POST",
       `/items/${source}/transition`,
-      { key: adminA, body: { state: "trashed" } },
+      { key: keyA, body: { state: "trashed" } },
     );
     expect(trashed.status).toBe(200);
     const key = await mintKey(spaceA, {
-      role: "member",
       type_permissions: { "core.file": "read" },
       edge_permissions: { "*": "read" },
     });
@@ -228,12 +223,12 @@ describe("GET /edges/:id", () => {
     // The gate is about permission, not about lifecycle. An edge off a
     // trashed item is still readable by someone who may read it -- which is
     // the case a client resolving a stale id is usually in.
-    const { id, source } = await createEdge(adminA);
+    const { id, source } = await createEdge(keyA);
     await request(ctx.app, "POST", `/items/${source}/transition`, {
-      key: adminA,
+      key: keyA,
       body: { state: "trashed" },
     });
-    const res = await request(ctx.app, "GET", `/edges/${id}`, { key: adminA });
+    const res = await request(ctx.app, "GET", `/edges/${id}`, { key: keyA });
     expect(res.status).toBe(200);
     expect(((await res.json()) as EdgeBody).edge.id).toBe(id);
   });

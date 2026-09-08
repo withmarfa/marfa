@@ -715,18 +715,19 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
     const spaceA = await ctx.storage.spaces.create("t235-proxy-A");
     const spaceB = await ctx.storage.spaces.create("t235-proxy-B");
 
-    // Admin (not platform) is space-bounded; the cross-space fence fires inside readOAuthConfig,
-    // after requireConnectionProxyAccess passes.
+    // A space-bound key holding the proxy door's own permission and nothing
+    // else: the cross-space fence fires inside readOAuthConfig, after
+    // requireConnectionProxyAccess passes.
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `marfa_k1_t235_admin_a_${suffix}`;
+    const rawKey = `marfa_k1_t235_space_a_${suffix}`;
     const hash = hashApiKey(rawKey, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {
-        label: `t235-admin-a-${suffix}`,
-        source: `t235-admin-a-${suffix}`,
-        role: "instance_admin",
+        label: `t235-space-a-${suffix}`,
+        source: `t235-space-a-${suffix}`,
+        space_permissions: ["space.upstream_access"],
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hash,
       spaceA.id,
@@ -797,7 +798,6 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
       {
         label: "test runtime credential",
         source: `integration:${connectionId}`,
-        role: "member",
         type_permissions: { "*": "write" },
         extension_permissions: { "connection.runtime": "write" },
         edge_permissions: {},
@@ -840,7 +840,6 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
       {
         label: "wrong-connection runtime credential",
         source: `integration:${connectionB}`,
-        role: "member",
         type_permissions: { "*": "write" },
         extension_permissions: { "connection.runtime": "write" },
         edge_permissions: {},

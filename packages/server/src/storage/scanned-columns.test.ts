@@ -134,11 +134,12 @@ describe("the scanned-column roster keeps up with the storage layer", () => {
   it("accounts for every column a stored row is cast on", () => {
     // Keyed on the column and the union together, not on the union alone.
     // A roster that asked only whether a type appeared somewhere was
-    // silent on the case this feature exists for — a second column
-    // carrying a union already on the list. `row.source as MarfaRole` in a
-    // store passed that guard without anybody deciding anything, which is
-    // the exact shape of the incident: a column holding a value nothing
-    // recognized.
+    // silent on the case this feature exists for: a second column carrying
+    // a union already on the list. `Tier` is on two of them already,
+    // `api_keys.default_tier` and `items.tier`, so a third column cast to
+    // it would pass that guard without anybody deciding anything, which is
+    // the shape of the incident behind all of this: a column holding a
+    // value nothing recognized.
     const scanned = new Set(
       SCANNED_COLUMNS.map((c) => pair(c.column, c.castType)),
     );

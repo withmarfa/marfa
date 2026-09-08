@@ -226,7 +226,6 @@ export async function mintLocalRuntimeCredential(
         {
           label: `local-runtime ${connectionId}`,
           source: `local-runtime:${connectionId}:${suffix}`,
-          role: "member",
           type_permissions: buildTypePermissions(
             manifest,
             connection.properties,

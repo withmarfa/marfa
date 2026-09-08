@@ -1492,7 +1492,7 @@ describe("the content category projection", () => {
   it("never claims a write the reserved-namespace gate refuses", () => {
     // `marfa.*` types are family `integration`, so they are squarely inside
     // the category and their reads are unrestricted. Their writes are refused
-    // by the middleware for every credential that is not `is_platform` or a
+    // by the middleware for every credential that is not `is_operator` or a
     // manifest-granted runtime credential, and an OAuth token is neither. A
     // parent that claimed the write would put something on a consent screen
     // that will never work.

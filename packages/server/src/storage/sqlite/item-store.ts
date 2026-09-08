@@ -134,11 +134,14 @@ function isSourceDedupViolation(err: unknown): boolean {
  * wildcard-scoped credential, and ignoring an empty list reports the whole
  * space to a credential that may read nothing.
  *
- * `undefined` in means "no filter" — an admin or space_admin, whose space
- * isolation is enforced separately. An empty array is the opposite: a member
- * credential or an OAuth token whose scopes project into no type permission at
- * all, which must see nothing rather than everything. `undefined` out means "no
- * predicate", so a caller pushes the result only when it is present.
+ * `undefined` in means "no filter", which is either a request that carried no
+ * credential at all — bootstrap and the anonymous reads — or a server-internal
+ * read with no caller to bound it. No authenticated caller produces it: its
+ * permission map is the whole of what it may reach, so it always arrives with
+ * a real list. An empty array is the opposite: a credential whose map, or
+ * whose projected OAuth scopes, permit no type at all, which must see nothing
+ * rather than everything. `undefined` out means "no predicate", so a caller
+ * pushes the result only when it is present.
  */
 function typePatternClause(pattern: string): SQL {
   const { global, exact, descendantPattern } = typePatternToSql(pattern);

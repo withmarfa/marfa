@@ -378,10 +378,18 @@ describe("re-importing after being away (seam: online, no subscription)", () => 
       type: "core.note",
       properties: { body: "ordinary" },
     });
-    const reserved = await client.items.create({
-      type: "system.device",
-      properties: { name: "a laptop", kind: "desktop" },
-    });
+    // Through storage, because no credential writes `system.*`: the namespace
+    // belongs to the platform's own machinery, and every one of its writers
+    // goes through the storage layer rather than through a credential.
+    const reserved = await fixture.storage.items.create(
+      {
+        type: "system.device",
+        properties: { name: "a laptop", kind: "desktop" },
+        source: "sdk-test-local",
+        tier: "library",
+      },
+      fixture.spaceId,
+    );
 
     await importAll({ store, client, prune: false });
     expect(await store.server.items.get(reserved.id)).toBeDefined();

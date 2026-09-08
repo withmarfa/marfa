@@ -8,11 +8,7 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import {
-  requireAuth,
-  computeTypeFilter,
-  roleBypassesPermissionMaps,
-} from "../middleware/auth.js";
+import { requireAuth, computeTypeFilter } from "../middleware/auth.js";
 import {
   eventMatchesTypeFilter,
   subscribe,
@@ -293,10 +289,6 @@ function filterReplayPayload(
   apiKey: ApiKey | undefined,
 ): string {
   if (parsed === null) return payload;
-  // A credential that bypasses the maps has nothing to narrow, so it pays
-  // no re-serialize. Without this an admin catching up on a backlog
-  // rebuilt every metadata frame in it to arrive at the same bytes.
-  if (roleBypassesPermissionMaps(apiKey)) return payload;
   // Shape-checked rather than presence-checked. `filterMetadataForCaller`
   // hands `.extensions` to a filter that iterates its keys, so a stored
   // payload whose `metadata` lacks that block — an older shape, or a

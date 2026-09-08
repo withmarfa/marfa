@@ -7,8 +7,7 @@
  * defect the helper exists for. Delete this line when you do. */
 import { eq, and } from "drizzle-orm";
 import { generateId } from "@withmarfa/shared";
-import type { MarfaRole, User } from "@withmarfa/shared";
-import { storedRole } from "../stored-role.js";
+import type { User } from "@withmarfa/shared";
 import type { UserStore, UpdateProfileInput } from "../interface.js";
 import { users, auth_user } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
@@ -26,7 +25,6 @@ function rowToUser(row: typeof users.$inferSelect): User {
     space_id: row.space_id,
     handle: row.handle,
     auth_user_id: row.auth_user_id,
-    role: storedRole(row.role, { table: "users", id: row.id }),
     timezone: row.timezone,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -43,7 +41,6 @@ export class SqliteUserStore implements UserStore {
     space_id: string;
     handle?: string;
     auth_user_id?: string;
-    role?: MarfaRole;
   }): Promise<User> {
     const now = new Date().toISOString();
     const row = {
@@ -58,28 +55,11 @@ export class SqliteUserStore implements UserStore {
       space_id: input.space_id,
       handle: input.handle ?? null,
       auth_user_id: input.auth_user_id ?? null,
-      role: input.role ?? "member",
       timezone: null,
       created_at: now,
       updated_at: now,
     };
     await this.db.insert(users).values(row).run();
-    return rowToUser(row);
-  }
-
-  async setRole(id: string, role: MarfaRole): Promise<User> {
-    const now = new Date().toISOString();
-    await this.db
-      .update(users)
-      .set({ role, updated_at: now })
-      .where(eq(users.id, id))
-      .run();
-    const row = await this.db
-      .select()
-      .from(users)
-      .where(eq(users.id, id))
-      .get();
-    if (!row) throw new Error(`User ${id} not found`);
     return rowToUser(row);
   }
 

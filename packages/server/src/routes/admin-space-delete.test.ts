@@ -98,7 +98,6 @@ describe("POST /admin/spaces/:id/delete", () => {
         body: {
           label: "types",
           source: "types",
-          role: "space_admin",
           metadata_permissions: { "*": "write" },
         },
       },
@@ -157,7 +156,11 @@ describe("POST /admin/spaces/:id/delete", () => {
       `/admin/spaces/${spaceId}/keys`,
       {
         key: ctx.adminKey,
-        body: { label: "events", source: "events", role: "space_admin" },
+        body: {
+          label: "events",
+          source: "events",
+          type_permissions: { "*": "write" },
+        },
       },
     );
     expect(keyRes.status).toBe(201);
@@ -207,7 +210,11 @@ describe("POST /admin/spaces/:id/delete", () => {
       `/admin/spaces/${spaceId}/keys`,
       {
         key: ctx.adminKey,
-        body: { label: "content", source: "content", role: "space_admin" },
+        body: {
+          label: "content",
+          source: "content",
+          type_permissions: { "*": "write" },
+        },
       },
     );
     expect(keyRes.status).toBe(201);

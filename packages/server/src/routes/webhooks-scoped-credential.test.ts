@@ -8,12 +8,14 @@
  * to narrow a payload against, so the only thing that can bound what a
  * webhook delivers is the reach of whoever registered it.
  *
- * `requireSpaceAdmin` alone does not give that. An OAuth-derived token
- * projects the user's role — `space_admin` included — while holding a
- * grant that is a subset of the space, which is exactly why
- * `roleBypassesPermissionMaps` excludes it. Such a credential could
- * otherwise leave behind a standing subscription delivering more than the
- * app was ever granted, with nothing on the row to record it.
+ * Holding `space.webhooks` alone does not give that, and the two are separate
+ * axes: a credential can hold the permission to set up webhooks and hold read
+ * on one type. Such a credential could otherwise leave behind a standing
+ * subscription delivering more than it could ever fetch itself, with nothing
+ * on the row to record it.
+ *
+ * The door asks the credential's own content reach rather than how it was
+ * minted, so a key and a sign-in are answered the same way.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
@@ -24,6 +26,7 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -46,8 +49,8 @@ interface ErrorBody {
   error: { code: string };
 }
 
-describe("POST /webhooks and a scope-enforced credential", () => {
-  it("refuses one that projects space_admin", async () => {
+describe("POST /webhooks and a credential narrower than its space", () => {
+  it("refuses a session holding a subset of the space", async () => {
     const space = await spaces().create("scoped-webhook-space");
     const { token } = await seedOauthBearer(
       ctx.storage,
@@ -58,12 +61,12 @@ describe("POST /webhooks and a scope-enforced credential", () => {
       },
     );
 
-    // The role gate admits it — that is the point. The refusal has to come
-    // from the scope flag, not from the role and not from a missing scope.
-    // Both capabilities are granted so that the request reaches the check this
-    // file is about: `keys` for the probe below, `webhooks` for the door
-    // itself. Neither buys any data-plane reach, so what the webhook door sees
-    // is unchanged.
+    // The capability gate admits it — that is the point. The refusal has to
+    // come from the credential's narrow content reach, not from a missing
+    // scope. Both capabilities are granted so that the request reaches the
+    // check this file is about: `keys` for the probe below, `webhooks` for the
+    // door itself. Neither buys any data-plane reach, so what the webhook door
+    // sees is unchanged.
     const keysRes = await request(ctx.app, "GET", "/keys", { key: token });
     expect(keysRes.status).toBe(200);
 
@@ -86,16 +89,16 @@ describe("POST /webhooks and a scope-enforced credential", () => {
     // could not have created.
     const space = await spaces().create("scoped-webhook-update-space");
 
-    // Registered by an unscoped space admin, the way it is meant to be.
+    // Registered by a credential reaching the whole space, as intended.
     const suffix = Math.random().toString(36).slice(2, 8);
     const adminKey = await ctx.storage.keys.create(
       {
         label: `wh-admin-${suffix}`,
         source: `wh-admin-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(`marfa_k1_whadmin_${suffix}`, TEST_API_KEY_SALT),
       space.id,
@@ -117,8 +120,8 @@ describe("POST /webhooks and a scope-enforced credential", () => {
         userRole: "space_admin",
       },
     );
-    // The role gate admits it, so the refusal below comes from the scope
-    // flag rather than from the role. The create test asserts the same.
+    // The capability gate admits it, so the refusal below comes from the
+    // credential's content reach. The create test asserts the same.
     expect(
       (await request(ctx.app, "GET", "/keys", { key: token })).status,
     ).toBe(200);
@@ -144,10 +147,10 @@ describe("POST /webhooks and a scope-enforced credential", () => {
       {
         label: `wh-del-${suffix}`,
         source: `wh-del-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       space.id,
@@ -187,7 +190,7 @@ describe("POST /webhooks and a scope-enforced credential", () => {
     ).toContain(webhookId);
   });
 
-  it("admits an unscoped space admin, as before", async () => {
+  it("admits a credential that reaches the whole space", async () => {
     // The control. Without it the refusal above is satisfied by a door
     // that refuses everyone.
     const space = await spaces().create("unscoped-webhook-space");
@@ -197,10 +200,10 @@ describe("POST /webhooks and a scope-enforced credential", () => {
       {
         label: `wh-ok-${suffix}`,
         source: `wh-ok-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       space.id,

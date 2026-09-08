@@ -18,6 +18,7 @@ import type { Storage } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { KeyResponseSchema } from "./_schemas.js";
 import { extensionLabelOf } from "../auth/extension-label.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -40,7 +41,6 @@ async function createKey(overrides: Record<string, unknown> = {}): Promise<{
     body: {
       label: `subject-${suffix}`,
       source: `subject-${suffix}`,
-      role: "member",
       default_tier: "feed",
       type_permissions: { "core.note": "read" },
       extension_permissions: {},
@@ -74,7 +74,6 @@ describe("the key a create route returns", () => {
       body: {
         label: `expiry-${suffix}`,
         source: `expiry-${suffix}`,
-        role: "member",
         default_tier: "feed",
         type_permissions: { "core.note": "read" },
       },
@@ -136,7 +135,6 @@ describe("PATCH /keys/{id}", () => {
     expect(updated.label).toBe("renamed");
     // source is immutable — it must not have changed
     expect(updated.source).toBe(source);
-    expect(updated.role).toBe("member");
     expect(updated.default_tier).toBe("library");
     expect(updated.type_permissions).toEqual({ "core.note": "write" });
     expect(updated.extension_permissions).toEqual({ "my-app.prefs": "read" });
@@ -162,15 +160,29 @@ describe("PATCH /keys/{id}", () => {
     expect(updated.type_permissions).toEqual({ "core.note": "read" });
   });
 
-  it("returns 403 for a non-admin caller", async () => {
+  it("returns 403 for a caller that does not hold `space.keys`", async () => {
     const { id } = await createKey();
-    const { key: memberKey } = await createKey({
-      label: "patcher-member",
-      type_permissions: { "*": "read" },
-    });
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const narrow = `marfa_k1_patcher_${suffix}`;
+    await ctx.storage.keys.create(
+      {
+        label: `patcher-narrow-${suffix}`,
+        source: `patcher-narrow-${suffix}`,
+        // The whole point of the fixture: it reaches content and nothing
+        // administrative, which is what the keys doors now ask about. Not an
+        // operator key either — that one reaches these doors by being the
+        // operator key, and a fixture carrying the flag would prove the
+        // carve-out rather than the permission.
+        space_permissions: [],
+        type_permissions: { "*": "read" },
+        default_tier: "library",
+        is_operator: false,
+      },
+      hashApiKey(narrow, TEST_API_KEY_SALT),
+    );
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: memberKey,
+      key: narrow,
       body: { label: "nope" },
     });
     expect(res.status).toBe(403);
@@ -186,18 +198,6 @@ describe("PATCH /keys/{id}", () => {
     expect(res.status).toBe(400);
     const err = (await res.json()) as { error: { message: string } };
     expect(err.error.message).toMatch(/source.*immutable/i);
-  });
-
-  it("returns 400 when attempting to change the immutable `role`", async () => {
-    const { id } = await createKey();
-
-    const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.adminKey,
-      body: { role: "instance_admin" },
-    });
-    expect(res.status).toBe(400);
-    const err = (await res.json()) as { error: { message: string } };
-    expect(err.error.message).toMatch(/role.*immutable/i);
   });
 
   // The one response here that can carry an expiry, and it declared the field
@@ -217,7 +217,6 @@ describe("PATCH /keys/{id}", () => {
       {
         label: `runtime-${suffix}`,
         source: `runtime-${suffix}`,
-        role: "member",
         type_permissions: {},
         connection_id: `conn-${suffix}`,
         expires_at: expiresAt,
@@ -337,7 +336,6 @@ describe("bootstrap sentinel", () => {
         body: {
           label: "first-admin",
           source: "first-admin",
-          role: "member",
           default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
@@ -345,9 +343,10 @@ describe("bootstrap sentinel", () => {
         },
       });
       expect(res.status).toBe(201);
-      const body = (await res.json()) as { role: string; id: string };
-      // Bootstrap key is coerced to admin regardless of requested role.
-      expect(body.role).toBe("instance_admin");
+      const body = (await res.json()) as { is_operator: boolean; id: string };
+      // The first credential on an instance is the operator key, whatever the
+      // request asked for.
+      expect(body.is_operator).toBe(true);
       // Sentinel must now be stamped.
       const stamped = await storage.settings.get("bootstrapped");
       expect(stamped).toBe("true");
@@ -433,7 +432,6 @@ describe("bootstrap sentinel", () => {
         body: {
           label: "routine-admin-mint",
           source: "routine-admin-mint",
-          role: "member",
           default_tier: "feed",
           type_permissions: { "core.note": "read" },
           extension_permissions: {},
@@ -475,7 +473,6 @@ describe("bootstrap sentinel", () => {
         body: {
           label: "first-admin",
           source: "first-admin",
-          role: "member",
           default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
@@ -494,7 +491,6 @@ describe("bootstrap sentinel", () => {
         body: {
           label: "takeover",
           source: "takeover",
-          role: "member",
           default_tier: "feed",
           type_permissions: { "*": "write" },
           extension_permissions: {},
@@ -533,7 +529,7 @@ describe("bootstrap sentinel", () => {
       // Only one key persisted in the store.
       const keys = await storage.keys.list();
       expect(keys.length).toBe(1);
-      expect(keys[0]?.role).toBe("instance_admin");
+      expect(keys[0]?.is_operator).toBe(true);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -643,9 +639,9 @@ describe("bootstrap sentinel", () => {
 describe("POST /keys — a session mints, clamped to its own grant", () => {
   // The blanket refusal that used to stand here did two jobs: it withheld the
   // permission, and it prevented the escalation a mint makes possible. Both
-  // still hold, through three things that can fail independently — the
-  // capability gate, the breadth clamp, and `scope_enforced` — so each gets
-  // its own case rather than one test standing for all three.
+  // still hold, through two things that can fail independently — the
+  // capability gate and the breadth clamp — so each gets its own case rather
+  // than one test standing for both.
   let hostedCtx: TestContext;
   let spaceId: string;
 
@@ -669,7 +665,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     });
     const doors: [string, string, unknown?][] = [
       ["GET", "/keys"],
-      ["POST", "/keys", { label: "x", source: "x", role: "member" }],
+      ["POST", "/keys", { label: "x", source: "x" }],
       ["DELETE", "/keys/key_whatever"],
       ["PATCH", "/keys/key_whatever", { label: "renamed" }],
     ];
@@ -684,8 +680,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       };
       expect(err.error.code).toBe("forbidden");
       // The refusal names the literal. A client told only "forbidden" on an
-      // administrative surface reads it as the role, which is not what
-      // refused it, and cannot narrow toward a scope nobody named.
+      // administrative surface cannot narrow toward a scope nobody named.
       expect(err.error.details?.required_scope).toBe(KEYS);
     }
   });
@@ -698,27 +693,20 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
-      body: { label: "like me", source: "like-me", role: "member" },
+      body: { label: "like me", source: "like-me" },
     });
     expect(res.status).toBe(201);
     const created = (await res.json()) as {
       id: string;
-      scope_enforced?: boolean;
       type_permissions: Record<string, string>;
     };
     // The no-input case is "a key like this session". The alternative default
-    // is `{}`, which on a scope-enforced key reads nothing at all.
+    // is `{}`, which reads nothing at all.
     expect(created.type_permissions["core.note"]).toBe("read");
-    // **On the response, not only in storage.** The schema documents the flag
-    // on every key shape, and a handler that builds its response object field
-    // by field can satisfy the schema's type while never sending it — which is
-    // exactly what happened, and what a storage-only assertion cannot see.
-    expect(created.scope_enforced).toBe(true);
 
     const stored = await hostedCtx.storage.keys.get(created.id);
-    expect(stored?.scope_enforced).toBe(true);
     expect(stored?.space_id).toBe(spaceId);
-    expect(stored?.is_platform).toBe(false);
+    expect(stored?.is_operator).toBe(false);
   });
 
   it("refuses reach the grant does not cover, and names the literal", async () => {
@@ -732,7 +720,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "wider",
         source: "wider",
-        role: "member",
         type_permissions: { "core.note": "write" },
       },
     });
@@ -759,30 +746,15 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "under a wildcard",
         source: "under-wildcard",
-        role: "member",
         type_permissions: { "core.note": "read" },
       },
     });
     expect(res.status).toBe(201);
   });
 
-  it("still refuses a role above the session's own", async () => {
-    // Role is a separate axis and the capability does not touch it: a granted
-    // session may spend its role, never exceed it.
+  it("never mints an operator key from a session, whatever the body asks", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      userRole: "member",
-      spaceId,
-    });
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: token,
-      body: { label: "up", source: "up", role: "space_admin" },
-    });
-    expect(res.status).toBe(403);
-  });
-
-  it("never mints a platform key from a session, whatever the body asks", async () => {
-    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      userRole: "instance_admin",
+      userRole: "space_admin",
       spaceId,
     });
     const res = await request(hostedCtx.app, "POST", "/keys", {
@@ -790,17 +762,19 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "platform",
         source: "platform",
-        role: "member",
-        is_platform: true,
+        is_operator: true,
       },
     });
-    expect(res.status).toBe(201);
-    const created = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(created.id);
-    // `is_platform` is an operator-tier flag exclusive to API keys; the
-    // synthetic OAuth principal never carries it, so the escalation clamp
-    // above it coerces the request to false.
-    expect(stored?.is_platform).toBe(false);
+    // Running the instance sits outside the permission model, so no scope can
+    // reach it and the ask is refused rather than quietly downgraded. The
+    // synthetic OAuth principal never carries the flag, so no session can
+    // satisfy this whatever it was granted.
+    expect(res.status).toBe(403);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("forbidden");
+    expect(
+      (await hostedCtx.storage.keys.list()).some((k) => k.label === "platform"),
+    ).toBe(false);
   });
 
   it("records the grant on the audit row, so a revoked app leads to its keys", async () => {
@@ -811,7 +785,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
-      body: { label: "audited", source: "audited", role: "member" },
+      body: { label: "audited", source: "audited" },
     });
     expect(res.status).toBe(201);
     const created = (await res.json()) as { id: string };
@@ -841,10 +815,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       {
         label: "target",
         source: "target-" + Math.random().toString(36).slice(2),
-        role: "member",
         type_permissions: {},
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       spaceId,
@@ -860,10 +833,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       { key: token, body: { label: "renamed" } },
     );
     expect(renamed.status).toBe(200);
-    // The update response builds its own object too, and had the same gap.
-    expect(
-      Object.keys((await renamed.json()) as Record<string, unknown>),
-    ).toContain("scope_enforced");
 
     const revoked = await request(
       hostedCtx.app,
@@ -874,71 +843,41 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(revoked.status).toBe(200);
   });
 
-  it("refuses a session a role above member, which no scope can measure", async () => {
-    // `canGrantRole` permits this: a space_admin user's app asking for
-    // space_admin travels sideways, not up. The axis it does not measure is
-    // the one that matters — the session's own principal is scope-enforced, so
-    // its effective authority is its maps, while a key carrying rank opens
-    // audit, credentials, connections and the schema doors on rank alone.
-    const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      userRole: "space_admin",
-      spaceId,
-    });
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: token,
-      body: { label: "ranked", source: "ranked", role: "space_admin" },
-    });
-    expect(res.status).toBe(403);
-  });
-
-  it("refuses a key minted from a session when it tries to mint again", async () => {
-    // **The second half of the two-step escalation, kept even though the first
-    // half is now refused above.** The two defences are independent: the role
-    // refusal stops a session asking for rank, and this stops any
-    // scope-enforced credential reaching a capability door at all. If the role
-    // rule were ever relaxed — a deployment wanting session-minted admin keys,
-    // say — this is what would still be standing between that key and an
-    // unclamped, unstamped second key with full reach.
-    const raw = "marfa_k1_enf_" + Math.random().toString(36).slice(2);
-    const enforced = await hostedCtx.storage.keys.create(
-      {
-        label: "as if minted from a session",
-        source: "enforced-" + Math.random().toString(36).slice(2),
-        role: "space_admin",
-        type_permissions: {},
-        default_tier: "library",
-        is_platform: false,
-        scope_enforced: true,
-      },
-      hashApiKey(raw, TEST_API_KEY_SALT),
-      spaceId,
+  it("hands a session-minted key no more than the session held", async () => {
+    // **The second half of the two-step escalation.** A mint is the one way a
+    // credential can outlive the clamp that bounded it, so the key a session
+    // produces has to carry the session's own bounds — otherwise the refusals
+    // above last exactly until the app mints its way past them.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
     );
-    expect(
-      (await hostedCtx.storage.keys.get(enforced.id))?.scope_enforced,
-    ).toBe(true);
+    const minted = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "step one", source: "step-one" },
+    });
+    expect(minted.status).toBe(201);
+    const first = (await minted.json()) as { id: string; key: string };
+    const stored = await hostedCtx.storage.keys.get(first.id);
+    // The grant carried `space.keys`, so the key carries it and no more: the
+    // other ten are absent even though the account holder holds them all.
+    expect(stored?.space_permissions).toEqual(["space.keys"]);
 
-    // Its rank would open every one of these doors. The stamp closes them.
-    for (const [method, path, body] of [
-      ["GET", "/keys", undefined],
-      [
-        "POST",
-        "/keys",
-        {
-          label: "step two",
-          source: "step-two",
-          role: "space_admin",
-          type_permissions: { "*": "write" },
-        },
-      ],
-      ["DELETE", `/keys/${enforced.id}`, undefined],
-      ["PATCH", `/keys/${enforced.id}`, { label: "renamed" }],
-    ] as [string, string, unknown][]) {
-      const res = await request(hostedCtx.app, method, path, {
-        key: raw,
-        ...(body === undefined ? {} : { body }),
-      });
-      expect(res.status, `${method} ${path}`).toBe(403);
-    }
+    // And the second hop cannot widen what the first was clamped to.
+    const stepTwo = await request(hostedCtx.app, "POST", "/keys", {
+      key: first.key,
+      body: {
+        label: "step two",
+        source: "step-two",
+        space_permissions: ["space.credentials"],
+      },
+    });
+    expect(stepTwo.status).toBe(403);
+    const err = (await stepTwo.json()) as {
+      error: { details?: { required_scope?: string } };
+    };
+    expect(err.error.details?.required_scope).toBe("space.credentials");
   });
 
   it("clamps the update door, which reaches keys the session never minted", async () => {
@@ -949,10 +888,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       {
         label: "someone else's key",
         source: "victim-" + Math.random().toString(36).slice(2),
-        role: "member",
         type_permissions: {},
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       spaceId,
@@ -992,7 +930,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "ext",
         source: "ext",
-        role: "member",
         type_permissions: {},
         extension_permissions: { "*": "write" },
       },
@@ -1004,10 +941,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       {
         label: "ext target",
         source: "ext-target-" + Math.random().toString(36).slice(2),
-        role: "member",
         type_permissions: {},
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       spaceId,
@@ -1039,7 +975,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     // The derive path does hand the edge map over when nothing is named.
     const derived = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
-      body: { label: "derived", source: "derived-edges", role: "member" },
+      body: { label: "derived", source: "derived-edges" },
     });
     expect(derived.status).toBe(201);
     const derivedKey = await hostedCtx.storage.keys.get(
@@ -1053,7 +989,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "partial",
         source: "partial",
-        role: "member",
         type_permissions: { "core.note": "read" },
       },
     });
@@ -1082,7 +1017,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "edges only",
         source: "edges-only",
-        role: "member",
         edge_permissions: {},
       },
     });
@@ -1110,7 +1044,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "com.othervendor.sync",
         source: "vendor-probe",
-        role: "member",
         type_permissions: { "core.note": "read" },
       },
     });
@@ -1118,17 +1051,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const key = await hostedCtx.storage.keys.get(
       ((await minted.json()) as { id: string }).id,
     );
-    expect(key?.scope_enforced).toBe(true);
     // The stored map is empty, and the label must not stand in for one.
     expect(key?.extension_permissions ?? {}).toEqual({});
     expect(extensionLabelOf(key ?? undefined)).toBe("");
-    // A key minted the ordinary way still claims its own namespace.
-    expect(
-      extensionLabelOf({
-        label: "com.othervendor.sync",
-        scope_enforced: false,
-      }),
-    ).toBe("com.othervendor.sync");
   });
 
   it("measures a metadata wildcard on the metadata axis, not the type axis", async () => {
@@ -1148,7 +1073,6 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "meta up",
         source: "meta-up",
-        role: "member",
         metadata_permissions: { "*": "write" },
       },
     });
@@ -1170,56 +1094,49 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "meta ok",
         source: "meta-ok",
-        role: "member",
         metadata_permissions: { "*": "write" },
       },
     });
     expect(allowed.status).toBe(201);
   });
 
-  it("still lets an API-key space_admin mint, with no capability anywhere", async () => {
-    // The gate returns immediately for a non-OAuth caller, so nothing about a
-    // keys-mode or API-key deployment changes. This is the case that says so.
+  it("lets an API key holding `space.keys` mint, with no grant anywhere", async () => {
+    // The gate reads the key's own list when the caller is not a session, so
+    // a keys-mode or API-key deployment reaches this door with no OAuth
+    // principal involved at all. This is the case that says so.
     const raw = "marfa_k1_ta_" + Math.random().toString(36).slice(2);
     await hostedCtx.storage.keys.create(
       {
         label: "ta-key",
         source: "ta-key",
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       spaceId,
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: raw,
-      body: { label: "minted", source: "minted", role: "member" },
+      body: { label: "minted", source: "minted" },
     });
     expect(res.status).toBe(201);
     const created = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(created.id);
-    // And its key is not scope-enforced: an API-key mint keeps `{}` and its
-    // role decides, exactly as before.
-    expect(stored?.scope_enforced).toBe(false);
+    // An API-key mint that names no maps keeps `{}` rather than deriving from
+    // a grant, because there is no grant to derive from.
     expect(stored?.type_permissions).toEqual({});
   });
 });
 
 describe("POST /keys — space binding", () => {
-  // `POST /keys` mints into the caller's space. A platform admin has no
-  // space, so a `space_admin` key minted from one lands space-less:
-  // NULL space is the universal "platform tier / all spaces" signal to
-  // the RLS policies and to the storage layer's space predicate, while
-  // the role itself skips the permission maps. Composed, the credential
-  // reads and writes across every space behind a name that promises a
-  // boundary, so the mint refuses.
-  //
-  // `member` is not refused: it is this route's default role, the only
-  // way to express "platform reach, narrowed by type_permissions", and a
-  // caller denied it can ask for `role: "instance_admin"` here for strictly more
-  // authority. The tests below pin both halves of that split.
+  // `POST /keys` mints into the caller's space, and the operator key has none
+  // to give. A space-less credential is the instance tier — NULL space is the
+  // universal "all spaces" signal to the RLS policies and to the storage
+  // layer's space predicate — so the one credential this route can mint from
+  // an operator key is another operator key. Everything space-bound goes
+  // through `POST /admin/spaces/{id}/keys`, which names the space in the path.
   let hostedCtx: TestContext;
   let spaceId: string;
 
@@ -1233,44 +1150,13 @@ describe("POST /keys — space binding", () => {
     await hostedCtx.cleanup();
   });
 
-  it("refuses the role name this rename retired", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-
-    // Precondition: the same shape with the current word is accepted, so the
-    // 400 below is the enum refusing the retired value and not the request
-    // failing for an unrelated reason.
-    const permitted = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.adminKey,
-      body: {
-        label: `retired-ok-${suffix}`,
-        source: `retired-ok-${suffix}`,
-        role: "instance_admin",
-      },
-    });
-    expect(permitted.status).toBe(201);
-
+  it("refuses a space-bound mint from an operator key, naming the route that does it", async () => {
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.adminKey,
       body: {
-        label: `retired-${suffix}`,
-        source: `retired-${suffix}`,
-        role: "admin",
-      },
-    });
-
-    // Accepted for one release while the clients that mint credentials caught
-    // up, then removed with the migration. A request still sending it is a
-    // client nobody updated, and telling it so is the point.
-    expect(res.status).toBe(400);
-  });
-
-  it("rejects a space_admin mint from a platform admin with no space", async () => {
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.adminKey,
-      body: {
-        label: "null-space-admin",
-        source: "null-space-admin",
-        role: "space_admin",
+        label: "null-space-bound",
+        source: "null-space-bound",
+        is_operator: false,
       },
     });
     expect(res.status).toBe(400);
@@ -1283,27 +1169,25 @@ describe("POST /keys — space binding", () => {
     expect(err.error.message).toMatch(/POST \/admin\/spaces\/\{id\}\/keys/);
   });
 
-  it("still lets a platform admin mint a space-less member key", async () => {
-    // Refusing this would push the caller to `role: "instance_admin"`, the only
-    // other thing a space-less credential can mint here, which reads
-    // everything a member key would and ignores `type_permissions` on top.
-    // A guard that trades a narrow credential for a wide one is not a
-    // guard, so the mint stands and the audit row carries the tier.
+  it("narrows the operator key it mints by the maps the request names", async () => {
+    // The narrowing axis a space-less credential still has. Its tier is fixed
+    // by having no space, so what the request can ask for is a smaller reach
+    // over content rather than a lower rank.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.adminKey,
       body: {
-        label: `null-space-member-${suffix}`,
-        source: `null-space-member-${suffix}`,
-        role: "member",
+        label: `null-space-narrow-${suffix}`,
+        source: `null-space-narrow-${suffix}`,
         type_permissions: { "core.note": "read" },
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.role).toBe("member");
+    expect(stored?.type_permissions).toEqual({ "core.note": "read" });
     expect(stored?.space_id ?? null).toBeNull();
+    expect(stored?.is_operator).toBe(true);
 
     const audits = await waitForAudit(
       () => hostedCtx.storage.audit.list({ action: "key.create" }),
@@ -1314,19 +1198,17 @@ describe("POST /keys — space binding", () => {
   });
 
   it("mints the two-hop credential chain a black-box client relies on", async () => {
-    // The conformance suite authenticates as a space-less platform admin,
-    // mints a per-file `admin` key from it, then mints scoped `member`
-    // keys from that. Both hops land space-less. Pinned here because the
-    // suite runs against a deployed server, so a regression would only
-    // surface after release.
+    // The conformance suite authenticates as the operator key, mints a
+    // per-file credential from it, then mints scoped ones from that. Every hop
+    // lands space-less. Pinned here because the suite runs against a deployed
+    // server, so a regression would only surface after release.
     const suffix = Math.random().toString(36).slice(2, 10);
     const firstHop = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.adminKey,
       body: {
         label: `harness-${suffix}`,
         source: `harness-${suffix}`,
-        role: "instance_admin",
-        is_platform: true,
+        is_operator: true,
         type_permissions: { "*": "write" },
       },
     });
@@ -1342,41 +1224,23 @@ describe("POST /keys — space binding", () => {
       },
     });
     expect(secondHop.status).toBe(201);
-    const scoped = (await secondHop.json()) as { id: string; role: string };
-    // No `role` in the body, so the server default applies.
-    expect(scoped.role).toBe("member");
+    const scoped = (await secondHop.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(scoped.id);
     expect(stored?.space_id ?? null).toBeNull();
+    expect(stored?.type_permissions).toEqual({ "core.note": "read" });
   });
 
-  it("still lets a platform admin mint a platform-tier admin key", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.adminKey,
-      body: {
-        label: `platform-${suffix}`,
-        source: `platform-${suffix}`,
-        role: "instance_admin",
-      },
-    });
-    expect(res.status).toBe(201);
-    const minted = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.role).toBe("instance_admin");
-    expect(stored?.space_id ?? null).toBeNull();
-  });
-
-  it("still lets a space-bound admin mint into its own space", async () => {
+  it("still lets a space-bound key holding `space.keys` mint into its own space", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const raw = `marfa_k1_bound_admin_${suffix}`;
     await hostedCtx.storage.keys.create(
       {
         label: `bound-admin-${suffix}`,
         source: `bound-admin-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: {},
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       spaceId,
@@ -1384,16 +1248,13 @@ describe("POST /keys — space binding", () => {
 
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: raw,
-      body: {
-        label: `child-${suffix}`,
-        source: `child-${suffix}`,
-        role: "member",
-      },
+      body: { label: `child-${suffix}`, source: `child-${suffix}` },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
     expect(stored?.space_id).toBe(spaceId);
+    expect(stored?.is_operator).toBe(false);
   });
 
   it("rejects a body `space_id` instead of silently dropping it", async () => {
@@ -1403,7 +1264,6 @@ describe("POST /keys — space binding", () => {
       body: {
         label: `body-space-${suffix}`,
         source: `body-space-${suffix}`,
-        role: "instance_admin",
         space_id: spaceId,
       },
     });
@@ -1417,40 +1277,36 @@ describe("POST /keys — space binding", () => {
 });
 
 describe("POST /keys — single-space deployments keep minting space-less keys", () => {
-  // A single-space self-host has no space rows at all (they are only
-  // ever created by the hosted sign-up flow), so every key it mints is
-  // legitimately space-less. The `space_admin` refusal still applies:
-  // the role has no coherent meaning where no space can exist, and
-  // keying a security rule on the deployment's auth mode would leave it
-  // one env-var typo away from off.
-  it("mints a space-less member key in keys mode", async () => {
+  // A single-space self-host has no space rows at all (they are only ever
+  // created by the hosted sign-up flow), so every key it mints is legitimately
+  // space-less — which is to say every key it mints is an operator key. The
+  // space-bound refusal still applies here, and is not conditioned on the
+  // deployment's auth mode, so it cannot be switched off by an env var going
+  // stale.
+  it("mints a space-less key in keys mode", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: `self-host-${suffix}`,
         source: `self-host-${suffix}`,
-        role: "member",
       },
     });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await ctx.storage.keys.get(minted.id);
     expect(stored?.space_id ?? null).toBeNull();
+    expect(stored?.is_operator).toBe(true);
   });
 
-  it("refuses a space_admin mint here too, where no space can exist", async () => {
-    // Not conditioned on the deployment's auth mode: the rule holds
-    // everywhere so it cannot be switched off by an env var going stale.
-    // On a single-space instance `space_admin` names a boundary that
-    // cannot be created in the first place.
+  it("refuses a space-bound mint here too, where no space can exist", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
-        label: `self-host-ta-${suffix}`,
-        source: `self-host-ta-${suffix}`,
-        role: "space_admin",
+        label: `self-host-bound-${suffix}`,
+        source: `self-host-bound-${suffix}`,
+        is_operator: false,
       },
     });
     expect(res.status).toBe(400);
@@ -1465,7 +1321,6 @@ describe("POST /keys — single-space deployments keep minting space-less keys",
       body: {
         label: `self-host-body-${suffix}`,
         source: `self-host-body-${suffix}`,
-        role: "member",
         space_id: "some-space",
       },
     });

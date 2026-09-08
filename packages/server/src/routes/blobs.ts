@@ -7,8 +7,8 @@ import { resolveBlobForSpace } from "../storage/blob-reader.js";
 import type { ResolvedBlob } from "../storage/blob-reader.js";
 import {
   requireAuth,
-  requireAdmin,
-  hasPlatformAuthority,
+  requireOperatorKey,
+  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import type { ApiKey } from "@withmarfa/shared";
 import { reserveQuota } from "../middleware/quota.js";
@@ -321,7 +321,7 @@ async function resolveBlobForReader(
 ): Promise<ResolvedBlob | null> {
   return resolveBlobForSpace(
     storage,
-    hasPlatformAuthority(apiKey) ? undefined : (apiKey.space_id ?? ""),
+    hasOperatorAuthority(apiKey) ? undefined : (apiKey.space_id ?? ""),
     hash,
   );
 }
@@ -567,7 +567,7 @@ export function blobRoutes(
 
   // POST /blobs/cleanup — remove unreferenced blobs (admin only)
   router.openapi(cleanupBlobsRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
 
     const dryRun = c.req.valid("query").dry_run === "true";
     const spaceId = c.get("apiKey")?.space_id;
@@ -649,7 +649,7 @@ export function blobRoutes(
 
   // POST /blobs/reconcile — compare storage backend against database (admin only)
   router.openapi(reconcileBlobsRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
 
     if (!blobBackend.list) {
       throw new MarfaError(

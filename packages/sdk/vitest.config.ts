@@ -7,6 +7,11 @@ export default defineConfig({
     ...sharedTestBudget,
     name: "@withmarfa/sdk",
     include: ["src/**/*.test.ts"],
+    // Refuses the run when a sibling's build is older than its source. These
+    // fixtures build a whole server out of `@withmarfa/server`'s `dist`, so
+    // without it a route changed and not rebuilt is tested in its previous
+    // form, silently.
+    globalSetup: ["./src/test-global-setup.ts"],
     // Higher than the shared budget, and this is the package that made the
     // missing budget visible. `createHostedModeFixture` runs in `beforeEach`
     // rather than `beforeAll`, and each call makes a temp directory, opens a

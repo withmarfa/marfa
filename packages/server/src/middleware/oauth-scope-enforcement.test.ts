@@ -5,7 +5,7 @@
  * `edge.<type>:<verb>`, `metadata:<verb>`, and `metadata.<sub>:<verb>`
  * shapes; the auth middleware projects them into `type_permissions`,
  * `edge_permissions`, and `metadata_permissions` on a synthetic
- * member-tier `ApiKey` at token-resolve time.
+ * synthetic `ApiKey` at token-resolve time.
  *
  * These tests verify that the projection actually gates the data
  * plane — they exercise the four route families end-to-end with narrow
@@ -392,7 +392,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 // The four-bundle keystone: an OAuth token reaches a space's RUNTIME `user.*`
 // types — which never appear in the static scope allowlist — through the
 // wildcard the generous default bundle grants. No role bypass involved (the
-// token is a member-tier synthetic key).
+// token resolves to a synthetic key).
 // ---------------------------------------------------------------------------
 
 describe("wildcard scope reaches runtime user.* types (keystone)", () => {

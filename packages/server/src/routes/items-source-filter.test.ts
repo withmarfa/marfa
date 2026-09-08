@@ -21,6 +21,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let spaceId: string;
@@ -38,9 +39,12 @@ async function mintSpaceKey(source: string): Promise<string> {
     {
       label: `source-filter-${source}`,
       source,
-      role: "instance_admin",
-      type_permissions: {},
+      space_permissions: [...SPACE_PERMISSIONS],
+      // The rank this fixture carried admitted it past its own map, so the
+      // map has to say what the rank granted silently.
+      type_permissions: { "*": "write" },
       default_tier: "library",
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,

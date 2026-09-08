@@ -7,6 +7,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -506,7 +507,7 @@ describe("GET /items/:id/edges + /backrefs", () => {
         body: {
           label: `edge-read-${suffix}`,
           source: `edge-read-${suffix}`,
-          role: "member",
+          space_permissions: [],
           default_tier: "library",
           type_permissions: typePermissions,
           edge_permissions: { "*": "write" },
@@ -735,14 +736,14 @@ describe("Custom edge-type registration", () => {
 });
 
 describe("Edge permission enforcement", () => {
-  it("rejects a non-admin key without edge permissions", async () => {
-    // Create a non-admin key with type_permissions but no edge_permissions.
+  it("rejects a key without edge permissions", async () => {
+    // A key with type_permissions but no edge_permissions.
     const keyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "member-no-edge",
         source: `member-no-edge-${String(Math.random())}`,
-        role: "member",
+        space_permissions: [],
         default_tier: "library",
         type_permissions: { "core.note": "write" },
         edge_permissions: {},
@@ -766,13 +767,13 @@ describe("Edge permission enforcement", () => {
     expect(err.error.code).toBe("edge_permission_denied");
   });
 
-  it("accepts a non-admin key with edge.*:write wildcard", async () => {
+  it("accepts a key with edge.*:write wildcard", async () => {
     const keyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "member-edge-all",
         source: `member-edge-all-${String(Math.random())}`,
-        role: "member",
+        space_permissions: [],
         default_tier: "library",
         type_permissions: { "core.note": "write" },
         edge_permissions: { "*": "write" },
@@ -989,13 +990,13 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
     expect(patch.status).toBe(400);
   });
 
-  it("PATCH edges gates by edge-type permission for non-admin keys", async () => {
+  it("PATCH edges gates by edge-type permission", async () => {
     const keyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "patch-edge-denied",
         source: `patch-edge-denied-${String(Math.random())}`,
-        role: "member",
+        space_permissions: [],
         default_tier: "library",
         type_permissions: { "*": "write" },
         edge_permissions: {}, // explicitly denies edges
@@ -1013,18 +1014,17 @@ describe("PATCH /items/:id with edges (replace-all-for-specified-types)", () => 
   });
 });
 
-describe("Edge permission matrix (admin / type-only / edge-only / both / neither)", () => {
+describe("Edge permission matrix (all-granted / type-only / edge-only / both / neither)", () => {
   async function mkKey(
     typePerms: Record<string, "read" | "write" | "none"> | undefined,
     edgePerms: Record<string, "read" | "write"> | undefined,
-    role: "instance_admin" | "space_admin" | "member" = "member",
   ): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: `matrix-${String(Math.random())}`,
         source: `matrix-${String(Math.random())}`,
-        role,
+        space_permissions: [],
         default_tier: "library",
         ...(typePerms && { type_permissions: typePerms }),
         ...(edgePerms && { edge_permissions: edgePerms }),
@@ -1033,8 +1033,8 @@ describe("Edge permission matrix (admin / type-only / edge-only / both / neither
     return ((await res.json()) as { key: string }).key;
   }
 
-  it("admin passes create + update + delete without permissions", async () => {
-    // ctx.adminKey is already admin; demonstrate end-to-end.
+  it("a key granted both maps passes create + update + delete", async () => {
+    // ctx.adminKey carries `*: write` on both maps; demonstrate end-to-end.
     const a = await createItem();
     const b = await createItem();
     const create = await request(ctx.app, "POST", "/edges", {
@@ -1271,7 +1271,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
       body: {
         label: `edge-gate-${suffix}`,
         source: `edge-gate-${suffix}`,
-        role: "member",
+        space_permissions: [],
         default_tier: "feed",
         type_permissions: typePermissions,
         extension_permissions: {},
@@ -1392,7 +1392,8 @@ describe("Single-edge mutate/delete — cross-space fence", () => {
   let hostedCtx: TestContext;
   let spaceA: string;
   let spaceB: string;
-  // Space A's caller (space_admin API key) — the would-be attacker.
+  // Space A's caller, holding every space permission inside A — the
+  // would-be attacker.
   let keyA: string;
   // An edge that lives entirely in space B.
   let spaceBEdgeId: string;
@@ -1407,16 +1408,21 @@ describe("Single-edge mutate/delete — cross-space fence", () => {
     spaceA = a.id;
     spaceB = b.id;
 
-    // Mint a space_admin API key bound to space A.
+    // Mint an API key bound to space A holding every space permission.
     const rawA = "marfa_k1_a_" + Math.random().toString(36).slice(2);
     await hostedCtx.storage.keys.create(
       {
-        label: "space-a-admin",
-        source: "space-a-admin",
-        role: "space_admin",
-        type_permissions: {},
+        label: "space-a-caller",
+        source: "space-a-caller",
+        space_permissions: [...SPACE_PERMISSIONS],
+        // Spelled out because the maps are now the whole of a credential's
+        // reach. The subject here is the cross-space fence, so the caller has
+        // to reach items and edges freely inside its own space for the
+        // same-space control cases to mean anything.
+        type_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(rawA, TEST_API_KEY_SALT),
       spaceA,

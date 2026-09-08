@@ -3,9 +3,9 @@ import { createHash } from "node:crypto";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  holdsSpacePermission,
   requireAuth,
   actsAsConnection,
-  hasSpaceAdminAuthority,
   requireSpacePermission,
 } from "../middleware/auth.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
@@ -744,12 +744,11 @@ async function requireConnectionProxyAccess(
       "Connection not found",
     );
   }
-  // A connection is a space resource, so the gate is space-bounded
-  // admin authority, not platform authority — every hosted account is
-  // provisioned `space_admin` and owns the connections it installed.
-  // The lookup above is already fenced on `key.space_id`, so a
-  // space-bound caller of any rank sees only its own connections.
-  const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
+  // A connection is a space resource, so the gate is `space.upstream_access`
+  // rather than platform authority: the permission says who may reach an
+  // upstream through a connection. The lookup above is already fenced on
+  // `key.space_id`, so it says that only about the caller's own connections.
+  const isAdmin = holdsSpacePermission(c, "space.upstream_access");
   // Shared with the inbound-webhook and leased-token routes: the caller
   // is the Connection itself, either as an OAuth grant or as a runtime
   // credential stamped with this `connection_id`. Without the runtime

@@ -42,7 +42,7 @@ async function uploadBlob(
   });
 }
 
-async function mintSpaceAdmin(
+async function mintSpaceKey(
   ctx: TestContext,
   spaceId: string,
   label: string,
@@ -53,10 +53,9 @@ async function mintSpaceAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,
@@ -73,7 +72,7 @@ describe("quota wiring — POST /blobs", () => {
   it("enforces blobs (count) quota — third upload over a cap of 2 returns 429", async () => {
     ctx = await createTestContext();
     const spaceId = `t-blobs-${Math.random().toString(36).slice(2, 10)}`;
-    const key = await mintSpaceAdmin(ctx, spaceId, "ws-blobs");
+    const key = await mintSpaceKey(ctx, spaceId, "ws-blobs");
     await ctx.storage.spaceQuotas.set(spaceId, { blobs_limit: 2 });
 
     const r1 = await uploadBlob(ctx, key, "payload-1-bytes");
@@ -97,7 +96,7 @@ describe("quota wiring — POST /blobs", () => {
   it("enforces storage_bytes quota — second upload that pushes over cap returns 429", async () => {
     ctx = await createTestContext();
     const spaceId = `t-storage-${Math.random().toString(36).slice(2, 10)}`;
-    const key = await mintSpaceAdmin(ctx, spaceId, "ws-storage");
+    const key = await mintSpaceKey(ctx, spaceId, "ws-storage");
     // Cap of 32 bytes. Two uploads of 20 bytes each — second
     // should fail because 20 + 20 = 40 > 32.
     await ctx.storage.spaceQuotas.set(spaceId, {
@@ -150,8 +149,8 @@ describe("quota wiring — per-space rate ceiling", () => {
     await ctx.storage.spaceQuotas.set(spaceId, {
       rate_per_minute_limit: 3,
     });
-    const keyA = await mintSpaceAdmin(ctx, spaceId, "ws-rate-a");
-    const keyB = await mintSpaceAdmin(ctx, spaceId, "ws-rate-b");
+    const keyA = await mintSpaceKey(ctx, spaceId, "ws-rate-a");
+    const keyB = await mintSpaceKey(ctx, spaceId, "ws-rate-b");
 
     // Burn the cap with a mix of A + B. The 4th request must 429.
     const r1 = await request(ctx.app, "GET", "/items", { key: keyA });

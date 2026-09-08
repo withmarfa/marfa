@@ -7618,7 +7618,7 @@
           "Items"
         ],
         "summary": "Bulk upsert items",
-        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type (admin / space_admin bypass; members need the per-type permission), and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`.",
+        "description": "Creates or upserts up to 5000 items in one call, matching existing rows on `(source, source_id)`. Atomic by default; `source` is server-stamped from the credential, so any caller-supplied value is overwritten. Requires write access to each item's type — the credential's own type permissions decide, and nothing bypasses them — and operates only within the caller's space.\n\nAn entry that resolves a row of a different type is refused with `type_mismatch` — a write does not re-type the row it lands on. Passing `retype: true` for the batch moves those rows instead, which is how a corpus is brought onto a type a mapping now names. It is opt-in rather than inferred from a differing type, because a declared type accompanies nearly every write and inferring would move a corpus on an ordinary sync bug. Each move requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination: an item the destination type cannot accept is reported as an `errored` entry naming why, and the rest of the batch proceeds.\n\nAn ordinary update is validated too, against the row's own type and on the properties the write would leave on it rather than on the body alone, so a patch removing a required field is refused even though it names no invalid value. A refusal is an `errored` entry under `invalid_properties`; with the default `atomic` it rolls the page back instead, carrying that code in `details.code`.",
         "security": [
           {
             "bearerAuth": []
@@ -14267,7 +14267,7 @@
           "Edges"
         ],
         "summary": "Bulk upsert edges",
-        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and edge type (admin / space_admin bypass; members need both per-type permissions), and operates only within the caller's space.",
+        "description": "Creates or upserts up to 5000 edges in one call, matching existing rows on `(source_id, target_id, edge_type)`. An entry that matches an existing row merges its properties over that row's, as `PATCH /edges/{id}` does, so an upsert naming one property leaves the others standing. Atomic by default; the items being wired together must already exist. Requires write access to each edge's source-item type and to the edge type, and operates only within the caller's space.",
         "security": [
           {
             "bearerAuth": []
@@ -14680,7 +14680,7 @@
           "Edge Types"
         ],
         "summary": "Register an edge type",
-        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Space-admin or platform-admin; the registration is scoped to the caller's space and is invisible to other spaces. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+        "description": "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`; the registration is scoped to the caller's space and is invisible to other spaces. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
         "security": [
           {
             "bearerAuth": []
@@ -15277,7 +15277,7 @@
           "Edge Types"
         ],
         "summary": "Delete an edge type",
-        "description": "Removes a custom edge type registration scoped to the caller's space. Space-admin or platform-admin; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
+        "description": "Removes a custom edge type registration scoped to the caller's space. Requires `space.schema`; core edge types are rejected, another space's edge type resolves as not-found, and the request fails while any edges of this type still exist, so delete or migrate them first.",
         "security": [
           {
             "bearerAuth": []
@@ -20733,7 +20733,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. A signed-in app must hold `space.keys`, and the key it mints may not reach past what its own grant covers — a request for more is refused naming the scope. Such a key is `scope_enforced`: its permission maps decide what it reaches and its role does not override them. Omitting the maps mints a key matching the session's own reach rather than an empty one. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
+        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: no authentication, and the key it mints is the operator key.",
         "security": [
           {
             "bearerAuth": []
@@ -20754,13 +20754,24 @@
                     "minLength": 1,
                     "maxLength": 200
                   },
-                  "role": {
-                    "type": "string",
-                    "enum": [
-                      "instance_admin",
-                      "space_admin",
-                      "member"
-                    ]
+                  "space_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "space.webhooks",
+                        "space.connections",
+                        "space.schema",
+                        "space.usage",
+                        "space.settings",
+                        "space.audit_read",
+                        "space.item_purge",
+                        "space.upstream_access",
+                        "space.credentials",
+                        "space.keys",
+                        "space.app_grants"
+                      ]
+                    }
                   },
                   "default_tier": {
                     "type": "string",
@@ -20769,7 +20780,7 @@
                       "feed"
                     ]
                   },
-                  "is_platform": {
+                  "is_operator": {
                     "type": "boolean"
                   },
                   "space_id": {
@@ -20816,6 +20827,16 @@
                         "write"
                       ]
                     }
+                  },
+                  "profile_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -20846,13 +20867,27 @@
                     "source": {
                       "type": "string"
                     },
-                    "role": {
-                      "type": "string",
-                      "enum": [
-                        "instance_admin",
-                        "space_admin",
-                        "member"
-                      ]
+                    "space_permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "space.webhooks",
+                          "space.connections",
+                          "space.schema",
+                          "space.usage",
+                          "space.settings",
+                          "space.audit_read",
+                          "space.item_purge",
+                          "space.upstream_access",
+                          "space.credentials",
+                          "space.keys",
+                          "space.app_grants"
+                        ]
+                      }
+                    },
+                    "oauth_client_id": {
+                      "type": "string"
                     },
                     "default_tier": {
                       "type": "string",
@@ -20861,12 +20896,8 @@
                         "feed"
                       ]
                     },
-                    "is_platform": {
+                    "is_operator": {
                       "type": "boolean"
-                    },
-                    "scope_enforced": {
-                      "type": "boolean",
-                      "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                     },
                     "type_permissions": {
                       "type": "object",
@@ -20922,9 +20953,8 @@
                     "key",
                     "label",
                     "source",
-                    "role",
                     "default_tier",
-                    "is_platform",
+                    "is_operator",
                     "type_permissions",
                     "created_at",
                     "last_used_at"
@@ -20948,7 +20978,7 @@
             }
           },
           "400": {
-            "description": "Body carried a `space_id`, or the mint would produce a `space_admin` key with no space",
+            "description": "Body carried a `space_id`. A key is minted into its creator's space, so the space is never named in the body.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21060,7 +21090,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or space_admin, requested a role above its own, or is a signed-in app that was not granted `space.keys` or asked for reach its grant does not cover. The last two name the missing scope in `details.required_scope`.",
+            "description": "Caller does not hold `space.keys`, asked for reach its own credential does not cover, or asked to mint across the instance tier in either direction. A missing permission is named in `details.required_scope`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21191,7 +21221,7 @@
           "Keys"
         ],
         "summary": "List API keys",
-        "description": "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Admin or space_admin only.",
+        "description": "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`.",
         "security": [
           {
             "bearerAuth": []
@@ -21219,8 +21249,29 @@
                           "source": {
                             "type": "string"
                           },
-                          "role": {
-                            "type": "string"
+                          "space_permissions": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "space.webhooks",
+                                "space.connections",
+                                "space.schema",
+                                "space.usage",
+                                "space.settings",
+                                "space.audit_read",
+                                "space.item_purge",
+                                "space.upstream_access",
+                                "space.credentials",
+                                "space.keys",
+                                "space.app_grants"
+                              ]
+                            },
+                            "description": "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds."
+                          },
+                          "oauth_client_id": {
+                            "type": "string",
+                            "description": "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly."
                           },
                           "default_tier": {
                             "type": "string",
@@ -21229,12 +21280,8 @@
                               "feed"
                             ]
                           },
-                          "is_platform": {
+                          "is_operator": {
                             "type": "boolean"
-                          },
-                          "scope_enforced": {
-                            "type": "boolean",
-                            "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                           },
                           "type_permissions": {
                             "type": "object",
@@ -21294,9 +21341,8 @@
                           "id",
                           "label",
                           "source",
-                          "role",
                           "default_tier",
-                          "is_platform",
+                          "is_operator",
                           "type_permissions",
                           "created_at",
                           "last_used_at"
@@ -21459,7 +21505,7 @@
           "Keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Admin or space_admin only.",
+        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`.",
         "security": [
           {
             "bearerAuth": []
@@ -21645,7 +21691,7 @@
           "Keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, or permission maps in place. `source` and `role` are immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change them. Admin or space_admin only.",
+        "description": "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`.",
         "security": [
           {
             "bearerAuth": []
@@ -21721,10 +21767,36 @@
                       ]
                     }
                   },
-                  "source": {
-                    "nullable": true
+                  "profile_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
                   },
-                  "role": {
+                  "space_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "space.webhooks",
+                        "space.connections",
+                        "space.schema",
+                        "space.usage",
+                        "space.settings",
+                        "space.audit_read",
+                        "space.item_purge",
+                        "space.upstream_access",
+                        "space.credentials",
+                        "space.keys",
+                        "space.app_grants"
+                      ]
+                    }
+                  },
+                  "source": {
                     "nullable": true
                   }
                 }
@@ -21749,13 +21821,29 @@
                     "source": {
                       "type": "string"
                     },
-                    "role": {
+                    "space_permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "space.webhooks",
+                          "space.connections",
+                          "space.schema",
+                          "space.usage",
+                          "space.settings",
+                          "space.audit_read",
+                          "space.item_purge",
+                          "space.upstream_access",
+                          "space.credentials",
+                          "space.keys",
+                          "space.app_grants"
+                        ]
+                      },
+                      "description": "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds."
+                    },
+                    "oauth_client_id": {
                       "type": "string",
-                      "enum": [
-                        "instance_admin",
-                        "space_admin",
-                        "member"
-                      ]
+                      "description": "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly."
                     },
                     "default_tier": {
                       "type": "string",
@@ -21764,12 +21852,8 @@
                         "feed"
                       ]
                     },
-                    "is_platform": {
+                    "is_operator": {
                       "type": "boolean"
-                    },
-                    "scope_enforced": {
-                      "type": "boolean",
-                      "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                     },
                     "type_permissions": {
                       "type": "object",
@@ -21829,9 +21913,8 @@
                     "id",
                     "label",
                     "source",
-                    "role",
                     "default_tier",
-                    "is_platform",
+                    "is_operator",
                     "type_permissions",
                     "created_at",
                     "last_used_at"
@@ -22370,7 +22453,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or space_admin.",
+            "description": "Caller does not hold `space.credentials`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22695,7 +22778,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or space_admin.",
+            "description": "Caller does not hold `space.credentials`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -22997,7 +23080,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or space_admin.",
+            "description": "Caller does not hold `space.credentials`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23458,7 +23541,7 @@
             }
           },
           "403": {
-            "description": "Caller lacks is_platform: true",
+            "description": "Caller lacks is_operator: true",
             "content": {
               "application/json": {
                 "schema": {
@@ -24195,7 +24278,7 @@
           "Spaces"
         ],
         "summary": "Get the current space's configuration",
-        "description": "Returns the calling space's configuration — the optional `enforcement` levers plus the per-space cleanup-job retention overrides. Returns an empty object when nothing is configured. Admin or space_admin.",
+        "description": "Returns the calling space's configuration — the optional `enforcement` levers plus the per-space cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
         "security": [
           {
             "bearerAuth": []
@@ -24498,7 +24581,7 @@
           "Spaces"
         ],
         "summary": "Replace the current space's configuration",
-        "description": "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Admin or space_admin.",
+        "description": "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Requires `space.settings`.",
         "security": [
           {
             "bearerAuth": []
@@ -24958,7 +25041,7 @@
           "Spaces"
         ],
         "summary": "Get current space quotas",
-        "description": "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. A platform-admin key with no space id receives `400` — use `GET /spaces/{id}/quotas` with an explicit id instead. Admin or space_admin.",
+        "description": "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. A credential with no space binding receives `400` — use `GET /spaces/{id}/quotas` with an explicit id instead. Requires `space.usage`.",
         "security": [
           {
             "bearerAuth": []
@@ -25028,7 +25111,7 @@
             }
           },
           "400": {
-            "description": "Caller has no space_id (platform admin).",
+            "description": "Caller has no space binding.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25424,7 +25507,7 @@
             }
           },
           "403": {
-            "description": "Caller is not a platform admin",
+            "description": "Caller is not the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -25729,7 +25812,7 @@
             }
           },
           "403": {
-            "description": "Caller is not a platform admin",
+            "description": "Caller is not the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -26149,7 +26232,7 @@
             }
           },
           "403": {
-            "description": "Caller is not a platform admin",
+            "description": "Caller is not the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -26392,7 +26475,7 @@
             }
           },
           "403": {
-            "description": "Caller is not a platform admin",
+            "description": "Caller is not the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -30986,7 +31069,7 @@
             }
           },
           "403": {
-            "description": "Caller is not a space admin or platform admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33339,7 +33422,7 @@
           "Connections"
         ],
         "summary": "Move a connection to a newer version of its integration",
-        "description": "Re-binds the connection to a newer registered version of the same integration, keeping its cursor state, and revokes its runtime credentials so the next mint projects permissions from the manifest it now resolves. Refuses with 403 when the newer manifest would grant more than the connection was installed with, naming exactly what is new: that move needs a space admin's approval through the install consent screen. Returns 400 when the connection already resolves the newest registered version, or when its stored settings do not satisfy the new manifest.",
+        "description": "Re-binds the connection to a newer registered version of the same integration, keeping its cursor state, and revokes its runtime credentials so the next mint projects permissions from the manifest it now resolves. Refuses with 403 when the newer manifest would grant more than the connection was installed with, naming exactly what is new: that move needs approval through the install consent screen. Returns 400 when the connection already resolves the newest registered version, or when its stored settings do not satisfy the new manifest.",
         "security": [
           {
             "bearerAuth": []
@@ -35258,7 +35341,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may register or re-point one.",
+            "description": "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35528,7 +35611,7 @@
             }
           },
           "403": {
-            "description": "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
+            "description": "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35800,7 +35883,7 @@
             }
           },
           "403": {
-            "description": "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
+            "description": "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36224,7 +36307,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may register or re-point one.",
+            "description": "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36523,7 +36606,7 @@
             }
           },
           "403": {
-            "description": "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may create, re-point or destroy one.",
+            "description": "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may create, re-point or destroy one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -36875,7 +36958,7 @@
             }
           },
           "403": {
-            "description": "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
+            "description": "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37064,7 +37147,7 @@
           "Audit"
         ],
         "summary": "List audit log entries",
-        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or space_admin: a space-scoped caller sees only its own space's entries, a platform admin sees every entry.",
+        "description": "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`: a space-bound caller sees only its own space's entries, a caller with no space binding sees every entry.",
         "security": [
           {
             "bearerAuth": []
@@ -37294,7 +37377,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin or space_admin",
+            "description": "Caller does not hold `space.audit_read`",
             "content": {
               "application/json": {
                 "schema": {
@@ -37835,13 +37918,24 @@
                     "minLength": 1,
                     "maxLength": 200
                   },
-                  "role": {
-                    "type": "string",
-                    "enum": [
-                      "instance_admin",
-                      "space_admin",
-                      "member"
-                    ]
+                  "space_permissions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "space.webhooks",
+                        "space.connections",
+                        "space.schema",
+                        "space.usage",
+                        "space.settings",
+                        "space.audit_read",
+                        "space.item_purge",
+                        "space.upstream_access",
+                        "space.credentials",
+                        "space.keys",
+                        "space.app_grants"
+                      ]
+                    }
                   },
                   "default_tier": {
                     "type": "string",
@@ -37890,6 +37984,16 @@
                         "write"
                       ]
                     }
+                  },
+                  "profile_permissions": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "read",
+                        "write"
+                      ]
+                    }
                   }
                 },
                 "required": [
@@ -37920,13 +38024,27 @@
                     "source": {
                       "type": "string"
                     },
-                    "role": {
-                      "type": "string",
-                      "enum": [
-                        "instance_admin",
-                        "space_admin",
-                        "member"
-                      ]
+                    "space_permissions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "space.webhooks",
+                          "space.connections",
+                          "space.schema",
+                          "space.usage",
+                          "space.settings",
+                          "space.audit_read",
+                          "space.item_purge",
+                          "space.upstream_access",
+                          "space.credentials",
+                          "space.keys",
+                          "space.app_grants"
+                        ]
+                      }
+                    },
+                    "oauth_client_id": {
+                      "type": "string"
                     },
                     "default_tier": {
                       "type": "string",
@@ -37935,12 +38053,8 @@
                         "feed"
                       ]
                     },
-                    "is_platform": {
+                    "is_operator": {
                       "type": "boolean"
-                    },
-                    "scope_enforced": {
-                      "type": "boolean",
-                      "description": "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API."
                     },
                     "type_permissions": {
                       "type": "object",
@@ -37996,9 +38110,8 @@
                     "key",
                     "label",
                     "source",
-                    "role",
                     "default_tier",
-                    "is_platform",
+                    "is_operator",
                     "type_permissions",
                     "created_at",
                     "last_used_at"
@@ -38698,7 +38811,7 @@
           "Admin"
         ],
         "summary": "Create an account",
-        "description": "Creates an email + password account, already verified, with its own space and `space_admin` on it — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
+        "description": "Creates an email + password account, already verified, with its own space, which it solely owns — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
         "security": [
           {
             "bearerAuth": []

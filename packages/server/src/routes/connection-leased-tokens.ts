@@ -10,11 +10,11 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  holdsSpacePermission,
   requireAuth,
   actsAsConnection,
-  hasSpaceAdminAuthority,
   requireSpacePermission,
-  hasPlatformAuthority,
+  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -87,7 +87,7 @@ async function requireConnectionAccess(
   // Space-bounded admin authority, matching the sibling connection
   // routes: leased tokens belong to a connection, and a connection
   // belongs to a space.
-  const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
+  const isAdmin = holdsSpacePermission(c, "space.connections");
   // Shared with the connection-proxy and inbound-webhook routes: the
   // caller is the Connection itself, either as an OAuth grant or as a
   // runtime credential stamped with this `connection_id`.
@@ -102,12 +102,7 @@ async function requireConnectionAccess(
   // `connection_id` / source-prefix binding is its own scope, and
   // self-hosted (single-space) deploys legitimately leave `space_id`
   // unset on those.
-  if (
-    !key.space_id &&
-    !isIntegration &&
-    !hasPlatformAuthority(key) &&
-    !key.is_platform
-  ) {
+  if (!key.space_id && !isIntegration && !hasOperatorAuthority(key)) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Space scope required for this credential",

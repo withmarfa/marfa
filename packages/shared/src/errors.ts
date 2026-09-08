@@ -42,16 +42,16 @@ export enum ErrorCode {
   INTEGRATION_OWNED = "integration_owned",
   TYPE_NOT_PERMITTED = "type_not_permitted",
   /**
-   * A scope-enforced credential (an OAuth-derived token) attempted an
-   * operation reserved for a credential whose reach is the whole space.
+   * A credential whose content reach is narrower than the space attempted an
+   * operation only a credential reaching all of it may perform.
    *
-   * Distinct from the generic `FORBIDDEN` it shares a status with,
-   * because the caller's role is not the problem and re-granting the
-   * role will not help: an OAuth token can project `space_admin` and
-   * still hold a grant narrower than the space. Outbound webhooks are
-   * the case this exists for — a subscription is space-level and carries
-   * no credential of its own, so anything it delivers is bounded by the
-   * space rather than by the grant of whoever registered it.
+   * Distinct from the generic `FORBIDDEN` it shares a status with, because
+   * holding more space permissions will not help: what the caller may
+   * administer and what it may read are separate axes, and this is a refusal
+   * on the second one. Outbound webhooks are the case this exists for — a
+   * subscription is space-level and carries no credential of its own, so
+   * anything it delivers is bounded by the space rather than by the reach of
+   * whoever registered it.
    */
   SCOPED_CREDENTIAL_NOT_PERMITTED = "scoped_credential_not_permitted",
   INVALID_TRANSITION = "invalid_transition",

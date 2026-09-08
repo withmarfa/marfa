@@ -23,6 +23,7 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let spaceKey: string;
@@ -36,17 +37,21 @@ interface ErrorResponse {
   error: { code: string; details?: { constraint?: string } };
 }
 
-async function mintSpaceAdmin(): Promise<string> {
+async function mintSpaceKey(): Promise<string> {
   const raw = `marfa_k1_ec_${Math.random().toString(36).slice(2, 14)}`;
   await ctx.storage.keys.create(
     {
       label: "edge-constraint-space-scope",
       source: `ec-${suffix}`,
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       default_tier: "library",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
-      is_platform: false,
+      // The fixture registers the types the constraints name, and
+      // registration is gated on the metadata map rather than on the space
+      // permissions.
+      metadata_permissions: { "*": "write" },
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     space,
@@ -82,7 +87,7 @@ async function createItem(
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  spaceKey = await mintSpaceAdmin();
+  spaceKey = await mintSpaceKey();
   await registerType({
     id: COLLECTION_TYPE,
     label: "Collection",

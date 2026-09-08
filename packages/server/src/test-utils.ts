@@ -1,3 +1,4 @@
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
@@ -360,7 +361,6 @@ export async function seedOauthBearer(
       provider_id: authUserId,
       space_id: opts.spaceId,
       auth_user_id: authUserId,
-      role: opts.userRole,
     });
   }
 
@@ -680,11 +680,19 @@ async function buildTestContext(
     {
       label: "test-admin",
       source: `test-admin-${suffix}`,
-      role: "instance_admin",
-      type_permissions: {},
+      // **Every map is named, because nothing is implied any more.** This key
+      // used to carry a rank that bypassed the permission maps outright, so an
+      // empty `type_permissions` still reached every type. With one permission
+      // model the maps are the whole of a credential's reach, so the fixture
+      // has to say what the rank used to grant it silently.
+      type_permissions: { "*": "write" },
+      extension_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
+      space_permissions: [...SPACE_PERMISSIONS],
       default_tier: "library",
       // Tests need to register helper types and exercise system.* paths.
-      is_platform: true,
+      is_operator: true,
     },
     keyHash,
   );

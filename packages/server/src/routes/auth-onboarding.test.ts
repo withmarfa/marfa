@@ -5,6 +5,7 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 /**
  * Onboarding provisioning + self-serve key tests (T-326).
@@ -314,12 +315,14 @@ describe("self-serve keys can fill their own space", () => {
     );
     expect(minted).toBeTruthy();
 
-    // Sideways, never up. A sign-up owns their space as space_admin, so full
-    // access lands exactly there — and `admin` (platform authority, bounded by
-    // no space at all) stays unreachable from a self-serve form whatever the
-    // form says.
-    expect(minted?.role).toBe("space_admin");
-    expect(minted?.is_platform).toBe(false);
+    // Sideways, never up. The first person in a space holds every space
+    // permission in it, so full access hands that whole set down — and the
+    // operator flag (authority bounded by no space at all) stays unreachable
+    // from a self-serve form whatever the form says.
+    expect(new Set(minted?.space_permissions)).toEqual(
+      new Set(SPACE_PERMISSIONS),
+    );
+    expect(minted?.is_operator).toBe(false);
 
     // And it can actually do the job it exists for.
     const noteRes = await request(ctx.app, "POST", "/items", {
@@ -329,7 +332,7 @@ describe("self-serve keys can fill their own space", () => {
     expect(noteRes.status).toBe(201);
   });
 
-  it("keeps a scoped key at member even though the owner is higher", async () => {
+  it("hands a scoped key no space permissions even though the owner holds them all", async () => {
     ctx = await createTestContext({
       authMode: "hosted",
       authAllowSignup: true,
@@ -344,7 +347,7 @@ describe("self-serve keys can fill their own space", () => {
       (k) => k.label === "read only",
     );
     // Not ticking full access must not quietly inherit the owner's authority.
-    expect(minted?.role).toBe("member");
+    expect(minted?.space_permissions ?? []).toEqual([]);
   });
 });
 

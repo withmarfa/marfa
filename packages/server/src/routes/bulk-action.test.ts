@@ -138,17 +138,21 @@ describe("POST /items/bulk-actions (async)", () => {
     expect(getRes.status).toBe(404);
   });
 
-  it("purge action refuses non-admin (hard 403)", async () => {
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+  it("purge action refuses a credential that is not the operator (hard 403)", async () => {
+    // Bound to a space, which is what makes this a test rather than a
+    // tautology: the schema holds a space-less key to `is_operator`, so a
+    // credential with no space would pass the very gate under test. The wide
+    // type map is there so the refusal cannot be mistaken for a narrow one.
+    const rawKey = `marfa_k1_purge_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
-        label: "purge-member",
-        source: `purge-member-${rawKey.slice(-6)}`,
-        role: "member",
+        label: "purge-bounded",
+        source: `purge-bounded-${rawKey.slice(-6)}`,
         type_permissions: { "*": "write" },
       },
       keyHash,
+      "bulk-action-purge-space",
     );
 
     const { initialStatus } = await runBulkActionAsync(
@@ -469,29 +473,45 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
     expect(res.status).toBe(404);
   });
 
-  it("foreign credential is 403 on GET", async () => {
-    // POST as admin
+  it("a credential that did not start the job is 403 on GET", async () => {
+    // Both credentials sit in one space, because that is the only shape the
+    // 403 branch has left: a caller in another space is cloaked with a 404,
+    // and an operator key reaches every job. What remains is a sibling in
+    // the same space, and no permission it can hold opens another
+    // credential's job to it.
+    const space = "bulk-action-foreign-space";
+    const ownerKey = `marfa_k1_owner_${Math.random().toString(36).slice(2)}`;
+    await ctx.storage.keys.create(
+      {
+        label: "job-owner",
+        source: `job-owner-${ownerKey.slice(-6)}`,
+        type_permissions: { "*": "write" },
+      },
+      hashApiKey(ownerKey, "test-salt"),
+      space,
+    );
+
     const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.adminKey,
+      key: ownerKey,
       body: {
         action: "transition",
         state: "archived",
         filter: { type: "core.note" },
       },
     });
+    expect(postRes.status).toBe(202);
     const queued = (await postRes.json()) as { id: string };
 
-    // Create a second member-level credential
     const rawKey = `marfa_k1_foreign_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
-        label: "foreign-member",
+        label: "foreign-sibling",
         source: `foreign-${rawKey.slice(-6)}`,
-        role: "member",
         type_permissions: { "*": "read" },
       },
       keyHash,
+      space,
     );
 
     const getRes = await request(

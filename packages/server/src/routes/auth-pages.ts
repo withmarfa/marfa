@@ -13,18 +13,17 @@ import {
   scopesToEdgePermissions,
   isValidHandle,
   isReservedHandle,
-  canGrantRole,
   GLOBAL_TYPE_WILDCARD,
+  SPACE_PERMISSIONS,
 } from "@withmarfa/shared";
-import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   isReservedCredentialSource,
   requireSpacePermission,
-  requireSpaceAdmin,
+  requireAuth,
   hashApiKey,
   stampOAuthGrantLastUsed,
-  hasPlatformAuthority,
+  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import {
   mergeDeviceApprovalScopes,
@@ -502,7 +501,7 @@ export function authRoutes(
     // management routes beside them, not something a narrow member
     // credential does. The space fence below is the second axis: rank
     // says who may act, the space says where.
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     // Rank alone is reachable by an app, because the bearer middleware
     // projects the signed-in person's role onto it — and revoking another
     // app's access is exactly the authority a person would want to have been
@@ -512,7 +511,7 @@ export function authRoutes(
     // argument below; one without a space would fall through to every
     // space's grants, so that shape needs platform authority (or an
     // explicit platform credential) to reach here.
-    if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
+    if (!key.space_id && !hasOperatorAuthority(key) && !key.is_operator) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Space scope required for this credential",
@@ -556,9 +555,9 @@ export function authRoutes(
     // and the space fence below so only an unbound credential with
     // platform authority may resolve `spaceId` to undefined and address
     // a grant in any space.
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.app_grants");
-    if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
+    if (!key.space_id && !hasOperatorAuthority(key) && !key.is_operator) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         "Space scope required for this credential",
@@ -1265,8 +1264,9 @@ export function authRoutes(
   // authenticator. It's the self-serve path a freshly-onboarded hosted
   // user takes to mint their first long-lived `marfa_k1_` key after
   // sign-up + verification, with no pre-existing bearer token to bootstrap
-  // from. Keys minted here are `space_admin` (the space owner) scoped to
-  // the user's own space.
+  // from. A key minted here is scoped to the user's own space and carries
+  // the whole space-permission set or none of it, according to what the
+  // owner ticked.
 
   // Resolve the signed-in user's marfa profile (carrying space_id) from
   // their Better Auth session. Null when the account has no Marfa space
@@ -1417,12 +1417,9 @@ export function authRoutes(
     }
     // "Full access" asks for a credential that can fill the owner's whole
     // space — seeding it, migrating into it, restoring a backup. That case had
-    // no self-serve route at all before, so it had to be handed a
-    // platform-minted key by an operator, which is the dependency the
-    // space-admin role exists to remove. It asks at the owner's OWN role;
-    // `canGrantRole` at the mint is what stops it exceeding them.
+    // no self-serve route at all before, so it had to be handed a key by an
+    // operator, which is the dependency this page exists to remove.
     const fullAccess = wantsFullAccess;
-    const requestedRole: MarfaRole = fullAccess ? userRow.role : "member";
 
     // Full access is its own grant over every content type, so it sets the
     // content level outright rather than being read back off the ticked set.
@@ -1450,14 +1447,12 @@ export function authRoutes(
         // The label doubles as the key's `source` — the provenance stamped
         // onto items written with it, surfaced back to the owner.
         source: label,
-        // A self-serve key carries only the permissions the owner picked, and
-        // never more authority than the owner has. `canGrantRole` is the same
-        // ceiling `POST /keys` enforces, so the lattice has one implementation
-        // rather than a second one that can drift out of step with it.
-        role: canGrantRole(userRow.role, requestedRole)
-          ? requestedRole
-          : "member",
-        is_platform: false,
+        // **A self-serve key carries what the owner picked and nothing the
+        // owner does not hold.** The first person in a space holds everything,
+        // so full access hands the whole set down and a narrower pick hands
+        // down exactly what was ticked.
+        space_permissions: fullAccess ? [...SPACE_PERMISSIONS] : [],
+        is_operator: false,
         type_permissions: typePermissions,
         // Edges are the substance of the data model, so a key that cannot
         // write them cannot seed, migrate or restore a space — which is what

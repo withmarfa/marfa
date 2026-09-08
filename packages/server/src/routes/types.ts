@@ -19,7 +19,6 @@ import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
   requireSpacePermission,
-  requireSpaceAdmin,
   requireMetadataPermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
@@ -492,7 +491,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
       if (
         tier === "publisher" &&
         authMode === "hosted" &&
-        c.get("apiKey")?.is_platform !== true
+        c.get("apiKey")?.is_operator !== true
       ) {
         const publisher = body.id.split(".")[0] ?? "";
         const user =
@@ -583,7 +582,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
   });
 
   router.openapi(updateTypeRoute, async (c) => {
-    requireSpaceAdmin(c);
+    requireAuth(c);
     requireSpacePermission(c, "space.schema");
     const { id } = c.req.valid("param");
     // Scope to the caller's space: a space_admin sees and mutates only its
@@ -677,7 +676,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
   });
 
   router.openapi(deleteTypeRoute, async (c) => {
-    requireSpaceAdmin(c);
+    requireAuth(c);
     requireSpacePermission(c, "space.schema");
     const { id } = c.req.valid("param");
     // Scope to the caller's space: a space_admin can only delete its own

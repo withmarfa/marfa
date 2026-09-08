@@ -9,10 +9,21 @@
  * hold that vendor's extension data on every item in the space, from a grant
  * that named no extension anything, durably and after the app was revoked.
  *
- * The same gap exists one step away and is inert today rather than closed: the
- * self-serve key page lets a signed-in person name a label freely, and that key
- * is not scope-enforced. It bites the day a space can hold more than one
- * person at different ranks.
+ * The test is whether an app chose the label, which `oauth_client_id` answers
+ * for both shapes that carry one: a signed-in app acting through its own grant,
+ * and a key that app minted, which outlives the grant and would otherwise keep
+ * the claim after the app was revoked.
+ *
+ * `oauth_client_id` is stamped by the server at mint and is settable from no
+ * request, so it is the fact itself rather than a stand-in for it. That
+ * matters in one direction: a test that stops discriminating goes quietly true
+ * for every credential, which is the direction that hands out a namespace
+ * rather than withholding one.
+ *
+ * The same gap exists one step away and is inert: the self-serve key page lets
+ * a signed-in person name a label freely. One account holds one space and the
+ * first person in it holds everything, so there is no one for that person to
+ * escalate against; it bites the day a space can hold more than one person.
  *
  * **`label` is read as identity, exactly like `source`.** `source` already has
  * that recorded — `oauth:<connection-id>` is proof a caller *is* a connection,
@@ -29,8 +40,8 @@
  * what keeps this value unforgeable rather than merely unreached.
  */
 export function extensionLabelOf(
-  key: { label?: string; scope_enforced?: boolean } | undefined,
+  key: { label?: string; oauth_client_id?: string } | undefined,
 ): string {
-  if (!key || key.scope_enforced === true) return "";
+  if (!key || key.oauth_client_id !== undefined) return "";
   return key.label ?? "";
 }

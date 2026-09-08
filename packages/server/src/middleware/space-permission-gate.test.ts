@@ -1,8 +1,13 @@
 /**
- * The capability carrier and the gate that reads it.
+ * The space-permission carrier and the gate that reads it.
  *
- * **The carrier is the half that did not exist.** `hasSpacePermission` has shipped
- * since the grammar landed and no route could call it, because a capability
+ * **One question, asked of one list, whichever credential arrived.** A key
+ * carries its permissions on its row and a sign-in carries them on its grant,
+ * and both are the literals themselves — so the gate does not branch on what
+ * it is looking at, and there is no second implementation to drift.
+ *
+ * **The carrier is the half that did not exist.** `hasSpacePermission` shipped
+ * with the grammar and no route could call it, because a space permission
  * deliberately projects into none of the permission maps: the bearer
  * middleware translated a token's scopes into `type_permissions`,
  * `edge_permissions`, `metadata_permissions` and `profile_permissions` and
@@ -24,6 +29,7 @@ import { MarfaError } from "@withmarfa/shared";
 import { authMiddleware, requireSpacePermission, type AppEnv } from "./auth.js";
 import {
   createTestContext,
+  request,
   seedOauthBearer,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
@@ -38,9 +44,8 @@ function fakeKey(over: Partial<ApiKey> = {}): ApiKey {
     space_id: "space-1",
     label: "test",
     source: "test",
-    role: "space_admin",
     default_tier: "library",
-    is_platform: false,
+    is_operator: false,
     type_permissions: {},
     extension_permissions: {},
     edge_permissions: {},
@@ -63,18 +68,42 @@ function fakeContext(vars: {
 }
 
 describe("requireSpacePermission", () => {
-  it("lets an API-key caller through, whatever it holds", () => {
-    // A capability literal on an API key reaches no permission map and means
-    // nothing there: the family exists to name what a person consented to
-    // hand an app, and an API key is the person's own credential. Refusing
-    // one here would break every self-host in keys mode and the CLI's
-    // ordinary admin work, for no security gain.
+  it("reads an API key's own list, and refuses one holding nothing", () => {
+    // The API-key arm used to be a pass-through, on the reading that a space
+    // permission named what a person handed an app and so meant nothing on a
+    // person's own credential. Under one permission model it means the same
+    // thing on both: the key's row carries the literals, and a key that
+    // carries none holds none.
     expect(() => {
       requireSpacePermission(
         fakeContext({ apiKey: fakeKey(), authType: "api_key" }),
         "space.keys",
       );
+    }).toThrow(MarfaError);
+
+    expect(() => {
+      requireSpacePermission(
+        fakeContext({
+          apiKey: fakeKey({ space_permissions: ["space.keys"] }),
+          authType: "api_key",
+        }),
+        "space.keys",
+      );
     }).not.toThrow();
+  });
+
+  it("does not let one of a key's permissions stand in for another", () => {
+    expect(() => {
+      requireSpacePermission(
+        fakeContext({
+          apiKey: fakeKey({
+            space_permissions: ["space.webhooks", "space.audit_read"],
+          }),
+          authType: "api_key",
+        }),
+        "space.keys",
+      );
+    }).toThrow(MarfaError);
   });
 
   it("refuses an OAuth caller holding no capability, naming the literal", () => {
@@ -82,7 +111,7 @@ describe("requireSpacePermission", () => {
     try {
       requireSpacePermission(
         fakeContext({
-          apiKey: fakeKey({ scope_enforced: true }),
+          apiKey: fakeKey(),
           authType: "oauth",
           oauthGrant: { scopes: ["openid", "core.note:read"] },
         }),
@@ -105,7 +134,7 @@ describe("requireSpacePermission", () => {
     expect(() => {
       requireSpacePermission(
         fakeContext({
-          apiKey: fakeKey({ scope_enforced: true }),
+          apiKey: fakeKey(),
           authType: "oauth",
           oauthGrant: { scopes: ["openid", "space.keys"] },
         }),
@@ -120,7 +149,7 @@ describe("requireSpacePermission", () => {
     expect(() => {
       requireSpacePermission(
         fakeContext({
-          apiKey: fakeKey({ scope_enforced: true }),
+          apiKey: fakeKey(),
           authType: "oauth",
           oauthGrant: {
             scopes: ["space.webhooks", "space.audit_read"],
@@ -137,7 +166,7 @@ describe("requireSpacePermission", () => {
     expect(() => {
       requireSpacePermission(
         fakeContext({
-          apiKey: fakeKey({ scope_enforced: true }),
+          apiKey: fakeKey(),
           authType: "oauth",
         }),
         "space.keys",
@@ -267,5 +296,42 @@ describe("the bearer middleware carries the grant onto the request", () => {
     };
     expect(body.authType).toBe("api_key");
     expect(body.grant).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Carrier plus gate plus route, end to end
+
+describe("a real door reads what a real grant carries", () => {
+  let ctx: TestContext;
+  let spaceId: string;
+
+  beforeAll(async () => {
+    ctx = await createTestContext({ authMode: "hosted" });
+    const space = await ctx.storage.spaces!.create("capability-door-space");
+    spaceId = space.id;
+  });
+  afterAll(async () => {
+    await ctx.cleanup();
+  });
+
+  it("admits a bearer whose grant names the permission the door asks for", async () => {
+    // The unit tests above pass a hand-built context, so nothing in them
+    // proves the middleware, the gate and the route agree in one request.
+    const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {
+      spaceId,
+      userRole: "space_admin",
+    });
+    const res = await request(ctx.app, "GET", "/keys", { key: token });
+    expect(res.status).toBe(200);
+  });
+
+  it("refuses a bearer whose grant does not", async () => {
+    const { token } = await seedOauthBearer(ctx.storage, ["core.note:read"], {
+      spaceId,
+      userRole: "space_admin",
+    });
+    const res = await request(ctx.app, "GET", "/keys", { key: token });
+    expect(res.status).toBe(403);
   });
 });

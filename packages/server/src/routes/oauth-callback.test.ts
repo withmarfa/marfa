@@ -15,9 +15,13 @@
  * authorize URL. The fence ensures cross-space references resolve to null
  * and the route returns OAUTH_PROXY_UPSTREAM_INVALID instead.
  *
- * The route's own connection lookup is unfenced by design (only admin /
- * platform callers reach it), so this test seeds the cross-space shape
- * through the storage layer and calls the route as the platform admin.
+ * The route's own connection lookup passes the caller's `space_id`, so it is
+ * already fenced for any credential bound to a space; the door itself is
+ * `space.credentials`. This test calls it with the operator key, which is
+ * bound to no space at all, so that lookup narrows nothing and the
+ * cross-space shape reaches the credential fence this file is about. The
+ * shape is seeded through the storage layer because the install pipeline
+ * would refuse it.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -89,7 +93,9 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
       "POST",
       `/connections/${crossConn.id}/oauth/start`,
       {
-        key: ctx.adminKey, // platform admin — the only role that can reach this route
+        // Bound to no space, so the route's own lookup narrows nothing. The
+        // door is `space.credentials`, which this key holds.
+        key: ctx.adminKey,
         body: {},
       },
     );

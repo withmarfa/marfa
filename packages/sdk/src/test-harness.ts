@@ -1,3 +1,4 @@
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -114,11 +115,19 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
 }
 
 export interface KeysModeFixture {
-  /** SDK client wired to call the in-process server via the bootstrap admin key. */
+  /** SDK client wired to call the in-process server via the space-bound
+   *  working key. */
   client: MarfaClient;
-  /** The bootstrap admin key (`marfa_k1_*`). Use to mint additional keys
+  /** The space-bound working key (`marfa_k1_*`) the client bears. Holds every
+   *  space permission and the whole content set. Use to mint additional keys
    *  in tests that need them. */
   adminKey: string;
+  /** The operator key minted by the first, unauthenticated request. Holds no
+   *  space and no permission: it reaches the instance routes and nothing else.
+   *  Use where a test is about the instance tier rather than about work. */
+  operatorKey: string;
+  /** The space the operator key created, which the working key is bound to. */
+  spaceId: string;
   /** The custom `fetch` the SDK is wired through. Pass into a second
    *  `MarfaClient` if a test needs another bearer against the same
    *  in-process app. */
@@ -179,16 +188,60 @@ export async function createKeysModeFixture(
   );
   const fetch = createTestFetch(app);
 
+  // **The first, unauthenticated mint produces the operator key**, and that is
+  // the whole of what it is: running the instance sits outside the permission
+  // model, so the row carries no space and no permission of any kind. It is
+  // not a working key, and a fixture that handed it to a client would be
+  // testing a credential the product does not intend anyone to work through.
   const bootstrapRes = await fetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      label: "test-admin",
-      source: "sdk-test-admin",
+      label: "test-operator",
+      source: "sdk-test-operator",
       default_tier: "feed",
     }),
   });
-  const { key } = (await bootstrapRes.json()) as { key: string };
+  const { key: operatorKey } = (await bootstrapRes.json()) as { key: string };
+
+  // **Then the operator key creates a space and mints a key into it**, which is
+  // the setup keys mode is meant to follow. Both routes are instance-tier and
+  // take the operator key; everything after this point is ordinary work done
+  // through an ordinary space-bound credential.
+  const operatorHeaders = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${operatorKey}`,
+  };
+  const spaceRes = await fetch("http://localhost/admin/spaces", {
+    method: "POST",
+    headers: operatorHeaders,
+    body: JSON.stringify({ name: "sdk-test" }),
+  });
+  const { id: spaceId } = (await spaceRes.json()) as { id: string };
+
+  // Named rather than implied. The key this fixture works through used to
+  // carry a rank that bypassed every permission map, so an empty body still
+  // produced a credential that reached everything; the maps and the permission
+  // list are the entire reach of a credential now, and the fixture has to say
+  // so.
+  const workerRes = await fetch(
+    `http://localhost/admin/spaces/${spaceId}/keys`,
+    {
+      method: "POST",
+      headers: operatorHeaders,
+      body: JSON.stringify({
+        label: "test-admin",
+        source: "sdk-test-admin",
+        default_tier: "feed",
+        space_permissions: [...SPACE_PERMISSIONS],
+        type_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+        metadata_permissions: { "*": "write" },
+      }),
+    },
+  );
+  const { key } = (await workerRes.json()) as { key: string };
 
   const client = new MarfaClient({
     url: "http://localhost",
@@ -199,6 +252,8 @@ export async function createKeysModeFixture(
   return {
     client,
     adminKey: key,
+    operatorKey,
+    spaceId,
     fetch,
     storage,
     cleanup: () => {
@@ -212,7 +267,10 @@ export async function createKeysModeFixture(
   };
 }
 
-export interface HostedModeFixture extends Omit<KeysModeFixture, "adminKey"> {
+export interface HostedModeFixture extends Omit<
+  KeysModeFixture,
+  "adminKey" | "operatorKey" | "spaceId"
+> {
   /** Email of the signed-up + email-verified user. */
   email: string;
   /** `auth_user.id` for the signed-up user — the `authUserId` the
@@ -332,10 +390,16 @@ export async function createHostedModeFixture(
     {
       label: `sdk-hosted-${suffix}`,
       source: `sdk-hosted-${suffix}`,
-      role: "space_admin",
+      // The whole administrative surface of the fixture's own space, named
+      // rather than implied: the maps and the permission list are the entire
+      // reach of a credential now, and nothing bypasses either.
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
+      extension_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
     },
     hashKey(rawKey, TEST_API_KEY_SALT),
     spaceId,

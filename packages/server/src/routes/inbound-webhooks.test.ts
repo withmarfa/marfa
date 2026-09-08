@@ -310,9 +310,10 @@ describe("POST /connections/:id/inbound-webhooks", () => {
 });
 
 describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
-  // The two halves of one invariant: a space_admin must be able to
-  // subscribe against a platform-scoped (space_id IS NULL) integration
-  // item, and whoever creates the subscription, the row must land in the
+  // The two halves of one invariant: a space-bound key holding
+  // `space.connections` must be able to subscribe against a
+  // platform-scoped (space_id IS NULL) integration item, and whoever
+  // creates the subscription, the row must land in the
   // CONNECTION's space — the local substrate's receipt route looks
   // subscriptions up fenced on the connection's space, so a row stamped
   // with the caller's (absent) space is a subscription that never
@@ -329,14 +330,14 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
       `inbound-scope-${Math.random().toString(36).slice(2, 8)}`,
     );
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `marfa_k1_test_sadmin_${suffix}`;
+    const rawKey = `marfa_k1_test_spacekey_${suffix}`;
     await ctx.storage.keys.create(
       {
-        label: `inbound-scope-sadmin-${suffix}`,
-        source: `inbound-scope-sadmin-${suffix}`,
-        role: "space_admin",
+        label: `inbound-scope-spacekey-${suffix}`,
+        source: `inbound-scope-spacekey-${suffix}`,
+        space_permissions: ["space.connections"],
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(rawKey, TEST_API_KEY_SALT),
       space.id,
@@ -360,7 +361,7 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
     };
   }
 
-  it("space_admin subscribes against a platform-scoped integration item", async () => {
+  it("a space key holding space.connections subscribes against a platform-scoped integration item", async () => {
     const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
     const res = await request(
       ctx.app,
@@ -373,7 +374,7 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
     expect(created.space_id).toBe(spaceId);
   });
 
-  it("platform-admin create stamps the connection's space, not its own", async () => {
+  it("an operator key's create stamps the connection's space, not its own", async () => {
     const { spaceId, connectionId } = await spaceScopedConnection();
     const res = await request(
       ctx.app,
@@ -392,7 +393,7 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
     expect(rows.map((r) => r.id)).toContain(created.id);
   });
 
-  it("space_admin from another space cannot reach the connection", async () => {
+  it("a space key from another space cannot reach the connection", async () => {
     // The fence on the connection lookup is what makes stamping the
     // connection's space safe: a caller only ever reaches connections
     // whose space it shares, so the stamp cannot cross a boundary.

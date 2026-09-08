@@ -176,13 +176,22 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     expect(text).not.toContain(noteId);
   });
 
-  it("withholds a stored row naming no item type, and sends it unfiltered", async () => {
+  it("withholds a stored row naming no item type, from every subscriber", async () => {
     // The one behavior in the replay condition that is not the shared
     // matcher. `publish` always attaches the item, so nothing in the tree
     // writes this row: it stands for an older stored shape or a
     // hand-written one, and the filter has to decide about it rather than
-    // throw. Asserted both ways, because "withheld" alone is equally true
-    // of a row that was never replayed at all.
+    // throw.
+    //
+    // Asked of a filtering subscriber and of one carrying no `?type=`,
+    // because the replay decodes the payload for both and reaches the same
+    // answer. There is no longer a subscriber it decodes nothing for: every
+    // credential is held to its permission maps, so `typeFilter.allowed` is
+    // never absent and the row is classified for all of them.
+    //
+    // The anchor is what makes "withheld" mean something. Both reads run
+    // until they see a row written after this one, so the replay is known to
+    // have walked past it and decided rather than merely not reached it.
     await createItem("core.note", { body: "seed-typeless" });
     const cursor = await latestEventId();
 
@@ -217,8 +226,9 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
         until: (t) => t.includes(anchorId),
       })
     ).text;
-    // With nothing to filter on there is nothing to withhold it for.
-    expect(unfilteredText).toContain("ZZtypelessZZ");
+    // The permission narrowing still applies with no `?type=` on the
+    // request, and a row it cannot classify cannot be proved readable.
+    expect(unfilteredText).not.toContain("ZZtypelessZZ");
   });
 });
 
@@ -353,10 +363,8 @@ describe("GET /events?type= answers the spellings /items answers", () => {
  * unfiltered. The check that failed open was the permission check, which
  * is the wrong one of the two to be wrong.
  *
- * The gap only opens for a credential the permission maps apply to and a
- * request carrying no `?type=`: with a type filter the first check
- * withholds the row anyway, and for an admin nothing decodes the payload
- * at all. That combination is what this pins.
+ * Pinned on a narrow credential and a request carrying no `?type=`, so the
+ * permission narrowing is the only check with anything to say about the row.
  *
  * Nothing in the tree writes this payload — the publisher always attaches
  * the item — so it is constructed at the store. Unreachable today is a
@@ -371,9 +379,12 @@ describe("the replay's two checks on a row that names no item type", () => {
       {
         label: "type-filter member",
         source: `type-filter-member-${suffix}`,
-        role: "member",
         type_permissions: { "core.*": "read" },
         default_tier: "library",
+        // Keys mode leaves this key space-less, which the row constraint
+        // pairs with operator. The narrowing under test reads the type map,
+        // which that flag does not widen.
+        is_operator: true,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );

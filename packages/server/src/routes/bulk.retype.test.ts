@@ -181,19 +181,22 @@ describe("moving a corpus through the bulk door", () => {
     // entered, and a re-type is an entry into one. Non-atomic on purpose:
     // atomic mode's own pre-check authorizes every declared type up
     // front, so it would answer this whether or not the re-type arm did.
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
+    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
     await ctx.storage.keys.create(
       {
-        label: "retype-member",
-        source: `retype-member-${rawKey.slice(-6)}`,
-        role: "member",
+        label: "retype-scoped",
+        source: `retype-scoped-${rawKey.slice(-6)}`,
         type_permissions: { "user.origin_log": "write" },
+        // Keys mode carries no space, and the schema requires a space-less
+        // key to be an operator key. `user.*` is outside the reserved
+        // namespaces, so the type map is still what refuses the move.
+        is_operator: true,
       },
       hashApiKey(rawKey, "test-salt"),
     );
     const sid = `retype-${suffix()}`;
 
-    // Seeded through the member's own credential: `source` is stamped
+    // Seeded through that credential itself: `source` is stamped
     // from it, and the natural key resolves within one source.
     const seeded = await request(ctx.app, "POST", "/items/bulk", {
       key: rawKey,
@@ -202,7 +205,7 @@ describe("moving a corpus through the bulk door", () => {
         items: [
           {
             type: "user.origin_log",
-            properties: { title: "member's own" },
+            properties: { title: "its own" },
             source_id: sid,
           },
         ],
@@ -222,7 +225,7 @@ describe("moving a corpus through the bulk door", () => {
         items: [
           {
             type: "user.dest_log",
-            properties: { title: "member's own" },
+            properties: { title: "its own" },
             source_id: sid,
           },
         ],

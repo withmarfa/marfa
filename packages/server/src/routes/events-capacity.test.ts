@@ -37,9 +37,10 @@ function spaceKey(): ApiKey {
     id: "key_events_capacity",
     name: "events capacity",
     key_hash: "unused",
-    role: "space_admin",
     space_id: SPACE_ID,
-    type_permissions: {},
+    // The rank this fixture used to carry admitted it past its own maps, so
+    // the map has to say what the rank granted silently.
+    type_permissions: { "*": "read" },
     extension_permissions: {},
     edge_permissions: {},
     metadata_permissions: {},

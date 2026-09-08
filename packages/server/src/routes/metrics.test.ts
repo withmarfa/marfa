@@ -3,6 +3,7 @@ import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -15,7 +16,6 @@ beforeAll(async () => {
     {
       label: "runtime-live",
       source: "metrics-runtime-live",
-      role: "member",
       type_permissions: {},
       connection_id: "conn_metrics_live",
       expires_at: new Date(Date.now() + 600_000).toISOString(),
@@ -27,7 +27,6 @@ beforeAll(async () => {
     {
       label: "runtime-retired",
       source: "metrics-runtime-retired",
-      role: "member",
       type_permissions: {},
       connection_id: "conn_metrics_retired",
       expires_at: new Date(Date.now() + 600_000).toISOString(),
@@ -159,7 +158,7 @@ describe("GET /metrics", () => {
       {
         label: "space-a-admin",
         source: `space-a-${raw.slice(-8)}`,
-        role: "instance_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: {},
         default_tier: "feed",
       },

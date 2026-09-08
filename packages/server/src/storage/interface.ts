@@ -13,7 +13,6 @@ import type {
   CreateWebhookInput,
   UpdateWebhookInput,
   InboundWebhookEvent,
-  MarfaRole,
   PaginatedResult,
   SearchResult,
   AncestorUnavailableResponse,
@@ -107,11 +106,11 @@ export interface ItemFilters {
   /** Opt-in widening of the space filter for catalog surfaces. When
    *  `spaceId` is set AND this flag is true, the WHERE clause becomes
    *  `(space_id = $spaceId OR space_id IS NULL)` — so platform-scoped
-   *  rows (written by `is_platform: true` credentials with `space_id` NULL)
+   *  rows (written by `is_operator: true` credentials with `space_id` NULL)
    *  surface to in-space callers alongside their own rows. Used by the
    *  Integrations catalog list (`GET /integrations`) so registered
    *  manifests, which carry `space_id IS NULL` by design, are visible to
-   *  any authenticated space member. Default off — generic list reads
+   *  any authenticated caller in the space. Default off — generic list reads
    *  must NOT pick this up, or null-space rows from any source would
    *  leak across space boundaries. No effect when `spaceId` is unset. */
   includePlatformScoped?: boolean;
@@ -516,7 +515,7 @@ export function decodeKeyedCursorNullable(
  * `includePlatformScoped` mirrors `ItemFilters.includePlatformScoped` for the
  * single-id path: when set alongside a real `spaceId`, the WHERE clause
  * widens to `(space_id = $spaceId OR space_id IS NULL)` so platform-
- * scoped rows (written by `is_platform: true` credentials with
+ * scoped rows (written by `is_operator: true` credentials with
  * `space_id` NULL) resolve for in-space callers. Used by the
  * Integrations install + get-by-id endpoints, which legitimately need
  * to fetch a platform-scoped `system.integration` manifest from a
@@ -730,8 +729,8 @@ export interface ItemStore {
   /**
    * How many items carry this exact type identifier, across every space.
    *
-   * Deliberately unscoped, and the only caller is the platform-admin
-   * surface that decides whether a retired shipped type can be removed.
+   * Deliberately unscoped, and the only caller is the operator surface
+   * that decides whether a retired shipped type can be removed.
    * The question it answers is about the instance, not about a space: a
    * row kept because one space still holds items of it is kept for
    * everyone, since the row is what makes those items resolve.
@@ -1156,16 +1155,17 @@ export interface KeyStore {
   /**
    * Mint a key.
    *
-   * `scope_enforced` is an intersection rather than a field on
+   * `oauth_client_id` is an intersection rather than a field on
    * `CreateKeyInput` for the same reason `is_runtime_credential` is not one:
    * it is set by the server from who is calling, never from a request body,
    * and `CreateKeyInput` is published — an SDK consumer can construct one, and
-   * a settable flag there would read as something a caller may ask for. It
-   * holds the key to its permission maps rather than to its role, which is
-   * what keeps the mint clamp meaningful after the mint.
+   * a settable field there would read as something a caller may ask for. It
+   * records that an app minted this key rather than a person, which is what
+   * ties the key to that app and what `extensionLabelOf` reads to refuse a
+   * label claim.
    */
   create(
-    input: CreateKeyInput & { scope_enforced?: boolean },
+    input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
     spaceId?: string,
   ): Promise<ApiKey>;
@@ -1194,8 +1194,8 @@ export interface KeyStore {
   get(id: string): Promise<ApiKey | null>;
   /**
    * List a single space's active (non-revoked) API keys. Used by the
-   * platform-admin operator surface to discover keys for emergency
-   * revocation. Returns an empty array when the space has no keys.
+   * operator surface to discover keys for emergency revocation. Returns an
+   * empty array when the space has no keys.
    */
   listForSpace(spaceId: string): Promise<ApiKey[]>;
   /**
@@ -1278,15 +1278,15 @@ export interface KeyStore {
  * `(space_id, hash)`; the same hash can appear under multiple space_ids
  * (the storage backend dedupes physically — one file per hash — but each
  * space gets their own metadata row). The empty string `""` is the
- * sentinel for "instance-wide / single-space / platform-admin"; routes
- * pass `key.space_id ?? ""` so single-space deployments and
- * platform-admin uploads continue to interoperate.
+ * sentinel for "instance-wide / single-space / operator"; routes pass
+ * `key.space_id ?? ""` so single-space deployments and operator uploads
+ * continue to interoperate.
  *
  * `register`, `get`, `remove` all take a space scope — passing the wrong
  * space returns null / no-op rather than the row from another space.
  *
  * `listAll` and `count` are unscoped — they're admin reconciliation
- * helpers (reconcile route + metrics), gated to platform admins at the
+ * helpers (reconcile route + metrics), gated to operator keys at the
  * route layer.
  */
 export interface BlobStore {
@@ -1323,8 +1323,8 @@ export interface BlobStore {
   remove(hash: string, spaceId: string): Promise<void>;
   /**
    * Removes every row for a given hash across all spaces. Used only by
-   * the admin orphan-cleanup + reconcile routes — the platform admin
-   * decided this hash is unreferenced everywhere, so all per-space
+   * the admin orphan-cleanup + reconcile routes — the operator decided
+   * this hash is unreferenced everywhere, so all per-space
    * metadata rows go. Space-scoped deletes use `remove(hash, spaceId)`.
    */
   removeAllForHash(hash: string): Promise<void>;
@@ -1627,10 +1627,6 @@ export interface UserStore {
      *  between Better Auth identity and the Marfa profile. Test fixtures
      *  and admin tooling may leave it null. */
     auth_user_id?: string;
-    /** Optional role on creation. No route surfaces this — sign-up flows
-     *  default to `member`. Tests and the operator's escape hatch
-     *  (`setRole`) use it. */
-    role?: MarfaRole;
   }): Promise<User>;
   getById(id: string): Promise<User | null>;
   /** Lookup by Better Auth `auth_user.id`. The single source of truth for
@@ -1642,9 +1638,6 @@ export interface UserStore {
   getByHandle(handle: string): Promise<User | null>;
   /** Claim or change a user's handle. Throws on collision. */
   setHandle(id: string, handle: string): Promise<User>;
-  /** Operator-only role mutation. No route surfaces this — elevation happens
-   *  via SQL or this method from an operator script. */
-  setRole(id: string, role: MarfaRole): Promise<User>;
   /** Update the editable profile fields (first/last name, bio, avatar blob
    *  hash). Stamps `updated_at`. `undefined` keys are untouched; `null`
    *  clears the column. */
@@ -2314,7 +2307,7 @@ export interface OauthProviderStore {
   /**
    * Every `system.connection { kind: "app" }` projection carrying this
    * client id, in every space and whatever either lifecycle axis says. The
-   * platform-admin client delete walks this list, so it has to see the
+   * operator's client delete walks this list, so it has to see the
    * tombstones `findGrantItemId` deliberately hides: a projection left
    * behind by a hand-deleted client row is exactly what that route exists
    * to remove.
@@ -2415,9 +2408,9 @@ export interface AuditEntry {
   /**
    * Space scope. Stamped at write time from the calling api key's
    * `space_id`. Null for system-initiated audits (install pipeline,
-   * cycle-budget overflow) and for bootstrap-admin keys that have no space.
+   * cycle-budget overflow) and for the operator key, which has no space.
    * `GET /audit` filters on this column when the caller is space-scoped;
-   * space-less callers (bootstrap admin) read every row.
+   * space-less callers (the operator key) read every row.
    */
   space_id: string | null;
   action: string;
@@ -2437,8 +2430,8 @@ export interface AuditEntry {
 export interface AuditLogEntry {
   key_id?: string;
   /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
-   *  handlers; null for system-initiated audits and for the bootstrap-admin
-   *  shape on self-hosted single-space deployments. */
+   *  handlers; null for system-initiated audits and for the operator shape
+   *  on self-hosted single-space deployments. */
   space_id?: string | null;
   action: string;
   resource_type: string;
@@ -2494,8 +2487,8 @@ export interface AuditStore {
     limit?: number;
     cursor?: string;
     /** Space-scope filter. When set, returns only rows whose `space_id`
-     *  matches. When omitted, every row is returned — bootstrap-admin reads
-     *  on a self-hosted deployment, plus the cleanup job which is global. */
+     *  matches. When omitted, every row is returned — operator reads on a
+     *  self-hosted deployment, plus the cleanup job which is global. */
     space_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>>;
   /**
@@ -2776,7 +2769,7 @@ export interface SettingsStore {
   /** Atomic insert-or-bail: returns true if this caller's INSERT created the
    *  row, false if a row already existed. Used by the bootstrap path so that
    *  exactly one of N concurrent `POST /keys` on a fresh DB wins the right
-   *  to mint the seed admin key. */
+   *  to mint the seed operator key. */
   claim(key: string, value: string): Promise<boolean>;
 }
 
@@ -2836,7 +2829,7 @@ export interface EdgeStore {
    * cross-space id matches zero rows and raises `edge_not_found`, which
    * the handler answers 404 — a bare error here would reach the generic
    * tail and cost the caller a 500 for a row that is simply gone.
-   * Omitting `spaceId` leaves the update unscoped (platform-admin /
+   * Omitting `spaceId` leaves the update unscoped (operator /
    * single-space self-host).
    *
    * **This is the only statement in the codebase that changes an edge row
@@ -2887,7 +2880,7 @@ export interface EdgeStore {
    * to that space so a space-scoped caller cannot delete another space's
    * edge by id — a cross-space id matches zero rows and is a silent no-op
    * (the route layer's prior 404-cloak is the user-visible signal). Omitting
-   * `spaceId` leaves the delete unscoped (platform-admin / single-space
+   * `spaceId` leaves the delete unscoped (operator / single-space
    * self-host).
    */
   delete(id: string, spaceId?: string): Promise<void>;

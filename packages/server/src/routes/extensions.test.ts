@@ -5,46 +5,50 @@ import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
-// Non-admin credential label doubles as the namespace owner: a key with
-// label "noter" can implicitly write to the "noter" namespace.
+// The credential's label doubles as the namespace owner: a key with label
+// "noter" can implicitly write to the "noter" namespace.
 const SCOPED_LABEL = "noter";
 let scopedKey: string;
 
-interface ItemResponse {
-  item: { id: string };
-}
+// The scoped credential is bound to a space rather than left space-less, and
+// that is load-bearing rather than incidental. The reserved-namespace fence
+// admits any operator key, and a space-less key must be one — the api_keys
+// CHECK constraint ties the two together — so a space-less fixture would pass
+// the very door two tests here exist to see refused. Items are therefore
+// seeded straight into this space instead of being written through the
+// space-less admin key, which the scoped credential could not see.
+const SCOPED_SPACE = `ext-space-${Math.random().toString(36).slice(2, 10)}`;
 
 async function createItem(): Promise<string> {
-  const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
-    body: {
+  const item = await ctx.storage.items.create(
+    {
       type: "core.note",
       properties: { body: `ext-item-${String(Math.random())}` },
     },
-  });
-  const data = (await res.json()) as ItemResponse;
-  return data.item.id;
+    SCOPED_SPACE,
+  );
+  return item.id;
 }
 
 beforeAll(async () => {
   ctx = await createTestContext();
 
-  // Seed a scoped (non-admin) credential. `extension_permissions` grants
-  // read on the "friends" namespace; the implicit own-namespace write
-  // keeps the "noter" namespace writable. See metrics.test.ts:89-99 for
-  // the same seeding pattern.
+  // Seed the scoped credential. `extension_permissions` grants read on the
+  // "friends" namespace; the implicit own-namespace write keeps the "noter"
+  // namespace writable.
   const suffix = Math.random().toString(36).slice(2, 10);
   scopedKey = `marfa_k1_ext_scoped_${suffix}`;
   await ctx.storage.keys.create(
     {
       label: SCOPED_LABEL,
       source: `ext-scoped-${suffix}`,
-      role: "member",
       type_permissions: { "*": "write" },
       extension_permissions: { friends: "read" },
       default_tier: "feed",
+      is_operator: false,
     },
     hashApiKey(scopedKey, "test-salt"),
+    SCOPED_SPACE,
   );
 });
 
@@ -204,7 +208,7 @@ describe("GET /items/:id/extensions/:namespace", () => {
 });
 
 describe("PUT /items/:id/extensions/:namespace", () => {
-  it("rejects reserved namespace write from non-admin with 403", async () => {
+  it("rejects a reserved namespace write from a non-operator key with 403", async () => {
     const itemId = await createItem();
 
     for (const namespace of ["core", "marfa", "system"]) {
@@ -265,7 +269,7 @@ describe("PUT /items/:id/extensions/:namespace", () => {
 });
 
 describe("DELETE /items/:id/extensions/:namespace", () => {
-  it("rejects reserved namespace delete from non-admin with 403", async () => {
+  it("rejects a reserved namespace delete from a non-operator key with 403", async () => {
     const itemId = await createItem();
 
     for (const namespace of ["core", "marfa", "system"]) {

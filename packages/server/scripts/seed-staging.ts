@@ -20,7 +20,7 @@
  *   MARFA_API_KEY=<platform-admin key> \
  *     pnpm --filter @withmarfa/server exec tsx scripts/seed-staging.ts
  *
- * The key MUST be a platform credential (is_platform: true). Re-running is
+ * The key MUST be a platform credential (is_operator: true). Re-running is
  * safe: a manifest already registered at the same (name, version) returns
  * 409 and is reported as "exists", not an error.
  */

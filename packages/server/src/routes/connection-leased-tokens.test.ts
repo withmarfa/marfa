@@ -269,9 +269,9 @@ async function spaceWithTwoConnections(): Promise<{
     {
       label: `lease-ident-${suffix}`,
       source: `lease-ident-${suffix}`,
-      role: "space_admin",
+      space_permissions: ["space.connections"],
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(rawKey, TEST_API_KEY_SALT),
     space.id,
@@ -301,9 +301,9 @@ async function spaceWithTwoConnections(): Promise<{
  * can be given any `source` the author likes, so it will satisfy a gate
  * that tests one, and it proved a permissive behavior no caller could
  * reach: the real mint stamps `source: local-runtime:<id>:<suffix>` with
- * a random suffix, and the credential is `role: "member"` with
- * `is_platform: false`, so neither a fixed source string nor the admin
- * bypass admits it.
+ * a random suffix, and the credential holds no space permission and is
+ * not an operator key, so a fixture with a chosen source stands in for
+ * nothing a dispatch can actually present.
  */
 describe("integration runtime credential", () => {
   it("issues a lease when called with the connection's own runtime credential", async () => {
@@ -569,14 +569,14 @@ describe("POST /connections/:id/lease-tokens — space scoping", () => {
       `lease-scope-${Math.random().toString(36).slice(2, 8)}`,
     );
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `marfa_k1_test_lease_sadmin_${suffix}`;
+    const rawKey = `marfa_k1_test_lease_spacekey_${suffix}`;
     await ctx.storage.keys.create(
       {
-        label: `lease-scope-sadmin-${suffix}`,
-        source: `lease-scope-sadmin-${suffix}`,
-        role: "space_admin",
+        label: `lease-scope-spacekey-${suffix}`,
+        source: `lease-scope-spacekey-${suffix}`,
+        space_permissions: ["space.connections"],
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(rawKey, TEST_API_KEY_SALT),
       space.id,
@@ -598,7 +598,7 @@ describe("POST /connections/:id/lease-tokens — space scoping", () => {
     };
   }
 
-  it("space_admin issues a lease against a platform-scoped integration item", async () => {
+  it("a space key holding space.connections issues a lease against a platform-scoped integration item", async () => {
     const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
     const res = await request(
       ctx.app,
@@ -611,7 +611,7 @@ describe("POST /connections/:id/lease-tokens — space scoping", () => {
     expect(created.space_id).toBe(spaceId);
   });
 
-  it("platform-admin issue stamps the connection's space, not its own", async () => {
+  it("an operator key's issue stamps the connection's space, not its own", async () => {
     const { spaceId, connectionId } = await spaceScopedConnection();
     const res = await request(
       ctx.app,

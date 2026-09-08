@@ -379,18 +379,21 @@ describe("POST /edges/bulk", () => {
     expect(body.error.code).toBe("validation_error");
   });
 
-  it("admits a member with source-type + edge-type write (matches POST /edges)", async () => {
-    // Bulk edge authorization mirrors single-edge POST /edges: a member
-    // holding write on the source item's type AND the edge type succeeds.
+  it("admits a key with source-type + edge-type write (matches POST /edges)", async () => {
+    // Bulk edge authorization mirrors single-edge POST /edges: a key holding
+    // write on the source item's type AND the edge type succeeds.
     const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
       {
         label: "edges-bulk-member-ok",
         source: `edges-bulk-member-ok-${rawKey.slice(-6)}`,
-        role: "member",
         type_permissions: { "*": "write" },
         edge_permissions: { "*": "write" },
+        // Keys mode gives this key no space, and a space-less key must be an
+        // operator key. The subject is the edge map, which an operator key
+        // does not bypass.
+        is_operator: true,
       },
       keyHash,
     );
@@ -409,7 +412,7 @@ describe("POST /edges/bulk", () => {
     expect(body.counts.created).toBe(1);
   });
 
-  it("rejects a member lacking edge-type write (atomic 400)", async () => {
+  it("rejects a key lacking edge-type write (atomic 400)", async () => {
     // Has source-type write but no edge_permissions → edge_permission_denied,
     // surfaced as a bulk_atomic_rollback by the atomic pre-check.
     const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
@@ -418,9 +421,9 @@ describe("POST /edges/bulk", () => {
       {
         label: "edges-bulk-member-noedge",
         source: `edges-bulk-member-noedge-${rawKey.slice(-6)}`,
-        role: "member",
         type_permissions: { "*": "write" },
         edge_permissions: {},
+        is_operator: true,
       },
       keyHash,
     );

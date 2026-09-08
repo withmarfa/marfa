@@ -729,6 +729,13 @@
       "when": 1788880888511,
       "tag": "0103_space_permission_scope_rename",
       "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1788889528262,
+      "tag": "0104_one_permission_set_per_credential",
+      "breakpoints": true
     }
   ]
 }

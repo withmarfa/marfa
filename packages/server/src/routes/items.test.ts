@@ -7,6 +7,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -262,8 +263,10 @@ describe("POST /items", () => {
       body: {
         label: "alt-source",
         source: "alt-source",
-        role: "instance_admin",
-        type_permissions: {},
+        // The map is named because nothing is implied: the rank that used to
+        // reach every type regardless is gone, and the boundary under test is
+        // the stamped `source`, not the reach.
+        type_permissions: { "core.note": "write" },
       },
     });
     const altKey = (await altKeyRes.json()) as { key: string };
@@ -555,19 +558,19 @@ describe("null on an optional property is treated as unset", () => {
 });
 
 describe("POST /items — platform-credential gate", () => {
-  it("rejects a non-platform admin writing system.* even with explicit type_permissions", async () => {
-    // Only platform credentials may write to `core.*`, `system.*`, or
-    // `marfa.*` types, regardless of role or type_permissions. The gate
-    // fires before any role bypass; reads are unrestricted.
+  it("rejects a space credential writing system.* even with explicit type_permissions", async () => {
+    // Only operator credentials may write `system.*` or `marfa.*`, and the
+    // fence stands ahead of the type map: naming the literal does not open
+    // it. Reads are unrestricted.
     const spaceAdminKey = "marfa_k1_test_non_platform_admin";
     await ctx.storage.keys.create(
       {
         label: "space-admin-non-platform",
         source: "space-admin-non-platform",
-        role: "instance_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "system.connection": "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(spaceAdminKey, TEST_API_KEY_SALT),
       "space-x",
@@ -594,7 +597,7 @@ describe("POST /items — platform-credential gate", () => {
     expect(body.error.message).toMatch(/system/);
   });
 
-  it("admits the bootstrap admin (is_platform: true) writing system.*", async () => {
+  it("admits the bootstrap admin (is_operator: true) writing system.*", async () => {
     // Sanity check the legitimate path stays open. Bootstrap admin is
     // the test fixture admin which is platform-shaped.
     const res = await request(ctx.app, "POST", "/items", {
@@ -614,7 +617,7 @@ describe("POST /items — platform-credential gate", () => {
   });
 
   it("admits runtime credentials writing system.activity (carve-out for integration status reporting)", async () => {
-    // Runtime credentials are is_platform: false but is_runtime_credential:
+    // Runtime credentials are is_operator: false but is_runtime_credential:
     // true and bound to a connection. The activity sink in runtime-sdk
     // calls POST /items with type: "system.activity" to surface progress
     // / errors — the carve-out keeps that path open while still blocking
@@ -624,7 +627,6 @@ describe("POST /items — platform-credential gate", () => {
       {
         label: "runtime-cred",
         source: "runtime-cred",
-        role: "member",
         type_permissions: { "system.activity": "write" },
         connection_id: "conn_test_carve_out",
         expires_at: new Date(Date.now() + 600_000).toISOString(),
@@ -677,7 +679,6 @@ describe("POST /items — platform-credential gate", () => {
       {
         label: "runtime-marfa-grant",
         source: "runtime-marfa-grant",
-        role: "member",
         type_permissions: {
           "system.activity": "write",
           "marfa.captured_email": "write",
@@ -711,7 +712,6 @@ describe("POST /items — platform-credential gate", () => {
       {
         label: "runtime-marfa-wildcard",
         source: "runtime-marfa-wildcard",
-        role: "member",
         type_permissions: { "system.activity": "write", "*": "write" },
         connection_id: "conn_test_marfa_wildcard",
         expires_at: new Date(Date.now() + 600_000).toISOString(),
@@ -737,14 +737,13 @@ describe("POST /items — platform-credential gate", () => {
 
   it("refuses the same exact literal on a credential that is not runtime-minted", async () => {
     // The admit rides the manifest projection, and only runtime mints
-    // project. A hand-minted member key naming the literal does not
+    // project. A hand-minted key naming the literal does not
     // carry the platform's declaration and stays outside the fence.
     const humanKey = "marfa_k1_test_human_marfa_literal";
     await ctx.storage.keys.create(
       {
         label: "human-marfa-literal",
         source: "human-marfa-literal",
-        role: "member",
         type_permissions: { "marfa.captured_email": "write" },
       },
       hashApiKey(humanKey, TEST_API_KEY_SALT),
@@ -769,7 +768,6 @@ describe("POST /items — platform-credential gate", () => {
       {
         label: "runtime-system-literal",
         source: "runtime-system-literal",
-        role: "member",
         type_permissions: {
           "system.activity": "write",
           "system.connection": "write",
@@ -799,19 +797,19 @@ describe("POST /items — platform-credential gate", () => {
     expect(res.status).toBe(403);
   });
 
-  it("does not gate reads to system.* (space admin can list its own system.connection rows)", async () => {
+  it("does not gate reads to system.* (a space credential lists its own system.connection rows)", async () => {
     // Reads to reserved-namespace items are unrestricted (filtered by
     // space scoping at the storage layer); only writes need
-    // is_platform.
+    // is_operator.
     const spaceReaderKey = "marfa_k1_test_space_reader";
     await ctx.storage.keys.create(
       {
         label: "space-reader",
         source: "space-reader",
-        role: "instance_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "system.connection": "read" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(spaceReaderKey, TEST_API_KEY_SALT),
       "space-x",
@@ -995,20 +993,19 @@ describe("PATCH /items/:id — retype", () => {
   });
 
   it("refuses a move into a type the credential cannot write", async () => {
-    // Write on the type being LEFT is not enough. A member key that may
+    // Write on the type being LEFT is not enough. A credential that may
     // write entities and not bookmarks must not be able to turn one into
     // the other, or the type map stops bounding what it can produce.
     //
-    // An admin key would prove nothing here: it bypasses the type map
-    // entirely, so every other case in this block is silent about the
-    // permission the route checks.
+    // The narrow key is the point: `ctx.adminKey` holds `"*": "write"`, so
+    // every other case in this block is silent about the permission the
+    // route checks.
     const id = await entity(ctx);
     const scopedRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "entities-only",
         source: "entities-only",
-        role: "member",
         type_permissions: { "core.entity": "write" },
       },
     });
@@ -1048,7 +1045,6 @@ describe("PATCH /items/:id — retype", () => {
       body: {
         label: "both-types",
         source: "both-types",
-        role: "member",
         type_permissions: {
           "core.entity": "write",
           "core.bookmark": "write",
@@ -1606,8 +1602,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
       body: {
         label: "alt-source-rename",
         source: "alt-source-rename",
-        role: "instance_admin",
-        type_permissions: {},
+        type_permissions: { "core.note": "write" },
       },
     });
     const altKey = (await altKeyRes.json()) as { key: string };
@@ -2360,7 +2355,7 @@ describe("metadata.changed pubsub event", () => {
 });
 
 describe("metadata.extensions are permission-filtered on every read path", () => {
-  async function createMemberKey(
+  async function createScopedKey(
     extPerms: Record<string, "read" | "write">,
     label: string,
   ): Promise<string> {
@@ -2369,7 +2364,6 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
       body: {
         label,
         source: `${label}-src`,
-        role: "member",
         type_permissions: { "*": "write" },
         extension_permissions: extPerms,
       },
@@ -2405,13 +2399,13 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
 
   it("GET /items/:id only surfaces extension namespaces the caller can read", async () => {
     const id = await seedItemWithExtensions();
-    const memberKey = await createMemberKey(
+    const narrowKey = await createScopedKey(
       { "visible-app.prefs": "read" },
       "ext-leak-single",
     );
 
     const res = await request(ctx.app, "GET", `/items/${id}`, {
-      key: memberKey,
+      key: narrowKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2424,7 +2418,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
 
   it("GET /items?include=metadata filters extensions per item", async () => {
     const id = await seedItemWithExtensions();
-    const memberKey = await createMemberKey(
+    const narrowKey = await createScopedKey(
       { "visible-app.prefs": "read" },
       "ext-leak-list",
     );
@@ -2433,7 +2427,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
       ctx.app,
       "GET",
       `/items?type=core.note&include=metadata&limit=200`,
-      { key: memberKey },
+      { key: narrowKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2451,13 +2445,13 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
 
   it("GET /items/:id/metadata filters extensions", async () => {
     const id = await seedItemWithExtensions();
-    const memberKey = await createMemberKey(
+    const narrowKey = await createScopedKey(
       { "visible-app.prefs": "read" },
       "ext-leak-meta",
     );
 
     const res = await request(ctx.app, "GET", `/items/${id}/metadata`, {
-      key: memberKey,
+      key: narrowKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2470,13 +2464,13 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
 
   it("/search filters extensions on every result", async () => {
     await seedItemWithExtensions();
-    const memberKey = await createMemberKey(
+    const narrowKey = await createScopedKey(
       { "visible-app.prefs": "read" },
       "ext-leak-search",
     );
 
     const res = await request(ctx.app, "GET", `/search?q=ext-leak-fixture`, {
-      key: memberKey,
+      key: narrowKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2510,7 +2504,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
     const id = await seedItemWithExtensions();
     // Key with no explicit grants — the own-namespace rule should let it
     // see an extension namespace that matches its label.
-    const ownerKey = await createMemberKey({}, "visible-app.prefs");
+    const ownerKey = await createScopedKey({}, "visible-app.prefs");
     const res = await request(ctx.app, "GET", `/items/${id}`, {
       key: ownerKey,
     });
@@ -2524,7 +2518,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
 });
 
 describe("GET /items?include=extensions", () => {
-  async function createMemberKey(
+  async function createScopedKey(
     extPerms: Record<string, "read" | "write">,
     label: string,
   ): Promise<string> {
@@ -2533,7 +2527,6 @@ describe("GET /items?include=extensions", () => {
       body: {
         label,
         source: `${label}-src`,
-        role: "member",
         type_permissions: { "*": "write" },
         extension_permissions: extPerms,
       },
@@ -2601,7 +2594,7 @@ describe("GET /items?include=extensions", () => {
 
   it("filters extensions per caller permissions", async () => {
     const id = await seedItem("filtered");
-    const memberKey = await createMemberKey(
+    const narrowKey = await createScopedKey(
       { "visible.prefs": "read" },
       "include-ext-filtered",
     );
@@ -2609,7 +2602,7 @@ describe("GET /items?include=extensions", () => {
       ctx.app,
       "GET",
       `/items?type=core.note&tags=include-ext-filtered&include=extensions`,
-      { key: memberKey },
+      { key: narrowKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2666,7 +2659,7 @@ describe("GET /items?include=extensions", () => {
 });
 
 describe("permission-gate ordering (priority cluster)", () => {
-  async function createMemberKey(
+  async function createScopedKey(
     permissions: Record<string, "read" | "write" | "none">,
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
@@ -2675,7 +2668,6 @@ describe("permission-gate ordering (priority cluster)", () => {
       body: {
         label: `gate-member-${suffix}`,
         source: `gate-member-${suffix}`,
-        role: "member",
         default_tier: "feed",
         type_permissions: permissions,
         extension_permissions: {},
@@ -2695,8 +2687,8 @@ describe("permission-gate ordering (priority cluster)", () => {
     });
     const { item } = (await create.json()) as { item: { id: string } };
 
-    // Member credential with no core.note write.
-    const restrictedKey = await createMemberKey({ "core.note": "read" });
+    // A credential holding read and not write on core.note.
+    const restrictedKey = await createScopedKey({ "core.note": "read" });
 
     const del = await request(ctx.app, "DELETE", `/items/${item.id}`, {
       key: restrictedKey,
@@ -2723,7 +2715,7 @@ describe("permission-gate ordering (priority cluster)", () => {
     expect(del.status).toBe(200);
 
     // Restore by a restricted credential must 403.
-    const restrictedKey = await createMemberKey({ "core.note": "read" });
+    const restrictedKey = await createScopedKey({ "core.note": "read" });
     const restore = await request(
       ctx.app,
       "POST",
@@ -2937,12 +2929,12 @@ describe("GET /items?include=system", () => {
     expect(ids).toContain(deviceId);
   });
 
-  // Every other case in this file and its sibling runs as `ctx.adminKey`, whose
-  // role short-circuits `computeTypeFilter` (`middleware/auth.ts:737`), so
-  // `allowed_types` is inert in all of them. `exclude_system_types` and
-  // `allowed_types` are independent arguments to the same storage call, and
-  // nothing asserted how they compose — which matters now the published
-  // description advertises the token to every client.
+  // Every other case in this file and its sibling runs as `ctx.adminKey`,
+  // which holds `"*": "write"` — so `allowed_types` admits everything and
+  // says nothing in any of them. `exclude_system_types` and `allowed_types`
+  // are independent arguments to the same storage call, and nothing asserted
+  // how they compose, which matters now the published description advertises
+  // the token to every client.
   //
   // The grant has to name the system type. A key holding only `core.note`
   // proves nothing: the device is absent whether the token was honored or
@@ -2950,8 +2942,8 @@ describe("GET /items?include=system", () => {
   // entirely. That was the first version of this test, and it is the guard
   // that cannot fail for the reason it exists.
   //
-  // Reads to `system.*` are unrestricted by role (`auth.ts:641`), so the
-  // permission map is the only thing fencing them.
+  // Reads to `system.*` pass the reserved-namespace fence, which gates
+  // writes only, so the permission map is the one thing fencing them.
   async function scopedKey(
     label: string,
     perms: Record<string, "read" | "write">,
@@ -2961,7 +2953,6 @@ describe("GET /items?include=system", () => {
       body: {
         label,
         source: `${label}-src`,
-        role: "member",
         type_permissions: perms,
       },
     });

@@ -31,17 +31,16 @@ const baseType = {
 };
 
 describe("POST /types — metadata.types:write gating", () => {
-  it("blocks a non-admin member key without metadata.types:write", async () => {
-    // New default: member keys cannot register custom types unless
-    // explicitly granted `metadata.types:write`. The previous
-    // requireAdmin gate is replaced by an extension-permission-style
-    // check; admin keys still bypass.
+  it("blocks a key without metadata.types:write", async () => {
+    // Registering a custom type is gated on the metadata map alone, and no
+    // credential is exempt from it. `space_permissions` is named because
+    // omitting it mints a copy of the caller's set, which here is all eleven.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "no-types-key",
         source: "no-types-key-src",
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
         // metadata_permissions intentionally omitted — defaults to {}.
       },
@@ -61,13 +60,13 @@ describe("POST /types — metadata.types:write gating", () => {
     expect(body.error.code).toBe("forbidden");
   });
 
-  it("allows a non-admin member key when metadata.types:write is granted", async () => {
+  it("allows a key when metadata.types:write is granted", async () => {
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "types-writer-key",
         source: "types-writer-key-src",
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
       },
@@ -725,14 +724,14 @@ describe("compatible_with at the gate and on the wire", () => {
   it("keeps compatible items out of target-type queries", async () => {
     // Compatibility is a read-as promise for consumers, not query membership:
     // a filter for the target returns only the target and its descendants.
-    // Exercised through a member credential so the resolution path a
-    // non-admin caller takes is the one under test.
+    // Exercised through a credential narrowed by its type map, so the
+    // resolution path a filtered caller takes is the one under test.
     const keyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "compat-member",
         source: "compat-member-src",
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
       },
     });
@@ -770,7 +769,7 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
   for (const tier of ["core", "system", "marfa"] as const) {
     it(`refuses a ${tier}.* registration from a platform credential`, async () => {
       const res = await request(ctx.app, "POST", "/types", {
-        key: ctx.adminKey, // bootstrap admin: is_platform, no space
+        key: ctx.adminKey, // bootstrap admin: is_operator, no space
         body: { id: `${tier}.runtime-authored-probe`, ...baseType },
       });
       // Previously 201: the gate admitted a platform credential, which put
@@ -820,7 +819,6 @@ describe("POST /types — publisher-tier handle ownership", () => {
       {
         label: `ownership-${suffix}`,
         source: "test",
-        role: "member",
         type_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
       },
@@ -872,7 +870,7 @@ describe("POST /types — publisher-tier handle ownership", () => {
 
   it("exempts platform credentials", async () => {
     const res = await request(hosted.app, "POST", "/types", {
-      key: hosted.adminKey, // bootstrap admin: is_platform, no space
+      key: hosted.adminKey, // bootstrap admin: is_operator, no space
       body: { id: "somevendor.platform-seeded", ...baseType },
     });
     expect(res.status).toBe(201);
@@ -889,23 +887,30 @@ describe("POST /types — publisher-tier handle ownership", () => {
   });
 
   it("does not bind in keys mode, where no handle system exists", async () => {
-    // The module-level ctx runs in keys mode. Its member credential has
-    // no user row at all; refusing here would break every self-hosted
-    // deployment's custom publisher types, so the exemption is a
-    // deliberate, recorded choice rather than an accident.
-    const createKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
-      body: {
+    // The module-level ctx runs in keys mode, and its credential has no user
+    // row at all; refusing here would break every self-hosted deployment's
+    // custom publisher types, so the exemption is a deliberate, recorded
+    // choice rather than an accident.
+    //
+    // Seeded space-bound and non-operator rather than minted through
+    // `POST /keys`, which would hand it the caller's operator flag — and a
+    // platform credential is exempt from this rule for a different reason, so
+    // the test would then pass without touching the one under test.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const rawKey = `marfa_k1_test_keysmode_${suffix}`;
+    await ctx.storage.keys.create(
+      {
         label: "keys-mode-publisher",
-        source: "keys-mode-publisher-src",
-        role: "member",
+        source: `keys-mode-publisher-${suffix}`,
         type_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
+        is_operator: false,
       },
-    });
-    const created = (await createKeyRes.json()) as { key: string };
+      hashApiKey(rawKey, TEST_API_KEY_SALT),
+      `keys-mode-publisher-space-${suffix}`,
+    );
     const res = await request(ctx.app, "POST", "/types", {
-      key: created.key,
+      key: rawKey,
       body: { id: "acme.keys-mode-gadget", ...baseType },
     });
     expect(res.status).toBe(201);

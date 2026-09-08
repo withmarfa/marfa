@@ -1,7 +1,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ALL_TYPES, ALL_INTEGRATION_TYPES } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireOperatorKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { surveyConnectionDrift } from "../connections/auto-upgrade.js";
@@ -115,7 +115,7 @@ const getMetricsRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a platform admin",
+      description: "Caller is not the operator key",
     },
   },
 });
@@ -124,7 +124,7 @@ export function metricsRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(getMetricsRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
 
     const now = Date.now();
     if (metricsCache && now - metricsCache.at < CACHE_TTL_MS) {

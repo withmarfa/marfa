@@ -29,12 +29,13 @@
  * and permissions decide the rest: a credential still has to hold the type,
  * and the platform-credential gate still decides who may write there. On
  * `POST /items/bulk-actions` that is not true — it runs no per-row
- * `requireTypeAccess`, and `getTypeFilter` returns an unrestricted filter
- * for any role that bypasses the permission maps, `space_admin` included.
- * So on that door this is the whole of the type-axis control rather than
- * one layer of it, which is the reason it takes no widening token: a read
- * widened by one answers a bigger question, an action widened by one acts
- * on more rows.
+ * `requireTypeAccess`, so nothing stands between a match set and the action
+ * taken on it except what narrowed the query. The type filter beside this
+ * cannot cover for that: a credential granted write across the board
+ * satisfies it and is still not a platform credential. So on that door this
+ * is the whole of the reserved-namespace control rather than one layer of
+ * it, which is the reason it takes no widening token: a read widened by one
+ * answers a bigger question, an action widened by one acts on more rows.
  *
  * `POST /items/bulk-get` is deliberately not a caller. It resolves a
  * caller's own id list rather than running a query, so it filters the rows

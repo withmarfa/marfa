@@ -42,11 +42,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { MarfaError, ErrorCode, type Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireAuth,
-  hasSpaceAdminAuthority,
-  requireSpacePermission,
-} from "../middleware/auth.js";
+import { requireAuth, requireSpacePermission } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import {
@@ -62,7 +58,7 @@ import {
 } from "../oauth/state.js";
 import { setNoStore } from "./no-store.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import { resolveSpaceAdminCaller } from "./_space-caller.js";
+import { resolveSpaceCaller } from "./_space-caller.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
 
 interface OAuthAuthorizeConfig {
@@ -423,24 +419,21 @@ export function oauthStartRoutes(
   const r = new Hono<AppEnv>();
   r.post("/:id/oauth/start", async (c) => {
     const apiKey = requireAuth(c);
-    if (!hasSpaceAdminAuthority(apiKey) && !apiKey.is_platform) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "OAuth start requires admin or platform credential",
-      );
-    }
+    requireSpacePermission(c, "space.credentials");
     // No integration arm on this door: it starts the upstream OAuth dance and
     // takes a caller-supplied scope override into the authorize URL, so it is
     // a credentials surface reached on rank and nothing else.
     requireSpacePermission(c, "space.credentials");
     const connectionId = c.req.param("id");
-    // Fenced on the caller's space. Rank alone does not confer
-    // cross-space reach: a credential carrying a `space_id` is confined
-    // to it whatever its role, and `POST /admin/spaces/{id}/keys` mints
-    // exactly that shape at `role: "instance_admin"`. An unfenced lookup here
-    // would let such a key start an OAuth flow against another space's
-    // connection, and the signed state binds the connection id — so the
-    // callback would persist the resulting tokens onto that connection.
+    // Fenced on the caller's space. Holding `space.credentials` confers no
+    // cross-space reach: a credential carrying a `space_id` is confined to it
+    // however much of that space it administers, and `POST
+    // /admin/spaces/{id}/keys` mints exactly that shape — bound to one space,
+    // `is_operator: false`, holding every space permission inside it. An
+    // unfenced lookup here would let such a key start an OAuth flow against
+    // another space's connection, and the signed state binds the connection
+    // id, so the callback would persist the resulting tokens onto that
+    // connection.
     const connection = await storage.items.get(
       connectionId,
       apiKey.space_id ?? undefined,
@@ -507,7 +500,7 @@ export function oauthStartRoutes(
    * asked for.
    */
   r.get("/:id/oauth/start", async (c) => {
-    const caller = await resolveSpaceAdminCaller(
+    const caller = await resolveSpaceCaller(
       c,
       storage,
       options.auth,

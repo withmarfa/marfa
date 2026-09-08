@@ -20,6 +20,7 @@ import {
   placeholderColor,
 } from "./profile.js";
 import { ensureAccountHolderItem } from "../auth/account-holder.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 /**
  * Profile endpoint coverage.
@@ -174,8 +175,12 @@ async function provisionUser(
     {
       label: "test-admin",
       source: "test-admin",
-      role: "instance_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: {},
+      // Category 2 is levelled, so an absent map means the credential may not
+      // even read the profile. The rank this fixture carried used to read past
+      // the map; the map now has to say so.
+      profile_permissions: { "*": "write" },
     },
     hashApiKey(rawKey, SALT),
     space.id,
@@ -653,21 +658,6 @@ describe("Profile routes", () => {
         body: { first_name: "Nope" },
       });
       expect(patch.status).toBe(403);
-    });
-
-    it("still admits a first-party credential, which holds no scopes at all", async () => {
-      // The distinction the gate is built on is what the caller holds rather
-      // than which endpoint it chose: `roleBypassesPermissionMaps` is false
-      // for a `scope_enforced` OAuth token and true for an ordinary key, so
-      // the CLI and the MCP are unaffected by any of the above.
-      const u = await provisionUser(hosted, {
-        handle: "firstparty",
-        email: "firstparty@example.com",
-      });
-      const res = await request(hosted.app, "GET", "/profile/me", {
-        key: u.apiKey,
-      });
-      expect(res.status).toBe(200);
     });
   });
 

@@ -32,17 +32,19 @@ let narrowKey: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // A member that reads tasks and nothing else, so `core.note` is a
-  // registered type it cannot read.
+  // A credential that reads tasks and nothing else, so `core.note` is a
+  // registered type it cannot read. `is_operator` is what the schema demands
+  // of a space-less key in keys mode; the narrow map is what this file tests,
+  // and no flag reads past it.
   const suffix = Math.random().toString(36).slice(2, 12);
   narrowKey = `marfa_k1_narrow_${suffix}`;
   await ctx.storage.keys.create(
     {
       label: `narrow-${suffix}`,
       source: `narrow-${suffix}`,
-      role: "member",
       type_permissions: { "core.task": "read" },
       default_tier: "library",
+      is_operator: true,
     },
     hashApiKey(narrowKey, TEST_API_KEY_SALT),
   );

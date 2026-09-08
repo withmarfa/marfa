@@ -2,13 +2,14 @@
  * Tests for `POST /credentials/oauth-provider`.
  *
  * Coverage:
- *   - Auth gate: unauthenticated → 401; member key → 403; space_admin OK.
+ *   - Auth gate: unauthenticated → 401; a key without `space.credentials`
+ *     → 403; one holding it OK.
  *   - Happy path: 201 + credential_id; the resulting `system.credential` row
  *     has the right shape; the encrypted secret round-trips back to the
  *     original via `decryptSecret`.
  *   - Validation: malformed URL fields → 400.
  *   - Audit trail: `credential.oauth_provider.create` row written.
- *   - Removal: `DELETE /credentials/{id}` gates on space_admin, refuses
+ *   - Removal: `DELETE /credentials/{id}` gates on `space.credentials`, refuses
  *     while a live connection references the credential, and otherwise
  *     removes the row and the secret it held.
  */
@@ -37,14 +38,15 @@ function uniqueSuffix(): string {
   return Math.random().toString(36).slice(2, 10);
 }
 
-async function mintMemberKey(): Promise<string> {
+/** A key holding no space permission, so every credentials door refuses it. */
+async function mintUnprivilegedKey(): Promise<string> {
   const suffix = uniqueSuffix();
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.adminKey,
     body: {
-      label: `member-test-${suffix}`,
-      source: `member-test-${suffix}`,
-      role: "member",
+      label: `no-permission-test-${suffix}`,
+      source: `no-permission-test-${suffix}`,
+      space_permissions: [],
       type_permissions: {},
     },
   });
@@ -53,22 +55,22 @@ async function mintMemberKey(): Promise<string> {
   return body.key;
 }
 
-// Built through the storage layer rather than `POST /keys`, which refuses
-// to mint a `space_admin` key from a caller that has no space to pass on
-// (the resulting credential would not stop at the boundary its role names).
-// These tests only need a credential that carries the role, so the fixture
-// stamps a space directly instead of routing around the rule.
-async function mintSpaceAdminKey(): Promise<string> {
+// Built through the storage layer rather than `POST /keys`, because the
+// minting caller here carries no space and so mints only space-less keys.
+// What these cases need is the opposite shape — a credential bound to a
+// space and holding `space.credentials` — so the fixture stamps the space
+// directly instead of routing around the rule.
+async function mintSpaceCredentialsKey(): Promise<string> {
   const suffix = uniqueSuffix();
-  const raw = `marfa_k1_space_admin_${suffix}`;
+  const raw = `marfa_k1_space_credentials_${suffix}`;
   await ctx.storage.keys.create(
     {
-      label: `space-admin-test-${suffix}`,
-      source: `space-admin-test-${suffix}`,
-      role: "space_admin",
+      label: `space-credentials-test-${suffix}`,
+      source: `space-credentials-test-${suffix}`,
+      space_permissions: ["space.credentials"],
       type_permissions: {},
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     `space-credentials-${suffix}`,
@@ -94,10 +96,10 @@ describe("POST /credentials/oauth-provider — auth gate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects member keys with 403", async () => {
-    const memberKey = await mintMemberKey();
+  it("rejects a key without space.credentials with 403", async () => {
+    const unprivilegedKey = await mintUnprivilegedKey();
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: memberKey,
+      key: unprivilegedKey,
       body: VALID_BODY,
     });
     expect(res.status).toBe(403);
@@ -147,11 +149,11 @@ describe("POST /credentials/oauth-provider — happy path", () => {
     expect(plaintext).toBe(VALID_BODY.oauth_client_secret);
   });
 
-  it("space_admin keys can create credentials too", async () => {
-    const spaceAdminKey = await mintSpaceAdminKey();
+  it("a space key holding space.credentials can create credentials too", async () => {
+    const spaceKey = await mintSpaceCredentialsKey();
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: spaceAdminKey,
-      body: { ...VALID_BODY, label: "Google (space_admin)" },
+      key: spaceKey,
+      body: { ...VALID_BODY, label: "Google (space credentials key)" },
     });
     expect(res.status).toBe(201);
   });
@@ -245,10 +247,10 @@ describe("POST /credentials/api-token — auth gate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects member keys with 403", async () => {
-    const memberKey = await mintMemberKey();
+  it("rejects a key without space.credentials with 403", async () => {
+    const unprivilegedKey = await mintUnprivilegedKey();
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: memberKey,
+      key: unprivilegedKey,
       body: VALID_API_TOKEN_BODY,
     });
     expect(res.status).toBe(403);
@@ -291,11 +293,14 @@ describe("POST /credentials/api-token — happy path", () => {
     expect(plaintext).toBe(VALID_API_TOKEN_BODY.api_token);
   });
 
-  it("space_admin keys can create api_token credentials too", async () => {
-    const spaceAdminKey = await mintSpaceAdminKey();
+  it("a space key holding space.credentials can create api_token credentials too", async () => {
+    const spaceKey = await mintSpaceCredentialsKey();
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: spaceAdminKey,
-      body: { ...VALID_API_TOKEN_BODY, label: "Todoist (space_admin)" },
+      key: spaceKey,
+      body: {
+        ...VALID_API_TOKEN_BODY,
+        label: "Todoist (space credentials key)",
+      },
     });
     expect(res.status).toBe(201);
   });
@@ -410,11 +415,11 @@ describe("DELETE /credentials/{id}", () => {
     return ((await res.json()) as { credential_id: string }).credential_id;
   }
 
-  it("requires an admin key", async () => {
+  it("requires space.credentials", async () => {
     const id = await makeCredential("delete-auth-gate");
-    const memberKey = await mintMemberKey();
+    const unprivilegedKey = await mintUnprivilegedKey();
     const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
-      key: memberKey,
+      key: unprivilegedKey,
     });
     expect(res.status).toBe(403);
   });
@@ -434,11 +439,11 @@ describe("DELETE /credentials/{id}", () => {
     expect(await ctx.storage.items.get(id)).toBeNull();
   });
 
-  it("a space_admin can remove a credential they created", async () => {
-    const spaceAdminKey = await mintSpaceAdminKey();
+  it("a space key holding space.credentials can remove a credential it created", async () => {
+    const spaceKey = await mintSpaceCredentialsKey();
     const created = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: spaceAdminKey,
-      body: { ...VALID_API_TOKEN_BODY, label: "space-admin-owned" },
+      key: spaceKey,
+      body: { ...VALID_API_TOKEN_BODY, label: "space-credentials-key-owned" },
     });
     expect(created.status).toBe(201);
     const { credential_id } = (await created.json()) as {
@@ -449,7 +454,7 @@ describe("DELETE /credentials/{id}", () => {
       ctx.app,
       "DELETE",
       `/credentials/${credential_id}`,
-      { key: spaceAdminKey },
+      { key: spaceKey },
     );
     expect(res.status).toBe(200);
   });

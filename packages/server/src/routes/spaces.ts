@@ -3,9 +3,9 @@ import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { SpaceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
-  requireAdmin,
+  requireOperatorKey,
   requireSpacePermission,
-  requireSpaceAdmin,
+  requireAuth,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -87,7 +87,7 @@ const getConfigRoute = createRoute({
   tags: ["Spaces"],
   summary: "Get the current space's configuration",
   description:
-    "Returns the calling space's configuration — the optional `enforcement` levers plus the per-space cleanup-job retention overrides. Returns an empty object when nothing is configured. Admin or space_admin.",
+    "Returns the calling space's configuration — the optional `enforcement` levers plus the per-space cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -122,7 +122,7 @@ const putConfigRoute = createRoute({
   tags: ["Spaces"],
   summary: "Replace the current space's configuration",
   description:
-    "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Admin or space_admin.",
+    "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Requires `space.settings`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -179,7 +179,7 @@ const getQuotasRoute = createRoute({
   tags: ["Spaces"],
   summary: "Get space quotas",
   description:
-    "Returns the per-space quota ceilings for a specific space. A `null` field means the env default applies, and an entirely-null payload means no per-space override is configured. Platform-admin only — space admins use `GET /spaces/me/quotas` to read their own ceilings without knowing their space id.",
+    "Returns the per-space quota ceilings for a specific space. A `null` field means the env default applies, and an entirely-null payload means no per-space override is configured. Platform-admin only — a space-bound credential holding `space.usage` uses `GET /spaces/me/quotas` to read its own ceilings without knowing its space id.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -221,9 +221,9 @@ const getQuotasRoute = createRoute({
 });
 
 // `GET /spaces/me/quotas` resolves the calling key's space_id from
-// `c.var.apiKey` so space_admins don't need to know their own space_id
-// to read their ceilings. The explicit `/{space_id}/quotas` route is
-// for platform admins.
+// `c.var.apiKey` so a space-bound caller doesn't need to know its own
+// space_id to read its ceilings. The explicit `/{space_id}/quotas` route
+// is for the operator key.
 const getOwnQuotasRoute = createRoute({
   operationId: "getOwnQuotas",
   method: "get",
@@ -231,7 +231,7 @@ const getOwnQuotasRoute = createRoute({
   tags: ["Spaces"],
   summary: "Get current space quotas",
   description:
-    "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. A platform-admin key with no space id receives `400` — use `GET /spaces/{id}/quotas` with an explicit id instead. Admin or space_admin.",
+    "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. A credential with no space binding receives `400` — use `GET /spaces/{id}/quotas` with an explicit id instead. Requires `space.usage`.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -244,7 +244,7 @@ const getOwnQuotasRoute = createRoute({
           schema: makeErrorResponseSchema(["validation_error"]),
         },
       },
-      description: "Caller has no space_id (platform admin).",
+      description: "Caller has no space binding.",
     },
     401: {
       content: {
@@ -328,12 +328,12 @@ export function spaceRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   // `/me/config` addresses the caller's OWN space and reads nothing else,
-  // so the space-bounded gate is the right one: the space admins that
-  // hosted sign-up provisions are the intended operators of their own
-  // space's config. Every storage call below is keyed on `key.space_id`,
-  // which satisfies the widening rule for a space-scoped callsite.
+  // so the space-bounded gate is the right one: `space.settings`, held by a
+  // credential bound to the space whose config it is reading. Every storage
+  // call below is keyed on `key.space_id`, which satisfies the widening rule
+  // for a space-scoped callsite.
   router.openapi(getConfigRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.settings");
     if (!key.space_id || !storage.spaces) {
       return c.json({}, 200);
@@ -343,7 +343,7 @@ export function spaceRoutes(storage: Storage) {
   });
 
   router.openapi(putConfigRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.settings");
     // No cast. The validated shape and `SpaceConfig` are the same type now
     // that the schema declares every field the interface does, and the cast
@@ -372,15 +372,15 @@ export function spaceRoutes(storage: Storage) {
   });
 
   // **Route order matters.** `/me/quotas` is registered BEFORE `/{id}/quotas`
-  // so a request to `GET /spaces/me/quotas` matches the space-admin handler
+  // so a request to `GET /spaces/me/quotas` matches the own-space handler
   // instead of the platform-admin handler with `id="me"`. Hono dispatches in
-  // registration order; flipping these would 403 space_admin callers.
+  // registration order; flipping these would 403 every space-bound caller.
   router.openapi(getOwnQuotasRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.usage");
     const spaceId = key.space_id;
     if (!spaceId) {
-      // Platform admin keys (no space_id) hit this — they should use
+      // A credential with no space_id hits this — it should use
       // the explicit `/spaces/{id}/quotas` route instead.
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
@@ -404,7 +404,7 @@ export function spaceRoutes(storage: Storage) {
 
   // Platform-admin only — reading another space's caps is cross-space authority.
   router.openapi(getQuotasRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const { id } = c.req.valid("param");
     const result = await storage.spaceQuotas.getForExistingSpace(id);
     if (!result.exists) {
@@ -426,7 +426,7 @@ export function spaceRoutes(storage: Storage) {
   });
 
   router.openapi(putQuotasRoute, async (c) => {
-    const key = requireAdmin(c);
+    const key = requireOperatorKey(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
     const result = await storage.spaceQuotas.setForExistingSpace(id, body);
