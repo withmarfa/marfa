@@ -13,6 +13,7 @@ import {
   requireAuth,
   actsAsConnection,
   hasSpaceAdminAuthority,
+  requireCapability,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
@@ -135,6 +136,15 @@ async function requireConnectionAccess(
       "Caller cannot manage inbound webhooks on this connection",
     );
   }
+
+  // **Only the rank arm needs the capability, and the distinction is the whole
+  // point.** A connection acting as itself is not an app inheriting somebody's
+  // role — it is the credential the connection was installed with, so there is
+  // no consent screen behind it and nothing for a capability to have been
+  // ticked on. Requiring one unconditionally here would 403 an integration's
+  // own dispatch. Reached only once admission is settled above, so a caller
+  // that is not the connection got in on rank.
+  if (!isIntegration) requireCapability(c, "capability.connections");
   return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
 }
 

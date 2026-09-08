@@ -2,7 +2,11 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { SpaceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin, requireSpaceAdmin } from "../middleware/auth.js";
+import {
+  requireAdmin,
+  requireCapability,
+  requireSpaceAdmin,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { QuotaSchema } from "./_schemas.js";
@@ -330,6 +334,7 @@ export function spaceRoutes(storage: Storage) {
   // which satisfies the widening rule for a space-scoped callsite.
   router.openapi(getConfigRoute, async (c) => {
     const key = requireSpaceAdmin(c);
+    requireCapability(c, "capability.space_settings");
     if (!key.space_id || !storage.spaces) {
       return c.json({}, 200);
     }
@@ -339,6 +344,7 @@ export function spaceRoutes(storage: Storage) {
 
   router.openapi(putConfigRoute, async (c) => {
     const key = requireSpaceAdmin(c);
+    requireCapability(c, "capability.space_settings");
     // No cast. The validated shape and `SpaceConfig` are the same type now
     // that the schema declares every field the interface does, and the cast
     // that used to bridge them was hiding exactly the field this route could
@@ -371,6 +377,7 @@ export function spaceRoutes(storage: Storage) {
   // registration order; flipping these would 403 space_admin callers.
   router.openapi(getOwnQuotasRoute, async (c) => {
     const key = requireSpaceAdmin(c);
+    requireCapability(c, "capability.space_usage");
     const spaceId = key.space_id;
     if (!spaceId) {
       // Platform admin keys (no space_id) hit this — they should use

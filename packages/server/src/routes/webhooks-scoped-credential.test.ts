@@ -49,15 +49,21 @@ interface ErrorBody {
 describe("POST /webhooks and a scope-enforced credential", () => {
   it("refuses one that projects space_admin", async () => {
     const space = await spaces().create("scoped-webhook-space");
-    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
-      spaceId: space.id,
-      userRole: "space_admin",
-    });
+    const { token } = await seedOauthBearer(
+      ctx.storage,
+      ["capability.keys", "capability.webhooks"],
+      {
+        spaceId: space.id,
+        userRole: "space_admin",
+      },
+    );
 
-    // The role gate admits it — that is the point. The refusal has to
-    // come from the scope flag, not from the role. `capability.keys` is
-    // granted only so the probe reaches that role check; it buys no
-    // data-plane reach, so what the webhook door sees is unchanged.
+    // The role gate admits it — that is the point. The refusal has to come
+    // from the scope flag, not from the role and not from a missing scope.
+    // Both capabilities are granted so that the request reaches the check this
+    // file is about: `keys` for the probe below, `webhooks` for the door
+    // itself. Neither buys any data-plane reach, so what the webhook door sees
+    // is unchanged.
     const keysRes = await request(ctx.app, "GET", "/keys", { key: token });
     expect(keysRes.status).toBe(200);
 
@@ -103,10 +109,14 @@ describe("POST /webhooks and a scope-enforced credential", () => {
     expect(created.status).toBe(201);
     const webhookId = ((await created.json()) as { id: string }).id;
 
-    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
-      spaceId: space.id,
-      userRole: "space_admin",
-    });
+    const { token } = await seedOauthBearer(
+      ctx.storage,
+      ["capability.keys", "capability.webhooks"],
+      {
+        spaceId: space.id,
+        userRole: "space_admin",
+      },
+    );
     // The role gate admits it, so the refusal below comes from the scope
     // flag rather than from the role. The create test asserts the same.
     expect(
@@ -149,10 +159,14 @@ describe("POST /webhooks and a scope-enforced credential", () => {
     expect(created.status).toBe(201);
     const webhookId = ((await created.json()) as { id: string }).id;
 
-    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
-      spaceId: space.id,
-      userRole: "space_admin",
-    });
+    const { token } = await seedOauthBearer(
+      ctx.storage,
+      ["capability.keys", "capability.webhooks"],
+      {
+        spaceId: space.id,
+        userRole: "space_admin",
+      },
+    );
     expect(
       (await request(ctx.app, "GET", "/keys", { key: token })).status,
     ).toBe(200);

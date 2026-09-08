@@ -17,7 +17,7 @@ import {
   type Item,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireSpaceAdmin } from "../middleware/auth.js";
+import { requireCapability, requireSpaceAdmin } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { closeMappingBreaks } from "../connections/mapping-health.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
@@ -180,6 +180,7 @@ export function connectionMappingRoutes(storage: Storage) {
 
   router.openapi(getMappingRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
+    requireCapability(c, "capability.connections");
     const { id } = c.req.valid("param");
     const item = await resolveConnection(id, apiKey.space_id);
     const props = item.properties as {
@@ -205,6 +206,7 @@ export function connectionMappingRoutes(storage: Storage) {
 
   router.openapi(putMappingRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
+    requireCapability(c, "capability.connections");
     const { id } = c.req.valid("param");
     const item = await resolveConnection(id, apiKey.space_id);
 
@@ -285,6 +287,7 @@ export function connectionMappingRoutes(storage: Storage) {
 
   router.openapi(deleteMappingRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
+    requireCapability(c, "capability.connections");
     const { id } = c.req.valid("param");
     await resolveConnection(id, apiKey.space_id);
     // Property updates merge shallowly, so removing a key takes an

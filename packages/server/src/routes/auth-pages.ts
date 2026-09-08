@@ -20,6 +20,7 @@ import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   isReservedCredentialSource,
+  requireCapability,
   requireSpaceAdmin,
   hashApiKey,
   stampOAuthGrantLastUsed,
@@ -502,6 +503,11 @@ export function authRoutes(
     // credential does. The space fence below is the second axis: rank
     // says who may act, the space says where.
     const key = requireSpaceAdmin(c);
+    // Rank alone is reachable by an app, because the bearer middleware
+    // projects the signed-in person's role onto it — and revoking another
+    // app's access is exactly the authority a person would want to have been
+    // asked about. So the grant has to name it too.
+    requireCapability(c, "capability.app_grants");
     // A credential carrying a space_id is fenced by the `spaceId`
     // argument below; one without a space would fall through to every
     // space's grants, so that shape needs platform authority (or an
@@ -551,6 +557,7 @@ export function authRoutes(
     // platform authority may resolve `spaceId` to undefined and address
     // a grant in any space.
     const key = requireSpaceAdmin(c);
+    requireCapability(c, "capability.app_grants");
     if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,

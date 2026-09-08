@@ -18,6 +18,7 @@ import { revalidateAndReport } from "../connections/mapping-health.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
+  requireCapability,
   requireSpaceAdmin,
   requireMetadataPermission,
 } from "../middleware/auth.js";
@@ -583,6 +584,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
 
   router.openapi(updateTypeRoute, async (c) => {
     requireSpaceAdmin(c);
+    requireCapability(c, "capability.schema");
     const { id } = c.req.valid("param");
     // Scope to the caller's space: a space_admin sees and mutates only its
     // own custom types. A probe for another space's id resolves to nothing
@@ -676,6 +678,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
 
   router.openapi(deleteTypeRoute, async (c) => {
     requireSpaceAdmin(c);
+    requireCapability(c, "capability.schema");
     const { id } = c.req.valid("param");
     // Scope to the caller's space: a space_admin can only delete its own
     // custom types; another space's id resolves as not-found.

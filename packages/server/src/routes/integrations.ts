@@ -555,6 +555,7 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
       storage,
       auth,
       "Space admin authority required to install an integration",
+      "capability.connections",
     );
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
@@ -615,6 +616,7 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
       storage,
       auth,
       "Space admin authority required to install an integration",
+      "capability.connections",
     );
     if (caller instanceof Response) return caller;
     const id = c.req.param("id");
