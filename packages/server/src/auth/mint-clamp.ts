@@ -109,8 +109,9 @@ export function firstUncoveredScope(
  * honest answers are "refuse" and "let it through unchecked" — and unchecked
  * is real reach: `GET /items/{id}/extensions/{ns}` consults the extension map
  * alone, with no type-permission check beside it, so `{"*":"read"}` reads
- * every non-reserved namespace on every item in the space from a grant that
- * conferred nothing.
+ * every namespace on every item in the space from a grant that conferred
+ * nothing. Every namespace, reserved ones included: `RESERVED_NAMESPACES` is
+ * consulted on the write and delete doors and on neither read door.
  *
  * An empty object is accepted, because it asks for nothing.
  */

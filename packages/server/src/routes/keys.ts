@@ -22,6 +22,7 @@ import {
   isReservedCredentialSource,
   RESERVED_CREDENTIAL_SOURCE_PREFIXES,
 } from "../middleware/auth.js";
+import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import { RoleRequestSchema, RoleResponseSchema } from "./role-schema.js";
 import { KeyResponseSchema } from "./_schemas.js";
@@ -403,13 +404,21 @@ async function resolveGrantItemId(
       clientId: grant.clientId,
       authUserId: grant.authUserId,
     });
-  } catch {
+  } catch (err) {
     // **Resolved before the key is written, and swallowed, for the same
     // reason the audit write itself is `void`ed.** A read that throws must not
     // decide whether a mint succeeds: past the insert the plaintext exists in
     // exactly one place, the response, so a failure raised after it loses the
     // key forever and leaves a live credential in the table. A null costs one
     // hop in the trail; the client and user ids still name the app.
+    //
+    // Logged because null otherwise means two different things. The audit
+    // row's own reading of a null projection is "a grant an operator deleted
+    // by hand", and a storage fault arriving as the same value would make the
+    // trail quietly wrong rather than visibly incomplete.
+    log("warn", "keys: grant projection lookup failed for a key.create row", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   }
 }
@@ -554,8 +563,13 @@ export function keyRoutes(storage: Storage, salt: string) {
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
     };
-    // All four families, so naming one does not quietly take the other three
-    // off the derive path and hand them through unmeasured.
+    // All four families. The other three are measured by the clamp whether or
+    // not the derive path is on, so this fourth term is not what closed the
+    // unmeasured-extension hole — `refuseUnclampableExtensions` is. What it
+    // does is stop a body naming only `extension_permissions: {}` from taking
+    // the derive path, which would be a narrower key than asked for rather
+    // than a wider one. Kept because the condition should read all four
+    // families or it invites the next reader to add a fifth and forget.
     const namesNoReach =
       requested.type_permissions === undefined &&
       requested.edge_permissions === undefined &&
@@ -566,6 +580,32 @@ export function keyRoutes(storage: Storage, salt: string) {
     // anything: it is a copy of what the session already holds.
     if (mintingFromSession) {
       refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
+    }
+
+    // **A session mints at `member` and no higher, and this is not the same
+    // question as `canGrantRole`.** That one asks whether the role travels up
+    // the lattice from the caller's own, and a `space_admin` user's app asking
+    // for `space_admin` travels sideways, which it permits.
+    //
+    // The axis it does not measure is the one that matters here. The session's
+    // own principal is scope-enforced: its effective authority is its
+    // permission maps, not its rank. A key carrying rank is therefore wider
+    // than the session that asked for it, because rank gates
+    // (`hasSpaceAdminAuthority`) read the role and never consult
+    // `scope_enforced` — audit, credentials, connections, space config and the
+    // schema doors all open on rank alone. And nothing measures that: no scope
+    // expresses a role, so the clamp above has nothing to compare.
+    //
+    // Transiently the session already reaches those doors, which is why this
+    // is about durability rather than breadth. A minted key outlives the grant
+    // and survives the app being revoked, with no scope literal on the row to
+    // say what it was ever allowed to be. `member` keeps the key inside the
+    // permission-map system, which is the only place the clamp can hold it.
+    if (mintingFromSession && role !== "member") {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        `A signed-in app can only mint a key with role "member". A higher role carries authority no scope expresses, so the key could not be held to the app's grant once minted.`,
+      );
     }
 
     const derivedFromSession = mintingFromSession && namesNoReach;

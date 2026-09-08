@@ -10,6 +10,7 @@
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
+import { extensionLabelOf } from "../auth/extension-label.js";
 import {
   MarfaError,
   ErrorCode,
@@ -18,29 +19,6 @@ import {
   filterExtensionsByPermission,
 } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
-
-/**
- * The label an implicit own-namespace write may be claimed with, or a value
- * that can match no namespace.
- *
- * `resolveExtensionPermission` grants write when a namespace equals the key's
- * label, on the reading that a key writes its own namespace. That reading
- * depends on the label being assigned by whoever minted the key — and a key
- * minted through a signed-in app carries a label the app chose. Its authority
- * is supposed to be exactly the grant behind it, so a namespace claimed by
- * naming it would be reach nobody consented to: an app minting a key labelled
- * `com.othervendor.sync` would hold write over that vendor's extension data.
- *
- * The empty string is the "matches nothing" value, and it is safe here rather
- * than merely convenient: every namespace on these routes arrives as a path
- * segment, and a route pattern does not match an empty one.
- */
-function implicitNamespaceLabel(
-  key: { label?: string; scope_enforced?: boolean } | undefined,
-): string {
-  if (!key || key.scope_enforced === true) return "";
-  return key.label ?? "";
-}
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
@@ -354,7 +332,7 @@ export function extensionRoutes(storage: Storage) {
     const filtered = filterExtensionsByPermission(
       extensions,
       apiKey?.extension_permissions,
-      apiKey?.label ?? "",
+      extensionLabelOf(apiKey),
       roleBypassesPermissionMaps(apiKey),
     );
 
@@ -380,7 +358,7 @@ export function extensionRoutes(storage: Storage) {
       : resolveExtensionPermission(
           namespace,
           apiKey?.extension_permissions,
-          implicitNamespaceLabel(apiKey),
+          extensionLabelOf(apiKey),
         );
     if (perm === "none") {
       throw new MarfaError(
@@ -446,7 +424,7 @@ export function extensionRoutes(storage: Storage) {
         : resolveExtensionPermission(
             namespace,
             apiKey?.extension_permissions,
-            implicitNamespaceLabel(apiKey),
+            extensionLabelOf(apiKey),
           );
       if (perm !== "write") {
         throw new MarfaError(
@@ -538,12 +516,12 @@ export function extensionRoutes(storage: Storage) {
         `Namespace "${namespace}" is reserved`,
       );
     } else {
-      const isOwner = implicitNamespaceLabel(apiKey) === namespace;
+      const isOwner = extensionLabelOf(apiKey) === namespace;
       if (!roleBypassesPermissionMaps(apiKey) && !isOwner) {
         const perm = resolveExtensionPermission(
           namespace,
           apiKey?.extension_permissions,
-          implicitNamespaceLabel(apiKey),
+          extensionLabelOf(apiKey),
         );
         if (perm !== "write") {
           throw new MarfaError(

@@ -17,6 +17,7 @@ import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { KeyResponseSchema } from "./_schemas.js";
+import { extensionLabelOf } from "../auth/extension-label.js";
 
 let ctx: TestContext;
 
@@ -863,43 +864,71 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     expect(revoked.status).toBe(200);
   });
 
-  it("refuses a key minted from a session when it tries to mint again", async () => {
-    // **The two-step escalation, and the reason `scope_enforced` reaches this
-    // gate.** A session may mint `space_admin` — that is a sideways grant and
-    // permitted. That key is not an OAuth caller, so without this it would
-    // meet no capability gate, no clamp and no stamp, and its second key would
-    // bypass every permission map on every route from a grant that conferred
-    // no data-plane scope at all.
+  it("refuses a session a role above member, which no scope can measure", async () => {
+    // `canGrantRole` permits this: a space_admin user's app asking for
+    // space_admin travels sideways, not up. The axis it does not measure is
+    // the one that matters — the session's own principal is scope-enforced, so
+    // its effective authority is its maps, while a key carrying rank opens
+    // audit, credentials, connections and the schema doors on rank alone.
     const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
       userRole: "space_admin",
       spaceId,
     });
-    const first = await request(hostedCtx.app, "POST", "/keys", {
+    const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
-      body: { label: "step one", source: "step-one", role: "space_admin" },
+      body: { label: "ranked", source: "ranked", role: "space_admin" },
     });
-    expect(first.status).toBe(201);
-    const minted = (await first.json()) as { id: string; key: string };
-    expect((await hostedCtx.storage.keys.get(minted.id))?.scope_enforced).toBe(
-      true,
-    );
+    expect(res.status).toBe(403);
+  });
 
-    const second = await request(hostedCtx.app, "POST", "/keys", {
-      key: minted.key,
-      body: {
-        label: "step two",
-        source: "step-two",
+  it("refuses a key minted from a session when it tries to mint again", async () => {
+    // **The second half of the two-step escalation, kept even though the first
+    // half is now refused above.** The two defences are independent: the role
+    // refusal stops a session asking for rank, and this stops any
+    // scope-enforced credential reaching a capability door at all. If the role
+    // rule were ever relaxed — a deployment wanting session-minted admin keys,
+    // say — this is what would still be standing between that key and an
+    // unclamped, unstamped second key with full reach.
+    const raw = "marfa_k1_enf_" + Math.random().toString(36).slice(2);
+    const enforced = await hostedCtx.storage.keys.create(
+      {
+        label: "as if minted from a session",
+        source: "enforced-" + Math.random().toString(36).slice(2),
         role: "space_admin",
-        type_permissions: { "*": "write" },
+        type_permissions: {},
+        default_tier: "library",
+        is_platform: false,
+        scope_enforced: true,
       },
-    });
-    expect(second.status).toBe(403);
-
-    // And the same key reaches none of the other three doors either.
+      hashApiKey(raw, TEST_API_KEY_SALT),
+      spaceId,
+    );
     expect(
-      (await request(hostedCtx.app, "GET", "/keys", { key: minted.key }))
-        .status,
-    ).toBe(403);
+      (await hostedCtx.storage.keys.get(enforced.id))?.scope_enforced,
+    ).toBe(true);
+
+    // Its rank would open every one of these doors. The stamp closes them.
+    for (const [method, path, body] of [
+      ["GET", "/keys", undefined],
+      [
+        "POST",
+        "/keys",
+        {
+          label: "step two",
+          source: "step-two",
+          role: "space_admin",
+          type_permissions: { "*": "write" },
+        },
+      ],
+      ["DELETE", `/keys/${enforced.id}`, undefined],
+      ["PATCH", `/keys/${enforced.id}`, { label: "renamed" }],
+    ] as [string, string, unknown][]) {
+      const res = await request(hostedCtx.app, method, path, {
+        key: raw,
+        ...(body === undefined ? {} : { body }),
+      });
+      expect(res.status, `${method} ${path}`).toBe(403);
+    }
   });
 
   it("clamps the update door, which reaches keys the session never minted", async () => {
@@ -986,14 +1015,30 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   });
 
   it("names one family and still gets none of the other three for free", async () => {
-    // `namesNoReach` reads all four. Reading three would mean naming one map
-    // took the rest off the derive path and handed them through unmeasured.
+    // `namesNoReach` reads all four families. The grant below projects a
+    // non-empty edge map as well as a type map, so the derive path has
+    // something to hand over — without which this assertion would pass
+    // whether or not the condition were right, which is what the first
+    // version of it did.
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
-      grantScopes("core.note:read"),
+      grantScopes("core.note:read", "edge.about:read"),
       { userRole: "space_admin", spaceId },
     );
-    const res = await request(hostedCtx.app, "POST", "/keys", {
+
+    // The derive path does hand the edge map over when nothing is named.
+    const derived = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: { label: "derived", source: "derived-edges", role: "member" },
+    });
+    expect(derived.status).toBe(201);
+    const derivedKey = await hostedCtx.storage.keys.get(
+      ((await derived.json()) as { id: string }).id,
+    );
+    expect(derivedKey?.edge_permissions?.about).toBe("read");
+
+    // Naming one family takes the derive path off for all of them.
+    const partial = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
       body: {
         label: "partial",
@@ -1002,12 +1047,78 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
         type_permissions: { "core.note": "read" },
       },
     });
+    expect(partial.status).toBe(201);
+    const partialKey = await hostedCtx.storage.keys.get(
+      ((await partial.json()) as { id: string }).id,
+    );
+    expect(partialKey?.type_permissions["core.note"]).toBe("read");
+    expect(partialKey?.edge_permissions ?? {}).toEqual({});
+    expect(partialKey?.metadata_permissions ?? {}).toEqual({});
+    expect(partialKey?.extension_permissions ?? {}).toEqual({});
+  });
+
+  it("takes the derive path off whichever family is named", async () => {
+    // Symmetric to the case above, and it is the one that catches a term
+    // going missing from `namesNoReach`: naming only the edge family must
+    // stop the type map deriving too, or a caller asking for a narrow key
+    // silently receives the session's own reach instead.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read", "edge.about:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "edges only",
+        source: "edges-only",
+        role: "member",
+        edge_permissions: {},
+      },
+    });
     expect(res.status).toBe(201);
-    const created = (await res.json()) as { id: string };
-    const stored = await hostedCtx.storage.keys.get(created.id);
+    const stored = await hostedCtx.storage.keys.get(
+      ((await res.json()) as { id: string }).id,
+    );
+    expect(stored?.type_permissions ?? {}).toEqual({});
     expect(stored?.edge_permissions ?? {}).toEqual({});
-    expect(stored?.metadata_permissions ?? {}).toEqual({});
-    expect(stored?.extension_permissions ?? {}).toEqual({});
+  });
+
+  it("does not let a session-minted key claim a namespace by its label", async () => {
+    // `label` is read as identity, the same way `source` is: a namespace
+    // equal to the key's label is granted write implicitly. A session chooses
+    // its key's label, so without the stamp being consulted an app could name
+    // another vendor's namespace and read it on every item in the space,
+    // durably and after the app was revoked.
+    const { token } = await seedOauthBearer(
+      hostedCtx.storage,
+      grantScopes("core.note:read"),
+      { userRole: "space_admin", spaceId },
+    );
+    const minted = await request(hostedCtx.app, "POST", "/keys", {
+      key: token,
+      body: {
+        label: "com.othervendor.sync",
+        source: "vendor-probe",
+        role: "member",
+        type_permissions: { "core.note": "read" },
+      },
+    });
+    expect(minted.status).toBe(201);
+    const key = await hostedCtx.storage.keys.get(
+      ((await minted.json()) as { id: string }).id,
+    );
+    expect(key?.scope_enforced).toBe(true);
+    // The stored map is empty, and the label must not stand in for one.
+    expect(key?.extension_permissions ?? {}).toEqual({});
+    expect(extensionLabelOf(key ?? undefined)).toBe("");
+    // A key minted the ordinary way still claims its own namespace.
+    expect(
+      extensionLabelOf({
+        label: "com.othervendor.sync",
+        scope_enforced: false,
+      }),
+    ).toBe("com.othervendor.sync");
   });
 
   it("measures a metadata wildcard on the metadata axis, not the type axis", async () => {
