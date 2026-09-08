@@ -215,7 +215,12 @@ describe("describeSurfaceViolation", () => {
     );
     expect(text).toContain("@withmarfa/example");
     expect(text).toContain("1.0.0");
-    expect(text).toContain("Removing an export is a major");
+    // The verdict is the policy, so it is asserted as the policy rather than
+    // as a substring: a removal is a minor with a footer, and the message must
+    // not go on calling it a major while the convention calls it a minor.
+    expect(text).toContain("at least a minor");
+    expect(text).toContain("footer");
+    expect(text).not.toContain("is a major");
   });
 
   it("does not claim the names held when only the count did", () => {
