@@ -56,6 +56,8 @@ pnpm --filter @withmarfa/server schema-sql:generate
 - **Batch the work.** A whole matrix fires on every push to a pull request, and several tests fail on a fixed time budget, so pushing after each commit multiplies the load for no extra signal.
 - **Never re-run CI to see whether a failure repeats.** Reproduce it locally. If it genuinely looks environmental, say so with the evidence.
 
+**`deploy.sh` at the root is a shipped self-hosting feature, not this deployment's path.** It deploys over SSH into a source checkout run as a supervised service, and the self-hosting deployment page documents it along with its `DEPLOY_SERVICE_*` variables. Hosted Marfa deploys through `deploy-server.yml` to containers instead, so nothing here exercises the script and it reads as dead. It is not: deleting it breaks a documented path.
+
 ## Schema and generated artifacts
 
 Migrations, the journal-stamp trap and the migrate-then-deploy ordering rule live in `packages/server/AGENTS.md`, which is where the work happens.
