@@ -70,6 +70,35 @@ describe("renderSecurityPage", () => {
     expect(html).not.toContain("core.task:write");
   });
 
+  it("offers the person a way to delete their own account", () => {
+    // The only initiation there is. It used to be reachable from a bearer
+    // credential and from the command line and from no screen at all, which is
+    // backwards for an act only a person can take.
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [],
+      sessions: [],
+      accountDeletable: true,
+    });
+    expect(html).toContain("Delete account");
+    expect(html).toContain('action="/auth/account/delete"');
+    // Says plainly that pressing it deletes nothing yet.
+    expect(html).toContain("Nothing is deleted until you open it.");
+  });
+
+  it("makes no offer on an instance that cannot delete an account", () => {
+    // Without an account-lifecycle store every route under
+    // `/auth/account/delete` is a 404, and a button leading to one is worse
+    // than no button. The flag defaults to absent, so a caller that has not
+    // thought about it gets the page without the section.
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [],
+      sessions: [],
+    });
+    expect(html).not.toContain("/auth/account/delete");
+  });
+
   it("renders the empty-state copy when no grants exist", () => {
     const html = renderSecurityPage({
       email: "alice@example.com",

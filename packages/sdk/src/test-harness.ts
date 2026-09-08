@@ -39,10 +39,9 @@ const TEST_API_KEY_SALT = "test-salt";
  *   server in `authMode: 'hosted'`, runs a sign-up through the wrapped
  *   form endpoint (which provisions the `spaces` + `users` bridge
  *   atomically), flips `auth_user.email_verified = TRUE` directly so
- *   sign-in is unblocked, then mints a `space_admin` API key bound to
- *   the new user's space. The returned client uses that key as bearer;
- *   the account-lifecycle routes resolve the bridge and recover the
- *   `auth_user.id` for `requestDelete` / `confirmDelete` / `cancel`.
+ *   sign-in is unblocked, then mints an API key holding every space
+ *   permission, bound to the new user's space. The returned client uses
+ *   that key as bearer.
  *
  * The two fixtures share a `baseConfig` so they don't drift on
  * non-auth knobs (rate limit, blob backend, etc.).
@@ -273,21 +272,22 @@ export interface HostedModeFixture extends Omit<
 > {
   /** Email of the signed-up + email-verified user. */
   email: string;
-  /** `auth_user.id` for the signed-up user — the `authUserId` the
-   *  account-lifecycle routes resolve from the bearer's space binding. */
+  /** `auth_user.id` for the signed-up user, reachable through the `users`
+   *  bridge from `spaceId`. */
   authUserId: string;
   /** `users.space_id` for the bridged Marfa profile. The bearer key is
    *  scoped to this space. */
   spaceId: string;
-  /** A `space_admin` API key bound to `spaceId` — the SDK client
-   *  uses this as bearer. Use to mint additional clients in tests
-   *  that need to compare auth surfaces. */
+  /** An API key bound to `spaceId`, holding every space permission and
+   *  writing every content family — the SDK client uses this as bearer.
+   *  Use to mint additional clients in tests that need to compare auth
+   *  surfaces. */
   bearerKey: string;
 }
 
 /**
- * Boot the server in hosted mode, sign up a fresh user, mint a
- * space-scoped `space_admin` bearer that resolves to
+ * Boot the server in hosted mode, sign up a fresh user, and mint a
+ * space-scoped bearer holding the whole permission set, which resolves to
  * `auth_user.id` via the `users` bridge.
  *
  * Sign-up uses the wrapped `POST /auth/sign-up` form endpoint (not
@@ -423,28 +423,4 @@ export async function createHostedModeFixture(
       void storage.close();
     },
   };
-}
-
-/**
- * Read the most recent `account-delete:` or `account-cancel:`
- * verification token directly from the storage layer. Mirrors the
- * server-side `readLatestVerification` helper used in
- * `auth-account.test.ts`. Used by SDK round-trip tests in lieu of
- * intercepting the email transport.
- */
-export async function readLatestAccountVerification(
-  storage: Storage,
-  prefix: "account-delete:" | "account-cancel:",
-): Promise<string | null> {
-  const sqlite = storage as unknown as {
-    __sqliteAll?: (query: string) => Promise<unknown[]>;
-  };
-  if (!sqlite.__sqliteAll) return null;
-  const rows = (await sqlite.__sqliteAll(
-    `SELECT identifier FROM auth_verification
-      WHERE identifier LIKE '${prefix}%'
-      ORDER BY created_at DESC LIMIT 1`,
-  )) as { identifier: string }[];
-  if (rows.length === 0) return null;
-  return rows[0]?.identifier.slice(prefix.length) ?? null;
 }

@@ -32,7 +32,6 @@ const NAMESPACES = [
   "connections",
   "spaces",
   "admin",
-  "auth",
   "events",
   "profile",
   "occurrences",
