@@ -1,11 +1,12 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import { MarfaError, ErrorCode, GLOBAL_TYPE_WILDCARD } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  computeTypeFilter,
   requireSpacePermission,
-  requireSpaceAdmin,
+  requireAuth,
 } from "../middleware/auth.js";
 import { reserveQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
@@ -167,7 +168,7 @@ const createWebhookRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may register or re-point one.",
+        "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
     },
   },
 });
@@ -207,7 +208,7 @@ const listWebhooksRoute = createRoute({
         },
       },
       description:
-        "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
+        "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
     },
   },
 });
@@ -250,7 +251,7 @@ const getWebhookRoute = createRoute({
         },
       },
       description:
-        "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
+        "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
     },
     404: {
       content: {
@@ -327,7 +328,7 @@ const updateWebhookRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may register or re-point one.",
+        "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may register or re-point one.",
     },
     404: {
       content: {
@@ -381,7 +382,7 @@ const deleteWebhookRoute = createRoute({
         },
       },
       description:
-        "`forbidden`: the credential is not a space admin. `scoped_credential_not_permitted`: it is, but its reach is narrower than the space — an OAuth token held to the scopes a user granted an app. A subscription is space-level and carries no credential, so a delivery cannot be narrowed to a grant; only a credential covering the whole space may create, re-point or destroy one.",
+        "`forbidden`: the credential does not hold `space.webhooks`. `scoped_credential_not_permitted`: it does, but its content read is narrower than the space. A subscription is space-level and carries no credential of its own, so a delivery cannot be narrowed to what its creator could read; only a credential that can read the whole space may create, re-point or destroy one.",
     },
     404: {
       content: {
@@ -444,7 +445,7 @@ const listDeliveriesRoute = createRoute({
         },
       },
       description:
-        "The credential is not a space admin. Reading a space's webhook configuration is a space-admin operation like registering one.",
+        "The credential does not hold `space.webhooks`. Reading a space's webhook configuration takes the same permission as registering one.",
     },
     404: {
       content: {
@@ -464,35 +465,49 @@ const listDeliveriesRoute = createRoute({
 /**
  * Refuse a credential whose reach is narrower than the space.
  *
- * A webhook subscription is space-level and carries no credential of its
- * own: the row stores a url, a secret, an event list and a space, and
- * deliveries are built once and sent to every matching endpoint. So there
- * is no principal to narrow a payload against, and the only way the
- * delivery can be bounded is for the subscription to belong to a
- * credential whose grant already covers everything in the space.
+ * A webhook subscription is space-level and carries no credential of its own:
+ * the row stores a url, a secret, an event list and a space, and deliveries
+ * are built once and sent to every matching endpoint. So there is no principal
+ * to narrow a payload against, and the only way the delivery can be bounded is
+ * for the subscription to belong to a credential that already reaches
+ * everything in the space.
  *
- * `requireSpaceAdmin` alone does not give that. An OAuth-derived token
- * projects the user's role — it can be `space_admin` — while holding a
- * grant that is a subset of the space, and `roleBypassesPermissionMaps`
- * deliberately excludes it for exactly that reason. Such a credential
- * registering a webhook would create a standing subscription delivering
- * more than the app was ever granted, with nothing on the row to say so.
+ * **`space.webhooks` alone does not give that**, and under one permission
+ * model that is clearer than it was rather than less true. A credential can
+ * hold the permission to set up webhooks and hold read on one type, and the
+ * subscription it registers would then deliver every type — a standing
+ * subscription carrying more than its own credential could ever fetch, with
+ * nothing on the row to say so. The two are separate axes and holding one says
+ * nothing about the other.
  *
- * Every write door is guarded, not only registration. `PATCH` re-points
- * the url and rewrites the event list, which is registering a different
+ * The test is the credential's own content reach: the global read wildcard
+ * present in what it may reach, with nothing subtracted from it. Nothing about
+ * how the credential was minted enters into it, so a key and a sign-in are
+ * asked the same question and answered the same way.
+ *
+ * Every write door is guarded, not only registration. `PATCH` re-points the
+ * url and rewrites the event list, which is registering a different
  * subscription on a row that already exists; `DELETE` destroys one the
- * credential could not have created, silencing deliveries the space
- * depends on. The message names all three so it stays true wherever it
- * is returned.
+ * credential could not have created, silencing deliveries the space depends
+ * on. The message names all three so it stays true wherever it is returned.
  *
- * Refused rather than filtered, because filtering needs a principal the
- * row does not have. Unscoped space admins are unaffected.
+ * Refused rather than filtered, because filtering needs a principal the row
+ * does not have.
  */
-function refuseScopedCredential(key: ApiKey): void {
-  if (key.scope_enforced !== true) return;
+function refuseNarrowCredential(key: ApiKey): void {
+  // `allowed === undefined` means "no credential at all" and nothing else, so
+  // it cannot be the test: every authenticated caller arrives with a real
+  // list. The question is whether that list reaches every type, which is the
+  // global wildcard present and nothing subtracted from it.
+  const filter = computeTypeFilter(key, "read");
+  const reachesEverything =
+    filter.allowed !== undefined &&
+    filter.allowed.includes(GLOBAL_TYPE_WILDCARD) &&
+    filter.excluded.length === 0;
+  if (reachesEverything) return;
   throw new MarfaError(
     ErrorCode.SCOPED_CREDENTIAL_NOT_PERMITTED,
-    "A webhook subscription is space-level and cannot be registered, re-pointed or removed by a credential scoped to less than the space",
+    "A webhook subscription sends everything in the space to its endpoint, and this credential cannot read everything in the space. Registering, re-pointing or removing one takes a credential that can.",
   );
 }
 
@@ -500,11 +515,11 @@ export function webhookRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createWebhookRoute, async (c) => {
-    // space_admin only. Storage filters by key.space_id, so cross-space
+    // `space.webhooks` only. Storage filters by key.space_id, so cross-space
     // attempts return WEBHOOK_NOT_FOUND rather than 403.
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
-    refuseScopedCredential(key);
+    refuseNarrowCredential(key);
 
     // Reserved around the create below rather than checked here, so
     // concurrent creates cannot each see room against the same pre-write
@@ -545,7 +560,7 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(listWebhooksRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     const webhooks = await storage.outboundWebhooks.list(key.space_id);
     return c.json(
@@ -560,7 +575,7 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(getWebhookRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     const { id } = c.req.valid("param");
     const webhook = await storage.outboundWebhooks.get(id, key.space_id);
@@ -571,12 +586,12 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(updateWebhookRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     // The update door too: it re-points `url` and rewrites `events`, so
     // admitting a scoped credential here would let it take over a
     // subscription it could not have created.
-    refuseScopedCredential(key);
+    refuseNarrowCredential(key);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -615,13 +630,13 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(deleteWebhookRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     // Destroying a subscription this credential could not have created is
     // the same rationale as refusing to create one: the row belongs to
     // the space, not to the grant, and an app holding a subset of the
     // space must not be able to silence deliveries the space depends on.
-    refuseScopedCredential(key);
+    refuseNarrowCredential(key);
     const { id } = c.req.valid("param");
 
     const existing = await storage.outboundWebhooks.get(id, key.space_id);
@@ -642,7 +657,7 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(listDeliveriesRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
+    const key = requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");

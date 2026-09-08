@@ -24,7 +24,7 @@ import {
 } from "../page-limits.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireOperatorKey } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { DeadLetterOps } from "../integrations/local-runtime/dead-letters.js";
 
@@ -84,7 +84,7 @@ const listDeadLettersRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a platform admin",
+      description: "Caller is not the operator key",
     },
     503: {
       content: {
@@ -139,7 +139,7 @@ const replayDeadLetterRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a platform admin",
+      description: "Caller is not the operator key",
     },
     404: {
       content: {
@@ -182,14 +182,14 @@ export function adminRuntimeJobsRoutes(ops: DeadLetterOps | null) {
   }
 
   router.openapi(listDeadLettersRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const { limit } = c.req.valid("query");
     const jobs = await requireOps().list(limit);
     return c.json({ jobs }, 200);
   });
 
   router.openapi(replayDeadLetterRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const { id } = c.req.valid("param");
     const result = await requireOps().replay(id);
     return c.json(result, 200);

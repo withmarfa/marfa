@@ -25,7 +25,7 @@ import {
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import type { IntegrationManifest } from "@withmarfa/shared";
+import type { IntegrationManifest, SpacePermission } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 const ORIGIN = "http://localhost:0";
@@ -724,9 +724,9 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Catalog visibility for space-scoped member tokens.
+// Catalog visibility for space-bound tokens.
 //
-// Manifests register under platform credentials (is_platform: true), which
+// Manifests register under platform credentials (is_operator: true), which
 // carry space_id: null. The default space-equality filter on items.list
 // hides them from any in-space caller — turning the marketplace surface
 // invisible to every real user. The catalog list opts into
@@ -741,16 +741,15 @@ describe("GET /integrations — catalog visibility", () => {
     typePermissions: Record<string, "read" | "write" | "none"> = {},
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = `marfa_k1_test_member_${suffix}`;
+    const raw = `marfa_k1_test_space_key_${suffix}`;
     const hash = hashApiKey(raw, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {
-        label: `test-member-${suffix}`,
-        source: `test-member-${suffix}`,
-        role: "member",
+        label: `test-space-key-${suffix}`,
+        source: `test-space-key-${suffix}`,
         type_permissions: typePermissions,
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hash,
       spaceId,
@@ -758,54 +757,54 @@ describe("GET /integrations — catalog visibility", () => {
     return raw;
   }
 
-  it("returns platform-registered manifests to a member token in a space", async () => {
-    // The platform admin (ctx.adminKey) registers a fresh manifest. It
-    // lands with space_id: null because the admin carries no space.
+  it("returns platform-registered manifests to a space-bound token", async () => {
+    // The operator credential (ctx.adminKey) registers a fresh manifest. It
+    // lands with space_id: null because that key carries no space.
     const reg = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme/member-visibility" }) },
+      body: { manifest: baseManifest({ name: "acme/space-token-visibility" }) },
     });
     expect(reg.status).toBe(201);
     const regBody = (await reg.json()) as RegisterResponse;
 
     if (!ctx.storage.spaces) return;
-    const space = await ctx.storage.spaces.create("space-member-vis");
-    const memberKey = await mintSpaceKey(space.id, {
+    const space = await ctx.storage.spaces.create("space-token-vis");
+    const spaceKey = await mintSpaceKey(space.id, {
       "system.integration": "read",
     });
 
     const res = await request(
       ctx.app,
       "GET",
-      "/integrations?manifest_name=acme/member-visibility",
-      { key: memberKey },
+      "/integrations?manifest_name=acme/space-token-visibility",
+      { key: spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListResponse;
     const match = body.data.find((d) => d.id === regBody.id);
     expect(match).toBeDefined();
-    expect(match?.manifest_name).toBe("acme/member-visibility");
+    expect(match?.manifest_name).toBe("acme/space-token-visibility");
   });
 
-  it("preserves existing behavior for member tokens without the read scope", async () => {
+  it("preserves existing behavior for a token without the read grant", async () => {
     // The dedicated catalog list does not gate on type_permissions
     // (the route just calls requireAuth). This test pins that pre-existing
-    // behavior: a member token with no system.integration grant still
+    // behavior: a token with no system.integration grant still
     // resolves the endpoint at status 200 — no new rejection introduced.
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
-      body: { manifest: baseManifest({ name: "acme/member-no-scope" }) },
+      body: { manifest: baseManifest({ name: "acme/space-token-no-grant" }) },
     });
 
     if (!ctx.storage.spaces) return;
-    const space = await ctx.storage.spaces.create("space-member-no-scope");
-    const memberKey = await mintSpaceKey(space.id, {}); // no scope
+    const space = await ctx.storage.spaces.create("space-token-no-grant");
+    const spaceKey = await mintSpaceKey(space.id, {}); // no scope
 
     const res = await request(
       ctx.app,
       "GET",
-      "/integrations?manifest_name=acme/member-no-scope",
-      { key: memberKey },
+      "/integrations?manifest_name=acme/space-token-no-grant",
+      { key: spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -831,7 +830,7 @@ describe("GET /integrations — catalog visibility", () => {
     ).toBe(true);
   });
 
-  it("does not leak a space-scoped manifest to another space's member", async () => {
+  it("does not leak a space-scoped manifest to a token in another space", async () => {
     // Defense-in-depth — if a stray system.integration row carries a real
     // space_id (whether seeded by accident, by a future code path, or
     // copied during data migration), it must NOT cross the space
@@ -861,7 +860,7 @@ describe("GET /integrations — catalog visibility", () => {
     );
 
     // A platform-scoped manifest also lives in the catalog so we can
-    // assert the member in space B still sees null-space rows.
+    // assert the space-B token still sees null-space rows.
     const platformManifest = await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: {
@@ -870,11 +869,11 @@ describe("GET /integrations — catalog visibility", () => {
     });
     const platformBody = (await platformManifest.json()) as RegisterResponse;
 
-    const memberB = await mintSpaceKey(spaceB.id, {
+    const spaceBKey = await mintSpaceKey(spaceB.id, {
       "system.integration": "read",
     });
     const res = await request(ctx.app, "GET", "/integrations?limit=200", {
-      key: memberB,
+      key: spaceBKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListResponse;
@@ -892,10 +891,10 @@ describe("GET /integrations — catalog visibility", () => {
   it("does not widen the generic /items route — system.connection stays space-isolated", async () => {
     // Out-of-scope guard. The fix is local to the catalog endpoint;
     // a stray system.connection row with space_id IS NULL must remain
-    // invisible to a member token hitting the generic /items route.
+    // invisible to a space-bound token hitting the generic /items route.
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("space-items-gate");
-    const memberKey = await mintSpaceKey(space.id, {
+    const spaceKey = await mintSpaceKey(space.id, {
       "system.connection": "read",
     });
 
@@ -922,7 +921,7 @@ describe("GET /integrations — catalog visibility", () => {
       ctx.app,
       "GET",
       "/items?type=system.connection&limit=200",
-      { key: memberKey },
+      { key: spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -933,7 +932,7 @@ describe("GET /integrations — catalog visibility", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Platform-scoped get-by-id + install for space member callers.
+// Platform-scoped get-by-id + install for space-bound callers.
 //
 // The catalog list endpoint opts into `includePlatformScoped: true` so
 // platform-scoped manifests surface to in-space callers. The single-id
@@ -945,31 +944,32 @@ describe("GET /integrations — catalog visibility", () => {
 // ---------------------------------------------------------------------------
 
 describe("GET /integrations/:id + /:id/install — platform-scope", () => {
-  // Two ranks, because the routes here sit at two tiers. Reading the
-  // catalog is member work: a platform-scoped manifest must resolve for
-  // any space-bound credential. Installing is not — it mints a runtime
-  // credential from the manifest, so it takes space-admin authority
-  // (`routes/integrations-install-authority.test/ts` holds that line).
-  // The install tests below therefore mint an admin: their subject is
-  // space stamping and error shape, never who may install.
-  async function mintKeyAtRank(
+  // Two shapes, because the routes here sit at two tiers. Reading the
+  // catalog takes no space permission at all: a platform-scoped manifest
+  // must resolve for any space-bound credential. Installing is not — it
+  // mints a runtime credential from the manifest, so it takes
+  // `space.connections` (`routes/integrations-install-authority.test.ts`
+  // holds that line). The install tests below therefore mint a key that
+  // holds it: their subject is space stamping and error shape, never who
+  // may install.
+  async function mintSpaceBoundKey(
     spaceId: string,
-    role: "member" | "space_admin",
+    spacePermissions: SpacePermission[],
     typePermissions: Record<string, "read" | "write" | "none"> = {
       "system.integration": "read",
     },
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = `marfa_k1_test_member_${suffix}`;
+    const raw = `marfa_k1_test_space_key_${suffix}`;
     const hash = hashApiKey(raw, TEST_API_KEY_SALT);
     await ctx.storage.keys.create(
       {
-        label: `t234-${role}-${suffix}`,
-        source: `t234-${role}-${suffix}`,
-        role,
+        label: `t234-space-key-${suffix}`,
+        source: `t234-space-key-${suffix}`,
+        space_permissions: spacePermissions,
         type_permissions: typePermissions,
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hash,
       spaceId,
@@ -977,8 +977,8 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     return raw;
   }
 
-  it("GET /integrations/:id resolves a platform-scoped manifest for a member token", async () => {
-    // Manifest registered by platform admin → lives with space_id: null.
+  it("GET /integrations/:id resolves a platform-scoped manifest for a space-bound token", async () => {
+    // Manifest registered by the operator credential → lives with space_id: null.
     // Pre-fix this returned 404 to any caller with a real space; the
     // space-fenced get filtered the null-space row out.
     const reg = await request(ctx.app, "POST", "/integrations", {
@@ -990,10 +990,10 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-get");
-    const memberKey = await mintKeyAtRank(space.id, "member");
+    const spaceKey = await mintSpaceBoundKey(space.id, []);
 
     const res = await request(ctx.app, "GET", `/integrations/${regBody.id}`, {
-      key: memberKey,
+      key: spaceKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as RegisterResponse;
@@ -1010,7 +1010,9 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-html");
-    const installerKey = await mintKeyAtRank(space.id, "space_admin");
+    const installerKey = await mintSpaceBoundKey(space.id, [
+      "space.connections",
+    ]);
 
     const res = await request(
       ctx.app,
@@ -1040,10 +1042,14 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-count");
-    const installerKey = await mintKeyAtRank(space.id, "space_admin", {
-      "system.integration": "read",
-      "system.connection": "read",
-    });
+    const installerKey = await mintSpaceBoundKey(
+      space.id,
+      ["space.connections"],
+      {
+        "system.integration": "read",
+        "system.connection": "read",
+      },
+    );
 
     await ctx.app.request(`/integrations/${regBody.id}/install`, {
       method: "POST",
@@ -1074,7 +1080,9 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-post");
-    const installerKey = await mintKeyAtRank(space.id, "space_admin");
+    const installerKey = await mintSpaceBoundKey(space.id, [
+      "space.connections",
+    ]);
 
     const formBody = new URLSearchParams({
       decision: "approve",
@@ -1117,7 +1125,9 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     // items pass.
     if (!ctx.storage.spaces) return;
     const space = await ctx.storage.spaces.create("t234-space-missing");
-    const installerKey = await mintKeyAtRank(space.id, "space_admin");
+    const installerKey = await mintSpaceBoundKey(space.id, [
+      "space.connections",
+    ]);
 
     const res = await ctx.app.request(
       "/integrations/01999999-9999-7999-9999-999999999999/install",
@@ -1158,14 +1168,14 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
       },
       spaceA.id,
     );
-    const memberB = await mintKeyAtRank(spaceB.id, "member");
+    const spaceBKey = await mintSpaceBoundKey(spaceB.id, []);
 
     const res = await request(
       ctx.app,
       "GET",
       `/integrations/${spaceABound.id}`,
       {
-        key: memberB,
+        key: spaceBKey,
       },
     );
     expect(res.status).toBe(404);

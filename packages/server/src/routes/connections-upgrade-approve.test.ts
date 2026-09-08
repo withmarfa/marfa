@@ -62,7 +62,8 @@ function manifest(
   };
 }
 
-/** A space-admin key with no platform flag: the shape a space owner holds. */
+/** A space key holding every space permission: the shape a space owner holds.
+ *  Omitting `space_permissions` on the request takes the creator's whole set. */
 async function ownerKey(spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
@@ -70,25 +71,25 @@ async function ownerKey(spaceId: string): Promise<string> {
     body: {
       label: `owner-${suffix}`,
       source: `owner-${suffix}`,
-      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
     },
   });
   expect(res.status).toBe(201);
-  const body = (await res.json()) as { key: string; is_platform?: boolean };
-  expect(body.is_platform ?? false).toBe(false);
+  const body = (await res.json()) as { key: string; is_operator?: boolean };
+  expect(body.is_operator ?? false).toBe(false);
   return body.key;
 }
 
-async function memberKey(spaceId: string): Promise<string> {
+/** A space key holding no space permission at all. */
+async function unprivilegedKey(spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
     key: ctx.adminKey,
     body: {
-      label: `member-${suffix}`,
-      source: `member-${suffix}`,
-      role: "member",
+      label: `unprivileged-${suffix}`,
+      source: `unprivileged-${suffix}`,
+      space_permissions: [],
       default_tier: "library",
       type_permissions: { "*": "write" },
     },
@@ -303,15 +304,15 @@ describe("the gate is not reachable from an ordinary request", () => {
     ).toBe("1.0.0");
   });
 
-  it("refuses a member on both the list and the approval", async () => {
+  it("refuses a key without space.connections on both the list and the approval", async () => {
     const s = await scenario(spaceId, widens);
-    const member = await memberKey(spaceId);
+    const unprivileged = await unprivilegedKey(spaceId);
 
     const listed = await request(
       ctx.app,
       "GET",
       "/connections/upgrades/pending",
-      { key: member },
+      { key: unprivileged },
     );
     expect(listed.status).toBe(403);
 
@@ -319,7 +320,7 @@ describe("the gate is not reachable from an ordinary request", () => {
       ctx.app,
       "POST",
       `/connections/${s.connectionId}/upgrade/approve`,
-      { key: member, body: { to_version: "2.0.0" } },
+      { key: unprivileged, body: { to_version: "2.0.0" } },
     );
     expect(approved.status).toBe(403);
   });

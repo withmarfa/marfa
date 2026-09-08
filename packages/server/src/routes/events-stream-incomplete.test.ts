@@ -63,8 +63,8 @@ function makeApp(storage: Storage, key: Partial<ApiKey> = {}): Hono<AppEnv> {
       id: "key-events-overflow",
       name: "overflow viewer",
       key_hash: "unused",
-      role: "instance_admin",
-      type_permissions: {},
+      is_operator: true,
+      type_permissions: { "*": "read" },
       extension_permissions: {},
       edge_permissions: {},
       metadata_permissions: {},
@@ -341,10 +341,9 @@ describe("frames the subscriber would never receive", () => {
     const cursor = await latestEventId();
 
     const { storage, open } = gatedStorage();
-    // `member` rather than an admin role: the permission maps are what
-    // this probe is about, and admin roles bypass them.
+    // The permission map is what this probe is about, so it names one
+    // narrower than the default rather than inheriting it.
     const res = await makeApp(storage, {
-      role: "member",
       type_permissions: { "core.task": "read" },
     }).request("/events", { headers: { "Last-Event-ID": String(cursor) } });
     expect(res.status).toBe(200);

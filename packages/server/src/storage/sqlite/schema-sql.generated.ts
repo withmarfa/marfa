@@ -10,19 +10,6 @@
 // fail the schema-sql-freshness CI check.
 
 export const SCHEMA_SQL = `
-CREATE TABLE IF NOT EXISTS \`api_keys\` (
-	\`id\` text PRIMARY KEY NOT NULL,
-	"space_id" text,
-	\`key_hash\` text NOT NULL,
-	\`label\` text NOT NULL,
-	\`role\` text DEFAULT 'member' NOT NULL,
-	\`type_permissions\` text DEFAULT '{"*":"write"}' NOT NULL,
-	\`extension_permissions\` text DEFAULT '{}' NOT NULL,
-	\`created_at\` text NOT NULL,
-	\`revoked_at\` text,
-	\`last_used_at\` text
-, \`source\` text NOT NULL DEFAULT '', \`edge_permissions\` text NOT NULL DEFAULT '{}', \`default_tier\` text NOT NULL DEFAULT 'library', \`is_platform\` integer NOT NULL DEFAULT 0, \`metadata_permissions\` text NOT NULL DEFAULT '{}', \`is_runtime_credential\` integer NOT NULL DEFAULT 0, \`connection_id\` text, \`expires_at\` text, \`item_source\` text, \`scope_enforced\` integer DEFAULT false NOT NULL);
-
 CREATE TABLE IF NOT EXISTS \`audit_log\` (
 	\`id\` text PRIMARY KEY NOT NULL,
 	\`timestamp\` text NOT NULL,
@@ -139,7 +126,7 @@ CREATE TABLE IF NOT EXISTS \`users\` (
 	\`provider_id\` text NOT NULL,
 	"space_id" text NOT NULL,
 	\`created_at\` text NOT NULL,
-	\`updated_at\` text NOT NULL, \`handle\` text, \`first_name\` text, \`last_name\` text, \`bio\` text, \`avatar_blob_hash\` text, \`auth_user_id\` text, \`role\` text NOT NULL DEFAULT 'member', \`timezone\` text,
+	\`updated_at\` text NOT NULL, \`handle\` text, \`first_name\` text, \`last_name\` text, \`bio\` text, \`avatar_blob_hash\` text, \`auth_user_id\` text, \`timezone\` text,
 	FOREIGN KEY ("space_id") REFERENCES "spaces"(\`id\`) ON UPDATE no action ON DELETE no action
 );
 
@@ -449,13 +436,37 @@ CREATE TABLE IF NOT EXISTS "idempotency_records" (
   "completed_at" text
 );
 
+CREATE TABLE IF NOT EXISTS "api_keys" (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`space_id\` text,
+	\`key_hash\` text NOT NULL,
+	\`label\` text NOT NULL,
+	\`source\` text NOT NULL DEFAULT '',
+	\`default_tier\` text NOT NULL DEFAULT 'library',
+	\`is_operator\` integer NOT NULL DEFAULT 0,
+	\`is_runtime_credential\` integer NOT NULL DEFAULT 0,
+	\`connection_id\` text,
+	\`item_source\` text,
+	\`space_permissions\` text NOT NULL DEFAULT '[]',
+	\`type_permissions\` text NOT NULL DEFAULT '{"*":"write"}',
+	\`extension_permissions\` text NOT NULL DEFAULT '{}',
+	\`edge_permissions\` text NOT NULL DEFAULT '{}',
+	\`metadata_permissions\` text NOT NULL DEFAULT '{}',
+	\`profile_permissions\` text NOT NULL DEFAULT '{}',
+	\`oauth_client_id\` text,
+	\`created_at\` text NOT NULL,
+	\`expires_at\` text,
+	\`revoked_at\` text,
+	\`last_used_at\` text,
+	CONSTRAINT \`api_keys_operator_is_space_less\`
+	  CHECK (\`is_operator\` = 0 OR \`space_id\` IS NULL)
+);
+
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);
 
 CREATE INDEX IF NOT EXISTS \`idx_api_keys_connection_id\` ON \`api_keys\` (\`connection_id\`) WHERE \`connection_id\` IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS \`idx_api_keys_runtime_credential\`
-  ON \`api_keys\` (\`is_runtime_credential\`)
-  WHERE \`is_runtime_credential\`;
+CREATE INDEX IF NOT EXISTS \`idx_api_keys_runtime_credential\` ON \`api_keys\` (\`is_runtime_credential\`) WHERE \`is_runtime_credential\`;
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`idx_api_keys_source_per_space\` ON \`api_keys\` (\`space_id\`, \`source\`) WHERE revoked_at IS NULL;
 

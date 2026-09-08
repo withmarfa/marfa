@@ -40,7 +40,7 @@ import type { MarfaAuth } from "../auth/instance.js";
 import {
   buildAllowedOrigins,
   isCrossOriginPost,
-  resolveSpaceAdminCaller,
+  resolveSpaceCaller,
 } from "./_space-caller.js";
 import type { Storage } from "../storage/interface.js";
 import type {
@@ -522,7 +522,13 @@ export function connectionConfigureRoutes(
     options.authBaseUrl,
   );
 
-  const FORBIDDEN = "Space admin authority required to configure a connection";
+  // Only the session branch of `resolveSpaceCaller` returns this: a bearer is
+  // refused by `requireSpacePermission`, which names `space.connections`
+  // itself. What is left here is a signed-in person whose account resolves to
+  // no space, so the message says that rather than naming a permission the
+  // session branch never asks for.
+  const FORBIDDEN =
+    "Your account is not attached to a space, so it cannot configure a connection";
 
   // Default fetcher does the proxy call out-of-process. Tests typically
   // override via `options.fetchCalendars` so the GET path renders
@@ -533,7 +539,7 @@ export function connectionConfigureRoutes(
     (async () => []);
 
   r.get("/:id/configure", async (c) => {
-    const caller = await resolveSpaceAdminCaller(
+    const caller = await resolveSpaceCaller(
       c,
       storage,
       options.auth,
@@ -663,7 +669,7 @@ export function connectionConfigureRoutes(
     if (isCrossOriginPost(c.req.raw.headers, allowedOrigins)) {
       return c.text("Cross-origin configuration change rejected", 403);
     }
-    const caller = await resolveSpaceAdminCaller(
+    const caller = await resolveSpaceCaller(
       c,
       storage,
       options.auth,

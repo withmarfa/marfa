@@ -19,12 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
-import {
-  DELETION_STATES,
-  ITEM_STATES,
-  MARFA_ROLES,
-  TIERS,
-} from "@withmarfa/shared";
+import { DELETION_STATES, ITEM_STATES, TIERS } from "@withmarfa/shared";
 import {
   SCANNED_COLUMNS,
   scanStoredValues,
@@ -60,16 +55,23 @@ describe("scanStoredValues", () => {
   it("reports a value outside the union with the number of rows holding it", async () => {
     const found = await scanStoredValues(
       answering({
-        "users.role": [
-          { value: "member", count: 40 },
-          { value: "owner", count: 3 },
+        "api_keys.default_tier": [
+          { value: "library", count: 40 },
+          { value: "vault", count: 3 },
         ],
       }),
     );
 
     expect(found).toEqual({
       scanned: true,
-      values: [{ table: "users", column: "role", value: "owner", count: 3 }],
+      values: [
+        {
+          table: "api_keys",
+          column: "default_tier",
+          value: "vault",
+          count: 3,
+        },
+      ],
     });
   });
 
@@ -238,24 +240,21 @@ describe("scanStoredValues", () => {
     expect(logSpy).toHaveBeenCalledWith(
       "error",
       "stored-value scan outran its budget on a column",
-      { table: "users", column: "role", budget_ms: 5_000 },
+      { table: "api_keys", column: "default_tier", budget_ms: 5_000 },
     );
   });
 
   it("keys every column off the shared union rather than restating it", () => {
     // Reference identity, not contents. A hardcoded copy of the same
     // values passes every behavioral test in this file and is still the
-    // defect: a role added to `MARFA_ROLES` and not to the copy would make
-    // the scan report every row holding the new value as unrecognized, on
-    // an instance where nothing is wrong. `isMarfaRole` gives the reason
-    // in its own words — keyed off the array so adding a role cannot leave
-    // this behind.
+    // defect: a tier added to `TIERS` and not to the copy would make the
+    // scan report every row holding the new value as unrecognized, on an
+    // instance where nothing is wrong. Keyed off the array so widening a
+    // union cannot leave this behind.
     const allowedFor = (table: string, column: string) =>
       SCANNED_COLUMNS.find((c) => c.table === table && c.column === column)
         ?.allowed;
 
-    expect(allowedFor("users", "role")).toBe(MARFA_ROLES);
-    expect(allowedFor("api_keys", "role")).toBe(MARFA_ROLES);
     expect(allowedFor("api_keys", "default_tier")).toBe(TIERS);
     expect(allowedFor("auth_user", "deletion_state")).toBe(DELETION_STATES);
     expect(allowedFor("items", "state")).toBe(ITEM_STATES);
@@ -275,7 +274,7 @@ describe("storedValueScan", () => {
     expect(storedValueScan()).toEqual({ scanned: false, values: [] });
 
     const values = [
-      { table: "users", column: "role", value: "owner", count: 3 },
+      { table: "api_keys", column: "default_tier", value: "vault", count: 3 },
     ];
     setStoredValueScan({ scanned: true, values });
     expect(storedValueScan()).toEqual({ scanned: true, values });

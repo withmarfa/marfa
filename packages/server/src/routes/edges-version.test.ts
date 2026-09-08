@@ -26,6 +26,7 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -277,24 +278,21 @@ describe("the bulk door reaches the same statement", () => {
 describe("the precondition does not open the space fence", () => {
   const spaceA = `edge-ver-a-${Math.random().toString(36).slice(2, 10)}`;
   const spaceB = `edge-ver-b-${Math.random().toString(36).slice(2, 10)}`;
-  let adminA: string;
-  let adminB: string;
+  let keyA: string;
+  let keyB: string;
 
-  async function mintSpaceAdmin(
-    label: string,
-    spaceId: string,
-  ): Promise<string> {
+  async function mintSpaceKey(label: string, spaceId: string): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 14);
     const raw = `marfa_k1_edge_ver_${suffix}`;
     await ctx.storage.keys.create(
       {
         label,
         source: `${label}-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         default_tier: "library",
         type_permissions: { "*": "write" },
         edge_permissions: { "*": "write" },
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       spaceId,
@@ -303,8 +301,8 @@ describe("the precondition does not open the space fence", () => {
   }
 
   beforeAll(async () => {
-    adminA = await mintSpaceAdmin("edge-ver-admin-a", spaceA);
-    adminB = await mintSpaceAdmin("edge-ver-admin-b", spaceB);
+    keyA = await mintSpaceKey("edge-ver-key-a", spaceA);
+    keyB = await mintSpaceKey("edge-ver-key-b", spaceB);
   });
 
   it("answers not-found for another space's edge, even with its real version", async () => {
@@ -312,11 +310,11 @@ describe("the precondition does not open the space fence", () => {
     // rewritten to make room for it is the plausible way to lose it. A
     // caller holding the correct version must still be told the edge does
     // not exist, and must not learn otherwise from a 409.
-    const theirs = await edge({ note: "space B" }, adminB);
+    const theirs = await edge({ note: "space B" }, keyB);
     expect(theirs.version).toBe(1);
 
     const res = await request(ctx.app, "PATCH", `/edges/${theirs.id}`, {
-      key: adminA,
+      key: keyA,
       body: { version: 1, properties: { note: "reached across" } },
     });
     expect(res.status).toBe(404);
@@ -328,7 +326,7 @@ describe("the precondition does not open the space fence", () => {
       ctx.app,
       "GET",
       `/items/${theirs.source_id}/edges`,
-      { key: adminB },
+      { key: keyB },
     );
     const stored = first(((await after.json()) as { data: WireEdge[] }).data);
     expect(stored.properties).toEqual({ note: "space B" });
@@ -345,7 +343,7 @@ describe("the precondition does not open the space fence", () => {
     // route, and adding the version precondition rewrites the predicate it
     // lives in. Asserting it at the store is the only place the property is
     // observable.
-    const theirs = await edge({ note: "space B" }, adminB);
+    const theirs = await edge({ note: "space B" }, keyB);
     const spaceBId = (await ctx.storage.edges.get(theirs.id))?.space_id;
     expect(spaceBId).toBe(spaceB);
 

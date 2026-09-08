@@ -16,6 +16,7 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 async function mintSpaceAdmin(
   ctx: TestContext,
@@ -28,10 +29,10 @@ async function mintSpaceAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       default_tier: "library",
       type_permissions: {},
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,

@@ -92,7 +92,9 @@ describe("bootstrap mode", () => {
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as Record<string, unknown>;
-    expect(data.role).toBe("instance_admin");
+    // The instance tier is the absence of a space binding rather than a rank,
+    // so the seed credential is named by `is_operator`.
+    expect(data.is_operator).toBe(true);
     expect(data).toHaveProperty("key");
 
     await storage.close();
@@ -102,20 +104,39 @@ describe("bootstrap mode", () => {
 
 describe("key management", () => {
   it("creates and lists keys", async () => {
+    // A narrower set than the caller's, because that is the half a mint can
+    // get wrong: an omitted list takes the creator's whole set, so a response
+    // that reported the wrong one would be indistinguishable from a response
+    // that reported nothing.
     const createRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
-      body: { label: "test-member", source: "test-member-src", role: "member" },
+      body: {
+        label: "test-narrow",
+        source: "test-narrow-src",
+        space_permissions: ["space.webhooks"],
+      },
     });
     expect(createRes.status).toBe(201);
-    const created = (await createRes.json()) as Record<string, unknown>;
-    expect(created.role).toBe("member");
+    const created = (await createRes.json()) as {
+      id: string;
+      space_permissions?: string[];
+    };
+    expect(created.space_permissions).toEqual(["space.webhooks"]);
 
     const listRes = await request(ctx.app, "GET", "/keys", {
       key: ctx.adminKey,
     });
     expect(listRes.status).toBe(200);
-    const body = (await listRes.json()) as { keys: unknown[] };
+    const body = (await listRes.json()) as {
+      keys: { id: string; space_permissions?: string[] }[];
+    };
     expect(body.keys.length).toBeGreaterThanOrEqual(2);
+    // The stored row says the same thing the mint response did. Asserted
+    // separately because the two are built by different code, and the mint
+    // response is the one a caller cannot go back and re-read.
+    expect(
+      body.keys.find((k) => k.id === created.id)?.space_permissions,
+    ).toEqual(["space.webhooks"]);
   });
 
   it("revokes a key", async () => {
@@ -142,7 +163,7 @@ describe("extension_permissions wiring", () => {
       body: {
         label: "ext-write-key",
         source: "ext-write-key-src",
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
         extension_permissions: { "swift.calendar": "write" },
       },
@@ -167,15 +188,15 @@ describe("extension_permissions wiring", () => {
   });
 
   it("auth middleware copies extension_permissions onto the request context", async () => {
-    // Create a non-admin key with explicit grant on a namespace that doesn't
-    // match its label. Without the wiring this would fall through to the
-    // implicit own-namespace rule and 403 on the non-matching namespace.
+    // Create a key with an explicit grant on a namespace that doesn't match
+    // its label. Without the wiring this would fall through to the implicit
+    // own-namespace rule and 403 on the non-matching namespace.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "myapp",
         source: "myapp-grant-src",
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
         extension_permissions: { "other-app.notes": "write" },
       },
@@ -198,14 +219,14 @@ describe("extension_permissions wiring", () => {
   });
 
   it("persists and surfaces metadata_permissions on POST /keys and GET /keys", async () => {
-    // Metadata-layer permissions ride a dedicated map. Default-off for
-    // new keys; admin still bypasses.
+    // Metadata-layer permissions ride a dedicated map, default-off for new
+    // keys. Nothing reads past it: every credential is held to its maps.
     const createRes = await request(ctx.app, "POST", "/keys", {
       key: ctx.adminKey,
       body: {
         label: "metadata-types-key",
         source: "metadata-types-key-src",
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
         metadata_permissions: { types: "write" },
       },
@@ -235,7 +256,7 @@ describe("extension_permissions wiring", () => {
       body: {
         label: "selfns",
         source: "selfns-src",
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
       },
     });
@@ -264,7 +285,7 @@ describe("KeyStore.updateLastUsed — DB-side debounce", () => {
       body: {
         label: "last-used-debounce-key",
         source: "last-used-debounce-src",
-        role: "member",
+        space_permissions: [],
       },
     });
     const { id } = (await createRes.json()) as { id: string };

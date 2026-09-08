@@ -190,15 +190,15 @@ describe("mintLocalRuntimeCredential — direction is not an access level", () =
   );
 });
 
-describe("mintLocalRuntimeCredential — the ceiling on rank and tier", () => {
-  // Rank and platform tier used to be asserted against the install
-  // pipeline's mint, in `auth/non-http-mint-ceilings.test.ts`. That mint
-  // is gone, and this is the only path left that creates a runtime
-  // credential, so the assertions belong here or nowhere. A runtime
-  // credential is machine-minted with nobody to consent to a widening,
-  // which is exactly the shape that must never carry rank or the
-  // platform flag.
-  it("mints member rank, never platform, always expiring", async () => {
+describe("mintLocalRuntimeCredential — the ceiling on its reach", () => {
+  // The operator tier used to be asserted against the install pipeline's
+  // mint, in `auth/non-http-mint-ceilings.test.ts`. That mint is gone, and
+  // this is the only path left that creates a runtime credential, so the
+  // assertions belong here or nowhere. A runtime credential is
+  // machine-minted with nobody to consent to a widening, which is exactly
+  // the shape that must never carry the operator flag or an administrative
+  // permission.
+  it("holds no space permission, never the operator flag, always expiring", async () => {
     const integrationId = await createIntegrationItem();
     const connectionId = await createActiveConnection(integrationId);
     const cred = await mintLocalRuntimeCredential(
@@ -211,8 +211,8 @@ describe("mintLocalRuntimeCredential — the ceiling on rank and tier", () => {
     const credId = await credentialIdByHash(cred.api_key);
     const row = (await ctx.storage.keys.list()).find((k) => k.id === credId);
     if (!row) throw new Error("minted credential did not resolve");
-    expect(row.role).toBe("member");
-    expect(row.is_platform).toBe(false);
+    expect(row.space_permissions ?? []).toEqual([]);
+    expect(row.is_operator).toBe(false);
     // Machine-minted means expiring: the substrate cannot refresh
     // mid-dispatch, so an unstamped credential would outlive every
     // dispatch that could replace it.

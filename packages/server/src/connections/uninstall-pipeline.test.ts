@@ -60,7 +60,7 @@ async function installFresh(): Promise<{
 }> {
   const adminKey = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.role === "instance_admin"));
+    .then((keys) => keys.find((k) => k.is_operator));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
   const integration = await ctx.storage.items.create(
@@ -290,7 +290,6 @@ describe("performUninstall — partial-state semantics", () => {
       {
         label: "extra runtime cred",
         source: `integration-extra:${installed.connectionId}`,
-        role: "member",
         type_permissions: { "core.note": "read" },
         connection_id: installed.connectionId,
         expires_at: new Date(Date.now() + 600_000).toISOString(),
@@ -360,7 +359,7 @@ async function installWithCredential(credentialRef: string): Promise<{
 }> {
   const adminKey = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.role === "instance_admin"));
+    .then((keys) => keys.find((k) => k.is_operator));
   if (!adminKey) throw new Error("admin key not found in test ctx");
 
   const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -555,7 +554,7 @@ describe("performUninstall — a connection inside a space", () => {
   }> {
     const adminKey = await hosted.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.role === "instance_admin"));
+      .then((keys) => keys.find((k) => k.is_operator));
     if (!adminKey) throw new Error("admin key not found in test ctx");
 
     const space = await hosted.storage.spaces!.create(
@@ -743,7 +742,6 @@ describe("performUninstall — affected rows, not attempts", () => {
       {
         label: "raced runtime cred",
         source: `integration-raced:${installed.connectionId}`,
-        role: "member",
         type_permissions: { "core.note": "read" },
         connection_id: installed.connectionId,
         expires_at: new Date(Date.now() + 600_000).toISOString(),

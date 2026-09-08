@@ -20,10 +20,11 @@ import type {
   EdgePermission,
   ExtensionPermission,
   MetadataPermission,
+  ProfilePermission,
   Tier,
   TypePermission,
+  SpacePermission,
 } from "@withmarfa/shared";
-import { storedRole } from "../stored-role.js";
 import type { KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { PgDb } from "./connection.js";
@@ -41,13 +42,17 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     space_id: row.space_id ?? undefined,
     label: row.label,
     source: row.source,
-    role: storedRole(row.role, { table: "api_keys", id: row.id }),
     default_tier: row.default_tier as Tier,
-    is_platform: row.is_platform,
+    is_operator: row.is_operator,
     is_runtime_credential: row.is_runtime_credential,
-    scope_enforced: row.scope_enforced,
     connection_id: row.connection_id ?? undefined,
     item_source: row.item_source ?? undefined,
+    space_permissions: safeJsonParse<SpacePermission[]>(
+      row.space_permissions,
+      [],
+      "key space_permissions",
+    ),
+    oauth_client_id: row.oauth_client_id ?? undefined,
     type_permissions: safeJsonParse<Record<string, TypePermission>>(
       row.type_permissions,
       {},
@@ -67,6 +72,11 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
       row.metadata_permissions,
       {},
       "key metadata_permissions",
+    ),
+    profile_permissions: safeJsonParse<Record<string, ProfilePermission>>(
+      row.profile_permissions,
+      {},
+      "key profile_permissions",
     ),
     created_at: row.created_at,
     expires_at: row.expires_at ?? null,
@@ -89,7 +99,7 @@ export class PgKeyStore implements KeyStore {
   constructor(private db: PgDb) {}
 
   async create(
-    input: CreateKeyInput & { scope_enforced?: boolean },
+    input: CreateKeyInput & { oauth_client_id?: string },
     keyHash: string,
     spaceId?: string,
   ): Promise<ApiKey> {
@@ -118,14 +128,15 @@ export class PgKeyStore implements KeyStore {
       key_hash: keyHash,
       label: input.label,
       source: input.source,
-      role: input.role,
       default_tier: input.default_tier ?? "library",
-      is_platform: input.is_platform ?? false,
-      scope_enforced: input.scope_enforced ?? false,
+      is_operator: input.is_operator ?? false,
+      space_permissions: JSON.stringify(input.space_permissions ?? []),
+      oauth_client_id: input.oauth_client_id ?? null,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
       metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
+      profile_permissions: JSON.stringify(input.profile_permissions ?? {}),
       created_at: now,
     };
     await this.db.insert(apiKeys).values(row);
@@ -134,14 +145,15 @@ export class PgKeyStore implements KeyStore {
       space_id: spaceId,
       label: row.label,
       source: row.source,
-      role: input.role,
       default_tier: row.default_tier,
-      is_platform: row.is_platform,
-      scope_enforced: row.scope_enforced,
+      is_operator: row.is_operator,
+      space_permissions: input.space_permissions ?? [],
+      oauth_client_id: input.oauth_client_id,
       type_permissions: input.type_permissions ?? {},
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},
       metadata_permissions: input.metadata_permissions ?? {},
+      profile_permissions: input.profile_permissions ?? {},
       created_at: now,
       last_used_at: null,
     };
@@ -149,6 +161,7 @@ export class PgKeyStore implements KeyStore {
 
   async createRuntimeCredential(
     input: CreateKeyInput & {
+      oauth_client_id?: string;
       connection_id: string;
       expires_at: string;
       item_source: string | null;
@@ -181,16 +194,18 @@ export class PgKeyStore implements KeyStore {
       key_hash: keyHash,
       label: input.label,
       source: input.source,
-      role: input.role,
       default_tier: input.default_tier ?? "library",
-      is_platform: false,
+      is_operator: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
       item_source: input.item_source ?? undefined,
+      space_permissions: JSON.stringify(input.space_permissions ?? []),
+      oauth_client_id: input.oauth_client_id ?? null,
       type_permissions: JSON.stringify(input.type_permissions ?? {}),
       extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
       edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
       metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
+      profile_permissions: JSON.stringify(input.profile_permissions ?? {}),
       created_at: now,
       expires_at: input.expires_at,
     };
@@ -200,9 +215,8 @@ export class PgKeyStore implements KeyStore {
       space_id: spaceId,
       label: row.label,
       source: row.source,
-      role: input.role,
       default_tier: row.default_tier,
-      is_platform: false,
+      is_operator: false,
       is_runtime_credential: true,
       connection_id: input.connection_id,
       item_source: input.item_source ?? undefined,
@@ -210,6 +224,7 @@ export class PgKeyStore implements KeyStore {
       extension_permissions: input.extension_permissions ?? {},
       edge_permissions: input.edge_permissions ?? {},
       metadata_permissions: input.metadata_permissions ?? {},
+      profile_permissions: input.profile_permissions ?? {},
       created_at: now,
       expires_at: input.expires_at,
       last_used_at: null,
@@ -283,6 +298,14 @@ export class PgKeyStore implements KeyStore {
       patch.edge_permissions = JSON.stringify(input.edge_permissions);
     if (input.metadata_permissions !== undefined)
       patch.metadata_permissions = JSON.stringify(input.metadata_permissions);
+    // The two families the one permission model added. Declared on
+    // `UpdateKeyInput` and silently dropped here, so a caller narrowing a key
+    // through the SDK got a 200 and no change on exactly the two axes the
+    // model is about.
+    if (input.space_permissions !== undefined)
+      patch.space_permissions = JSON.stringify(input.space_permissions);
+    if (input.profile_permissions !== undefined)
+      patch.profile_permissions = JSON.stringify(input.profile_permissions);
 
     if (Object.keys(patch).length > 0) {
       await this.db.update(apiKeys).set(patch).where(eq(apiKeys.id, id));

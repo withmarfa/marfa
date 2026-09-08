@@ -6,7 +6,7 @@
  *   - The pure parser (`parseConfigurePayload`).
  *   - The pure renderer (`renderGoogleCalendarPicker`).
  *   - POST end-to-end against the test app:
- *       * auth gate (401 unauthenticated / 403 member),
+ *       * auth gate (401 unauthenticated / 403 without space.connections),
  *       * connection-not-found (404),
  *       * non-calendar manifest (400),
  *       * validation rejections (no selection / no default /
@@ -202,13 +202,14 @@ describe("renderGoogleCalendarPicker", () => {
 // End-to-end POST tests against the live app
 // ---------------------------------------------------------------------------
 
-async function mintMemberKey(): Promise<string> {
+/** A key holding no space permission, so the configure door refuses it. */
+async function mintUnprivilegedKey(): Promise<string> {
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.adminKey,
     body: {
-      label: "configure-member",
-      source: "configure-member",
-      role: "member",
+      label: "configure-unprivileged",
+      source: "configure-unprivileged",
+      space_permissions: [],
       type_permissions: {},
     },
   });
@@ -348,15 +349,15 @@ describe("POST /connections/:id/configure — auth gate", () => {
     expect(res.status).toBe(403);
   });
 
-  it("rejects member keys with 403", async () => {
+  it("rejects a key without space.connections with 403", async () => {
     const { connectionId } = await seedGoogleCalendarConnection();
-    const memberKey = await mintMemberKey();
+    const unprivilegedKey = await mintUnprivilegedKey();
     const res = await request(
       ctx.app,
       "POST",
       `/connections/${connectionId}/configure`,
       {
-        key: memberKey,
+        key: unprivilegedKey,
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
@@ -575,14 +576,15 @@ describe("GET /connections/:id/configure", () => {
     // The test request helper sets `apiKey` on `c.var` via the
     // bearer-token middleware on the main app. Here we propagate it by
     // reading the same context env shim and stamping a fixed apiKey for
-    // the route's `requireSpaceAdmin` to consume.
+    // the route's `requireAuth` and `requireSpacePermission` to consume.
+    // Every map is named: the operator flag opens no door on its own.
     miniApp.use("*", async (c, next) => {
       c.set("apiKey", {
         id: "test-admin",
         label: "test-admin",
         source: "test-admin",
-        role: "instance_admin",
-        is_platform: true,
+        is_operator: true,
+        space_permissions: ["space.connections"],
         default_tier: "library",
         type_permissions: { "*": "write" },
         extension_permissions: {},

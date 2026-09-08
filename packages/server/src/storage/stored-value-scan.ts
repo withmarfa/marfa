@@ -2,16 +2,15 @@
  * How many rows this instance holds whose stored value falls outside the
  * union the build compares that column against.
  *
- * The request-time half of this is already closed. `stored-role.ts`,
- * `stored-space-status.ts` and `platform-family.ts` each refuse an
- * unrecognized value, project onto the least capability, and log the row
- * they met it on. What none of them can do is answer the question the
- * motivating incident actually turned on: **how many rows**. A rename left
- * every user row on both environments holding a role no build recognized,
- * and it stayed that way for a full rename cycle. A per-request log line
- * would not have shortened that. On a broken instance it is a log storm,
- * which is the same as silence, and the ticket's own note says so: the
- * previous occurrence proved nobody reads it.
+ * The request-time half of this is already closed. `stored-space-status.ts`
+ * and `platform-family.ts` each refuse an unrecognized value, project onto
+ * the least capability, and log the row they met it on. What neither can do
+ * is answer the question the motivating incident actually turned on: **how
+ * many rows**. A rename left every row of one table on both environments
+ * holding a value no build recognized, and it stayed that way for a full
+ * rename cycle. A per-request log line would not have shortened that. On
+ * a broken instance it is a log storm, which is the same as silence, and
+ * the previous occurrence proved nobody reads it.
  *
  * So this is a count and not a guard. Nothing here changes what a request
  * sees.
@@ -30,8 +29,9 @@
  *   cannot complete.
  * - There is no repair path from a server that will not start. The remedy
  *   is a migration or a hand `UPDATE`, and both want an instance up.
- * - `stored-role.ts` already says in its own comment that a store read is
- *   the wrong place to throw. A boot read is the same read, earlier.
+ * - `platform-family.ts` already says in its own comment why a store read
+ *   projects rather than refusing to boot. A boot read is the same read,
+ *   earlier.
  *
  * **The severity lives on the log line, not on `/health`.** The boot log
  * is `error`-level and names the table, the column, the true stored string
@@ -44,12 +44,7 @@
  * source of truth with nothing keeping it honest, and it would go stale in
  * precisely the case that matters.
  */
-import {
-  DELETION_STATES,
-  ITEM_STATES,
-  MARFA_ROLES,
-  TIERS,
-} from "@withmarfa/shared";
+import { DELETION_STATES, ITEM_STATES, TIERS } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /** One column, and the set of values this build can interpret in it. */
@@ -69,11 +64,10 @@ export interface ScannedColumn {
   /**
    * The union itself, by reference.
    *
-   * Referenced rather than restated, which is `isMarfaRole`'s reason and
-   * is load-bearing: a role added to `MARFA_ROLES` and not to a copy here
-   * would make the scan report every row holding the new value as
-   * unrecognized, on an instance where nothing is wrong. A copy fails
-   * loudest exactly when the build is right.
+   * Referenced rather than restated, and load-bearing: a member added to
+   * the union and not to a copy here would make the scan report every row
+   * holding the new value as unrecognized, on an instance where nothing is
+   * wrong. A copy fails loudest exactly when the build is right.
    */
   allowed: readonly string[];
   /**
@@ -92,24 +86,12 @@ export interface ScannedColumn {
 /**
  * The columns counted at boot.
  *
- * Both `role` columns are here even though `storedRole` already guards
- * them at request time. That is the point of the ticket rather than scope
- * creep: the guard gives a deterministic projection and a log line *per
- * read*, and the count is the thing it cannot give.
+ * `items.tier` is here even though `isTier` already recognizes it at
+ * request time. That is the point rather than scope creep: the recognizer
+ * gives a deterministic projection and a log line *per read*, and the
+ * count is the thing it cannot give.
  */
 export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
-  {
-    table: "users",
-    column: "role",
-    castType: "MarfaRole",
-    allowed: MARFA_ROLES,
-  },
-  {
-    table: "api_keys",
-    column: "role",
-    castType: "MarfaRole",
-    allowed: MARFA_ROLES,
-  },
   {
     table: "api_keys",
     column: "default_tier",
@@ -159,7 +141,8 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
  * Keyed on the column and the type together, not on the type alone. A
  * roster that asked only whether a type appeared somewhere was silent on
  * the case this whole feature exists for: a *second* column carrying a
- * union that is already on the list. `row.source as MarfaRole` in a store
+ * union that is already on the list. `Tier` is on two of them already,
+ * `api_keys.default_tier` and `items.tier`, so a third column cast to it
  * would have passed such a guard without anybody deciding anything.
  */
 export const DELIBERATELY_UNSCANNED: readonly {

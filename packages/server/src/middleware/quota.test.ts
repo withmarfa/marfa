@@ -6,11 +6,13 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "./auth.js";
+import type { SpacePermission } from "@withmarfa/shared";
 
-async function mintSpaceAdmin(
+async function mintSpaceKey(
   ctx: TestContext,
   spaceId: string,
   label: string,
+  spacePermissions: SpacePermission[] = [],
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_quota_test_${suffix}`;
@@ -19,10 +21,10 @@ async function mintSpaceAdmin(
     {
       label,
       source: `${label}-${suffix}`,
-      role: "space_admin",
+      space_permissions: spacePermissions,
       default_tier: "library",
       type_permissions: { "*": "write" },
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,
@@ -39,7 +41,9 @@ describe("per-space quota enforcement", () => {
   it("webhook quota = 2 → third POST returns 429 with quota_exceeded shape", async () => {
     ctx = await createTestContext();
     const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintSpaceAdmin(ctx, spaceId, "wh-quota-admin");
+    const adminKey = await mintSpaceKey(ctx, spaceId, "wh-quota-admin", [
+      "space.webhooks",
+    ]);
 
     // Set the cap via the storage layer directly (admin route is also
     // exercised below).
@@ -76,7 +80,7 @@ describe("per-space quota enforcement", () => {
   it("items quota = 3 → fourth POST returns 429", async () => {
     ctx = await createTestContext();
     const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintSpaceAdmin(ctx, spaceId, "items-quota-admin");
+    const adminKey = await mintSpaceKey(ctx, spaceId, "items-quota-admin");
 
     await ctx.storage.spaceQuotas.set(spaceId, { items_limit: 3 });
 
@@ -140,7 +144,7 @@ describe("per-space quota enforcement", () => {
   it("storage_bytes quota arithmetic — second small upload under cap succeeds (PG bigint regression)", async () => {
     ctx = await createTestContext();
     const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintSpaceAdmin(ctx, spaceId, "storage-bytes-admin");
+    const adminKey = await mintSpaceKey(ctx, spaceId, "storage-bytes-admin");
 
     // Cap = 100_000 bytes (100 KB). First upload ~50 KB; second upload
     // ~1 KB. Sum is ~51 KB, well under the cap. Pre-fix the second

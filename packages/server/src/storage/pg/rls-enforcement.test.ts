@@ -131,9 +131,8 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
           {
             label: `${space}-admin`,
             source: `${space}-source-${suffix}`,
-            role: "instance_admin",
-            // space_admin would also pass; admin (with space_id
-            // set) is the simplest path.
+            // The maps carry the whole of the reach, so the wildcard is what
+            // lets this key write items in its own space.
             type_permissions: { "*": "write" },
             default_tier: "library",
           },
@@ -191,7 +190,6 @@ describe.skipIf(!isPg)("Postgres RLS enforcement", () => {
       probe.use("*", async (c, next) => {
         c.set("apiKey", {
           id: "rls-probe-key",
-          role: "space_admin",
           space_id: spaceA,
         } as unknown as ApiKey);
         await next();

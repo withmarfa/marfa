@@ -657,7 +657,7 @@ describe("the properties the announcement itself has to hold", () => {
   it("the batch deletes stop at the space they are given", async () => {
     // The batch deletes take a space id now, and this pins the parameter
     // rather than the route: `POST /items/bulk-actions` purge is
-    // `requireAdmin`, which refuses a space-bound key, so every purge
+    // `requireOperatorKey`, which refuses a space-bound key, so every purge
     // through that door runs unscoped and cannot reach the fence. Tested
     // at the store because that is where it is reachable — and where the
     // next caller of these methods will meet it.

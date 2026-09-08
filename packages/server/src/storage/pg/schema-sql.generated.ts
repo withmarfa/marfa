@@ -51,7 +51,6 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     space_id text,
     key_hash text NOT NULL,
     label text NOT NULL,
-    role text DEFAULT 'member'::text NOT NULL,
     type_permissions text DEFAULT '{"*":"write"}'::text NOT NULL,
     extension_permissions text DEFAULT '{}'::text NOT NULL,
     created_at text NOT NULL,
@@ -60,13 +59,16 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     source text NOT NULL,
     edge_permissions text DEFAULT '{}'::text NOT NULL,
     default_tier text DEFAULT 'library'::text NOT NULL,
-    is_platform boolean DEFAULT false NOT NULL,
+    is_operator boolean DEFAULT false NOT NULL,
     metadata_permissions text DEFAULT '{}'::text NOT NULL,
     is_runtime_credential boolean DEFAULT false NOT NULL,
     connection_id text,
     expires_at text,
     item_source text,
-    scope_enforced boolean DEFAULT false NOT NULL
+    space_permissions text DEFAULT '[]'::text NOT NULL,
+    oauth_client_id text,
+    profile_permissions text DEFAULT '{}'::text NOT NULL,
+    CONSTRAINT api_keys_operator_is_space_less CHECK (((NOT is_operator) OR (space_id IS NULL)))
 );
 
 CREATE TABLE IF NOT EXISTS public.audit_log (
@@ -530,7 +532,6 @@ CREATE TABLE IF NOT EXISTS public.users (
     bio text,
     avatar_blob_hash text,
     auth_user_id text,
-    role text DEFAULT 'member'::text NOT NULL,
     timezone text
 );
 

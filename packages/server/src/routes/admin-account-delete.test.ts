@@ -103,7 +103,11 @@ describe("POST /admin/accounts/:id/delete", () => {
       `/admin/spaces/${spaceId}/keys`,
       {
         key: ctx.adminKey,
-        body: { label: "content", source: "content", role: "space_admin" },
+        body: {
+          label: "content",
+          source: "content",
+          type_permissions: { "*": "write" },
+        },
       },
     );
     expect(spaceKeyRes.status).toBe(201);

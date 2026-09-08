@@ -20,6 +20,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 vi.setConfig({ testTimeout: 45_000 });
 
@@ -235,36 +236,51 @@ async function authUserIdFor(c: TestContext, email: string): Promise<string> {
   return id;
 }
 
-/** A space admin: the credential every hosted sign-up is provisioned with,
- *  and the one a widened gate would admit. */
+/**
+ * A credential holding every space permission there is, in a space of its own.
+ * The one a widened gate would admit: it is everything a hosted sign-up can
+ * hand an app, and it is still not the operator key, because operator
+ * authority is authority confined to no space at all.
+ *
+ * Bound to a space rather than left space-less, because the row constraint
+ * makes a space-less credential an operator credential — which would be the
+ * very thing this fixture has to not be.
+ */
 async function spaceAdminKey(c: TestContext): Promise<string> {
   const suffix = randomBytes(5).toString("hex");
   const raw = `marfa_k1_spaceadmin_${suffix}`;
+  const space = await c.storage.spaces!.create(`oauth-client-admin-${suffix}`);
   await c.storage.keys.create(
     {
       label: `space-admin-${suffix}`,
       source: `space-admin-${suffix}`,
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "library",
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
+    space.id,
   );
   return raw;
 }
 
+/** A credential with no administrative reach at all, in a space of its own. */
 async function memberKey(c: TestContext): Promise<string> {
   const suffix = randomBytes(5).toString("hex");
   const raw = `marfa_k1_member_${suffix}`;
+  const space = await c.storage.spaces!.create(`oauth-client-member-${suffix}`);
   await c.storage.keys.create(
     {
       label: `member-${suffix}`,
       source: `member-${suffix}`,
-      role: "member",
+      space_permissions: [],
       type_permissions: { "core.note": "read" },
       default_tier: "library",
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
+    space.id,
   );
   return raw;
 }
@@ -281,9 +297,9 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       await memberKey(ctx),
     );
     expect(forbidden.status).toBe(403);
-    // A space admin is the role every hosted sign-up holds, and the one a
-    // gate widened to `requireSpaceAdmin` would admit; this route walks
-    // every space, so it has to be refused too.
+    // The whole space-permission set is what the first person in a space
+    // holds, and what a gate widened to `requireAuth` would admit; this
+    // route walks every space, so it has to be refused too.
     const asSpaceAdmin = await deleteClient(
       ctx,
       clientId,
@@ -522,7 +538,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     });
     const row = deleted.data.find((r) => r.resource_id === clientId);
     const operator = (await ctx.storage.keys.list()).find(
-      (k) => k.role === "instance_admin" && !k.space_id,
+      (k) => k.is_operator && !k.space_id,
     );
     expect(operator).toBeDefined();
     expect(row?.key_id).toBe(operator!.id);

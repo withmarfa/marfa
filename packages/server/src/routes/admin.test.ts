@@ -14,6 +14,7 @@ import {
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
@@ -34,7 +35,7 @@ afterAll(async () => {
  */
 async function mintSpaceKey(
   spaceId: string,
-  opts?: { is_platform?: boolean },
+  opts?: { is_operator?: boolean },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const raw = `marfa_k1_test_member_${suffix}`;
@@ -43,10 +44,9 @@ async function mintSpaceKey(
     {
       label: `test-member-${suffix}`,
       source: `test-member-${suffix}`,
-      role: "member",
       type_permissions: { "core.note": "write" },
       default_tier: "library",
-      is_platform: opts?.is_platform ?? false,
+      is_operator: opts?.is_operator ?? false,
     },
     hash,
     spaceId,
@@ -193,7 +193,9 @@ describe("admin happy paths", () => {
         body: {
           label: "provisioned key",
           source: "provisioned",
-          role: "space_admin",
+          // The rank this mint used to carry admitted the key past its own
+          // map; the map now has to say what the rank granted silently.
+          type_permissions: { "*": "write" },
         },
       },
     );
@@ -218,7 +220,7 @@ describe("admin happy paths", () => {
       (k) => k.label === "provisioned key",
     );
     expect(stored?.space_id).toBe(space.id);
-    expect(stored?.is_platform ?? false).toBe(false);
+    expect(stored?.is_operator ?? false).toBe(false);
 
     const write = await request(ctx.app, "POST", "/items", {
       key: minted.key,
@@ -241,8 +243,8 @@ describe("admin happy paths", () => {
 
   it("POST /admin/spaces refuses a space-bound admin", async () => {
     // Creating a space is cross-space authority by definition, so the gate
-    // has to be platform-admin rather than the `admin` role — which
-    // `POST /admin/spaces/{id}/keys` can mint bound to one space.
+    // has to be the operator key rather than a space credential, however much
+    // that credential holds inside its own space.
     if (!ctx.storage.spaces) return;
     const t = await ctx.storage.spaces.create("bounded-admin");
     const keyRes = await request(
@@ -254,7 +256,6 @@ describe("admin happy paths", () => {
         body: {
           label: "bound admin",
           source: "bound-admin",
-          role: "instance_admin",
         },
       },
     );
@@ -316,7 +317,6 @@ describe("admin happy paths", () => {
         body: {
           label: "Raycast fallback",
           source: "raycast",
-          role: "space_admin",
           type_permissions: { "core.note": "write" },
           edge_permissions: { "core.related": "read" },
           metadata_permissions: { types: "write" },
@@ -328,18 +328,21 @@ describe("admin happy paths", () => {
       id: string;
       key: string;
       source: string;
-      role: string;
-      is_platform: boolean;
+      space_permissions: string[];
+      is_operator: boolean;
     };
     expect(body.key).toMatch(/^marfa_k1_/);
     expect(body.source).toBe("raycast");
-    expect(body.role).toBe("space_admin");
-    expect(body.is_platform).toBe(false);
+    // A mint into a named space that asks for nothing takes everything in it:
+    // the operator key holds no space permission to fence it with, so this is
+    // the seed rule for a creation with no ceiling above it.
+    expect(new Set(body.space_permissions)).toEqual(new Set(SPACE_PERMISSIONS));
+    expect(body.is_operator).toBe(false);
 
     const stored = await ctx.storage.keys.get(body.id);
     expect(stored?.space_id).toBe(target.id);
     expect(stored?.space_id).not.toBe(other.id);
-    expect(stored?.is_platform).toBe(false);
+    expect(stored?.is_operator).toBe(false);
   });
 
   it("GET /admin/spaces/:id — 404 on unknown space", async () => {

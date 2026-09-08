@@ -15,6 +15,7 @@ import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 const SALT = "test-salt";
 
@@ -167,8 +168,12 @@ async function mintUser(
     {
       label: "admin",
       source: "admin",
-      role: "instance_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
+      // Category 2 is levelled, so an absent map means the credential may not
+      // even read the profile. The rank this fixture carried used to read past
+      // the map; the map now has to say so.
+      profile_permissions: { "*": "write" },
     },
     hashApiKey(rawKey, SALT),
     space.id,

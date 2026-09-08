@@ -78,8 +78,9 @@ describe("GET /export", () => {
         body: {
           label: source,
           source,
-          role: "instance_admin",
-          type_permissions: {},
+          // The rank this fixture carried admitted it past its own map, so
+          // the map has to say what the rank granted silently.
+          type_permissions: { "*": "write" },
         },
       });
       return ((await res.json()) as { key: string }).key;

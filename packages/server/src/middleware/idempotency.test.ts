@@ -776,10 +776,9 @@ describe("a claim the store did not grant", () => {
         space_id: undefined,
         label: "fixture",
         source: credential.source,
-        role: "admin",
         default_tier: "library",
-        is_platform: false,
-        scope_enforced: false,
+        is_operator: false,
+        space_permissions: [],
         type_permissions: {},
         extension_permissions: {},
         edge_permissions: {},
@@ -787,7 +786,10 @@ describe("a claim the store did not grant", () => {
         profile_permissions: {},
         created_at: new Date().toISOString(),
         last_used_at: null,
-      } as unknown as ApiKey);
+        // Checked rather than asserted through `unknown`. The double cast used
+        // to hide two fields the wire type no longer has, and a fixture that
+        // cannot be checked is the one place a retired field survives longest.
+      } satisfies ApiKey);
       c.set("authType", credential.oauth === true ? "oauth" : "api_key");
       await next();
     });

@@ -11,6 +11,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 import { initEventLog, __resetCycleDetectionForTests } from "../pubsub.js";
 
 let ctx: TestContext;
@@ -172,17 +173,25 @@ describe("POST /admin/restore-archive", () => {
     expect(res.status).toBe(400);
   });
 
-  it("requires admin role", async () => {
+  it("requires the operator key", async () => {
+    // Bound to a space, because the row constraint makes a space-less
+    // credential an operator credential and this door is exactly what an
+    // operator key opens.
     const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
+    const space = await ctx.storage.spaces!.create(
+      `restore-member-${rawKey.slice(-6)}`,
+    );
     await ctx.storage.keys.create(
       {
         label: "restore-member",
         source: `restore-member-${rawKey.slice(-6)}`,
-        role: "member",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
+        is_operator: false,
       },
       keyHash,
+      space.id,
     );
 
     const archive = await buildArchive(

@@ -101,9 +101,12 @@ describe("GET /items/stats?by=type", () => {
       {
         label: `stats-${suffix}`,
         source: `stats-${suffix}`,
-        role: "member",
         type_permissions: { [SEEN]: "read" },
         default_tier: "library",
+        // Keys mode carries no space, and the schema requires a space-less
+        // key to be an operator key. The narrow type map is still what
+        // decides the breakdown.
+        is_operator: true,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
     );

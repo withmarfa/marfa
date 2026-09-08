@@ -167,16 +167,20 @@ describe("POST /items/bulk-get", () => {
       spaceA.id,
     );
 
-    // A space_admin key scoped to space A.
+    // A key bound to space A. The type map is named rather than left empty,
+    // because it is the whole of what this key can read and the case is about
+    // the space fence rather than the types: an unnamed map withholds both
+    // ids and the assertion passes for the wrong reason. No space permission
+    // is named because `bulk-get` asks for none.
     const suffix = Math.random().toString(36).slice(2, 8);
     const rawKey = `marfa_k1_bulkget_a_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `bulkget-a-${suffix}`,
         source: `bulkget-a-${suffix}`,
-        role: "space_admin",
+        type_permissions: { "*": "read" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(rawKey, TEST_API_KEY_SALT),
       spaceA.id,
@@ -194,17 +198,18 @@ describe("POST /items/bulk-get", () => {
   });
 
   it("omits items whose type the caller cannot read (implicit denial)", async () => {
-    // A member key that can read core.note but not core.bookmark.
+    // A key that can read core.note but not core.bookmark. It carries no
+    // space, so the schema requires the operator flag; the type map is still
+    // the whole of what it can read.
     const suffix = Math.random().toString(36).slice(2, 8);
-    const rawKey = `marfa_k1_bulkget_member_${suffix}`;
+    const rawKey = `marfa_k1_bulkget_narrow_${suffix}`;
     await ctx.storage.keys.create(
       {
-        label: `bulkget-member-${suffix}`,
-        source: `bulkget-member-${suffix}`,
-        role: "member",
+        label: `bulkget-narrow-${suffix}`,
+        source: `bulkget-narrow-${suffix}`,
         type_permissions: { "core.note": "read" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: true,
       },
       hashApiKey(rawKey, TEST_API_KEY_SALT),
     );

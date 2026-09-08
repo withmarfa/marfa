@@ -3,7 +3,7 @@
  *
  * Sits AFTER `authMiddleware` in the middleware chain. After credential
  * resolution, for every non-GET request, if the credential's space is
- * `status: 'suspended'` and the credential is not `is_platform`, the
+ * `status: 'suspended'` and the credential is not `is_operator`, the
  * middleware rejects with HTTP 403 `space_suspended`. Reads pass
  * through regardless; platform-admin keys bypass so operators can
  * inspect a suspended space.
@@ -24,7 +24,7 @@
  *   - Space-less credentials (`apiKey.space_id === undefined`) —
  *     single-space self-hosts and the platform-admin bootstrap. No
  *     space means no per-space status.
- *   - `is_platform: true` credentials — operators MUST be able to write
+ *   - `is_operator: true` credentials — operators MUST be able to write
  *     to a suspended space to suspend it further, change quotas, or
  *     unsuspend it.
  *
@@ -96,7 +96,7 @@ export function spaceSuspensionMiddleware(storage: Storage) {
       return next();
     }
 
-    if (apiKey.is_platform) {
+    if (apiKey.is_operator) {
       return next();
     }
 

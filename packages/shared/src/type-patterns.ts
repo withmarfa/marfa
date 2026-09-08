@@ -268,12 +268,14 @@ export function typeAnswersSubtreeFilter(
 /**
  * What a credential may read, as a list query can express it.
  *
- * `allowed: undefined` means no restriction — an admin or space_admin, whose
- * space isolation is enforced separately. An empty array is the opposite:
- * nothing is visible. `excluded` subtracts from `allowed` under the ranking
- * `resolveTypePermission` uses, which is why the two travel together: a caller
- * that took the permitted list alone would fail open, and that is the defect
- * this shape exists to make unrepresentable rather than to guard against.
+ * `allowed: undefined` means no credential at all — bootstrap and the
+ * anonymous reads, and nothing else. Every authenticated caller arrives with a
+ * real list, because its permission map is the whole of what it may reach. An
+ * empty array is the opposite: nothing is visible. `excluded` subtracts from
+ * `allowed` under the ranking `resolveTypePermission` uses, which is why the
+ * two travel together: a caller that took the permitted list alone would fail
+ * open, and that is the defect this shape exists to make unrepresentable
+ * rather than to guard against.
  */
 export interface TypeFilter {
   allowed: string[] | undefined;

@@ -1195,8 +1195,8 @@ describe("tier on a system.* row", () => {
  * door's guard reddens that door rather than merely the suite.
  *
  * **Both purge doors are absent from that list on purpose**, and one case
- * says so: they are role-gated shut to a runtime credential, so there is
- * nothing here for provenance to decide. The bulk route's `update_tags`,
+ * says so: a runtime credential is refused at each door's own gate, so there
+ * is nothing here for provenance to decide. The bulk route's `update_tags`,
  * `update_tier` and `update_timestamp` arms are outside D64 and still reach
  * a sibling's rows; that is recorded as its own finding rather than being
  * quietly widened here.
@@ -1252,12 +1252,12 @@ describe("destroying a sibling's row (D64)", () => {
     expect(row?.state).toBe("active");
   });
 
-  it("closes both purge doors to an integration by role, before provenance", async () => {
-    // Not a provenance refusal, and worth a case saying so. The single-row
-    // door is `requireSpaceAdmin` and the bulk arm is `requireAdmin`, and a
-    // runtime credential is neither — so an integration never reaches the
-    // point where D64 would have an opinion. A guard there would be
-    // unreachable code no test could pin.
+  it("closes both purge doors to an integration at their own gates, before provenance", async () => {
+    // Not a provenance refusal, and worth a case saying so. Both doors ask
+    // for `space.item_purge` — the same act on one row or on many — and a
+    // runtime credential holds no space permission at all, so an integration
+    // never reaches the point where D64 would have an opinion. A guard there
+    // would be unreachable code no test could pin.
     //
     // This is the case that reddens if either door ever widens, which is
     // what makes leaving the guard out safe rather than merely tidy.
@@ -1376,7 +1376,11 @@ describe("destroying a sibling's row (D64)", () => {
         body: {
           label: `edger-${String(seq)}`,
           source: `edger-${String(seq++)}`,
-          role: "space_admin",
+          // Both maps are named because nothing is implied any more: an edge
+          // write is gated on write over the source item's type and over the
+          // edge type, and this key exists only to make that one edge.
+          type_permissions: { "core.note": "write" },
+          edge_permissions: { "parent-of": "write" },
         },
       },
     );
@@ -1467,7 +1471,7 @@ describe("destroying a sibling's row (D64)", () => {
         body: {
           label: `person-${String(seq++)}`,
           source: `person-${String(seq)}`,
-          role: "space_admin",
+          type_permissions: { "core.note": "write" },
         },
       },
     );

@@ -39,7 +39,7 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 /**
- * A member key holding write on `core.note` and nothing on any edge type.
+ * A key holding write on `core.note` and nothing on any edge type.
  * The type half of the dual gate passes, so anything that gets through is
  * the edge half being absent rather than the request being wrong.
  */
@@ -50,7 +50,7 @@ async function keyWithoutEdgePermissions(): Promise<string> {
     body: {
       label: `edge-door-${suffix}`,
       source: `edge-door-${suffix}`,
-      role: "member",
+      space_permissions: [],
       default_tier: "library",
       type_permissions: { "core.note": "write" },
       edge_permissions: {},
@@ -245,7 +245,7 @@ describe.each(DOORS)("$name", (door) => {
       body: {
         label: `edge-door-allowed-${suffix}`,
         source: `edge-door-allowed-${suffix}`,
-        role: "member",
+        space_permissions: [],
         default_tier: "library",
         type_permissions: { "core.note": "write" },
         edge_permissions: { about: "write" },

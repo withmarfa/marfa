@@ -5,10 +5,7 @@ import {
   MIN_PAGE_LIMIT,
 } from "../page-limits.js";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireSpacePermission,
-  requireSpaceAdmin,
-} from "../middleware/auth.js";
+import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -39,7 +36,7 @@ const listAuditRoute = createRoute({
   tags: ["Audit"],
   summary: "List audit log entries",
   description:
-    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Admin or space_admin: a space-scoped caller sees only its own space's entries, a platform admin sees every entry.",
+    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`: a space-bound caller sees only its own space's entries, a caller with no space binding sees every entry.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -103,7 +100,7 @@ const listAuditRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin or space_admin",
+      description: "Caller does not hold `space.audit_read`",
     },
   },
 });
@@ -113,16 +110,16 @@ export function auditRoutes(storage: Storage) {
 
   router.openapi(listAuditRoute, async (c) => {
     // Space-bounded, not platform-only: the single storage call below is
-    // filtered by the caller's own space, so a space admin reading its
-    // own space's trail stays inside its own data.
-    requireSpaceAdmin(c);
+    // filtered by the caller's own space, so a space-bound caller reading
+    // its own space's trail stays inside its own data.
+    requireAuth(c);
     requireSpacePermission(c, "space.audit_read");
     const { action, resource_type, resource_id, since, until, limit, cursor } =
       c.req.valid("query");
 
-    // Platform-admin keys (no `space_id`) read every row — preserves
-    // the self-hosted single-space operator view. Space-scoped keys
-    // read only their own space. Mirrors the `ItemStore.list`
+    // A credential with no `space_id` reads every row — preserves the
+    // self-hosted single-space operator view. A space-bound credential
+    // reads only its own space. Mirrors the `ItemStore.list`
     // admit-all-when-space-less pattern.
     const callerSpaceId = c.get("apiKey")?.space_id ?? null;
 

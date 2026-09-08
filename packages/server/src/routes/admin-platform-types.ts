@@ -30,7 +30,7 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireOperatorKey } from "../middleware/auth.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import type { Storage } from "../storage/interface.js";
 import { platformDrift } from "../storage/platform-drift.js";
@@ -78,7 +78,7 @@ const listDriftRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a platform admin",
+      description: "Caller is not the operator key",
     },
   },
 });
@@ -117,7 +117,7 @@ const removeDriftedTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a platform admin",
+      description: "Caller is not the operator key",
     },
     404: {
       content: {
@@ -170,7 +170,7 @@ export function adminPlatformTypeRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listDriftRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const ids = platformDrift();
     const types = await Promise.all(
       ids.map(async (id) => {
@@ -188,7 +188,7 @@ export function adminPlatformTypeRoutes(storage: Storage) {
   });
 
   router.openapi(removeDriftedTypeRoute, async (c) => {
-    requireAdmin(c);
+    requireOperatorKey(c);
     const { id } = c.req.valid("param");
 
     // Asked of this boot's derived set rather than of the row, and the

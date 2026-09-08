@@ -29,7 +29,7 @@ import { publish, publishEdge } from "../pubsub.js";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import type { ItemState, Tier } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireOperatorKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -315,7 +315,7 @@ export function adminArchiveRoutes(
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    const callerKey = requireAdmin(c);
+    const callerKey = requireOperatorKey(c);
     const { target_space_id: targetSpaceParam } = c.req.valid("query");
 
     const rawBody = await c.req.arrayBuffer();

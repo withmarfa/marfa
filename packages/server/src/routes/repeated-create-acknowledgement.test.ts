@@ -21,7 +21,12 @@
  * other device.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
+import {
+  generateId,
+  MarfaError,
+  ErrorCode,
+  SPACE_PERMISSIONS,
+} from "@withmarfa/shared";
 import type { TypePermission } from "@withmarfa/shared";
 import {
   createTestContext,
@@ -158,10 +163,10 @@ describe("a repeated item create", () => {
       {
         label: `ack-${suffix}`,
         source: `ack-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(mineKey, TEST_API_KEY_SALT),
       mine.id,
@@ -227,11 +232,16 @@ describe("a repeated edge create", () => {
 });
 
 describe("the gates an acknowledgement still runs", () => {
-  /** A space, and a space_admin key inside it. */
+  /**
+   * A space, and a key inside it that may write items.
+   *
+   * No space permission is named because none of these doors asks for one:
+   * `POST /items` is decided by the type map alone, and the quota the case
+   * below sets is written by the operator key.
+   */
   async function spaceWithKey(
     label: string,
     permissions: Record<string, TypePermission> = { "*": "write" },
-    role: "space_admin" | "member" = "space_admin",
   ): Promise<{ spaceId: string; key: string }> {
     const spaces = ctx.storage.spaces;
     if (!spaces) throw new Error("this test needs a space store");
@@ -242,10 +252,9 @@ describe("the gates an acknowledgement still runs", () => {
       {
         label: `${label}-${suffix}`,
         source: `${label}-${suffix}`,
-        role,
         type_permissions: permissions,
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(key, TEST_API_KEY_SALT),
       space.id,
@@ -557,11 +566,11 @@ describe("a repeated edge create under concurrency", () => {
       {
         label: `edgeack-${suffix}`,
         source: `edgeack-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         edge_permissions: { "*": "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(myKey, TEST_API_KEY_SALT),
       mine.id,

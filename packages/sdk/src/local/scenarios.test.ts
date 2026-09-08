@@ -974,11 +974,18 @@ describe("a schema refusal from the server (seam: online)", () => {
     // configuration, and reading the vocabulary again returns exactly what
     // this client already holds. Without the guard the engine would refresh
     // on every refusal for ever and never settle the write.
-    const space = await client.admin.spaces.create({ name: "strict-space" });
-    const minted = await client.admin.keys.create(space.id, {
+    // Creating a space and minting into it are instance-tier acts, so they go
+    // through the operator key rather than the space-bound credential the rest
+    // of this file works through.
+    const operator = new MarfaClient({
+      url: "http://localhost",
+      apiKey: fixture.operatorKey,
+      fetch: seam.fetch,
+    });
+    const space = await operator.admin.spaces.create({ name: "strict-space" });
+    const minted = await operator.admin.keys.create(space.id, {
       label: "strict-space-admin",
       source: "sdk-test-local",
-      role: "space_admin",
     });
     const spaceClient = new MarfaClient({
       url: "http://localhost",
@@ -1338,13 +1345,19 @@ describe("a term found online (seam: online, then offline)", () => {
   ] as const;
 
   /** Named so the refill scenario can reopen the same file after closing
-   *  it, which is the only way to reach the open-time index repair. */
+   *  it, which is the only way to reach the open-time index repair.
+   *
+   *  The identity names the fixture's own space rather than `SINGLE_SPACE`,
+   *  and only this group needs it. Type registration is space-keyed, so a
+   *  store claiming a server with no space reads a different overlay from the
+   *  one `client.types.register` wrote into, and the subtree test below then
+   *  resolves against a registry that never saw the declared parentage. */
   const openSearchStore = (): Promise<LocalStore> =>
     openLocalStore({
       path: join(searchDir, "store.db"),
       identity: {
         origin: "http://localhost",
-        spaceId: SINGLE_SPACE,
+        spaceId: fixture.spaceId,
         accountId: SINGLE_ACCOUNT,
       },
     });

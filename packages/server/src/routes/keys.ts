@@ -1,30 +1,32 @@
 import { randomBytes } from "node:crypto";
+import type { ApiKey, SpacePermission } from "@withmarfa/shared";
 import { createRoute, z } from "@hono/zod-openapi";
 import {
   MarfaError,
   ErrorCode,
   isValidId,
-  canGrantRole,
-  parseMarfaRole,
+  SPACE_PERMISSIONS,
+  isSpacePermission,
 } from "@withmarfa/shared";
-import type { MarfaRole } from "@withmarfa/shared";
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  firstUncoveredExtension,
   firstUncoveredScope,
   refuseUnclampableExtensions,
+  scopesHeldByMaps,
   type RequestedReach,
 } from "../auth/mint-clamp.js";
 import {
   requireSpacePermission,
-  requireSpaceAdmin,
+  hasOperatorAuthority,
+  requireAuth,
   hashApiKey,
   isReservedCredentialSource,
   RESERVED_CREDENTIAL_SOURCE_PREFIXES,
 } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
-import { RoleRequestSchema, RoleResponseSchema } from "./role-schema.js";
 import { KeyResponseSchema } from "./_schemas.js";
 import {
   createOpenAPIRouter,
@@ -72,15 +74,20 @@ const KeyListItemSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  role: z.string(),
-  default_tier: z.enum(["library", "feed"]),
-  is_platform: z.boolean(),
-  scope_enforced: z
-    .boolean()
+  space_permissions: z
+    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
-      "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API.",
+      "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
     ),
+  oauth_client_id: z
+    .string()
+    .optional()
+    .describe(
+      "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
+    ),
+  default_tier: z.enum(["library", "feed"]),
+  is_operator: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -111,7 +118,8 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. A signed-in app must hold `space.keys`, and the key it mints may not reach past what its own grant covers — a request for more is refused naming the scope. Such a key is `scope_enforced`: its permission maps decide what it reaches and its role does not override them. Omitting the maps mints a key matching the session's own reach rather than an empty one. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
+    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: no authentication, and the key it mints is the operator key.",
+
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -123,9 +131,13 @@ const createKeyRoute = createRoute({
               .string()
               .min(1, "source display name is required")
               .max(200),
-            role: RoleRequestSchema.optional(),
+            space_permissions: z
+              .array(
+                z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]),
+              )
+              .optional(),
             default_tier: z.enum(["library", "feed"]).optional(),
-            is_platform: z.boolean().optional(),
+            is_operator: z.boolean().optional(),
             // Passthrough so the handler can reject it explicitly. The
             // new key's space is always the caller's; accepting the
             // field and stripping it left callers believing they had
@@ -146,6 +158,9 @@ const createKeyRoute = createRoute({
               .record(z.string(), z.enum(["read", "write"]))
               .optional(),
             metadata_permissions: z
+              .record(z.string(), z.enum(["read", "write"]))
+              .optional(),
+            profile_permissions: z
               .record(z.string(), z.enum(["read", "write"]))
               .optional(),
           }),
@@ -169,7 +184,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Body carried a `space_id`, or the mint would produce a `space_admin` key with no space",
+        "Body carried a `space_id`. A key is minted into its creator's space, so the space is never named in the body.",
     },
     401: {
       content: {
@@ -186,7 +201,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Caller is not an admin or space_admin, requested a role above its own, or is a signed-in app that was not granted `space.keys` or asked for reach its grant does not cover. The last two name the missing scope in `details.required_scope`.",
+        "Caller does not hold `space.keys`, asked for reach its own credential does not cover, or asked to mint across the instance tier in either direction. A missing permission is named in `details.required_scope`.",
     },
   },
 });
@@ -198,7 +213,7 @@ const listKeysRoute = createRoute({
   tags: ["Keys"],
   summary: "List API keys",
   description:
-    "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Admin or space_admin only.",
+    "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -229,7 +244,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Admin or space_admin only.",
+    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -256,8 +271,26 @@ const revokeKeyRoute = createRoute({
   },
 });
 
-// Passthrough — immutable fields (source, role) are rejected explicitly in the
-// handler with a readable error instead of a generic "unrecognized keys".
+/**
+ * **The operator key reaches these doors by being the operator key**, and holds
+ * no space permission to be checked. Key management is instance-tier work when
+ * the operator does it — it mints the credential a space works through, and it
+ * is the only caller that can see the keys of every space — so asking a space
+ * permission of it would be asking the wrong question, and the only answer it
+ * could ever give is no, because running the instance is deliberately not
+ * expressible as a permission.
+ *
+ * Everything else is held to `space.keys`, and the space fence on each door is
+ * separate: it keys on the caller's space binding, which is what says *which*
+ * space a credential may manage keys in.
+ */
+function requireSpaceKeysOrOperator(c: Context<AppEnv>): void {
+  if (hasOperatorAuthority(requireAuth(c))) return;
+  requireSpacePermission(c, "space.keys");
+}
+
+// Passthrough — `source` is immutable and rejected explicitly in the handler
+// with a readable error instead of a generic "unrecognized keys".
 const UpdateKeyBodySchema = z.object({
   label: z.string().min(1).optional(),
   default_tier: z.enum(["library", "feed"]).optional(),
@@ -271,23 +304,33 @@ const UpdateKeyBodySchema = z.object({
   metadata_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
+  profile_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
+  space_permissions: z
+    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
+    .optional(),
   source: z.unknown().optional(),
-  role: z.unknown().optional(),
 });
 
 const KeyDetailSchema = z.object({
   id: z.string(),
   label: z.string(),
   source: z.string(),
-  role: RoleResponseSchema,
-  default_tier: z.enum(["library", "feed"]),
-  is_platform: z.boolean(),
-  scope_enforced: z
-    .boolean()
+  space_permissions: z
+    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
     .optional()
     .describe(
-      "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API.",
+      "The space permissions this credential holds, as the literals themselves. Omitted on a create request takes the creator's whole set; anything named is honoured and clamped to what the creator holds.",
     ),
+  oauth_client_id: z
+    .string()
+    .optional()
+    .describe(
+      "The registered client that minted this key, when a signed-in app did. Absent on a key a person or another key created directly.",
+    ),
+  default_tier: z.enum(["library", "feed"]),
+  is_operator: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
@@ -314,7 +357,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` and `role` are immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change them. Admin or space_admin only.",
+    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -466,6 +509,51 @@ function refuseSessionReachAboveGrant(
   }
 }
 
+/**
+ * Refuse a key-minted key that reaches past the key that minted it.
+ *
+ * The sibling of `refuseSessionReachAboveGrant`, asking one question of a
+ * different carrier: a session holds scopes, a key holds maps, and
+ * `scopesHeldByMaps` projects the second into the first so both go through
+ * `grantCoversScope`.
+ *
+ * **The operator key is exempt because it has nothing to be measured against.**
+ * Running the instance is fenced outside the permission model, so its maps are
+ * empty by construction; measuring against them would refuse every mint it
+ * makes. What it may mint is bounded instead by the rule one gate up — through
+ * this route it mints another operator key and nothing else.
+ *
+ * Extensions are compared directly rather than refused. A session cannot be
+ * asked about a namespace because no scope names one; a key holds a map of the
+ * same shape, so the comparison is a lookup.
+ */
+function refuseKeyReachAboveCreator(
+  creator: ApiKey,
+  requested: RequestedReach,
+): void {
+  if (hasOperatorAuthority(creator)) return;
+
+  const namespace = firstUncoveredExtension(
+    creator.extension_permissions,
+    requested.extension_permissions,
+  );
+  if (namespace !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `This credential does not hold the ${namespace} extension namespace, so it cannot give a key reach it does not hold itself.`,
+    );
+  }
+
+  const uncovered = firstUncoveredScope(scopesHeldByMaps(creator), requested);
+  if (uncovered !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `This credential does not hold ${uncovered}, so it cannot give a key reach it does not hold itself.`,
+      { required_scope: uncovered },
+    );
+  }
+}
+
 // Router
 // ---------------------------------------------------------------------------
 
@@ -475,18 +563,21 @@ export function keyRoutes(storage: Storage, salt: string) {
   router.openapi(createKeyRoute, async (c) => {
     const isBootstrap = c.get("isBootstrap");
     if (!isBootstrap) {
-      requireSpaceAdmin(c);
+      requireAuth(c);
       // A session may mint, if it was granted the permission to and the key it
-      // asks for does not reach past the session's own grant. Role still caps
-      // what can be granted; this caps what a granted role may be spent on.
+      // asks for does not reach past the session's own grant. Holding
+      // `space.keys` says a credential may mint; the clamp below says how far
+      // what it mints may reach.
       //
       // The blanket refusal that used to stand here was doing two jobs at once
       // — withholding the permission, and preventing the escalation a mint
       // makes possible. Both are still done, by two things that can be reasoned
-      // about separately: `requireSpacePermission` here, and the breadth clamp plus
-      // `scope_enforced` below. Removing one without the others is the mistake
-      // to avoid; see `auth/mint-clamp.ts`.
-      requireSpacePermission(c, "space.keys");
+      // about separately: `requireSpacePermission` here, and the breadth clamp
+      // below. Removing one without the other is the mistake to avoid; see
+      // `auth/mint-clamp.ts`.
+      //
+      requireAuth(c);
+      requireSpaceKeysOrOperator(c);
     }
 
     const body = c.req.valid("json");
@@ -511,33 +602,11 @@ export function keyRoutes(storage: Storage, salt: string) {
     // concurrent unauthenticated POST /keys against a fresh DB both pass
     // the middleware gate (which reads the sentinel non-atomically); only
     // the caller whose INSERT-ON-CONFLICT-DO-NOTHING returns a row gets to
-    // mint. Everyone else falls through to requireAdmin and receives 401.
+    // mint. Everyone else falls through to requireOperatorKey and receives 401.
     if (isBootstrap) {
       const claimed = await storage.settings.claim("bootstrapped", "true");
       if (!claimed) {
         throw new MarfaError(ErrorCode.UNAUTHORIZED, "Authentication required");
-      }
-    }
-
-    // Role is a privilege axis, so a mint may travel sideways or downwards
-    // from the caller's own rank but never upwards — otherwise any principal
-    // allowed to mint at all could manufacture a credential outranking the
-    // one it presented, and the role gates guarding every other route would
-    // be decorative. Bootstrap is exempted: it seeds the first admin on a
-    // server that has no credential to compare against.
-    // `parseMarfaRole` rather than the raw body value: the request schema
-    // still accepts the word this rename is retiring, and nothing past this
-    // line should ever see it.
-    const role: MarfaRole = isBootstrap
-      ? "instance_admin"
-      : parseMarfaRole(body.role, "member");
-    if (!isBootstrap) {
-      const callerRole = c.get("apiKey")?.role;
-      if (!callerRole || !canGrantRole(callerRole, role)) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `A ${callerRole ?? "unknown"} credential cannot create a key with role "${role}".`,
-        );
       }
     }
 
@@ -546,134 +615,125 @@ export function keyRoutes(storage: Storage, salt: string) {
     // **The default for a session is a key like the session.** An OAuth caller
     // that names no permission maps gets the ones its own grant projects, which
     // the bearer middleware has already computed and hung on the synthetic key.
-    // The alternative default is `{}`, and on a `scope_enforced` key that means
-    // a credential that can read nothing — so "mint me a key" would hand back
+    // The alternative default is `{}`, which under one permission model is a
+    // credential that can read nothing — so "mint me a key" would hand back
     // something inert, and the only way to get a working one would be to
     // enumerate by hand what the session already holds.
-    //
-    // An API-key caller keeps `{}`, exactly as before: its key is not
-    // scope-enforced, so its role decides, and inheriting the caller's maps
-    // would silently widen the common `role: "member"` mint.
     const callerGrant = c.get("oauthGrant");
-    const sessionKey = c.get("apiKey");
+    const callerKey = c.get("apiKey");
     const mintingFromSession = !isBootstrap && c.get("authType") === "oauth";
+
+    // **Through this route the operator key mints another operator key and
+    // nothing else.** The instance tier is the absence of a space binding, and
+    // a credential's space is always its creator's, so an operator caller has
+    // no space to hand down: a key it minted here that was not itself an
+    // operator key would be space-less and ordinary, which is the one shape
+    // the row constraint refuses. Everything space-bound goes through
+    // `POST /admin/spaces/{id}/keys`, which names the space in the path.
+    const callerIsOperator =
+      isBootstrap || c.get("apiKey")?.is_operator === true;
+    if (!isBootstrap && callerIsOperator && body.is_operator === false) {
+      throw new MarfaError(
+        ErrorCode.VALIDATION_ERROR,
+        "An operator key mints another operator key here, or a space key through POST /admin/spaces/{id}/keys. It has no space of its own to give a key minted from it.",
+      );
+    }
+    if (!isBootstrap && !callerIsOperator && body.is_operator === true) {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        "Only an operator key can mint another. Running the instance sits outside the permission model, so nothing in a permission set reaches it.",
+      );
+    }
+
+    // **The creator is the ceiling, and omitting the list takes the whole of
+    // it.** A key gets what its creator holds unless the request names less,
+    // and anything it names is honoured whatever the creator holds — which
+    // together mean a key can be narrowed at the moment of minting and can
+    // never be widened by one.
+    //
+    // The bootstrap key takes nothing, because it is the operator key: the
+    // instance tier is fenced outside the model rather than expressed as a
+    // full set inside it.
+    const callerHeldSpacePermissions: SpacePermission[] = isBootstrap
+      ? []
+      : mintingFromSession
+        ? (c.get("oauthGrant")?.scopes ?? []).filter(isSpacePermission)
+        : (c.get("apiKey")?.space_permissions ?? []);
+    const requestedSpacePermissions =
+      body.space_permissions?.filter(isSpacePermission);
+    if (requestedSpacePermissions !== undefined) {
+      const beyond = requestedSpacePermissions.find(
+        (permission) => !callerHeldSpacePermissions.includes(permission),
+      );
+      if (beyond !== undefined) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
+          { required_scope: beyond },
+        );
+      }
+    }
+    const spacePermissions =
+      requestedSpacePermissions ?? callerHeldSpacePermissions;
+
     const requested = {
       type_permissions: body.type_permissions,
       edge_permissions: body.edge_permissions,
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
     };
-    // All four families. The other three are measured by the clamp whether or
-    // not the derive path is on, so this fourth term is not what closed the
-    // unmeasured-extension hole — `refuseUnclampableExtensions` is. What it
-    // does is stop a body naming only `extension_permissions: {}` from taking
-    // the derive path, which would be a narrower key than asked for rather
-    // than a wider one. Kept because the condition should read all four
-    // families or it invites the next reader to add a fifth and forget.
-    const namesNoReach =
-      requested.type_permissions === undefined &&
-      requested.edge_permissions === undefined &&
-      requested.metadata_permissions === undefined &&
-      requested.extension_permissions === undefined;
-
+    // **The ceiling is asked of every creator, not only of a session.** A
+    // session is measured against its granted scopes; a key is measured against
+    // the literals its own maps confer, which is the same question through the
+    // same comparison. Bootstrap is the exception the design names: it is a
+    // seed, with no creator above it to be bounded by.
+    //
     // Checked before the derive below, because the derived case cannot exceed
-    // anything: it is a copy of what the session already holds.
+    // anything: it is a copy of what the creator already holds.
     if (mintingFromSession) {
       refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
+    } else if (!isBootstrap && callerKey) {
+      refuseKeyReachAboveCreator(callerKey, requested);
     }
 
-    // **A session mints at `member` and no higher, and this is not the same
-    // question as `canGrantRole`.** That one asks whether the role travels up
-    // the lattice from the caller's own, and a `space_admin` user's app asking
-    // for `space_admin` travels sideways, which it permits.
+    // **A body naming no reach at all takes the creator's whole set; a body
+    // naming any family gets only what it named.** One rule, and the second
+    // half of it is deliberate: naming a narrow type map and receiving the
+    // creator's edges for free would be a key wider than the request, which is
+    // a different failure from a key wider than the creator and just as
+    // unwanted. Asking all five families is what makes "named nothing"
+    // unambiguous.
     //
-    // The axis it does not measure is the one that matters here. The session's
-    // own principal is scope-enforced: its effective authority is its
-    // permission maps, not its rank. A key carrying rank is therefore wider
-    // than the session that asked for it, because rank gates
-    // (`hasSpaceAdminAuthority`) read the role and never consult
-    // `scope_enforced` — audit, credentials, connections, space config and the
-    // schema doors all open on rank alone. And nothing measures that: no scope
-    // expresses a role, so the clamp above has nothing to compare.
-    //
-    // Transiently the session already reaches those doors, which is why this
-    // is about durability rather than breadth. A minted key outlives the grant
-    // and survives the app being revoked, with no scope literal on the row to
-    // say what it was ever allowed to be. `member` keeps the key inside the
-    // permission-map system, which is the only place the clamp can hold it.
-    if (mintingFromSession && role !== "member") {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `A signed-in app can only mint a key with role "member". A higher role carries authority no scope expresses, so the key could not be held to the app's grant once minted.`,
-      );
-    }
-
-    const derivedFromSession = mintingFromSession && namesNoReach;
-    const typePermissions = derivedFromSession
-      ? (sessionKey?.type_permissions ?? {})
-      : (body.type_permissions ?? {});
-    const edgePermissions = derivedFromSession
-      ? (sessionKey?.edge_permissions ?? {})
-      : body.edge_permissions;
-    const metadataPermissions = derivedFromSession
-      ? (sessionKey?.metadata_permissions ?? {})
-      : body.metadata_permissions;
-    // Never derived, because no scope expresses an extension grant: the
-    // synthetic key carries `{}` and there is nothing for a session to pass on.
-    const extensionPermissions = derivedFromSession
-      ? {}
-      : body.extension_permissions;
+    // Deriving is what stops the other shape — a credential holding every
+    // permission in a space and unable to read a row of it, which is what an
+    // empty default produced and what the space mint was already fixed for.
+    // Bootstrap derives from nothing, because the operator key holds nothing
+    // to give.
+    const namesNoReach =
+      body.type_permissions === undefined &&
+      body.edge_permissions === undefined &&
+      body.metadata_permissions === undefined &&
+      body.extension_permissions === undefined &&
+      body.profile_permissions === undefined;
+    const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
+    const typePermissions =
+      creator?.type_permissions ?? body.type_permissions ?? {};
+    const edgePermissions =
+      creator?.edge_permissions ?? body.edge_permissions ?? {};
+    const metadataPermissions =
+      creator?.metadata_permissions ?? body.metadata_permissions ?? {};
+    const profilePermissions =
+      creator?.profile_permissions ?? body.profile_permissions ?? {};
+    const extensionPermissions =
+      creator?.extension_permissions ?? body.extension_permissions ?? {};
 
     const rawKey = generateRawKey();
     const keyHash = hashApiKey(rawKey, salt);
 
-    // is_platform escalation requires the caller to already be platform.
-    // Bootstrap is exempted — the seed key is implicitly platform.
-    const callerIsPlatform = c.get("apiKey")?.is_platform === true;
-    let isPlatform: boolean;
-    if (isBootstrap) {
-      isPlatform = body.is_platform ?? true;
-    } else {
-      isPlatform = callerIsPlatform && body.is_platform === true;
-    }
-
+    // The new key's space is always the caller's, and an operator caller has
+    // none to give. The row constraint holds the pair together: space-less
+    // when and only when the key is an operator key.
     const newKeySpaceId = c.get("apiKey")?.space_id;
-
-    // `space_admin` means "admin inside a space", but the new key inherits
-    // the caller's space and a space-less caller hands it none. NULL space
-    // is the platform-tier signal everywhere below: the RLS middleware skips
-    // its role-switch wrapper and the storage layer drops its
-    // `WHERE space_id = ?` predicate, while the role itself bypasses the
-    // permission maps. The result reads and writes across every space behind
-    // a label that promises a boundary, so the mint refuses.
-    //
-    // Unconditional rather than scoped to multi-space deployments. Gating on
-    // the auth mode would put a security rule behind an env var that fails
-    // open when unset or misspelled, and there is no independent signal to
-    // lean on: the hosted-only wiring (`storage.users`) is built from that
-    // same variable, and asking whether space rows exist costs an unbounded
-    // scan on the mint path. Refusing outright needs no signal and buys an
-    // invariant worth stating plainly: every `space_admin` key has a space.
-    //
-    // `member` is deliberately not caught, despite inheriting the same NULL
-    // space. It is this route's default role and the only shape expressing
-    // "platform reach, narrowed by `type_permissions`" (`admin` ignores those
-    // outright), and a caller refused it can ask for `role: "instance_admin"` here
-    // instead, for strictly more authority. Blocking it would move callers to
-    // a wider credential, not a narrower one; the audit row below marks the
-    // tier instead.
-    //
-    // Safe under bootstrap only because `role` is hard-forced to
-    // "instance_admin"
-    // above. Were bootstrap ever to honor `body.role`, the first
-    // unauthenticated request to a fresh instance could ask for
-    // `space_admin`, and this check would be all that stood in front of it.
-    if (!newKeySpaceId && role === "space_admin") {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        'Cannot mint a `space_admin` key from a credential that has no space: the new key would inherit no space either, so its authority would not stop at the boundary its role names. Use `POST /admin/spaces/{id}/keys` to bind the key to a specific space, or ask for `role: "instance_admin"` if a platform-tier key is what you want.',
-      );
-    }
 
     // Resolved ahead of the write, so nothing between the insert and the
     // response can fail and take the plaintext with it.
@@ -683,29 +743,31 @@ export function keyRoutes(storage: Storage, salt: string) {
       {
         label: body.label.trim(),
         source: body.source.trim(),
-        role: role,
         default_tier: body.default_tier,
-        is_platform: isPlatform,
+        is_operator: callerIsOperator,
+        space_permissions: spacePermissions,
         type_permissions: typePermissions,
         extension_permissions: extensionPermissions,
         edge_permissions: edgePermissions,
         metadata_permissions: metadataPermissions,
-        // Set from who is minting, never from the body. A key minted through a
-        // session is held to the maps above rather than to its role, which is
-        // what keeps the clamp meaningful past the moment of minting.
-        scope_enforced: mintingFromSession,
+        profile_permissions: profilePermissions,
+        // Set from who is minting, never from the body. A key an app made
+        // belongs to that app: the keys page groups it there, and revoking the
+        // app offers to revoke it.
+        oauth_client_id: mintingFromSession
+          ? c.get("oauthGrant")?.clientId
+          : undefined,
       },
       keyHash,
       newKeySpaceId,
     );
 
-    // A key with no space is platform tier: the RLS middleware skips its
-    // wrapper for it and the storage layer drops its space predicate. That
-    // is a legitimate thing to mint, but it is not what `role: "member"`
-    // looks like at a glance, so the audit row records the tier and an
-    // operator can enumerate every such credential later. Derived from the
-    // stored space alone rather than from how the instance is configured,
-    // so the trail stays accurate whatever the deployment shape.
+    // A key with no space is instance tier: the RLS middleware skips its
+    // wrapper for it and the storage layer drops its space predicate. Only the
+    // operator key is minted that way, and the audit row records the tier so
+    // every such credential can be enumerated later. Derived from the stored
+    // space alone rather than from how the instance is configured, so the
+    // trail stays accurate whatever the deployment shape.
     const platformTierMint = !newKeySpaceId;
 
     void storage.audit.log({
@@ -724,14 +786,15 @@ export function keyRoutes(storage: Storage, salt: string) {
         key: rawKey,
         label: stored.label,
         source: stored.source,
-        role: stored.role,
         default_tier: stored.default_tier,
-        is_platform: stored.is_platform,
-        scope_enforced: stored.scope_enforced,
+        is_operator: stored.is_operator,
+        space_permissions: stored.space_permissions,
+        oauth_client_id: stored.oauth_client_id,
         type_permissions: stored.type_permissions,
         extension_permissions: stored.extension_permissions,
         edge_permissions: stored.edge_permissions,
         metadata_permissions: stored.metadata_permissions,
+        profile_permissions: stored.profile_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
       },
@@ -740,13 +803,12 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(listKeysRoute, async (c) => {
-    // A space-bound caller sees only its own space's keys; only an
-    // unbound credential sees all. The fence keys on the space binding,
-    // not on the role: `POST /admin/spaces/{id}/keys` mints a
-    // space-bound `admin`, and a role-keyed fence would hand that
-    // credential every other space's key inventory.
-    const key = requireSpaceAdmin(c);
-    requireSpacePermission(c, "space.keys");
+    // A space-bound caller sees only its own space's keys; only an unbound
+    // credential sees all. The fence keys on the space binding, which is the
+    // only thing that says which space a credential belongs to — holding
+    // `space.keys` says nothing about where.
+    const key = requireAuth(c);
+    requireSpaceKeysOrOperator(c);
     const all = await storage.keys.list();
     const visible = key.space_id
       ? all.filter((k) => k.space_id === key.space_id)
@@ -755,17 +817,16 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(revokeKeyRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
-    requireSpacePermission(c, "space.keys");
+    const key = requireAuth(c);
+    requireSpaceKeysOrOperator(c);
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid key ID");
     }
 
-    // 404 not 403 — cross-space probes must not enumerate key ids.
-    // Keyed on the space binding rather than the role, so a space-bound
-    // `admin` is fenced to its own space exactly like a space_admin.
+    // 404 not 403 — cross-space probes must not enumerate key ids. Keyed on
+    // the space binding, like the listing above.
     if (key.space_id) {
       const target = await storage.keys.get(id);
       if (target?.space_id !== key.space_id) {
@@ -790,8 +851,8 @@ export function keyRoutes(storage: Storage, salt: string) {
   });
 
   router.openapi(updateKeyRoute, async (c) => {
-    const key = requireSpaceAdmin(c);
-    requireSpacePermission(c, "space.keys");
+    const key = requireAuth(c);
+    requireSpaceKeysOrOperator(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
@@ -803,12 +864,6 @@ export function keyRoutes(storage: Storage, salt: string) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
         "`source` is immutable after creation — it is baked into item provenance. Revoke and issue a new key instead.",
-      );
-    }
-    if ("role" in body) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "`role` is immutable after creation for security reasons. Revoke and issue a new key instead.",
       );
     }
 
@@ -828,13 +883,43 @@ export function keyRoutes(storage: Storage, salt: string) {
     // the caller's space rather than only the ones the session minted. So a
     // session refused a wide key at the mint could have widened an existing
     // one instead — including a key it did not create.
+    //
+    // Asked of every editor rather than only of a session, for the reason the
+    // mint states: a key holding `space.keys` and read on one type is an
+    // ordinary credential now, and nothing about holding the permission to
+    // edit says how far what it edits may reach.
+    const requestedReach = {
+      type_permissions: body.type_permissions,
+      edge_permissions: body.edge_permissions,
+      metadata_permissions: body.metadata_permissions,
+      extension_permissions: body.extension_permissions,
+    };
     if (c.get("authType") === "oauth") {
-      refuseSessionReachAboveGrant(c.get("oauthGrant")?.scopes ?? [], {
-        type_permissions: body.type_permissions,
-        edge_permissions: body.edge_permissions,
-        metadata_permissions: body.metadata_permissions,
-        extension_permissions: body.extension_permissions,
-      });
+      refuseSessionReachAboveGrant(
+        c.get("oauthGrant")?.scopes ?? [],
+        requestedReach,
+      );
+    } else {
+      refuseKeyReachAboveCreator(key, requestedReach);
+    }
+
+    // **The space permissions are clamped here too, and were not.** They are
+    // editable through this door like any other family, so a key holding one
+    // permission could have given itself the other ten.
+    const requestedSpacePermissions =
+      body.space_permissions?.filter(isSpacePermission);
+    if (requestedSpacePermissions !== undefined && !hasOperatorAuthority(key)) {
+      const held = key.space_permissions ?? [];
+      const beyond = requestedSpacePermissions.find(
+        (permission) => !held.includes(permission),
+      );
+      if (beyond !== undefined) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
+          { required_scope: beyond },
+        );
+      }
     }
 
     const updated = await storage.keys.update(id, {
@@ -844,6 +929,8 @@ export function keyRoutes(storage: Storage, salt: string) {
       extension_permissions: body.extension_permissions,
       edge_permissions: body.edge_permissions,
       metadata_permissions: body.metadata_permissions,
+      space_permissions: requestedSpacePermissions,
+      profile_permissions: body.profile_permissions,
     });
 
     void storage.audit.log({
@@ -854,7 +941,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       resource_type: "key",
       resource_id: id,
       details: {
-        fields: Object.keys(body).filter((k) => k !== "source" && k !== "role"),
+        fields: Object.keys(body).filter((k) => k !== "source"),
       },
     });
 
@@ -863,10 +950,10 @@ export function keyRoutes(storage: Storage, salt: string) {
         id: updated.id,
         label: updated.label,
         source: updated.source,
-        role: updated.role,
         default_tier: updated.default_tier,
-        is_platform: updated.is_platform,
-        scope_enforced: updated.scope_enforced,
+        is_operator: updated.is_operator,
+        space_permissions: updated.space_permissions,
+        oauth_client_id: updated.oauth_client_id,
         type_permissions: updated.type_permissions,
         extension_permissions: updated.extension_permissions,
         edge_permissions: updated.edge_permissions,

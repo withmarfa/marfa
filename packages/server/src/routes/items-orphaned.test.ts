@@ -50,6 +50,7 @@ import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 import { resolveOrphanScopeForOwnWrite, withOrphanState } from "./_orphaned.js";
 import { initEventLog } from "../pubsub.js";
 import type { ApiKey, IntegrationManifest, Item } from "@withmarfa/shared";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 let homeSpace: string;
@@ -165,7 +166,6 @@ async function mintRuntimeKey(
     {
       label: `orphan-runtime-${suffix}`,
       source: `orphan-runtime-${suffix}`,
-      role: "member",
       type_permissions: { "core.note": "write", "core.event": "write" },
       default_tier: "library",
       connection_id: connectionId,
@@ -185,9 +185,15 @@ async function mintSpaceKey(spaceId: string, label: string): Promise<string> {
     {
       label,
       source: `orphan-space-${suffix}`,
-      role: "instance_admin",
-      type_permissions: {},
+      space_permissions: [...SPACE_PERMISSIONS],
+      // The rank this fixture carried admitted it past all four maps, so
+      // each one has to say what the rank granted silently.
+      type_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
+      extension_permissions: { "*": "write" },
       default_tier: "library",
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,
@@ -232,9 +238,7 @@ beforeAll(async () => {
   // The default bootstrap leaves the event log unwired, and the replay half
   // of the stream contract needs `publish()` to append something to replay.
   initEventLog(ctx.storage.eventLog);
-  const admin = (await ctx.storage.keys.list()).find(
-    (k) => k.role === "instance_admin",
-  );
+  const admin = (await ctx.storage.keys.list()).find((k) => k.is_operator);
   if (!admin) throw new Error("admin key not found in test ctx");
   adminKeyId = admin.id;
 
@@ -889,9 +893,12 @@ describe("the remaining write paths that echo an item back", () => {
       {
         label: "integration:acme/orphan-gone",
         source: "integration:acme/orphan-gone",
-        role: "instance_admin",
-        type_permissions: {},
+        space_permissions: [...SPACE_PERMISSIONS],
+        // The rank this fixture carried admitted it past its own map, so the
+        // map has to say what the rank granted silently.
+        type_permissions: { "*": "write" },
         default_tier: "library",
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
       homeSpace,
@@ -1165,7 +1172,7 @@ describe("the single-space self-host shape", () => {
 
   it("answers for space-less rows against space-less connections", async () => {
     const admin = (await selfHost.storage.keys.list()).find(
-      (k) => k.role === "instance_admin",
+      (k) => k.is_operator,
     );
     if (!admin) throw new Error("admin key not found");
 
@@ -1208,7 +1215,6 @@ describe("the single-space self-host shape", () => {
         {
           label: `selfhost-runtime-${suffix}`,
           source: `selfhost-runtime-${suffix}`,
-          role: "member",
           type_permissions: { "core.note": "write" },
           default_tier: "library",
           connection_id: connectionId,

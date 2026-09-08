@@ -39,8 +39,10 @@ describe("keys.revoke", () => {
       {
         label: `affected-rows ${suffix}`,
         source: `affected-rows-${suffix}`,
-        role: "member",
         type_permissions: {},
+        // Space-less and operator go together: the row constraint holds the
+        // pair, so a key with no space cannot be anything else.
+        is_operator: true,
       },
       hashApiKey(`marfa_k1_affected_rows_${suffix}`, TEST_API_KEY_SALT),
       undefined,

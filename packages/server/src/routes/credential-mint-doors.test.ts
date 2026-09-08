@@ -36,6 +36,7 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -60,8 +61,9 @@ async function mintSpaceAdmin(spaceId: string): Promise<string> {
     {
       label: "mint-door-space-admin",
       source: `mint-door-${Math.random().toString(36).slice(2, 10)}`,
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,
@@ -69,9 +71,9 @@ async function mintSpaceAdmin(spaceId: string): Promise<string> {
   return raw;
 }
 
-/** Sign up + verify + sign in; returns the session cookie. Hosted
- *  sign-up provisions the account as space_admin, which is exactly the
- *  rank the console door's ceiling has to hold at. */
+/** Sign up + verify + sign in; returns the session cookie. The first person
+ *  in a space holds all of it, which is exactly the ceiling the console
+ *  door's mint has to clamp to. */
 async function signInAndCookie(email: string): Promise<string> {
   const password = "correct horse battery";
   await request(ctx.app, "POST", "/auth/sign-up/email", {
@@ -138,7 +140,7 @@ const NO_CALLER_SOURCE: Record<string, string> = {
 
 const DOORS: MintDoor[] = [
   {
-    name: "POST /keys — role travels down the lattice, space is inherited",
+    name: "POST /keys — a mint is clamped to the creator, space is inherited",
     specRoute: "post /keys",
     forgedSource: async () => {
       const spaceId = `t-forge-${Math.random().toString(36).slice(2, 10)}`;
@@ -148,7 +150,6 @@ const DOORS: MintDoor[] = [
         body: {
           label: "forged",
           source: `oauth:${"c".repeat(8)}`,
-          role: "member",
         },
       });
       expect(res.status).toBeGreaterThanOrEqual(400);
@@ -157,45 +158,39 @@ const DOORS: MintDoor[] = [
       const spaceId = `t-mint-${Math.random().toString(36).slice(2, 10)}`;
       const spaceAdmin = await mintSpaceAdmin(spaceId);
 
-      // Over the ceiling: a space_admin asking for admin rank.
-      const escalate = await request(ctx.app, "POST", "/keys", {
-        key: spaceAdmin,
-        body: { label: "up", source: "mint-up", role: "instance_admin" },
-      });
-      expect(escalate.status).toBeGreaterThanOrEqual(400);
-
       // Over the ceiling: naming a space — binding is inherited, never chosen.
       const crossSpace = await request(ctx.app, "POST", "/keys", {
         key: spaceAdmin,
         body: {
           label: "aim",
           source: "mint-aim",
-          role: "member",
           space_id: "some-other-space",
         },
       });
       expect(crossSpace.status).toBeGreaterThanOrEqual(400);
 
-      // Over the ceiling: claiming the platform flag without holding it.
+      // Over the ceiling: claiming the operator flag without holding it.
+      // Refused outright rather than coerced, because running the instance
+      // sits outside the permission model and nothing in a permission set
+      // reaches it.
       const platform = await request(ctx.app, "POST", "/keys", {
         key: spaceAdmin,
         body: {
           label: "flag",
           source: "mint-flag",
-          role: "member",
-          is_platform: true,
+          is_operator: true,
         },
       });
-      expect(platform.status).toBe(201);
-      const platformBody = (await platform.json()) as {
-        is_platform?: boolean;
-      };
-      expect(platformBody.is_platform ?? false).toBe(false);
+      expect(platform.status).toBe(403);
 
-      // At the ceiling: sideways-or-down mints work.
+      // At the ceiling: a mint narrower than the creator works.
       const member = await request(ctx.app, "POST", "/keys", {
         key: spaceAdmin,
-        body: { label: "down", source: "mint-down", role: "member" },
+        body: {
+          label: "down",
+          source: "mint-down",
+          space_permissions: ["space.webhooks"],
+        },
       });
       expect(member.status).toBe(201);
     },
@@ -210,7 +205,7 @@ const DOORS: MintDoor[] = [
     // The axis is new. Until this shipped, `POST /keys` refused an OAuth caller
     // outright, and that refusal was the whole ceiling. Now a session may mint,
     // so the ceiling has to be stated: never past the reach the grant covers,
-    // and the key it produces holds to its maps rather than to its role.
+    // on any of the families or on the space permissions.
     name: "POST /keys — a session mints no wider than its own grant",
     specRoute: "post /keys",
     forgedSource: async () => {
@@ -226,7 +221,6 @@ const DOORS: MintDoor[] = [
         body: {
           label: "forged",
           source: `oauth:${"c".repeat(8)}`,
-          role: "member",
         },
       });
       expect(res.status).toBeGreaterThanOrEqual(400);
@@ -244,7 +238,7 @@ const DOORS: MintDoor[] = [
       });
       const refused = await request(ctx.app, "POST", "/keys", {
         key: ungranted.token,
-        body: { label: "no cap", source: "oauth-no-cap", role: "member" },
+        body: { label: "no cap", source: "oauth-no-cap" },
       });
       expect(refused.status).toBe(403);
 
@@ -259,35 +253,35 @@ const DOORS: MintDoor[] = [
         body: {
           label: "wider",
           source: "oauth-wider",
-          role: "member",
           type_permissions: { "core.note": "write" },
         },
       });
       expect(wider.status).toBe(403);
 
-      // Over the ceiling: rank above the session's own user.
-      const lowly = await seedOauthBearer(ctx.storage, scopes, {
-        userRole: "member",
-        spaceId: space.id,
+      // Over the ceiling on the space-permission axis: a space permission the
+      // grant does not carry, which is the axis a content clamp cannot see.
+      const beyond = await request(ctx.app, "POST", "/keys", {
+        key: granted.token,
+        body: {
+          label: "beyond",
+          source: "oauth-beyond",
+          space_permissions: ["space.credentials"],
+        },
       });
-      const up = await request(ctx.app, "POST", "/keys", {
-        key: lowly.token,
-        body: { label: "up", source: "oauth-up", role: "space_admin" },
-      });
-      expect(up.status).toBe(403);
+      expect(beyond.status).toBe(403);
 
-      // At the ceiling: a key like the session, held to its maps rather than
-      // to its role — without which the clamp above lasts until first use.
+      // At the ceiling: a key like the session, held to the same maps — without
+      // which the clamp above lasts until first use.
       const at = await request(ctx.app, "POST", "/keys", {
         key: granted.token,
-        body: { label: "like me", source: "oauth-like-me", role: "member" },
+        body: { label: "like me", source: "oauth-like-me" },
       });
       expect(at.status).toBe(201);
       const body = (await at.json()) as { id: string };
       const stored = await ctx.storage.keys.get(body.id);
-      expect(stored?.scope_enforced).toBe(true);
-      expect(stored?.is_platform).toBe(false);
+      expect(stored?.is_operator).toBe(false);
       expect(stored?.type_permissions["core.note"]).toBe("read");
+      expect(stored?.space_permissions).toEqual(["space.keys"]);
     },
   },
   {
@@ -309,7 +303,6 @@ const DOORS: MintDoor[] = [
           body: {
             label: "forged",
             source: `integration:${"c".repeat(8)}`,
-            role: "member",
           },
         },
       );
@@ -331,16 +324,16 @@ const DOORS: MintDoor[] = [
           body: {
             label: "space-scoped",
             source: `mint-adm-${Math.random().toString(36).slice(2, 8)}`,
-            role: "instance_admin",
-            is_platform: true,
+            is_operator: true,
           },
         },
       );
       expect(res.status).toBe(201);
-      const body = (await res.json()) as { is_platform?: boolean };
-      // The platform flag never rides through this door: a space-bound
-      // admin is deliberately less than the platform tier.
-      expect(body.is_platform ?? false).toBe(false);
+      const body = (await res.json()) as { is_operator?: boolean };
+      // The operator flag never rides through this door, whatever the body
+      // says: a credential confined to one space is deliberately less than
+      // the instance tier, and the schema does not even accept the field.
+      expect(body.is_operator ?? false).toBe(false);
     },
   },
   {
@@ -368,7 +361,7 @@ const DOORS: MintDoor[] = [
     },
   },
   {
-    name: "POST /auth/keys — the console form mints at the owner's rank, never platform",
+    name: "POST /auth/keys — the console form mints inside the owner's space, never operator",
     specRoute: null,
     forgedSource: async () => {
       // The console form writes its label into `source`, so the label is
@@ -415,10 +408,13 @@ const DOORS: MintDoor[] = [
       const rows = await ctx.storage.keys.list();
       const stored = rows.find((k) => k.label === label);
       expect(stored).toBeDefined();
-      expect(stored?.is_platform ?? false).toBe(false);
-      // Hosted sign-up provisions space_admin; full access mints at that
-      // rank and no higher.
-      expect(stored?.role).toBe("space_admin");
+      expect(stored?.is_operator ?? false).toBe(false);
+      // The first person in a space holds every space permission in it, so
+      // full access hands that whole set down and no more — the operator
+      // flag above it is unreachable from a self-serve form.
+      expect(new Set(stored?.space_permissions)).toEqual(
+        new Set(SPACE_PERMISSIONS),
+      );
       expect(stored?.space_id).toBeTruthy();
     },
   },

@@ -17,11 +17,15 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "./errors.js";
+import type { Storage } from "@withmarfa/server";
 import type { Item } from "@withmarfa/shared";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
 let adminKey: string;
+let testStorage: Storage;
+let testSpaceId: string;
 let cleanup: () => void;
 
 function createTestFetch(app: {
@@ -45,6 +49,7 @@ function createTestFetch(app: {
 beforeAll(async () => {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-sdk-test-"));
   const storage = await createSqliteStorage(join(tmpDir, "test.db"));
+  testStorage = storage;
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,
@@ -90,16 +95,52 @@ beforeAll(async () => {
   testFetchFn = createTestFetch(app);
   const testFetch = testFetchFn;
 
+  // **The first, unauthenticated mint produces the operator key**, which holds
+  // no space and no permission: running the instance sits outside the model.
+  // It is not a working key, so the fixture uses it to create a space and mint
+  // one, which is the setup keys mode is meant to follow.
   const bootstrapRes = await testFetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      label: "test-admin",
-      source: "sdk-test-admin",
+      label: "test-operator",
+      source: "sdk-test-operator",
       default_tier: "feed",
     }),
   });
-  const { key } = (await bootstrapRes.json()) as { key: string };
+  const { key: operatorKey } = (await bootstrapRes.json()) as { key: string };
+  const operatorHeaders = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${operatorKey}`,
+  };
+  const spaceRes = await testFetch("http://localhost/admin/spaces", {
+    method: "POST",
+    headers: operatorHeaders,
+    body: JSON.stringify({ name: "sdk-test" }),
+  });
+  ({ id: testSpaceId } = (await spaceRes.json()) as { id: string });
+
+  // Named rather than implied: the working key used to carry a rank that
+  // bypassed the permission maps, and the maps and the permission list are now
+  // the whole of a credential's reach.
+  const workerRes = await testFetch(
+    `http://localhost/admin/spaces/${testSpaceId}/keys`,
+    {
+      method: "POST",
+      headers: operatorHeaders,
+      body: JSON.stringify({
+        label: "test-admin",
+        source: "sdk-test-admin",
+        default_tier: "feed",
+        space_permissions: [...SPACE_PERMISSIONS],
+        type_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+        metadata_permissions: { "*": "write" },
+      }),
+    },
+  );
+  const { key } = (await workerRes.json()) as { key: string };
   adminKey = key;
 
   client = new MarfaClient({
@@ -875,7 +916,6 @@ describe("keys", () => {
     const { id, key } = await client.keys.create({
       label: "test-key",
       source: "test-key-source",
-      role: "member",
     });
     expect(id).toBeTruthy();
     expect(key).toMatch(/^marfa_k1_/);
@@ -890,7 +930,6 @@ describe("keys", () => {
     const { id, key } = await client.keys.create({
       label: "revoke-me",
       source: "revoke-me-source",
-      role: "member",
     });
     await client.keys.revoke(id);
 
@@ -906,7 +945,6 @@ describe("keys", () => {
     const { id, source } = await client.keys.create({
       label: "update-me",
       source: "update-me-source",
-      role: "member",
       default_tier: "feed",
       type_permissions: { "core.note": "read" },
     });
@@ -930,12 +968,11 @@ describe("keys", () => {
     const { id } = await client.keys.create({
       label: "immut-check",
       source: "immut-check-source",
-      role: "member",
     });
 
-    // `source` and `role` are intentionally omitted from UpdateKeyInput. The
-    // double-cast routes around that to prove the server also rejects them
-    // at the wire level — defense in depth.
+    // `source` is intentionally omitted from UpdateKeyInput. The double-cast
+    // routes around that to prove the server also rejects it at the wire
+    // level — defense in depth.
     await expect(
       client.keys.update(id, {
         source: "renamed-source",
@@ -1006,27 +1043,23 @@ describe("Extended SDK surface", () => {
   });
 
   it("spaces.setConfig calls PUT /spaces/me/config", async () => {
-    // The test fixture runs in single-space SQLite mode (no space_id on
-    // the bootstrap key); the server route rejects PUT under that
-    // configuration with a clear validation error. Conformance against a
-    // real space-scoped credential is exercised by the conformance suite. Here we
-    // just confirm the SDK invokes the endpoint and surfaces the
-    // server's response shape.
-    await expect(client.spaces.setConfig({})).rejects.toThrow(ValidationError);
+    // The fixture's credential is bound to a real space now — keys mode
+    // creates one and mints into it — so the route answers rather than
+    // refusing, and what this asserts is that the SDK reaches it and returns
+    // the config the server sent back.
+    await expect(client.spaces.setConfig({})).resolves.toEqual({});
   });
 
   it("keys.create returns the full ApiKey shape including credential defaults", async () => {
     const created = await client.keys.create({
       label: "wave2-sdk-test",
       source: "wave2-sdk-test-src",
-      role: "member",
       type_permissions: { "*": "write" },
     });
     expect(created.id).toBeTruthy();
     expect(created.key.startsWith("marfa_k1_")).toBe(true);
     expect(created.label).toBe("wave2-sdk-test");
     expect(created.source).toBe("wave2-sdk-test-src");
-    expect(created.role).toBe("member");
     expect(created.default_tier).toBe("library");
     expect(created.type_permissions).toEqual({ "*": "write" });
   });
@@ -2178,6 +2211,14 @@ describe("the paging helpers and the system opt-in", () => {
     };
   }
 
+  /**
+   * **The system row is seeded through storage, because no credential writes
+   * one.** `system.*` belongs to the platform's own machinery — the manifest
+   * registrar, the connection bridge, the provider store — and every one of
+   * those writes through the storage layer rather than through a credential.
+   * The API door refuses the namespace outright, and the only credential that
+   * used to reach it did so through the role bypass this model removed.
+   */
   async function seedPair(
     marker: string,
   ): Promise<{ noteId: string; deviceId: string }> {
@@ -2186,11 +2227,16 @@ describe("the paging helpers and the system opt-in", () => {
       properties: { body: marker },
       tags: [marker],
     });
-    const device = await client.items.create({
-      type: "system.device",
-      properties: { name: marker, kind: "laptop" },
-      tags: [marker],
-    });
+    const device = await testStorage.items.create(
+      {
+        type: "system.device",
+        properties: { name: marker, kind: "laptop" },
+        tags: [marker],
+        source: "sdk-test",
+        tier: "library",
+      },
+      testSpaceId,
+    );
     return { noteId: note.id, deviceId: device.id };
   }
 

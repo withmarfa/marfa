@@ -103,23 +103,23 @@ export type PlatformTypeFamily = (typeof PLATFORM_TYPE_FAMILIES)[number];
 /**
  * Whether a value is one of the families this build recognizes.
  *
- * Exists for the same reason `isMarfaRole` does: the column is plain text
- * with no constraint, so a family read back from storage is a bare string
- * and the code that consumes one compares it against a literal. Testing
- * only that the value is *present* leaves an empty string, a truncated
- * write, or a family a later build introduced looking exactly like a
- * placeable row — which on this field means a shipped type landing in the
- * wrong permission category rather than being refused.
+ * Exists because the column is plain text with no constraint: a family read
+ * back from storage is a bare string, and the code that consumes one
+ * compares it against a literal. Testing only that the value is *present*
+ * leaves an empty string, a truncated write, or a family a later build
+ * introduced looking exactly like a placeable row — which on this field
+ * means a shipped type landing in the wrong permission category rather than
+ * being refused.
  *
  * The union is derived FROM the array rather than the array being annotated
  * with the union, and that direction is the whole point. Annotated
  * `readonly PlatformTypeFamily[]`, a subset is assignable, so a family
  * added to the union would compile with the array untouched and this
- * predicate would silently stop recognizing it. `MARFA_ROLES` is written
- * the annotated way and gets away with it because `ROLE_RANK` is a mapped
- * `Record` over its union, which fails to compile until the author
- * updates it. There is no such record over this union, so copying that
- * shape would have copied everything except the part that made it work.
+ * predicate would silently stop recognizing it. An annotated array is only
+ * safe when some mapped `Record` over the same union sits beside it and
+ * fails to compile until the author updates it. There is no such record
+ * over this union, so the annotation would take everything from that shape
+ * except the part that made it work.
  */
 export function isPlatformTypeFamily(
   value: unknown,
@@ -181,11 +181,12 @@ export type TypeOrigin = (typeof TYPE_ORIGINS)[number];
 /**
  * Whether a value is one of the origins this build recognizes.
  *
- * Reporting only. Unlike `isMarfaRole`, no caller substitutes a fallback
- * on a false: an origin outside the union already fails every equality
- * its consumers test, which excludes the row from the shipped vocabulary
- * and from a person's own registrations alike. Substituting a member of
- * the union would pick one of those doors and open it.
+ * Reporting only. Unlike `isPlatformTypeFamily`, whose caller falls back to
+ * the restrictive family, nothing substitutes a value on a false here: an
+ * origin outside the union already fails every equality its consumers test,
+ * which excludes the row from the shipped vocabulary and from a person's own
+ * registrations alike. Substituting a member of the union would pick one of
+ * those doors and open it.
  *
  * Derived from the array for the reason `isPlatformTypeFamily` gives.
  */

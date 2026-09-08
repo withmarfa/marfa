@@ -17,6 +17,7 @@ import { hashApiKey } from "../middleware/auth.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { spaceRoutes } from "./spaces.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 const SALT = "test-salt";
 
@@ -104,8 +105,7 @@ async function createHostedContext(): Promise<HostedContext> {
     {
       label: "platform-quotas-admin",
       source: `platform-quotas-${suffix}`,
-      role: "instance_admin",
-      is_platform: true,
+      is_operator: true,
       type_permissions: {},
       default_tier: "feed",
     },
@@ -116,7 +116,7 @@ async function createHostedContext(): Promise<HostedContext> {
     {
       label: "space-cfg-admin",
       source: `space-cfg-${suffix}`,
-      role: "instance_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: {},
       default_tier: "feed",
     },

@@ -11,7 +11,7 @@
  * `integrations/local-runtime/dead-letters.test.ts` (PG-gated).
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
+import { MarfaError, ErrorCode, SPACE_PERMISSIONS } from "@withmarfa/shared";
 import {
   createTestContext,
   request,
@@ -86,7 +86,7 @@ describe("admin runtime dead-letter routes", () => {
       {
         label: `test-space-admin-${suffix}`,
         source: `test-space-admin-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",
       },

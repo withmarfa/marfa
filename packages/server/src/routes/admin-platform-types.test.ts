@@ -13,6 +13,7 @@ import { setPlatformDrift } from "../storage/platform-drift.js";
 import type { TypeSchema } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 import { TEST_API_KEY_SALT } from "../test-utils.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 const contexts: TestContext[] = [];
 
@@ -33,13 +34,15 @@ afterEach(async () => {
 });
 
 /**
- * A `role: "instance_admin"` credential bound to one space.
+ * A credential bound to one space, holding every space permission and no
+ * operator flag.
  *
  * The distinction this exists to test: it authenticates, so a request
- * carrying it never reaches the 401 an unauthenticated one gets. Only the
- * platform-authority half of `requireAdmin` refuses it, and a test that
- * sends no credential at all cannot tell the two apart: it would pass
- * against `requireSpaceAdmin` just as happily.
+ * carrying it never reaches the 401 an unauthenticated one gets. Both halves
+ * of `requireOperatorKey` refuse it — the flag is false and the space binding
+ * is present, either of which disqualifies on its own — and a test that sends
+ * no credential at all cannot tell the two apart: it would pass against
+ * `requireAuth` just as happily.
  */
 async function mintSpaceBoundAdmin(ctx: TestContext): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
@@ -48,10 +51,10 @@ async function mintSpaceBoundAdmin(ctx: TestContext): Promise<string> {
     {
       label: `space-admin-${suffix}`,
       source: `space-admin-${suffix}`,
-      role: "instance_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       default_tier: "library",
       type_permissions: {},
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     (await ctx.storage.spaces!.create("bound")).id,

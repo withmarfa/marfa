@@ -1,6 +1,9 @@
 // Marfa wire types — the format shared between server and clients over the API.
 
 import type { ItemState, MergePolicy, MergeStrategy } from "@withmarfa/types";
+// Type-only, and so erased at build: `scopes.ts` imports this module for its
+// wire types, and a value import back the other way would be a runtime cycle.
+import type { SpacePermission } from "./scopes.js";
 
 /** Valid item states as a readonly array, useful for validation. */
 export const ITEM_STATES: readonly ItemState[] = [
@@ -24,9 +27,9 @@ export const TIERS: readonly Tier[] = ["library", "feed"] as const;
 /**
  * Whether a value is a tier this build recognizes.
  *
- * Exists for the same reason `isMarfaRole` does, and is keyed off `TIERS`
- * rather than repeating the union literal so adding a tier cannot leave
- * this behind. Both dialects' item projections compared the column against
+ * Exists because the column is plain text with no constraint, and is keyed
+ * off `TIERS` rather than repeating the union literal so adding a tier cannot
+ * leave this behind. Both dialects' item projections compared the column against
  * two hardcoded literals instead, which is the same defect wearing
  * different syntax: a tier added here would have been dropped to
  * `undefined` by two comparisons nobody would think to update.
@@ -37,117 +40,6 @@ export function isTier(value: unknown): value is Tier {
   return (
     typeof value === "string" && (TIERS as readonly string[]).includes(value)
   );
-}
-
-/**
- * Principal roles.
- *
- * Applies to both API-key principals and OAuth-bearer principals. The role
- * gates admin-shaped routes via `requireSpaceAdmin(c)` and `requireAdmin(c)`;
- * the bearer middleware projects this onto the synthetic principal regardless
- * of credential type.
- *
- * - `instance_admin` — full authority over the instance. Bypasses every
- *   permission map. Used for system config, cross-space ops, minting platform
- *   credentials. Named for what it governs, like the role below it: read
- *   beside `space_admin`, a bare `admin` looks like the smaller of the two
- *   when it is the larger.
- * - `space_admin` — space-bounded admin. Full admin authority within the
- *   calling principal's `space_id`: own keys, webhooks, types, connections,
- *   extensions. Cannot cross-space read/write (RLS-enforced), cannot mint
- *   platform credentials, cannot touch system config.
- * - `member` — non-admin credential. Bound by `type_permissions` /
- *   `edge_permissions` / `extension_permissions` / `metadata_permissions`.
- */
-export type MarfaRole = "instance_admin" | "space_admin" | "member";
-
-/** Valid role values as a readonly array, in descending authority order. */
-export const MARFA_ROLES: readonly MarfaRole[] = [
-  "instance_admin",
-  "space_admin",
-  "member",
-] as const;
-
-/**
- * Whether a value is one of the roles this build recognizes.
- *
- * Exists because a role read back from storage is a bare string, and every
- * gate that consumes one compares it against a literal. A value outside the
- * union therefore matches no branch and is not refused anywhere, it simply
- * fails every comparison, which reads as "not an admin" in one place and,
- * where the comparison runs through `ROLE_RANK`, as `undefined < 2` and so
- * "not below space_admin" in another. One stale value produced both, in
- * opposite directions, and neither said anything.
- *
- * Keyed off `MARFA_ROLES` rather than a repeated union literal so adding a
- * role cannot leave this behind.
- */
-export function isMarfaRole(value: unknown): value is MarfaRole {
-  return (
-    typeof value === "string" &&
-    (MARFA_ROLES as readonly string[]).includes(value)
-  );
-}
-
-/**
- * Narrows an untrusted role to the union, falling back rather than throwing.
- *
- * Deliberately does not translate historical values forward. A rename is
- * finished by the migration that realigns the stored rows; a translation
- * table in live code would keep a retired word working indefinitely and
- * hide the fact that a database was never migrated.
- *
- * A rename does need a build that reads both spellings, because migrations
- * are applied while the previous build is still serving — but that build is
- * a step, not a resting state. The tolerance is added with the rename, ships
- * in its own deploy ahead of the migration, and is removed in the change that
- * lands the migration. It has been done exactly that way once; git carries
- * the shape.
- *
- * Falls back because the callers are row projections. A parse that threw
- * would take out every list query touching one bad row, turning a single
- * mis-migrated record into an outage. Callers that can report the value
- * should do so, see `storage/stored-role.ts` in the server, which pairs
- * this with a log line so a fallback is visible rather than silent.
- */
-export function parseMarfaRole(
-  value: unknown,
-  fallback: MarfaRole = "member",
-): MarfaRole {
-  return isMarfaRole(value) ? value : fallback;
-}
-
-/**
- * Authority ranking of the roles. Higher outranks lower.
- *
- * The ordering was always implicit in the prose above and in the order
- * `MARFA_ROLES` is declared; naming it makes "is this role above that one"
- * a decidable question instead of a judgement call at each callsite.
- *
- * Rank is the ONLY axis this encodes. Two capabilities sit orthogonal to
- * it and are gated separately: `is_platform` (writes to the reserved
- * `system.*` / `marfa.*` namespaces) and space binding (a credential
- * carrying a `space_id` is confined to that space whatever its rank).
- */
-export const ROLE_RANK: Readonly<Record<MarfaRole, number>> = {
-  instance_admin: 3,
-  space_admin: 2,
-  member: 1,
-};
-
-/**
- * Whether a principal holding `granter` may mint a credential carrying
- * `granted`.
- *
- * Privilege can be passed sideways or downwards, never upwards: a
- * credential must not be able to manufacture more authority than the
- * caller presenting it already holds. Callers combine this with the
- * orthogonal gates — granting `is_platform` additionally requires the
- * caller to be platform itself, and a minted credential inherits the
- * caller's space binding.
- */
-export function canGrantRole(granter: MarfaRole, granted: MarfaRole): boolean {
-  return ROLE_RANK[granted] <= ROLE_RANK[granter];
 }
 
 /** Per-type permission levels. */
@@ -418,32 +310,22 @@ export interface ApiKey {
    * stamping `source`.
    */
   item_source?: string;
-  role: MarfaRole;
   /**
-   * Platform-credential gate. When `true`, the credential may write items
+   * Operator-key gate. When `true`, the credential may write items
    * of the reserved-namespace types (`core.*`, `system.*`, `marfa.*`) and
    * is exempt from the publisher-handle ownership rule at type
    * registration. It does not admit reserved-namespace registration:
    * `POST /types` refuses a reserved-root type for every credential,
    * platform included — those types arrive with the build. The first
-   * credential created at server install is the seed platform credential;
-   * only an existing platform credential may mint another. Defaults to
-   * `false` for ordinary space admin and member keys.
+   * credential created at server install is the seed operator key; only an
+   * existing operator key may mint another. Defaults to `false` for every
+   * ordinary space credential.
+   *
+   * Together with the absence of a `space_id` this is the whole instance
+   * tier: the routes that reach across every space take an operator key and
+   * nothing else, and no consent screen can offer one.
    */
-  is_platform: boolean;
-  /**
-   * Scope-enforcement gate. When `true`, this credential is limited to
-   * exactly the scopes it was granted on the data plane — the
-   * `admin` / `space_admin` role bypass in `checkTypeAccess`,
-   * `computeTypeFilter`, `requireEdgePermission`, and
-   * `requireMetadataPermission` does NOT apply. Set on OAuth-derived
-   * synthetic keys: a user's role is the ceiling on what an app can be
-   * granted, not an automatic full-access pass for every app the user
-   * signs into. Ordinary API keys leave this unset and keep the role
-   * bypass. Role gates (`requireSpaceAdmin` / `requireAdmin`) still read
-   * the projected role regardless of this flag.
-   */
-  scope_enforced?: boolean;
+  is_operator: boolean;
   /**
    * Connections runtime credential gate. When `true`, the credential was
    * minted by the integration runtime for a specific Connection's
@@ -471,6 +353,20 @@ export interface ApiKey {
   enforcement_override?: EnforcementSettings;
   /** Tier stamped onto items when the client doesn't supply one. */
   default_tier: Tier;
+  /**
+   * The eleven space permissions this credential holds, as the literals
+   * themselves.
+   *
+   * A list rather than a map because a space permission has no read/write
+   * axis: it is held or it is not. Stored as the same shape a grant carries,
+   * so one `hasSpacePermission` answers for a key and for a sign-in and
+   * neither door has to know which it is looking at.
+   *
+   * Absent or empty means the credential holds none, which is the correct
+   * reading for an operator key as well: the instance tier is fenced off the
+   * model rather than expressed inside it.
+   */
+  space_permissions?: SpacePermission[];
   type_permissions: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   /**
@@ -494,11 +390,18 @@ export interface ApiKey {
    * with the levelled parent keyed on `*`.
    *
    * Absent means the caller holds nothing on this category, which on a
-   * levelled category means it may not read it either. A first-party key
-   * bypasses the map through its role, exactly as it does for metadata; an
-   * OAuth token is `scope_enforced` and does not.
+   * levelled category means it may not read it either. Every credential is
+   * held to this map: there is no rank that reads past it.
    */
   profile_permissions?: Record<string, ProfilePermission>;
+  /**
+   * The registered client that minted this key, when a signed-in app did.
+   *
+   * A key minted through a grant belongs to the app that asked for it, so
+   * the keys page groups it under that app and revoking the app offers to
+   * revoke it. Absent on a key a person or another key created directly.
+   */
+  oauth_client_id?: string;
   created_at: string;
   /**
    * Hard lifetime bound (ISO timestamp). A key past its `expires_at` is
@@ -515,52 +418,61 @@ export interface ApiKey {
 export interface CreateKeyInput {
   label: string;
   source: string;
-  role: MarfaRole;
+  space_permissions?: SpacePermission[];
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
+  profile_permissions?: Record<string, ProfilePermission>;
   /**
-   * Optional. Only an existing platform credential can set this to `true`;
-   * other callers see the value silently coerced to `false`. The bootstrap
-   * admin created at server install is the seed platform credential.
+   * Optional. Only an existing operator key can set this to `true`; other
+   * callers see the value silently coerced to `false`. The key minted at
+   * server install is the seed operator key.
    */
-  is_platform?: boolean;
+  is_operator?: boolean;
 }
 
 /**
- * Input for `POST /admin/spaces/{id}/keys`, the platform-admin route that
- * mints a key into a named space rather than into the caller's own.
+ * Input for `POST /admin/spaces/{id}/keys`, the operator route that mints a
+ * key into a named space rather than into the caller's own.
  *
  * Two deliberate differences from {@link CreateKeyInput}: the space comes
- * from the path, not the body; and there is no `is_platform`, because the
+ * from the path, not the body; and there is no `is_operator`, because the
  * whole point of the route is a credential whose authority is confined to
- * one space. `role` defaults to `member` server-side.
+ * one space. Omitting `space_permissions` takes everything in that space,
+ * which is the seed rule for a mint no creator set bounds.
  */
 export interface CreateSpaceKeyInput {
   label: string;
   source: string;
-  role?: MarfaRole;
+  space_permissions?: SpacePermission[];
   default_tier?: Tier;
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
+  profile_permissions?: Record<string, ProfilePermission>;
 }
 
 /**
  * Input for in-place updating an API key (PATCH). All fields optional;
- * `source` and `role` are intentionally omitted — they are immutable after
- * creation (source is baked into item provenance, role is security-critical).
+ * `source` is intentionally omitted, because it is baked into the provenance
+ * of every item the credential has already written.
+ *
+ * An edit narrows and never widens: whatever it names is clamped to what the
+ * caller itself holds, exactly as a mint is, so nothing can be widened by
+ * editing what a first request could not have asked for.
  */
 export interface UpdateKeyInput {
   label?: string;
   default_tier?: Tier;
+  space_permissions?: SpacePermission[];
   type_permissions?: Record<string, TypePermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
+  profile_permissions?: Record<string, ProfilePermission>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1212,8 +1124,7 @@ export type SpaceStatus = (typeof SPACE_STATUSES)[number];
 /**
  * Whether a value is a space status this build recognizes.
  *
- * Exists for the same reason `isMarfaRole` does. A status read back from
- * storage is a bare string, the column carries no constraint in either
+ * Exists because a status read back from storage is a bare string, the column carries no constraint in either
  * dialect, and the one gate that consumes it compares against a single
  * literal. So a value outside the union matches no branch and is refused
  * nowhere: it reads as "not suspended", and the writes the suspension
@@ -1390,12 +1301,6 @@ export interface User {
    *  to Marfa profile. NULL only on a `users` row with no matching
    *  `auth_user`. */
   auth_user_id: string | null;
-  /** Principal role projected onto the bearer principal for OAuth-
-   *  authenticated requests. Defaults to `member`; operator elevates
-   *  via SQL. Gates admin-shaped routes (`requireSpaceAdmin`,
-   *  `requireAdmin`) whether the request arrives via API key or OAuth
-   *  bearer. */
-  role: MarfaRole;
   /** IANA zone the account keeps its own clock in, or NULL when unstated.
    *  A default and a display preference: it is what answers "what is on
    *  today" for a caller that names no zone. It never anchors a

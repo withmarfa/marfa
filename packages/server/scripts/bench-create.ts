@@ -84,7 +84,6 @@ async function main(): Promise<void> {
     {
       label: "bench",
       source: "bench",
-      role: "space_admin",
       type_permissions: {},
       default_tier: "library",
     },

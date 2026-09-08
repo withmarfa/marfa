@@ -4,8 +4,16 @@
  * Every other check runs against a database built by the migrator from empty,
  * which proves the SQL is valid in sequence and nothing more. It cannot prove
  * the part that carries risk, because an empty database has nothing to lose:
- * rows already present when the rename lands, and a stored role value that is
- * data rather than an identifier and so is reached by no schema change.
+ * rows already present when the rename lands.
+ *
+ * **This used to replay the rename's stored-role update, and no longer can.**
+ * `role` was data rather than an identifier, so no schema change reached it and
+ * the migration realigned the values by hand; the one-permission-set migration
+ * has since dropped the column, so at head there is nothing to assert against.
+ * The statement still runs on an upgrade from a pre-rename deployment, ahead of
+ * the drop, and what proves a populated database survives that later migration
+ * is its own replay test, which seeds the pre-migration shape rather than the
+ * shape at head.
  *
  * Postgres rather than both dialects, deliberately. The row-level security
  * rewrite is the concentrate of the risk here — column renames keep their
@@ -17,7 +25,6 @@
  * would return zero rows rather than failing loudly.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { runPgMigrations } from "../migrate.js";
 
@@ -45,7 +52,7 @@ afterAll(async () => {
 describe.skipIf(!isPg || !adminUrl)(
   "the rename migration upgrades a populated database",
   () => {
-    it("REGRESSION: carries rows across, and migrates the stored role value", async () => {
+    it("REGRESSION: carries rows across, and leaves no old name behind", async () => {
       // The whole chain, which ends with the rename. Running only the earlier
       // half and then the rename by hand would test a sequence that never
       // happens; this is the sequence an existing deployment actually takes.
@@ -73,54 +80,33 @@ describe.skipIf(!isPg || !adminUrl)(
         `;
         expect(staleColumns.map((r) => r.table_name)).toEqual([]);
 
-        // Seed the shape an existing deployment holds, then re-run the rename
-        // step against it. The migration ran once above against an empty
-        // database; what matters is what it does to rows.
+        // A row written through the renamed surface, read back through it.
+        // The migration ran once above against an empty database; this is the
+        // half that says the names it left behind are the ones a deployment's
+        // own rows are reachable by.
         await sql`INSERT INTO spaces (id, name, created_at, status)
                   VALUES ('spc_upgrade', 'upgrade', now()::text, 'active')`;
         await sql`
-          INSERT INTO api_keys (id, space_id, key_hash, label, role, created_at, source)
-          VALUES ('key_old', 'spc_upgrade', 'hash', 'legacy admin', 'tenant_admin', now()::text, 'seed-old')
-        `;
-        await sql`
-          INSERT INTO api_keys (id, space_id, key_hash, label, role, created_at, source)
-          VALUES ('key_new', 'spc_upgrade', 'hash2', 'already renamed', 'space_admin', now()::text, 'seed-new')
+          INSERT INTO api_keys (id, space_id, key_hash, label, created_at, source)
+          VALUES ('key_upgrade', 'spc_upgrade', 'hash', 'carried', now()::text, 'seed-upgrade')
         `;
 
-        // The migration's own statement, read from the file rather than
-        // retyped, so a change to it has to pass here too. Only the role
-        // update is replayable: the schema statements around it have already
-        // run and are not idempotent.
-        const migration = readFileSync(
-          new URL(
-            "../../../drizzle/pg/0073_rename_tenant_to_space.sql",
-            import.meta.url,
-          ),
-          "utf8",
-        );
-        // Every role update the file contains, not just the one table this
-        // test used to name. The old filter read `UPDATE "api_keys" SET role`
-        // and so could only ever see half the work: the same migration also
-        // renames `users`, whose stored role it did not realign, and this
-        // assertion was blind to that by construction. Collecting them all
-        // means a migration that grows a second table is replayed here
-        // rather than silently skipped. The `users` backfill itself landed
-        // separately, in 0093, with its own test.
-        const roleUpdates = migration
-          .split("\n")
-          .filter((line) => /^UPDATE "\w+" SET "?role"?/.test(line.trim()));
-        expect(roleUpdates.length).toBeGreaterThan(0);
-        for (const statement of roleUpdates) await sql.unsafe(statement);
-
-        const roles = await sql<{ id: string; role: string }[]>`
-          SELECT id, role FROM api_keys WHERE id IN ('key_old', 'key_new') ORDER BY id
+        const carried = await sql<{ id: string; space_id: string }[]>`
+          SELECT id, space_id FROM api_keys WHERE id = 'key_upgrade'
         `;
-        // The legacy value is migrated and the already-correct one is left
-        // alone; the row itself survives either way.
-        expect(roles).toEqual([
-          { id: "key_new", role: "space_admin" },
-          { id: "key_old", role: "space_admin" },
+        expect(carried).toEqual([
+          { id: "key_upgrade", space_id: "spc_upgrade" },
         ]);
+
+        // And the columns the rename retired are gone rather than kept
+        // alongside: `role` left with the one permission set, `tenant_id` with
+        // the rename itself.
+        const retired = await sql<{ column_name: string }[]>`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_schema = 'public' AND table_name = 'api_keys'
+            AND column_name IN ('role', 'scope_enforced', 'tenant_id', 'is_platform')
+        `;
+        expect(retired.map((r) => r.column_name)).toEqual([]);
 
         const space = await sql<{ name: string }[]>`
           SELECT name FROM spaces WHERE id = 'spc_upgrade'

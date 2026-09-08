@@ -505,7 +505,6 @@ describe("performUpgrade — a connection inside a space", () => {
       {
         label: `upgrade runtime ${suffix}`,
         source: `integration:${connection.id}`,
-        role: "member",
         type_permissions: { "core.note": "write" },
         connection_id: connection.id,
         expires_at: new Date(Date.now() + 600_000).toISOString(),

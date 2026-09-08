@@ -64,7 +64,12 @@ async function listTypes(query: string, key: string): Promise<string[]> {
   return body.data.map((item) => item.type).sort();
 }
 
-/** Mint a member-tier key whose only readable types are `patterns`. */
+/**
+ * Mint a key whose only readable types are `patterns`.
+ *
+ * `is_operator` is the schema's requirement of a space-less key in keys mode,
+ * not a widening: the type map is still the whole of what this key can read.
+ */
 async function mintScopedKey(
   patterns: Record<string, "read" | "write">,
 ): Promise<string> {
@@ -74,9 +79,9 @@ async function mintScopedKey(
     {
       label: `scoped-${suffix}`,
       source: `scoped-${suffix}`,
-      role: "member",
       type_permissions: patterns,
       default_tier: "library",
+      is_operator: true,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );

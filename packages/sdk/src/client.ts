@@ -327,8 +327,9 @@ export interface SpaceApiKeySummary {
   id: string;
   label: string;
   source: string;
-  role: string;
-  is_platform: boolean;
+  /** The space permissions the credential holds, as the literals themselves. */
+  space_permissions: string[];
+  is_operator: boolean;
   created_at: string;
   last_used_at: string | null;
 }
@@ -2388,7 +2389,7 @@ export class MarfaClient {
   /**
    * Operator-level admin surface — the `my admin` CLI command tree's
    * backing endpoints. Every method requires a platform-admin key
-   * (`is_platform: true`). Non-platform credentials get a `403
+   * (`is_operator: true`). Non-platform credentials get a `403
    * forbidden`; render `"this command requires a platform-admin key"`
    * in CLI / UI layers.
    *

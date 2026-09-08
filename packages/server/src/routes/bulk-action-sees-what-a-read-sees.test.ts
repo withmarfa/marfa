@@ -163,8 +163,8 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     expect(ids).toContain(deviceId);
   });
 
-  it("refuses the opt-in to a credential that is not platform", async () => {
-    // The opt-in is a platform credential naming a reserved type, and this
+  it("refuses the opt-in to a credential that is not the operator", async () => {
+    // The opt-in is an operator credential naming a reserved type, and this
     // is the half that is easy to leave out.
     //
     // This door runs no per-row `requireTypeAccess`, so a credential that
@@ -181,19 +181,47 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // query that returned zero rows. A write grant is what puts the fence
     // back in the path as the only thing standing between this key and a
     // reserved row.
+    // **Bound to a space, and that is now the whole of what "not platform"
+    // means.** A space-less credential is an operator credential — the row
+    // constraint states the two as one fact — so the only credential that can
+    // stand on the wrong side of the reserved fence is one confined to a
+    // space. Its rows are seeded into that space directly, because a
+    // space-bound caller cannot see what the space-less operator key writes.
+    const space = await ctx.storage.spaces!.create(
+      `reader-space-${Math.random().toString(36).slice(2, 8)}`,
+    );
     const raw = `marfa_k1_reader_${Math.random().toString(36).slice(2)}`;
     await ctx.storage.keys.create(
       {
         label: "reads-everything",
         source: `reader-${raw.slice(-6)}`,
-        role: "member",
+        space_permissions: [],
         type_permissions: { "*": "write" },
+        is_operator: false,
       },
       hashApiKey(raw, "test-salt"),
+      space.id,
     );
 
     const marker = Math.random().toString(36).slice(2, 8);
-    const { noteId, deviceId } = await seedPair(marker);
+    const note = await ctx.storage.items.create(
+      {
+        type: "core.note",
+        properties: { body: `ba-${marker}` },
+        tags: [marker],
+      },
+      space.id,
+    );
+    const device = await ctx.storage.items.create(
+      {
+        type: "system.device",
+        properties: { name: `ba-${marker}`, kind: "laptop" },
+        tags: [marker],
+      },
+      space.id,
+    );
+    const noteId = note.id;
+    const deviceId = device.id;
 
     const { initialStatus, result } = await runBulkActionAsync(
       ctx,
@@ -225,8 +253,8 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     );
     expect(ownReach?.ids ?? []).toContain(noteId);
 
-    // And the platform credential naming the same reserved type finds it, so
-    // the refusal is about the credential rather than about the filter.
+    // And the operator key naming the same reserved type finds it, so the
+    // refusal is about the credential rather than about the filter.
     const asPlatform = await matchedIds({
       type: "system.device",
       tags: [marker],

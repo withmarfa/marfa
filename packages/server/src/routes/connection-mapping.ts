@@ -17,10 +17,7 @@ import {
   type Item,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireSpacePermission,
-  requireSpaceAdmin,
-} from "../middleware/auth.js";
+import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { closeMappingBreaks } from "../connections/mapping-health.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
@@ -182,7 +179,7 @@ export function connectionMappingRoutes(storage: Storage) {
   }
 
   router.openapi(getMappingRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const item = await resolveConnection(id, apiKey.space_id);
@@ -208,7 +205,7 @@ export function connectionMappingRoutes(storage: Storage) {
   });
 
   router.openapi(putMappingRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const item = await resolveConnection(id, apiKey.space_id);
@@ -289,7 +286,7 @@ export function connectionMappingRoutes(storage: Storage) {
   });
 
   router.openapi(deleteMappingRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     await resolveConnection(id, apiKey.space_id);

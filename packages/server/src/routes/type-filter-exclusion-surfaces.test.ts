@@ -70,7 +70,15 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** A member key: no role bypass, so the permission map is what decides. */
+/**
+ * A key whose reach is exactly its permission map — nothing reads past it.
+ *
+ * `is_operator` is set because this context is keys mode, where no key
+ * carries a space and the schema requires a space-less key to be an operator
+ * key. It buys nothing here: the operator flag fences off the instance tier
+ * and the reserved namespaces, and `checkTypeAccess` still consults the map
+ * for everything else, which is the whole subject of this file.
+ */
 async function mintKey(type_permissions: Perms): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
   const raw = `marfa_k1_excl_${suffix}`;
@@ -78,9 +86,9 @@ async function mintKey(type_permissions: Perms): Promise<string> {
     {
       label: `excl-${suffix}`,
       source: `excl-${suffix}`,
-      role: "member",
       type_permissions,
       default_tier: "library",
+      is_operator: true,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
   );

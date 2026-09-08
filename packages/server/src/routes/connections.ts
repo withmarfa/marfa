@@ -5,10 +5,7 @@ import type {
   PreviewEventResult,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireSpacePermission,
-  requireSpaceAdmin,
-} from "../middleware/auth.js";
+import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   performPause,
@@ -64,11 +61,12 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 //     `connections/envelope.ts` so the bridge and the preview surface
 //     compute the same shape.
 //
-// Auth model: `requireSpaceAdmin` on every route. Space admins
-// operate on their own space's connections (storage lookups + writes
-// are scoped via `apiKey.space_id`); platform admins on single-space
-// self-hosts operate without a space scope and reach every connection.
-// Non-admin credentials are rejected with 403.
+// Auth model: `requireAuth` plus `requireSpacePermission(c,
+// "space.connections")` on every route. The permission decides who, and the
+// caller's `space_id` decides where: storage lookups and writes are scoped by
+// it, so a space-bound credential reaches only its own space's connections,
+// while a space-less operator key on a single-space self-host reaches every
+// one. A credential without the permission is rejected with 403.
 // ---------------------------------------------------------------------------
 
 /**
@@ -506,7 +504,7 @@ const upgradeRoute = createRoute({
   tags: ["Connections"],
   summary: "Move a connection to a newer version of its integration",
   description:
-    "Re-binds the connection to a newer registered version of the same integration, keeping its cursor state, and revokes its runtime credentials so the next mint projects permissions from the manifest it now resolves. Refuses with 403 when the newer manifest would grant more than the connection was installed with, naming exactly what is new: that move needs a space admin's approval through the install consent screen. Returns 400 when the connection already resolves the newest registered version, or when its stored settings do not satisfy the new manifest.",
+    "Re-binds the connection to a newer registered version of the same integration, keeping its cursor state, and revokes its runtime credentials so the next mint projects permissions from the manifest it now resolves. Refuses with 403 when the newer manifest would grant more than the connection was installed with, naming exactly what is new: that move needs approval through the install consent screen. Returns 400 when the connection already resolves the newest registered version, or when its stored settings do not satisfy the new manifest.",
   security: [{ bearerAuth: [] }],
   request: {
     params: connectionIdParam(
@@ -817,7 +815,7 @@ const previewEventRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not a space admin or platform admin.",
+      description: "Caller does not hold `space.connections`.",
     },
     404: {
       content: {
@@ -841,7 +839,7 @@ export function connectionRoutes(
   const r = createOpenAPIRouter<AppEnv>();
 
   r.openapi(installRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const {
       integration_id,
@@ -900,7 +898,7 @@ export function connectionRoutes(
   });
 
   r.openapi(previewEventRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const spaceId = apiKey.space_id ?? undefined;
     const body = c.req.valid("json");
@@ -1093,7 +1091,7 @@ export function connectionRoutes(
   };
 
   r.openapi(pauseRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const result = await applyRuntimeState("pause", id, apiKey, c.var.clientIp);
@@ -1101,7 +1099,7 @@ export function connectionRoutes(
   });
 
   r.openapi(resumeRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const result = await applyRuntimeState(
@@ -1114,7 +1112,7 @@ export function connectionRoutes(
   });
 
   r.openapi(uninstallRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id: connectionId } = c.req.valid("param");
     const spaceId = apiKey.space_id ?? undefined;
@@ -1157,7 +1155,7 @@ export function connectionRoutes(
   });
 
   r.openapi(runRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const spaceId = apiKey.space_id ?? undefined;
@@ -1279,7 +1277,7 @@ export function connectionRoutes(
   });
 
   r.openapi(upgradePreviewRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     try {
@@ -1298,7 +1296,7 @@ export function connectionRoutes(
   // differ. Registration order does not enter into it, which is worth
   // saying because it looks like it should.
   r.openapi(pendingUpgradesRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const pending = await listPendingConsent(
       storage,
@@ -1308,7 +1306,7 @@ export function connectionRoutes(
   });
 
   r.openapi(approveUpgradeRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const { to_version } = c.req.valid("json");
@@ -1394,7 +1392,7 @@ export function connectionRoutes(
   });
 
   r.openapi(upgradeRoute, async (c) => {
-    const apiKey = requireSpaceAdmin(c);
+    const apiKey = requireAuth(c);
     requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const spaceId = apiKey.space_id ?? undefined;

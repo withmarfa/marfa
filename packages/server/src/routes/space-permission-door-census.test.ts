@@ -1,80 +1,28 @@
 /**
- * Every space-admin door, and the capability it consults.
+ * Every administrative door, and the space permission it consults.
  *
  * **A census rather than a per-route test, for the reason the credential-mint
  * census exists.** A gate added to nine doors and forgotten on the tenth reads
  * as covered from every angle a per-route test can see: each route that was
  * changed has a passing test, and the one that was not has no failing one. The
- * property worth asserting is the shape of the whole surface, so that adding a
- * `requireSpaceAdmin` without a capability beside it is what turns something
- * red.
+ * property worth asserting is the shape of the whole surface.
  *
- * The rule: a handler that admits a caller on space-admin rank is reachable by
- * an OAuth bearer, because the bearer middleware projects the signed-in user's
- * role onto the synthetic principal. So rank alone would let an app act with
- * authority nobody consented to, and every such handler must also ask which
- * capability was granted.
- *
- * Two exemptions, both recorded at their own call sites and in
- * `packages/shared/src/scopes.ts`. They are named here rather than detected,
- * so that removing the reasoning at the site does not quietly remove the
- * exemption too.
+ * **What this can and cannot see, now that there is no rank.** It used to scan
+ * for handlers admitting on space-admin rank and report the ones with no
+ * capability beside them, and that worked because rank had a distinctive
+ * signature in the source. It has none now: `requireAuth` is ordinary
+ * authentication and sits on nearly every door, so a scan keyed on it reports
+ * the whole route table. What survives is the half that still has a signature
+ * — every door that does consult a permission is consulting the right one for
+ * its own surface, and the files reached through the shared resolver are seen
+ * at all. A door that should ask and does not is no longer detectable by
+ * reading the source, and needs an explicit list rather than a scanner.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const ROUTES_DIR = join(import.meta.dirname, ".");
-
-/**
- * Sites that admit on rank and deliberately consult no capability.
- *
- * `listEdgeTypesRoute` — listing a space's edge types is a read whose
- * item-type sibling is open to any authenticated caller. The consistent answer
- * is relaxing that rank gate rather than putting a capability in front of a
- * listing, and until it is relaxed it is inconsistent in the safe direction.
- *
- * `_space-caller.ts` — the caller resolver answers *which space* a request
- * acts in, ahead of the surfaces that are surfaces. Gating it would gate the
- * question rather than an answer.
- */
-const EXEMPT: readonly { file: string; handler: string; why: string }[] = [
-  {
-    file: "edge-types.ts",
-    handler: "listEdgeTypesRoute",
-    why: "a listing whose item-type sibling is open; the rank gate is what should relax",
-  },
-  {
-    file: "_space-caller.ts",
-    handler: "(module scope)",
-    why: "resolves which space, ahead of the surfaces",
-  },
-];
-
-/**
- * Doors whose capability is written and whose enforcement is waiting on a
- * client, listed separately from {@link EXEMPT} because the two mean opposite
- * things: an exemption is a door that should never consult a capability, and a
- * deferral is one that will, shortly, and whose entry here is meant to be
- * deleted.
- *
- * `purgeItemRoute` — Marfa Mini's Empty Bin calls this door, and Mini gained
- * both the scope and any way to notice a short grant only in 0.8.1. Gating it
- * before that release is installed and signed into would break the command
- * with no path back short of a sign-out, so it lands as its own merge when
- * that is confirmed. T-357 does not close until it does.
- */
-const DEFERRED: readonly {
-  file: string;
-  handler: string;
-  spacePermission: string;
-}[] = [
-  {
-    file: "items.ts",
-    handler: "purgeItemRoute",
-    spacePermission: "space.item_purge",
-  },
-];
 
 interface Site {
   file: string;
@@ -106,6 +54,22 @@ const ROUTE_STARTS: readonly RegExp[] = [
   /\b\w+\.openapi\(\s*(\w+)/,
   /\b\w+\.(?:get|post|put|patch|delete|all|on)\(\s*"(\/[^"]*)"/,
 ];
+
+/**
+ * Helpers that hold a door to a permission on its callers' behalf.
+ *
+ * A door gated through one of these names is gated, and the scanner has to say
+ * so or the four `/keys` doors become invisible the moment they share a line.
+ * The helper's own body is skipped for the same reason `_space-caller.ts` is:
+ * it is not a surface, and counting it would credit a door that does not exist
+ * while leaving the real ones unattributed.
+ *
+ * Adding a name here is a deliberate act, which is the point — a helper that
+ * wraps a gate has to be declared before the census will credit it.
+ */
+const GATE_HELPERS: Readonly<Record<string, string>> = {
+  requireSpaceKeysOrOperator: "space.keys",
+};
 
 function routeStart(line: string): string | null {
   for (const re of ROUTE_STARTS) {
@@ -155,20 +119,46 @@ function spacePermissionWithin(
       lines[i] ?? "",
     );
     if (direct) return direct[1] ?? null;
-    // `resolveSpaceAdminCaller` takes its capability as a required argument
+    // `resolveSpaceCaller` takes its capability as a required argument
     // rather than calling `requireSpacePermission` at the site, so that a new
     // surface behind it cannot be added without answering the question. The
     // literal is on its own line among the arguments.
     const viaResolver = /^\s*"(space\.[a-z_]+)",\s*$/.exec(lines[i] ?? "");
     if (viaResolver) return viaResolver[1] ?? null;
+    for (const [name, permission] of Object.entries(GATE_HELPERS)) {
+      if ((lines[i] ?? "").includes(`${name}(`)) return permission;
+    }
   }
   return null;
+}
+
+/**
+ * Whether `line` sits inside the body of a gate helper rather than a handler.
+ *
+ * Walks back to the nearest function declaration, stopping at a route
+ * registration, so a helper defined between two routes is still recognised.
+ */
+function insideGateHelper(lines: readonly string[], line: number): boolean {
+  for (let i = line - 1; i >= 0; i--) {
+    const text = lines[i] ?? "";
+    if (routeStart(text) !== null) return false;
+    const declared = /^(?:export )?function (\w+)\s*\(/.exec(text);
+    if (declared)
+      return declared[1] !== undefined && declared[1] in GATE_HELPERS;
+  }
+  return false;
 }
 
 function census(): Site[] {
   const out: Site[] = [];
   for (const file of readdirSync(ROUTES_DIR).sort()) {
     if (!file.endsWith(".ts") || file.endsWith(".test.ts")) continue;
+    // The resolver is not a surface — it answers which space a request acts
+    // in, ahead of the pages that are surfaces — and it takes its permission
+    // as a parameter, so there is no literal here to attribute. Everything it
+    // admits is counted at the call site instead, which is where the literal
+    // is written.
+    if (file === "_space-caller.ts") continue;
     const lines = readFileSync(join(ROUTES_DIR, file), "utf8").split("\n");
     lines.forEach((text, i) => {
       // Comments mention these names; a line that is only a comment is not a
@@ -178,13 +168,16 @@ function census(): Site[] {
       // The open paren rather than `(c)`, so a call Prettier has wrapped onto
       // the next line is still seen. The identifier and its paren stay
       // together; the argument does not.
-      const admitsOnRank =
-        text.includes("requireSpaceAdmin(") ||
-        text.includes("hasSpaceAdminAuthority(") ||
-        // Admits on rank one level down, and everything it admits is a
-        // surface. Its own capability argument is what this counts.
-        text.includes("resolveSpaceAdminCaller(");
-      if (!admitsOnRank) return;
+      // The two shapes that still name a permission: the gate itself, and the
+      // shared resolver, which takes its permission as a required argument so
+      // that a new surface behind it cannot be added without answering the
+      // question.
+      const consultsPermission =
+        text.includes("requireSpacePermission(") ||
+        text.includes("resolveSpaceCaller(") ||
+        Object.keys(GATE_HELPERS).some((name) => text.includes(`${name}(`));
+      if (!consultsPermission) return;
+      if (insideGateHelper(lines, i + 1)) return;
       out.push({
         file,
         line: i + 1,
@@ -196,48 +189,28 @@ function census(): Site[] {
   return out;
 }
 
-describe("every space-admin door consults a capability", () => {
+describe("every administrative door consults a space permission", () => {
   const sites = census();
 
   it("finds the surface at all, so an empty census cannot pass", () => {
     // A scanner that stops matching reports a clean sweep. This is what makes
-    // the assertion below mean something.
+    // the assertions below mean something.
     expect(sites.length).toBeGreaterThan(30);
   });
 
-  it("leaves no door admitting on rank alone", () => {
-    const excused = new Set(
-      [...EXEMPT, ...DEFERRED].map((e) => `${e.file}:${e.handler}`),
-    );
-    const ungated = sites
+  it("reads a permission off every site it counts", () => {
+    // The scanner's own health. A site it can see but cannot attribute would
+    // be excluded from the mapping check below without anything saying so,
+    // which is the failure mode that reads as a clean sweep.
+    const unattributed = sites
       .filter((s) => s.spacePermission === null)
-      .filter((s) => !excused.has(`${s.file}:${s.handler}`))
       .map((s) => `${s.file}:${String(s.line)} ${s.handler}`);
-    expect(ungated).toEqual([]);
-  });
-
-  it("defers exactly one door, and it is the one waiting on a client", () => {
-    // The deferral is narrow on purpose. Widening this list is how a phase
-    // that shipped most of a rule comes to look finished, so the set is
-    // asserted rather than merely consulted, and a second entry appearing
-    // without a decision behind it turns this red.
-    expect(DEFERRED.map((d) => `${d.file}:${d.handler}`)).toEqual([
-      "items.ts:purgeItemRoute",
-    ]);
-    for (const d of DEFERRED) {
-      const match = sites.filter(
-        (s) => s.file === d.file && s.handler === d.handler,
-      );
-      expect(match.length).toBeGreaterThan(0);
-      // Still ungated. When the follow-on merge lands, this reddens and the
-      // entry is deleted — which is the point of listing it here at all.
-      for (const s of match) expect(s.spacePermission).toBeNull();
-    }
+    expect(unattributed).toEqual([]);
   });
 
   it("sees every file that admits through the shared resolver", () => {
     // **The scanner going blind is the failure this catches.** Sites reached
-    // through `resolveSpaceAdminCaller` contain none of the strings the other
+    // through `resolveSpaceCaller` contain none of the strings the other
     // rules grep for, so before it was taught to look for the resolver they
     // were absent from the census entirely — not gated, not ungated, not
     // anything. Five doors sat in that gap, one of them the `GET` twin of a
@@ -247,7 +220,7 @@ describe("every space-admin door consults a capability", () => {
       .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
       .filter((f) =>
         readFileSync(join(ROUTES_DIR, f), "utf8").includes(
-          "resolveSpaceAdminCaller(",
+          "resolveSpaceCaller(",
         ),
       )
       .filter((f) => f !== "_space-caller.ts");
@@ -260,51 +233,53 @@ describe("every space-admin door consults a capability", () => {
     }
   });
 
-  it("keeps both exemptions real, so a stale one is noticed", () => {
-    // An exemption for a handler that no longer exists, or that has since been
-    // gated, is a license nobody is using and the next reader would trust.
-    for (const e of EXEMPT) {
-      const match = sites.filter(
-        (s) => s.file === e.file && s.handler === e.handler,
-      );
-      expect(match.length, `${e.file}:${e.handler} — ${e.why}`).toBeGreaterThan(
-        0,
-      );
-      for (const s of match) expect(s.spacePermission).toBeNull();
-    }
-  });
-
-  it("asks each door for the capability its own surface names", () => {
-    // The mapping, so a door gated on the wrong literal is caught. A file may
-    // name more than one where it carries more than one surface.
-    const expected: Record<string, readonly string[]> = {
-      "audit.ts": ["space.audit_read"],
-      "auth-pages.ts": ["space.app_grants"],
-      "connection-leased-tokens.ts": ["space.connections"],
-      "connection-mapping.ts": ["space.connections"],
-      "connection-configure.ts": ["space.connections"],
-      "connection-proxy.ts": ["space.upstream_access"],
-      "connections.ts": ["space.connections"],
-      "credentials.ts": ["space.credentials"],
-      "edge-types.ts": ["space.schema"],
-      "inbound-webhooks.ts": ["space.connections"],
-      "integrations.ts": ["space.connections"],
-      "items.ts": ["space.item_purge"],
-      "keys.ts": ["space.keys"],
-      "oauth-callback.ts": ["space.credentials"],
-      "spaces.ts": ["space.settings", "space.usage"],
-      "types.ts": ["space.schema"],
-      "webhooks.ts": ["space.webhooks"],
+  it("matches the surface exactly, in both directions", () => {
+    // **The count is pinned, not only the permission**, and that is what the
+    // rank gate used to give for free. `requireSpaceAdmin` marked which doors
+    // needed a permission, so a new one arriving unmarked was visible in the
+    // source; with rank retired nothing marks them, and a door added to a
+    // space surface with no permission beside it reads exactly like a door
+    // that never needed one.
+    //
+    // So the surface is written down. A door losing its gate drops its count
+    // and reddens here; a door gated on the wrong literal reddens here; and a
+    // new gated door has to be added deliberately, which is the moment someone
+    // asks whether the literal is right.
+    //
+    // **What this still cannot see is a new door that consults nothing at
+    // all**, in a file that already has gated siblings. Nothing in the source
+    // distinguishes it from the open reads those files legitimately carry —
+    // `GET /types` and `GET /edge-types` are open on purpose — so it is a
+    // judgement at review rather than a property a scan can hold. Said plainly
+    // here rather than left as an absence, because an absence reads as
+    // coverage.
+    const expected: Record<string, Record<string, number>> = {
+      "audit.ts": { "space.audit_read": 1 },
+      "auth-pages.ts": { "space.app_grants": 2 },
+      "connection-configure.ts": { "space.connections": 2 },
+      "connection-leased-tokens.ts": { "space.connections": 1 },
+      "connection-mapping.ts": { "space.connections": 3 },
+      "connection-proxy.ts": { "space.upstream_access": 1 },
+      "bulk.ts": { "space.item_purge": 1 },
+      "connections.ts": { "space.connections": 10 },
+      "credentials.ts": { "space.credentials": 3 },
+      "edge-types.ts": { "space.schema": 1 },
+      "inbound-webhooks.ts": { "space.connections": 1 },
+      "integrations.ts": { "space.connections": 2 },
+      "items.ts": { "space.item_purge": 1 },
+      "keys.ts": { "space.keys": 4 },
+      "oauth-callback.ts": { "space.credentials": 3 },
+      "spaces.ts": { "space.settings": 2, "space.usage": 1 },
+      "types.ts": { "space.schema": 2 },
+      "webhooks.ts": { "space.webhooks": 6 },
     };
-    const wrong = sites
-      .filter((s) => s.spacePermission !== null)
-      .filter(
-        (s) => !(expected[s.file] ?? []).includes(s.spacePermission ?? ""),
-      )
-      .map(
-        (s) =>
-          `${s.file}:${String(s.line)} ${s.handler} -> ${s.spacePermission ?? "none"}`,
-      );
-    expect(wrong).toEqual([]);
+
+    const actual: Record<string, Record<string, number>> = {};
+    for (const site of sites) {
+      const permission = site.spacePermission ?? "none";
+      const byPermission = (actual[site.file] ??= {});
+      byPermission[permission] = (byPermission[permission] ?? 0) + 1;
+    }
+    expect(actual).toEqual(expected);
   });
 });

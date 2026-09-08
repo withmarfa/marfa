@@ -13,7 +13,7 @@
  * existing one. Connections installed against v1.0 keep pointing at the
  * v1.0 item even after v1.1 lands; upgrade is an explicit caller concern.
  *
- * Registration is platform-credential gated (is_platform: true) — the
+ * Registration is platform-credential gated (is_operator: true) — the
  * marketplace publisher (or the orchestrator's CLI) is the legitimate
  * caller. Listing/get is admin-or-platform.
  */
@@ -26,7 +26,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import { resolveSpaceAdminCaller } from "./_space-caller.js";
+import { resolveSpaceCaller } from "./_space-caller.js";
 import { validateManifest } from "../integrations/validate-manifest.js";
 import { validateManifestAuthoring } from "@withmarfa/shared";
 import { registerIntegrationManifest } from "../integrations/register-manifest.js";
@@ -131,7 +131,7 @@ const registerRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller lacks is_platform: true",
+      description: "Caller lacks is_operator: true",
     },
     409: {
       content: {
@@ -390,10 +390,10 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
 
   apiRouter.openapi(registerRoute, async (c) => {
     const apiKey = requireAuth(c);
-    if (!apiKey.is_platform) {
+    if (!apiKey.is_operator) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        "Integration registration requires a platform credential (is_platform: true)",
+        "Integration registration requires a platform credential (is_operator: true)",
       );
     }
 
@@ -550,11 +550,13 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
   // ---------------------------------------------------------------------
 
   htmlRouter.get("/:id/install", async (c) => {
-    const caller = await resolveSpaceAdminCaller(
+    const caller = await resolveSpaceCaller(
       c,
       storage,
       auth,
-      "Space admin authority required to install an integration",
+      // Reached only by the session branch: a bearer is refused by
+      // `requireSpacePermission`, which names `space.connections` itself.
+      "Your account is not attached to a space, so it cannot install an integration",
       "space.connections",
     );
     if (caller instanceof Response) return caller;
@@ -611,11 +613,13 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
   });
 
   htmlRouter.post("/:id/install", async (c) => {
-    const caller = await resolveSpaceAdminCaller(
+    const caller = await resolveSpaceCaller(
       c,
       storage,
       auth,
-      "Space admin authority required to install an integration",
+      // Reached only by the session branch: a bearer is refused by
+      // `requireSpacePermission`, which names `space.connections` itself.
+      "Your account is not attached to a space, so it cannot install an integration",
       "space.connections",
     );
     if (caller instanceof Response) return caller;

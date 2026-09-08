@@ -9,10 +9,10 @@
  * leaving the address unproven, these tests stop passing rather than
  * quietly producing an account nobody can use.
  *
- * What they pin: the platform-admin gate, including against the
- * space-bound `instance_admin` a widened gate would let through; the
- * account lands verified with its own space and `space_admin` on it, the
- * same as a sign-up's; the password is the one the sign-in path accepts;
+ * What they pin: the operator-key gate, including against the space-bound
+ * key holding every space permission a widened gate would let through; the
+ * account lands verified with its own space, the same as a sign-up's; the
+ * password is the one the sign-in path accepts;
  * the operator's audit row is platform level and carries no address; a
  * duplicate address is a conflict rather than a second account, while a
  * failure to provision is a failure rather than a conflict; a password
@@ -28,6 +28,8 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import type { SpacePermission } from "@withmarfa/shared";
 
 const ORIGIN = "http://localhost:0";
 const PASSWORD = "correct horse battery staple";
@@ -49,27 +51,29 @@ async function hostedContext(): Promise<TestContext> {
   });
 }
 
-/** A space-bound key at the named role. The gate refuses both of these:
- *  a `member` because it has no admin authority at all, and a space-bound
- *  `instance_admin` because platform authority means authority not
- *  confined to a space. The second is the one a widened gate would let
- *  through, so both arms are exercised rather than the easy one. */
+/** A space-bound key holding the named space permissions. The gate refuses
+ *  both of the shapes it is called with: one holding nothing, which has no
+ *  administrative reach at all, and one holding every space permission,
+ *  because operator authority is authority not confined to a space and no
+ *  permission set adds up to it. The second is the one a widened gate would
+ *  let through, so both arms are exercised rather than the easy one. */
 async function mintSpaceKey(
   c: TestContext,
-  role: "member" | "instance_admin",
+  name: string,
+  spacePermissions: SpacePermission[],
 ): Promise<string> {
   if (!c.storage.spaces) throw new Error("hosted storage has spaces");
-  const space = await c.storage.spaces.create(`not-a-platform-admin-${role}`);
+  const space = await c.storage.spaces.create(`not-an-operator-${name}`);
   const suffix = Math.random().toString(36).slice(2, 10);
   const raw = `marfa_k1_test_member_${suffix}`;
   await c.storage.keys.create(
     {
       label: `test-member-${suffix}`,
       source: `test-member-${suffix}`,
-      role,
+      space_permissions: spacePermissions,
       type_permissions: {},
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     space.id,
@@ -97,14 +101,17 @@ describe("POST /admin/accounts", () => {
     });
     expect(anonymous.status).toBe(401);
 
-    for (const role of ["member", "instance_admin"] as const) {
-      const key = await mintSpaceKey(ctx, role);
+    for (const [name, permissions] of [
+      ["holds nothing", []],
+      ["holds every space permission", [...SPACE_PERMISSIONS]],
+    ] as const) {
+      const key = await mintSpaceKey(ctx, name, [...permissions]);
       const res = await createAccount(
         ctx,
         { email: "nobody@test.marfa.so", password: PASSWORD },
         key,
       );
-      expect(res.status, role).toBe(403);
+      expect(res.status, name).toBe(403);
     }
 
     // No refusal left anything behind.
@@ -153,12 +160,10 @@ describe("POST /admin/accounts", () => {
     // The password never comes back, under any spelling.
     expect(JSON.stringify(body)).not.toContain(PASSWORD);
 
-    // The provisioning hook ran: its own space, and space_admin on it —
-    // the same shape a sign-up gets, which is what lets the smoke suite
-    // purge rather than trash.
+    // The provisioning hook ran: its own space, the same shape a sign-up
+    // gets, which is what lets the smoke suite purge rather than trash.
     const user = await ctx.storage.users?.getByAuthUserId(body.id as string);
     expect(user?.space_id).toBe(body.space_id);
-    expect(user?.role).toBe("space_admin");
     expect(await ctx.storage.spaces?.get(body.space_id as string)).toBeTruthy();
 
     // Verified on arrival, so the sign-in path accepts it with no email

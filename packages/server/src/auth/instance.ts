@@ -61,7 +61,7 @@ export interface MarfaAuthOptions {
   dialect: "sqlite" | "pg";
   /** Hosting issuer URL — protocol + host (and port) the server is reached
    *  at. Used by better-auth to set cookie domains and base paths.
-   *  In dev this is typically `http://localhost:8602`. */
+   *  In dev this is typically `http://localhost:8600`. */
   baseURL: string;
   /** When false, the email + password sign-up endpoint is disabled.
    *  Default `false` per the orchestrator-confirmed sign-up policy
@@ -627,16 +627,12 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
                   handle,
                   auth_user_id: user.id,
                   // Every sign-up provisions a fresh space the user solely
-                  // owns (line above), so the user IS that space's admin —
-                  // stamp space_admin rather than the `member` default. This
-                  // lets the owner administer their own space (register types /
-                  // edge types, manage keys + connections). Data access for
-                  // apps they sign into is still gated by the granted OAuth
-                  // scopes (OAuth tokens are `scope_enforced`), so the role is
-                  // the ceiling, not a full-access pass. If a shared-space
-                  // membership model lands later, gate this on "first/owning
-                  // user of the space".
-                  role: "space_admin",
+                  // owns (the line above), and the first person in a space is
+                  // one of the three creations with no ceiling above it: there
+                  // is no creator set to be bounded by, so they hold the whole
+                  // of their own space. What an app they sign into may reach
+                  // is a separate question, answered by the scopes granted on
+                  // the consent screen.
                 });
                 // The account holder's graph handle rides with the space
                 // and the users row rather than following as a separate
@@ -844,7 +840,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
   // Hash before anything is written, so a hasher that throws throws
   // before a user row exists. Create the user through the internal
   // adapter, which is what runs the `user.create` hook that provisions
-  // the space, the handle and the `space_admin` role. Then link the
+  // the space and the handle. Then link the
   // credential account with the issuer Better Auth's own credential
   // lookup keys on — imported rather than spelled here, because a
   // literal would keep working until the day the format moved and then

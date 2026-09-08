@@ -41,9 +41,9 @@
  * repaired, over a type nothing is using. A boot refusal is the right
  * severity for a corrupt shipped set and the wrong severity for this.
  *
- * So it follows `stored-role.ts` rather than departing from it: recognize,
- * or fall back to the least capability and say so loudly enough that the
- * fallback is never mistaken for a real value.
+ * So the rule is the one its sibling projections take: recognize, or fall
+ * back to the least capability and say so loudly enough that the fallback is
+ * never mistaken for a real value.
  */
 import {
   isPlatformTypeFamily,
@@ -57,11 +57,9 @@ import type { LoadedType } from "./interface.js";
  * The family an unplaceable platform row is treated as.
  *
  * `system` because it is the restrictive end of both things family
- * decides: the bounded lifecycle, and a refused `tier`. That is the same
- * direction `stored-role.ts` projects in — least authority there, least
- * capability here — which is worth saying because the two look opposite.
- * `member` is the bottom of a lattice and `system` reads like the top, and
- * neither is a statement about rank.
+ * decides: the bounded lifecycle, and a refused `tier`. Worth saying because
+ * it reads like the opposite — `system` sounds like the privileged end, and
+ * the name is not a statement about what a credential may do with it.
  */
 const UNPLACEABLE_FALLBACK: PlatformTypeFamily = "system";
 

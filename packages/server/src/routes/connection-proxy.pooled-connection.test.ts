@@ -56,6 +56,7 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { pgRequestContext } from "../storage/pg/request-context.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 import {
   decryptSecret,
   encryptSecret,
@@ -108,7 +109,7 @@ async function mintSpaceKey(storage: Storage, space: string): Promise<string> {
     {
       label: `proxy-pool-${suffix}`,
       source: `proxy-pool-${suffix}`,
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "library",
     },

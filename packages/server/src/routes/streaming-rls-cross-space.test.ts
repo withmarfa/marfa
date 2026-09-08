@@ -25,6 +25,7 @@ import {
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { initEventLog } from "../pubsub.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 const dialect = process.env.DB_DIALECT ?? "sqlite";
 const isPg = dialect === "pg";
@@ -40,11 +41,13 @@ async function mintSpaceKey(
     {
       label,
       source: `${label}-${suffix}`,
-      // space_admin: bypasses type-permission checks, so any leak
-      // observed would be a DB-layer leak (the application-layer
-      // filter is genuinely bypassed for this credential — exactly
-      // what RLS is supposed to fence against).
-      role: "space_admin",
+      // The wildcard map is the point of this fixture, not redundancy in
+      // it. `{"*": "write"}` makes the application-layer type filter match
+      // every row, so anything from the other space that reaches this key
+      // is a database-layer leak and nothing else — exactly what RLS is
+      // supposed to fence against. Narrow it and these tests still pass
+      // while testing the permission map instead of RLS.
+      space_permissions: [...SPACE_PERMISSIONS],
       default_tier: "library",
       type_permissions: { "*": "write" },
     },
@@ -125,10 +128,11 @@ describe.skipIf(!isPg)("streaming RLS cross-space regression (PG only)", () => {
     const body = await res.text();
     // Parse line-by-line; space A's stream must contain itemA and
     // never itemB. This holds whether RLS catches the row or the
-    // application layer catches it — but with `*: write` perms +
-    // space_admin role, the application-layer filter only
-    // narrows by space_id (which goes into the WHERE clause); if
-    // the WHERE were dropped (regression), RLS is the second fence.
+    // application layer catches it — but the key's `*: write` map
+    // leaves the type filter matching everything, so the only
+    // application-layer narrowing left is space_id (which goes into
+    // the WHERE clause); if the WHERE were dropped (regression), RLS
+    // is the second fence.
     const ids = body
       .trim()
       .split("\n")

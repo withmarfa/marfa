@@ -33,7 +33,11 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Hono } from "hono";
 import type { ApiKey } from "@withmarfa/shared";
-import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
+import {
+  registerTypeSchema,
+  unregisterTypeSchema,
+  SPACE_PERMISSIONS,
+} from "@withmarfa/shared";
 import { createTestContext, readSse, settle } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { emitWake, type ItemEventWithId } from "../pubsub.js";
@@ -61,9 +65,9 @@ beforeAll(async () => {
       id: "key-events-custom-subtype",
       name: "space viewer",
       key_hash: "unused",
-      role: "space_admin",
+      space_permissions: [...SPACE_PERMISSIONS],
       space_id: SPACE,
-      type_permissions: {},
+      type_permissions: { "*": "read" },
       extension_permissions: {},
       edge_permissions: {},
       metadata_permissions: {},

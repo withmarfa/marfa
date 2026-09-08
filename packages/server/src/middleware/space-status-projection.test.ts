@@ -45,10 +45,9 @@ async function mintSpaceKey(spaceId: string): Promise<string> {
     {
       label: `test-member-${suffix}`,
       source: `test-member-${suffix}`,
-      role: "member",
       type_permissions: { "core.note": "write" },
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     spaceId,

@@ -31,8 +31,12 @@
  * and failing to.
  */
 import { z } from "@hono/zod-openapi";
-import { RoleResponseSchema } from "./role-schema.js";
-import { ITEM_STATES, MarfaError, ErrorCode } from "@withmarfa/shared";
+import {
+  ITEM_STATES,
+  MarfaError,
+  ErrorCode,
+  SPACE_PERMISSIONS,
+} from "@withmarfa/shared";
 import type { ItemState } from "@withmarfa/shared";
 
 /**
@@ -271,15 +275,12 @@ export const KeyResponseSchema = z.object({
   key: z.string(),
   label: z.string(),
   source: z.string(),
-  role: RoleResponseSchema,
+  space_permissions: z
+    .array(z.enum(SPACE_PERMISSIONS as unknown as [string, ...string[]]))
+    .optional(),
+  oauth_client_id: z.string().optional(),
   default_tier: z.enum(["library", "feed"]),
-  is_platform: z.boolean(),
-  scope_enforced: z
-    .boolean()
-    .optional()
-    .describe(
-      "Read-only. True when the key was minted through a signed-in app rather than from another key: its permission maps decide what it reaches, and its role does not override them. Set by the server at mint time and never settable through this API.",
-    ),
+  is_operator: z.boolean(),
   type_permissions: z.record(z.string(), z.enum(["read", "write", "none"])),
   extension_permissions: z
     .record(z.string(), z.enum(["read", "write"]))

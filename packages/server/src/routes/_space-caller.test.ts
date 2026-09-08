@@ -1,12 +1,14 @@
 /**
  * The rule that decides who may act on a space-admin HTML surface.
  *
- * These routes accept either a bearer token or a browser session, and the
- * two branches were not held to the same standard. The bearer branch
- * required space-admin authority; the session branch required only that
- * somebody was signed in, and then handed back whatever space resolved —
- * including none. Downstream, `spaceId: undefined` is not "no space", it
- * is "no space filter", so an unresolved session reached across spaces.
+ * These routes accept either a bearer token or a browser session, and the two
+ * branches answer different questions. A bearer is held to the capability the
+ * surface names. A session is not: these pages are part of the consent surface
+ * rather than something reached through it, so there is no grant behind them
+ * for a capability to have been ticked on, and what the session has to resolve
+ * to is a space. That is the refusal worth pinning — downstream,
+ * `spaceId: undefined` is not "no space", it is "no space filter", so an
+ * unresolved session would reach across spaces.
  *
  * Driven against the resolver directly. The route-level suites cover the
  * happy paths; what was missing is the refusals, which is the half a
@@ -15,8 +17,8 @@
 import { describe, it, expect } from "vitest";
 import type { Context } from "hono";
 import type { ApiKey, User } from "@withmarfa/shared";
-import { MarfaError, ErrorCode } from "@withmarfa/shared";
-import { resolveSpaceAdminCaller } from "./_space-caller.js";
+import { ErrorCode } from "@withmarfa/shared";
+import { resolveSpaceCaller } from "./_space-caller.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
@@ -35,7 +37,6 @@ function fakeUser(over: Partial<User>): User {
     space_id: "space-1",
     handle: "someone",
     auth_user_id: "auth-1",
-    role: "member",
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-01T00:00:00.000Z",
     ...over,
@@ -68,57 +69,22 @@ const auth = {
 } as unknown as MarfaAuth;
 
 async function resolve(user: User | null) {
-  return resolveSpaceAdminCaller(
+  return resolveSpaceCaller(
     sessionContext(),
     storageWith(user),
     auth,
-    "Space admin authority required",
+    "Your account is not attached to a space",
     "space.connections",
   );
 }
 
-describe("resolveSpaceAdminCaller — the session branch", () => {
-  it("refuses a signed-in member, as the bearer branch already does", async () => {
-    // Being signed in is not authority. A member holds an account in the
-    // space; installing an integration or rewriting its configuration is
-    // a space-admin act, and the bearer branch has always said so.
-    await expect(resolve(fakeUser({ role: "member" }))).rejects.toThrow(
-      MarfaError,
-    );
-    await expect(resolve(fakeUser({ role: "member" }))).rejects.toMatchObject({
-      code: ErrorCode.FORBIDDEN,
-    });
-  });
-
-  it("refuses a role outside the union instead of admitting it", async () => {
-    // The fail-open direction, and the one worth a test of its own. This
-    // gate compares ranks rather than literals, so an unrecognized role
-    // makes the lookup `undefined`, and `undefined < 2` is false, the
-    // comparison admits precisely what it means to refuse. Every account
-    // holder on both deployments carried such a value for a full rename
-    // cycle.
-    //
-    // The store narrows on read, so a real caller cannot arrive in this
-    // shape any more. This asserts the gate does not depend on that: the
-    // fake here builds a `User` directly, exactly as a future caller
-    // assembled some other way would.
-    const stale = fakeUser({ role: "tenant_admin" as "space_admin" });
-    await expect(resolve(stale)).rejects.toMatchObject({
-      code: ErrorCode.FORBIDDEN,
-    });
-  });
-
-  it("admits a space admin", async () => {
-    const caller = await resolve(fakeUser({ role: "space_admin" }));
+describe("resolveSpaceCaller — the session branch", () => {
+  it("admits a signed-in person whose account resolves to a space", async () => {
+    const caller = await resolve(fakeUser({}));
     expect(caller).toMatchObject({
       apiKeyId: "auth_user:auth-1",
       spaceId: "space-1",
     });
-  });
-
-  it("admits a platform admin", async () => {
-    const caller = await resolve(fakeUser({ role: "instance_admin" }));
-    expect(caller).toMatchObject({ spaceId: "space-1" });
   });
 
   it("refuses when no space resolves, rather than returning an unscoped caller", async () => {
@@ -131,22 +97,22 @@ describe("resolveSpaceAdminCaller — the session branch", () => {
   });
 
   it("refuses a session whose user row carries no space", async () => {
-    await expect(
-      resolve(fakeUser({ role: "space_admin", space_id: "" })),
-    ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+    await expect(resolve(fakeUser({ space_id: "" }))).rejects.toMatchObject({
+      code: ErrorCode.FORBIDDEN,
+    });
   });
 
   it("admits the account holder of a keys-mode self-host, which has no users store", async () => {
-    // The distinction that makes the refusals above safe. Keys mode has
-    // no per-user space model and no role to read, and its space-less
-    // caller is the only space the instance has rather than authority
-    // over every space. Collapsing the two would either break every
-    // self-host browser flow or leave the hosted hole open.
-    const caller = await resolveSpaceAdminCaller(
+    // The distinction that makes the refusal above safe. Keys mode has no
+    // per-user space model, and its space-less caller is the only space the
+    // instance has rather than authority over every space. Collapsing the two
+    // would either break every self-host browser flow or leave the hosted
+    // hole open.
+    const caller = await resolveSpaceCaller(
       sessionContext(),
       {} as unknown as Storage,
       auth,
-      "Space admin authority required",
+      "Your account is not attached to a space",
       "space.connections",
     );
     expect(caller).toMatchObject({
@@ -156,7 +122,7 @@ describe("resolveSpaceAdminCaller — the session branch", () => {
   });
 });
 
-describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
+describe("resolveSpaceCaller — the bearer branch asks the capability", () => {
   function bearerContext(key: ApiKey): Context<AppEnv> {
     return {
       get: (name: string) => (name === "apiKey" ? key : undefined),
@@ -174,9 +140,9 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
       space_id: "space-1",
       label: "t",
       source: "t",
-      role: "space_admin",
+      space_permissions: ["space.connections"],
       default_tier: "library",
-      is_platform: false,
+      is_operator: false,
       type_permissions: {},
       extension_permissions: {},
       edge_permissions: {},
@@ -187,9 +153,9 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
     };
   }
 
-  it("admits a space_admin key", async () => {
-    const caller = await resolveSpaceAdminCaller(
-      bearerContext(fakeKey({ role: "space_admin" })),
+  it("admits a key holding the capability the surface names", async () => {
+    const caller = await resolveSpaceCaller(
+      bearerContext(fakeKey({})),
       storageWith(null),
       auth,
       "nope",
@@ -218,14 +184,15 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
   }
 
   it("refuses a signed-in app that was not granted the capability", async () => {
-    // Rank is not enough here, and this is the case the resolver exists to
-    // answer: every hosted account is provisioned `space_admin`, so any app it
-    // authorizes projects that rank. Without this, the surfaces behind the
-    // resolver were reachable by any app at all — which is how the `GET` half
-    // of a door stayed open while its `POST` twin was closed.
+    // The case the resolver exists to answer. The key this app signed in
+    // through holds `space.connections` on its row; the grant does not, and
+    // the grant is what an OAuth caller is held to. Without this, the
+    // surfaces behind the resolver were reachable by any app at all — which
+    // is how the `GET` half of a door stayed open while its `POST` twin was
+    // closed.
     await expect(
-      resolveSpaceAdminCaller(
-        oauthContext(fakeKey({ role: "space_admin" }), ["openid"]),
+      resolveSpaceCaller(
+        oauthContext(fakeKey({}), ["openid"]),
         storageWith(null),
         auth,
         "nope",
@@ -235,11 +202,8 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
   });
 
   it("admits a signed-in app that holds it", async () => {
-    const caller = await resolveSpaceAdminCaller(
-      oauthContext(fakeKey({ role: "space_admin" }), [
-        "openid",
-        "space.connections",
-      ]),
+    const caller = await resolveSpaceCaller(
+      oauthContext(fakeKey({}), ["openid", "space.connections"]),
       storageWith(null),
       auth,
       "nope",
@@ -253,11 +217,8 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
     // answer the question. A hard-coded literal would let one be added under
     // the wrong authority and still look gated.
     await expect(
-      resolveSpaceAdminCaller(
-        oauthContext(fakeKey({ role: "space_admin" }), [
-          "openid",
-          "space.connections",
-        ]),
+      resolveSpaceCaller(
+        oauthContext(fakeKey({}), ["openid", "space.connections"]),
         storageWith(null),
         auth,
         "nope",
@@ -266,10 +227,10 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
     ).rejects.toMatchObject({ code: "forbidden" });
   });
 
-  it("refuses a member key", async () => {
+  it("refuses a key that holds nothing", async () => {
     await expect(
-      resolveSpaceAdminCaller(
-        bearerContext(fakeKey({ role: "member" })),
+      resolveSpaceCaller(
+        bearerContext(fakeKey({ space_permissions: [] })),
         storageWith(null),
         auth,
         "nope",

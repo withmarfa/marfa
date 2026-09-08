@@ -28,10 +28,11 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import { initEventLog } from "../pubsub.js";
+import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
-/** A member key that may read notes and read exactly one namespace. */
+/** A key that may read notes and read exactly one namespace. */
 let scopedKey: string;
 
 beforeAll(async () => {
@@ -46,13 +47,15 @@ beforeAll(async () => {
     {
       label: `extperm-${suffix}`,
       source: `extperm-${suffix}`,
-      role: "member",
       type_permissions: { "*": "write" },
       // `mine` is readable; `theirs` is not named at all, so the caller
       // holds nothing on it.
       extension_permissions: { mine: "read" },
       default_tier: "library",
-      is_platform: false,
+      // Keys mode leaves this key space-less, and a space-less key must be an
+      // operator key. Nothing here turns on that: the stream narrows on the
+      // extension map, which no credential bypasses.
+      is_operator: true,
     },
     hashApiKey(scopedKey, TEST_API_KEY_SALT),
   );
@@ -167,9 +170,8 @@ describe("metadata.changed on the live stream", () => {
 });
 
 describe("an OAuth-derived subscriber", () => {
-  // Its own context: an OAuth principal with a projected role needs
-  // hosted-mode storage with a user store, which the shared context above
-  // does not have.
+  // Its own context: an OAuth principal needs hosted-mode storage with a user
+  // store, which the shared context above does not have.
   let hosted: TestContext;
 
   beforeAll(async () => {
@@ -185,17 +187,15 @@ describe("an OAuth-derived subscriber", () => {
   });
 
   it("receives no extension namespace at all", async () => {
-    // OAuth tokens are minted with `extension_permissions: {}` and
-    // `scope_enforced`, so they hold nothing on any namespace and their
-    // projected role does not bypass the maps. The stream therefore shows
-    // them no extension data — which is what a REST read already does,
-    // and is the point: an app gets what the user granted it, not what
-    // the user could see.
+    // OAuth tokens are minted with `extension_permissions: {}`, so they hold
+    // nothing on any namespace and nothing about the principal behind them
+    // widens that. The stream therefore shows them no extension data — which
+    // is what a REST read already does, and is the point: an app gets what the
+    // user granted it, not what the user could see.
     const spaces = hosted.storage.spaces;
     if (!spaces) throw new Error("this test needs a space store");
     const space = await spaces.create("oauth-stream-space");
-    // Projected `space_admin`, which passes the role gates and still does
-    // not bypass the permission maps.
+    // The option seeds the backing user row the grant is FK-bound to.
     // A real type grant, so the token clears the stream's type filter and
     // the only thing left to narrow the frame is the extension map. With
     // no scopes at all it receives no events whatever, which would make
@@ -235,10 +235,14 @@ describe("an OAuth-derived subscriber", () => {
       {
         label: `oauthwriter-${suffix}`,
         source: `oauthwriter-${suffix}`,
-        role: "space_admin",
+        space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
+        // Named, because the extension door reads this map and nothing else:
+        // the implicit own-namespace write follows the key's label, which is
+        // not `mine`.
+        extension_permissions: { mine: "write" },
         default_tier: "library",
-        is_platform: false,
+        is_operator: false,
       },
       hashApiKey(writerKey, TEST_API_KEY_SALT),
       space.id,

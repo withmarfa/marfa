@@ -50,9 +50,8 @@ describe("client.admin.keys.create", () => {
             key: "marfa_k1_minted",
             label: "support-readonly",
             source: "support-readonly",
-            role: "member",
             default_tier: "library",
-            is_platform: false,
+            is_operator: false,
             type_permissions: { "core.note": "read" },
             created_at: "2026-01-01T00:00:00.000Z",
             last_used_at: null,
@@ -69,7 +68,6 @@ describe("client.admin.keys.create", () => {
     });
 
     expect(minted.key).toBe("marfa_k1_minted");
-    expect(minted.role).toBe("member");
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 
@@ -85,9 +83,8 @@ describe("client.admin.keys.create", () => {
             key: "marfa_k1_minted",
             label: "l",
             source: "s",
-            role: "member",
             default_tier: "library",
-            is_platform: false,
+            is_operator: false,
             type_permissions: {},
             created_at: "2026-01-01T00:00:00.000Z",
             last_used_at: null,

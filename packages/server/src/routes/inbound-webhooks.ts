@@ -10,11 +10,11 @@ import {
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  holdsSpacePermission,
   requireAuth,
   actsAsConnection,
-  hasSpaceAdminAuthority,
   requireSpacePermission,
-  hasPlatformAuthority,
+  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
@@ -106,12 +106,7 @@ async function requireConnectionAccess(
   // live subscription inside a space it does not belong to. Platform
   // authority and connection-bound credentials are the only space-less
   // shapes entitled to that reach.
-  if (
-    !key.space_id &&
-    !isIntegration &&
-    !hasPlatformAuthority(key) &&
-    !key.is_platform
-  ) {
+  if (!key.space_id && !isIntegration && !hasOperatorAuthority(key)) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Space scope required for this credential",
@@ -129,7 +124,7 @@ async function requireConnectionAccess(
   // `requireConnectionProxyAccess`: the connection lookup above is fenced
   // on `key.space_id`, so rank decides what the caller may do and the
   // fence decides which connections it can see.
-  const isAdmin = hasSpaceAdminAuthority(key) || key.is_platform;
+  const isAdmin = holdsSpacePermission(c, "space.connections");
   if (!isAdmin && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,

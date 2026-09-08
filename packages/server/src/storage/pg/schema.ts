@@ -55,10 +55,6 @@ export const users = pgTable(
     auth_user_id: text("auth_user_id").references(() => auth_user.id, {
       onDelete: "set null",
     }),
-    /** Principal role projected onto OAuth bearer principals. Defaults to
-     *  `member`; operator elevates via SQL. Gates `requireSpaceAdmin` /
-     *  `requireAdmin` routes for OAuth-authenticated requests. */
-    role: text("role").notNull().default("member"),
     /** IANA zone the account keeps its own clock in. A default and a
      *  display preference: it answers "what is on today" for a caller
      *  that names no zone, and never anchors a recurrence. */
@@ -295,24 +291,26 @@ export const apiKeys = pgTable(
     key_hash: text("key_hash").notNull().unique(),
     label: text("label").notNull(),
     source: text("source").notNull(),
-    role: text("role").notNull().default("member"),
     default_tier: text("default_tier").notNull().default("library"),
-    is_platform: boolean("is_platform").notNull().default(false),
+    is_operator: boolean("is_operator").notNull().default(false),
     is_runtime_credential: boolean("is_runtime_credential")
       .notNull()
       .default(false),
-    // A key minted through an OAuth session, held to the permission maps it
-    // was minted with rather than to its role.
-    //
-    // **Without this the breadth clamp on the mint is decorative.** That clamp
-    // refuses a request for reach the session's own grant does not cover, but a
-    // key whose role bypasses the maps ignores them at every later request — so
-    // the narrowing would hold for exactly as long as it took to use the key.
-    // Set by the server when the minting caller is OAuth, never from a request
-    // body, and never cleared.
-    scope_enforced: boolean("scope_enforced").notNull().default(false),
     connection_id: text("connection_id"),
     item_source: text("item_source"),
+    /**
+     * The eleven space permissions this credential holds, as a JSON array of
+     * the literals themselves.
+     *
+     * A list rather than a map, because a space permission has no read/write
+     * axis: it is held or it is not. The same shape a grant carries, so one
+     * `hasSpacePermission` answers for a key and for a sign-in.
+     *
+     * `[]` is the honest default and the right value for an operator key:
+     * running the instance is fenced outside the permission model rather than
+     * expressed inside it.
+     */
+    space_permissions: text("space_permissions").notNull().default("[]"),
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),
@@ -321,6 +319,23 @@ export const apiKeys = pgTable(
       .default("{}"),
     edge_permissions: text("edge_permissions").notNull().default("{}"),
     metadata_permissions: text("metadata_permissions").notNull().default("{}"),
+    /**
+     * Category 2 of the permission model, Your profile. Keyed on the row
+     * (`name`, `email`, `avatar`) with the levelled parent keyed on `*`.
+     *
+     * A key had nowhere to hold this until now: the field was on the wire type
+     * and on the synthetic principal an OAuth grant projects, and a first-party
+     * key reached the category through its role instead. With the role gone the
+     * map is the only answer, so the column has to exist or no key can ever be
+     * granted the category at all.
+     */
+    profile_permissions: text("profile_permissions").notNull().default("{}"),
+    /**
+     * The registered client that minted this key, when a signed-in app did.
+     * A key minted through a grant belongs to the app that asked for it, so
+     * the keys page groups it there and revoking the app offers to revoke it.
+     */
+    oauth_client_id: text("oauth_client_id"),
     created_at: text("created_at").notNull(),
     // Hard lifetime bound. NULL means the key never expires (human-minted
     // keys); runtime credentials are always stamped so the bearer gate and

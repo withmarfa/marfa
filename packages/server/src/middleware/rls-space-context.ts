@@ -35,7 +35,7 @@ import type { AppEnv } from "./auth.js";
  *      contexts that intentionally see all spaces — they bypass the
  *      role switch and run on the owner connection. Application-
  *      layer audit + the platform-admin-only gate
- *      (`requireAdmin`) are still load-bearing here.
+ *      (`requireOperatorKey`) are still load-bearing here.
  *
  *   3. **RLS enabled, request has a space.** Wrap the handler in
  *      `db.transaction(...)` and set `SET LOCAL ROLE marfa_app` +
