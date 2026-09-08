@@ -436,7 +436,7 @@ export function listTypes(spaceId?: string | null): TypeSchema[] {
  * (`core`, `system`, `app`, `user`, `marfa`) carry platform-defined
  * semantics, anything else is a publisher handle.
  *
- * `RESERVED_ROOTS` holds two more entries than this has tiers. `capability`
+ * `RESERVED_ROOTS` holds two more entries than this has tiers. `space`
  * and `content` are reserved so that no type is ever registrable under
  * either, which means no identifier reaching a classifier can carry those
  * roots; neither has a tier because there is nothing there to classify.

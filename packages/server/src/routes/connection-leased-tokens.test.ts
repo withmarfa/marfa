@@ -139,7 +139,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
   it("rejects a capability not in oauth_requirements at all with 422", async () => {
     const connectionId = await createConnection();
     const res = await issueLease(connectionId, {
-      capability_id: "unknown.spacePermission",
+      capability_id: "unknown.capability",
     });
     expect(res.status).toBe(422);
   });

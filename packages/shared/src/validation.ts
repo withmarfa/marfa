@@ -103,7 +103,7 @@ const TYPE_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$/;
  *
  * **Derived rather than typed out**, from `scope-roots.ts`. It was a hand
  * list, and every scope family that arrived needed a second edit here to be
- * protected — `capability` got one, `content` got one, and `metadata` and
+ * protected — the space-permission root got one, `content` got one, and `metadata` and
  * `edge` never did, which is the hole this closes. Composing it means the
  * next family is protected by having been declared.
  *

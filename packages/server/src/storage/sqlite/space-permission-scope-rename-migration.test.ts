@@ -41,6 +41,13 @@ const OLD_SET = [
 /** The five `auth_oauth_*` columns hold a JSON array as text. */
 const OLD_SET_JSON = JSON.stringify(OLD_SET);
 
+/** Deliberately not `OLD_SET`, and deliberately overlapping it in nothing but
+ *  shape. The machine-to-machine ceiling is its own column, so a statement
+ *  reading the wrong source would land this row's other list here. */
+const M2M_SET = ["capability.audit_read", "core.task:write"];
+const M2M_SET_JSON = JSON.stringify(M2M_SET);
+const M2M_SET_AFTER = ["space.audit_read", "core.task:write"];
+
 const NEW_SET = [
   "core.note:read",
   "space.keys",
@@ -66,8 +73,13 @@ async function seed(db: Client): Promise<void> {
   await db.batch(
     [
       {
-        sql: `INSERT INTO auth_oauth_client VALUES ('client-live', ?, NULL), ('client-untouched', ?, NULL)`,
-        args: [OLD_SET_JSON, JSON.stringify(["core.task:write"])],
+        // `client_credentials_scopes` is a separate ceiling for the
+        // machine-to-machine grant type rather than a subset of the first, so
+        // it is seeded with a DIFFERENT list: a statement that read the wrong
+        // source column would overwrite one with the other and still pass an
+        // assertion that only checked the names had moved.
+        sql: `INSERT INTO auth_oauth_client VALUES ('client-live', ?, ?), ('client-untouched', ?, NULL)`,
+        args: [OLD_SET_JSON, M2M_SET_JSON, JSON.stringify(["core.task:write"])],
       },
       {
         sql: `INSERT INTO auth_oauth_access_token VALUES ('at-1', ?)`,
@@ -177,6 +189,11 @@ describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
         ).toEqual(NEW_SET);
         expect(
           await json(
+            `SELECT client_credentials_scopes FROM auth_oauth_client WHERE id = 'client-live'`,
+          ),
+        ).toEqual(M2M_SET_AFTER);
+        expect(
+          await json(
             `SELECT scopes FROM auth_oauth_access_token WHERE id = 'at-1'`,
           ),
         ).toEqual(NEW_SET);
@@ -217,6 +234,22 @@ describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
         // A revoked projection still holds a scope list, and the surfaces
         // that render its history read the same names as the live ones.
         expect(parsed(byId.get("grant-revoked"))).toEqual(["space.audit_read"]);
+
+        // The rest of the document survives. A statement that replaced the
+        // whole properties bag rather than the one path would pass every
+        // assertion above and lose the grant's identity.
+        const { rows: kept } = await db.execute(
+          `SELECT json_extract(properties, '$.kind') AS kind,
+                  json_extract(properties, '$.client_id') AS client_id,
+                  typeof(properties) AS storage
+             FROM items WHERE id = 'grant-live'`,
+        );
+        expect(kept[0]?.kind).toBe("app");
+        expect(kept[0]?.client_id).toBe("client-live");
+        // And it is still SQLite's binary JSONB rather than JSON text. A
+        // `json_set` without the `jsonb(...)` wrapper reverts the encoding for
+        // the rows it touches, which nothing else here would notice.
+        expect(kept[0]?.storage).toBe("blob");
       } finally {
         db.close();
       }
@@ -244,15 +277,24 @@ describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
       try {
         await seed(db);
         await run(db);
-        const first = await db.execute(
-          `SELECT scopes FROM auth_oauth_consent WHERE id = 'consent-1'`,
-        );
+        // Every column, not just one: the two rewritten with `replace()`
+        // rather than through the JSON functions are where a second pass is
+        // most plausibly not a no-op.
+        const snapshot = async () =>
+          (
+            await db.execute(
+              `SELECT (SELECT scopes FROM auth_oauth_consent WHERE id = 'consent-1') AS consent,
+                      (SELECT scope  FROM oauth_device_codes  WHERE id = 'dc-1')      AS device,
+                      (SELECT value  FROM auth_verification   WHERE id = 'v-code')    AS code,
+                      (SELECT json_extract(properties, '$.scopes')
+                         FROM items WHERE id = 'grant-live')                          AS grant_scopes`,
+            )
+          ).rows[0];
+        const first = await snapshot();
         await run(db);
-        const second = await db.execute(
-          `SELECT scopes FROM auth_oauth_consent WHERE id = 'consent-1'`,
-        );
-        expect(parsed(second.rows[0]?.scopes)).toEqual(NEW_SET);
-        expect(second.rows[0]?.scopes).toEqual(first.rows[0]?.scopes);
+        const second = await snapshot();
+        expect(parsed(second?.consent)).toEqual(NEW_SET);
+        expect(second).toEqual(first);
       } finally {
         db.close();
       }

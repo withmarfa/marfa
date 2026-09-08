@@ -332,7 +332,7 @@ export enum ErrorCode {
   EMAIL_SEND_FAILED = "email_send_failed",
   /**
    * Handle claim was rejected because the value names a reserved root:
-   * one of the type grammar's namespace tiers, or `capability`. A handle
+   * one of the type grammar's namespace tiers, or a scope family root. A handle
    * appears as the first segment of a type identifier, so a claim on one
    * of these would let its holder register into the platform's own
    * vocabulary.

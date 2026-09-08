@@ -109,7 +109,7 @@ function formatDate(iso: string): string {
  * set honestly. `upstream_access` reaches outside the space entirely, to the
  * person's account at the third-party service. `item_purge` is the contents
  * rather than anything around them. `app_grants` revokes other apps, which
- * is this page's own subject. And `audit_read` and `space_usage` are reads
+ * is this page's own subject. And `audit_read` and `usage` are reads
  * that any collective phrasing overstates. So the line lists what was
  * granted, from the same labels the consent screen used, and a person meets
  * the same words in both places.

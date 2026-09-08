@@ -55,7 +55,7 @@ export function deriveWildcardDescription(
   //
   // `isReservedRoot` is the belt, and it is load-bearing rather than
   // decorative: `classifyNamespace` documents that a reserved root with no
-  // tier of its own — `content`, `capability` — falls through to
+  // tier of its own — `content`, `space` — falls through to
   // `publisher`. Neither reaches this function today, because both are
   // claimed by earlier arms of `parseScope`, but a classifier answering
   // "publisher" for a reserved word is not a premise to leave a sentence

@@ -1494,7 +1494,7 @@ async function resolvePriorScopes(
  * across four kinds sound.** `typePattern` carries a different namespace per
  * kind, so a single map is only safe if no two kinds can produce the same
  * string, and none can: `parseScope` claims `metadata`, `edge.` and
- * `capability.` ahead of the item-type matcher, `capability` is a reserved
+ * `space.` ahead of the item-type matcher, `space` is a reserved
  * root whose non-members it refuses outright, and the four OIDC literals are
  * bare single words that `isValidTypePattern` rejects, a type identifier
  * needing two segments.
