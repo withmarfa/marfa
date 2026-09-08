@@ -42,8 +42,8 @@ export default defineConfig({
     // its own `sequence.groupOrder` scheduling group; that re-grouping
     // starves the timing-sensitive cycle-attribution pubsub test under
     // CI scheduling. Connection pressure is bounded instead by the
-    // per-file pool size (maxPoolSize: 3 in test-utils.ts) — see the
-    // connection-cap note in this package's CLAUDE.md.
+    // per-file pool size (maxPoolSize: 3 in test-utils.ts), so the ceiling
+    // is that size times the fork count rather than anything set here.
     pool: "forks",
   },
 });

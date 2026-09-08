@@ -42,7 +42,8 @@ Every credential, key or sign-in alike, carries one permission set: the content 
 Defense in depth beneath the application-layer space scoping, on by default (`MARFA_RLS_ENFORCE`), skipped entirely on SQLite. The per-request middleware wraps each space-bounded request in a transaction that sets the role and the space GUC; the migrations carry the policies. Two things are load-bearing and neither is visible in the policy DDL.
 
 - **Plain `ENABLE`, never `FORCE`.** The sign-up provisioning hook and the bearer middleware both touch `users` on the unwrapped owner connection with no space GUC set, and `FORCE` would policy-check them against an empty GUC and strand every new sign-up. Plain `ENABLE` keeps the owner exempt.
-- **Two tables are deliberately unpoliced and one is deliberately excluded.** `settings` is genuinely instance-scoped with no space key. `oauth_device_codes` has no space link before consent, so a policy would hide pending codes and break the device flow. `rate_limit_windows` has no space column and is accessed pre-RLS. `storage/pg/rls-ungated-tables.test.ts` is the regression guard, and its job is to make a future table's omission deliberate.
+- **One table is deliberately unpoliced and two are deliberately excluded.** `settings` is genuinely instance-scoped with no space key, so it carries no policy. `oauth_device_codes` is excluded because its only space link is null before consent, and a policy would hide pending codes and break the device flow; `rate_limit_windows` is excluded because it has no space column and is reached before RLS is installed.
+- **A grant without a policy is the shape that has bitten before, so a table stays off the application role entirely rather than gaining one and not the other.** `enrichment_state` is the standing example. **Nothing enumerates this**: `storage/pg/rls-ungated-tables.test.ts` covers the four tables one migration added and `storage/pg/rls.test.ts` iterates a hardcoded list, so neither would notice a new granted-but-unpoliced table. It would be readable and writable across every space with the wrapper installed, every query succeeding and every test green. Until something counts grants against policies, the discipline is the guard.
 
 ## Streaming, pooling and locks
 
@@ -107,7 +108,7 @@ Every page the server hands a person shares one voice, one layout and one styles
 
 ## Enrichment and the integrations runtime
 
-- **Enrichment is state-driven, never event-driven.** A sweeper finds candidates from `enrichment_state`; nothing enqueues on write. `enrichment_state` carries no grant to the application role and so is not policed by RLS.
+- **Enrichment is state-driven, never event-driven.** A sweeper finds candidates from `enrichment_state`; nothing enqueues on write. `enrichment_state` carries no grant to the application role, per the grant-without-policy rule above.
 - **The OCR seam exists so tests never touch the network**, and `EXTRACTOR_VERSION` is the re-extraction switch.
 - **The runtime requires Postgres**, so SQLite deployments run without integrations. Dispatch serializes per Connection.
 - **The dispatch fixture is a workspace package, not a test file.** The image builds it by name in its own step, which is the only place the staging path is exercised before a deploy.
