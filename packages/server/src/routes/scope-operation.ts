@@ -84,7 +84,7 @@ export function scopeOperation(scope: ParsedScope): Operation | undefined {
       // cannot characterize.
       return scope.operation === "none" ? undefined : scope.operation;
     case "oidc":
-    case "capability":
+    case "space":
       // Neither family reaches a permission map at all, so there is no
       // read/write axis to report. Attaching one would invent it.
       return undefined;

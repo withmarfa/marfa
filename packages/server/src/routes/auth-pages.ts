@@ -20,7 +20,7 @@ import type { MarfaRole } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   isReservedCredentialSource,
-  requireCapability,
+  requireSpacePermission,
   requireSpaceAdmin,
   hashApiKey,
   stampOAuthGrantLastUsed,
@@ -507,7 +507,7 @@ export function authRoutes(
     // projects the signed-in person's role onto it — and revoking another
     // app's access is exactly the authority a person would want to have been
     // asked about. So the grant has to name it too.
-    requireCapability(c, "capability.app_grants");
+    requireSpacePermission(c, "space.app_grants");
     // A credential carrying a space_id is fenced by the `spaceId`
     // argument below; one without a space would fall through to every
     // space's grants, so that shape needs platform authority (or an
@@ -557,7 +557,7 @@ export function authRoutes(
     // platform authority may resolve `spaceId` to undefined and address
     // a grant in any space.
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.app_grants");
+    requireSpacePermission(c, "space.app_grants");
     if (!key.space_id && !hasPlatformAuthority(key) && !key.is_platform) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
@@ -1391,7 +1391,7 @@ export function authRoutes(
       // withheld drop is what stops a hand-crafted post to this form from
       // naming a capability, and the reason has changed rather than gone: it
       // used to be that such a literal granted nothing, so admitting one was
-      // merely untidy. `capability.keys` now opens all four keys doors, so a
+      // merely untidy. `space.keys` now opens all four keys doors, so a
       // form post that slipped one through would be a grant nobody ticked on
       // a consent screen — which is the one thing the capability family exists
       // to prevent.

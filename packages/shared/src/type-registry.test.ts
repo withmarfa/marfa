@@ -1665,7 +1665,7 @@ describe("isPlatformTypeFamily", () => {
     // Not a hypothetical: this is what an older build meets after a
     // rollback, and the caller has to be able to tell it apart from a
     // family rather than crash on it.
-    expect(isPlatformTypeFamily("capability")).toBe(false);
+    expect(isPlatformTypeFamily("nonesuch")).toBe(false);
   });
 
   it("refuses values that are not strings at all", () => {

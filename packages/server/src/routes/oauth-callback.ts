@@ -45,7 +45,7 @@ import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
   hasSpaceAdminAuthority,
-  requireCapability,
+  requireSpacePermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { renderAuthLayout } from "./auth-layout.js";
@@ -432,7 +432,7 @@ export function oauthStartRoutes(
     // No integration arm on this door: it starts the upstream OAuth dance and
     // takes a caller-supplied scope override into the authorize URL, so it is
     // a credentials surface reached on rank and nothing else.
-    requireCapability(c, "capability.credentials");
+    requireSpacePermission(c, "space.credentials");
     const connectionId = c.req.param("id");
     // Fenced on the caller's space. Rank alone does not confer
     // cross-space reach: a credential carrying a `space_id` is confined
@@ -512,7 +512,7 @@ export function oauthStartRoutes(
       storage,
       options.auth,
       "OAuth start requires admin or platform credential",
-      "capability.credentials",
+      "space.credentials",
     );
     if (caller instanceof Response) return caller;
     const connectionId = c.req.param("id");

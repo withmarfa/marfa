@@ -87,9 +87,9 @@ describe("toLoadedTypes", () => {
     // every case, including the one it exists for: an older build meeting
     // a family a newer build wrote.
     const [unknown] = toLoadedTypes([
-      row({ id: "core.note", family: "capability" }),
+      row({ id: "core.note", family: "nonesuch" }),
     ]);
-    expect(unknown?.family).toBe("capability");
+    expect(unknown?.family).toBe("nonesuch");
 
     // A genuinely absent column stays absent.
     const [absent] = toLoadedTypes([row({ id: "core.task", family: null })]);

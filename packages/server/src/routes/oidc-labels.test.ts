@@ -40,12 +40,7 @@ describe("every literal is named in both registers", () => {
   it("answers nothing for a literal that names no OIDC scope", () => {
     // A guard rather than a cast, so a type scope cannot be asserted into a
     // lookup that has no entry for it and come back with something.
-    for (const other of [
-      "core.note:read",
-      "capability.webhooks",
-      "",
-      "OPENID",
-    ]) {
+    for (const other of ["core.note:read", "space.webhooks", "", "OPENID"]) {
       expect(oidcLabel(other), other).toBeUndefined();
       expect(oidcShort(other), other).toBeUndefined();
     }

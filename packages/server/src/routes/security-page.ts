@@ -21,7 +21,7 @@
  */
 
 import { parseScope } from "@withmarfa/shared";
-import { capabilityShort } from "./capability-labels.js";
+import { spacePermissionShort } from "./space-permission-labels.js";
 import { scopeOperation } from "./scope-operation.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { escapeHtml } from "./auth-html.js";
@@ -97,7 +97,7 @@ function formatDate(iso: string): string {
  * **Every scope is counted before anything is said.** Two earlier versions
  * returned on first sight — one arm for a write, one for a capability — and
  * neither implied the other, so the sentence depended on the order the
- * scopes happened to arrive in. `["capability.app_grants", "core.note:write"]`
+ * scopes happened to arrive in. `["space.app_grants", "core.note:write"]`
  * and the same pair reversed produced different lines, each omitting what
  * the other named, and the page renders exactly one line, so the loser was
  * not merely unnamed but unmentioned. The default flow landed on the worse
@@ -187,8 +187,8 @@ function scopeSummary(scopes: readonly string[]): string {
       case "oidc":
         identifiesYou = true;
         break;
-      case "capability": {
-        const named = capabilityShort(parsed.typePattern);
+      case "space": {
+        const named = spacePermissionShort(parsed.typePattern);
         // An unnamed capability cannot be listed, but it must not vanish
         // either. The exhaustive label map makes this unreachable in a
         // build that compiles; it is here for one that did not.

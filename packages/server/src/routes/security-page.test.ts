@@ -318,13 +318,13 @@ describe("the summary does not depend on scope order", () => {
   };
 
   it("says the same thing whichever way round the scopes arrive", () => {
-    const a = summaryOf(["capability.app_grants", "core.note:write"]);
-    const b = summaryOf(["core.note:write", "capability.app_grants"]);
+    const a = summaryOf(["space.app_grants", "core.note:write"]);
+    const b = summaryOf(["core.note:write", "space.app_grants"]);
     expect(a).toBe(b);
   });
 
   it("mentions both halves rather than the first one seen", () => {
-    const summary = summaryOf(["core.note:write", "capability.app_grants"]);
+    const summary = summaryOf(["core.note:write", "space.app_grants"]);
     expect(summary).toContain("read and write your data");
     expect(summary).toContain("revoke the other apps");
   });
@@ -333,24 +333,24 @@ describe("the summary does not depend on scope order", () => {
     // No one sentence is honest across this set, so the line lists what was
     // granted. These three are the cases a collective phrase got wrong in
     // both directions.
-    expect(summaryOf(["capability.upstream_access"])).toContain(
+    expect(summaryOf(["space.upstream_access"])).toContain(
       "use your accounts at connected services directly",
     );
-    expect(summaryOf(["capability.item_purge"])).toContain(
+    expect(summaryOf(["space.item_purge"])).toContain(
       "permanently delete things past the trash",
     );
     // A pure read must not read as management.
-    const audit = summaryOf(["capability.audit_read"]);
+    const audit = summaryOf(["space.audit_read"]);
     expect(audit).toContain("read your security history");
     expect(audit).not.toContain("manage");
   });
 
   it("counts the tail rather than printing a paragraph in a table row", () => {
     const summary = summaryOf([
-      "capability.keys",
-      "capability.item_purge",
-      "capability.audit_read",
-      "capability.webhooks",
+      "space.keys",
+      "space.item_purge",
+      "space.audit_read",
+      "space.webhooks",
     ]);
     expect(summary).toContain("2 more things");
   });

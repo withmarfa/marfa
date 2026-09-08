@@ -67,12 +67,12 @@ const EXEMPT: readonly { file: string; handler: string; why: string }[] = [
 const DEFERRED: readonly {
   file: string;
   handler: string;
-  capability: string;
+  spacePermission: string;
 }[] = [
   {
     file: "items.ts",
     handler: "purgeItemRoute",
-    capability: "capability.item_purge",
+    spacePermission: "space.item_purge",
   },
 ];
 
@@ -80,7 +80,7 @@ interface Site {
   file: string;
   line: number;
   handler: string;
-  capability: string | null;
+  spacePermission: string | null;
 }
 
 /**
@@ -90,7 +90,7 @@ interface Site {
  * their surfaces as plain Hono routes and contain no `openapi(` call at all —
  * `auth-pages.ts` alone has twenty-eight. Bounding a handler by `openapi(`
  * there bounded nothing: the window became the whole file, so one
- * `requireCapability` anywhere in it credited every rank-admitting site in it,
+ * `requireSpacePermission` anywhere in it credited every rank-admitting site in it,
  * and every site reported the same `(module scope)` handler. Both effects run
  * in the unsafe direction, and they run in exactly the files the surfaces are
  * hardest to see in by eye.
@@ -132,7 +132,7 @@ function handlerAbove(lines: readonly string[], line: number): string {
  * loses its place would report an absence rather than fail, which is the
  * direction that costs something.
  */
-function capabilityWithin(
+function spacePermissionWithin(
   lines: readonly string[],
   line: number,
 ): string | null {
@@ -151,15 +151,15 @@ function capabilityWithin(
     }
   }
   for (let i = start; i < end; i++) {
-    const direct = /requireCapability\(\s*c\s*,\s*"([^"]+)"/.exec(
+    const direct = /requireSpacePermission\(\s*c\s*,\s*"([^"]+)"/.exec(
       lines[i] ?? "",
     );
     if (direct) return direct[1] ?? null;
     // `resolveSpaceAdminCaller` takes its capability as a required argument
-    // rather than calling `requireCapability` at the site, so that a new
+    // rather than calling `requireSpacePermission` at the site, so that a new
     // surface behind it cannot be added without answering the question. The
     // literal is on its own line among the arguments.
-    const viaResolver = /^\s*"(capability\.[a-z_]+)",\s*$/.exec(lines[i] ?? "");
+    const viaResolver = /^\s*"(space\.[a-z_]+)",\s*$/.exec(lines[i] ?? "");
     if (viaResolver) return viaResolver[1] ?? null;
   }
   return null;
@@ -189,7 +189,7 @@ function census(): Site[] {
         file,
         line: i + 1,
         handler: handlerAbove(lines, i + 1),
-        capability: capabilityWithin(lines, i + 1),
+        spacePermission: spacePermissionWithin(lines, i + 1),
       });
     });
   }
@@ -210,7 +210,7 @@ describe("every space-admin door consults a capability", () => {
       [...EXEMPT, ...DEFERRED].map((e) => `${e.file}:${e.handler}`),
     );
     const ungated = sites
-      .filter((s) => s.capability === null)
+      .filter((s) => s.spacePermission === null)
       .filter((s) => !excused.has(`${s.file}:${s.handler}`))
       .map((s) => `${s.file}:${String(s.line)} ${s.handler}`);
     expect(ungated).toEqual([]);
@@ -231,7 +231,7 @@ describe("every space-admin door consults a capability", () => {
       expect(match.length).toBeGreaterThan(0);
       // Still ungated. When the follow-on merge lands, this reddens and the
       // entry is deleted — which is the point of listing it here at all.
-      for (const s of match) expect(s.capability).toBeNull();
+      for (const s of match) expect(s.spacePermission).toBeNull();
     }
   });
 
@@ -254,7 +254,7 @@ describe("every space-admin door consults a capability", () => {
     expect(viaResolver.length).toBeGreaterThan(0);
     for (const file of viaResolver) {
       expect(
-        sites.some((s) => s.file === file && s.capability !== null),
+        sites.some((s) => s.file === file && s.spacePermission !== null),
         `${file} admits through the resolver but the census sees no gated door in it`,
       ).toBe(true);
     }
@@ -270,7 +270,7 @@ describe("every space-admin door consults a capability", () => {
       expect(match.length, `${e.file}:${e.handler} — ${e.why}`).toBeGreaterThan(
         0,
       );
-      for (const s of match) expect(s.capability).toBeNull();
+      for (const s of match) expect(s.spacePermission).toBeNull();
     }
   });
 
@@ -278,30 +278,32 @@ describe("every space-admin door consults a capability", () => {
     // The mapping, so a door gated on the wrong literal is caught. A file may
     // name more than one where it carries more than one surface.
     const expected: Record<string, readonly string[]> = {
-      "audit.ts": ["capability.audit_read"],
-      "auth-pages.ts": ["capability.app_grants"],
-      "connection-leased-tokens.ts": ["capability.connections"],
-      "connection-mapping.ts": ["capability.connections"],
-      "connection-configure.ts": ["capability.connections"],
-      "connection-proxy.ts": ["capability.upstream_access"],
-      "connections.ts": ["capability.connections"],
-      "credentials.ts": ["capability.credentials"],
-      "edge-types.ts": ["capability.schema"],
-      "inbound-webhooks.ts": ["capability.connections"],
-      "integrations.ts": ["capability.connections"],
-      "items.ts": ["capability.item_purge"],
-      "keys.ts": ["capability.keys"],
-      "oauth-callback.ts": ["capability.credentials"],
-      "spaces.ts": ["capability.space_settings", "capability.space_usage"],
-      "types.ts": ["capability.schema"],
-      "webhooks.ts": ["capability.webhooks"],
+      "audit.ts": ["space.audit_read"],
+      "auth-pages.ts": ["space.app_grants"],
+      "connection-leased-tokens.ts": ["space.connections"],
+      "connection-mapping.ts": ["space.connections"],
+      "connection-configure.ts": ["space.connections"],
+      "connection-proxy.ts": ["space.upstream_access"],
+      "connections.ts": ["space.connections"],
+      "credentials.ts": ["space.credentials"],
+      "edge-types.ts": ["space.schema"],
+      "inbound-webhooks.ts": ["space.connections"],
+      "integrations.ts": ["space.connections"],
+      "items.ts": ["space.item_purge"],
+      "keys.ts": ["space.keys"],
+      "oauth-callback.ts": ["space.credentials"],
+      "spaces.ts": ["space.settings", "space.usage"],
+      "types.ts": ["space.schema"],
+      "webhooks.ts": ["space.webhooks"],
     };
     const wrong = sites
-      .filter((s) => s.capability !== null)
-      .filter((s) => !(expected[s.file] ?? []).includes(s.capability ?? ""))
+      .filter((s) => s.spacePermission !== null)
+      .filter(
+        (s) => !(expected[s.file] ?? []).includes(s.spacePermission ?? ""),
+      )
       .map(
         (s) =>
-          `${s.file}:${String(s.line)} ${s.handler} -> ${s.capability ?? "none"}`,
+          `${s.file}:${String(s.line)} ${s.handler} -> ${s.spacePermission ?? "none"}`,
       );
     expect(wrong).toEqual([]);
   });

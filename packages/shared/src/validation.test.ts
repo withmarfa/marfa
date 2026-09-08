@@ -396,7 +396,7 @@ describe("isValidHandle", () => {
     expect(isValidHandle("app")).toBe(false);
     expect(isValidHandle("user")).toBe(false);
     expect(isValidHandle("marfa")).toBe(false);
-    expect(isValidHandle("capability")).toBe(false);
+    expect(isValidHandle("space")).toBe(false);
   });
 
   it("accepts a handle that merely names a company or a page", () => {
@@ -481,7 +481,7 @@ describe("isReservedHandle", () => {
     expect(isReservedHandle("app")).toBe(true);
     expect(isReservedHandle("user")).toBe(true);
     expect(isReservedHandle("marfa")).toBe(true);
-    expect(isReservedHandle("capability")).toBe(true);
+    expect(isReservedHandle("space")).toBe(true);
   });
 
   it("returns false for everything that is not a root", () => {

@@ -24,8 +24,8 @@ export const NAMESPACE_TIER_ROOTS = [
   "marfa",
 ] as const;
 
-/** The verb-less administrative scopes. */
-export const CAPABILITY_ROOT = "capability";
+/** The verb-less space permissions, `space.<name>`. */
+export const SPACE_ROOT = "space";
 /** The content category, `content:read` and `content:write`. */
 export const CONTENT_ROOT = "content";
 /** The metadata layer, `metadata:write` and `metadata.<sub>:<verb>`. */
@@ -38,7 +38,7 @@ export const PROFILE_ROOT = "profile";
 /**
  * Every root an OAuth scope family lives under.
  *
- * **`metadata` and `edge` belong here for exactly the reason `capability` and
+ * **`metadata` and `edge` belong here for exactly the reason `space` and
  * `content` do**, and their absence was the defect: `parseScope` tries the
  * metadata and edge matchers before the type matcher, so a type registered
  * under a claimed `metadata` handle could never have its own scope literal
@@ -46,7 +46,7 @@ export const PROFILE_ROOT = "profile";
  * metadata family first, and that is the scope gating `POST /types`.
  */
 export const SCOPE_FAMILY_ROOTS = [
-  CAPABILITY_ROOT,
+  SPACE_ROOT,
   CONTENT_ROOT,
   METADATA_ROOT,
   EDGE_ROOT,

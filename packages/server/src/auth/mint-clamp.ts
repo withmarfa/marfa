@@ -3,7 +3,7 @@
  *
  * `POST /keys` used to refuse an OAuth caller outright, and that refusal was
  * the enforcement: a session could not mint, so it could not mint something
- * wider than itself. Replacing it with `capability.keys` removes the refusal
+ * wider than itself. Replacing it with `space.keys` removes the refusal
  * and leaves the escalation, so the clamp is what takes its place. Without it
  * an app granted `core.note:read` plus the capability could mint a
  * `space_admin` key that bypasses the permission maps entirely — a durable

@@ -12,7 +12,7 @@
  *
  * ## What is withheld, and what deliberately is not
  *
- * **`capability.*` is withheld from a bundle, and only from a bundle.** The
+ * **`space.*` is withheld from a bundle, and only from a bundle.** The
  * eleven administrative literals are now emitted by `buildAllowedScopes`
  * itself, from the closed set, so the family is requestable and the drop here
  * no longer decides that. What it decides is that a *bundle* can never be the
@@ -42,7 +42,7 @@
  * because the allowlist emits all three itself. A bundle naming one adds
  * nothing it did not already hold.
  */
-import { isCapabilityScope, type PermissionBundle } from "@withmarfa/shared";
+import { isSpacePermission, type PermissionBundle } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -54,17 +54,17 @@ import { log } from "../middleware/logger.js";
  * bundle doors ask, which is whether a configuration may be the thing that
  * publishes it.
  *
- * Delegates to `isCapabilityScope` rather than matching the root, so there is
+ * Delegates to `isSpacePermission` rather than matching the root, so there is
  * one answer to "is this a capability" rather than two that can drift. It is
  * exact membership of the closed set, which also gives the property that
- * matters here: a literal added to `CAPABILITY_SCOPES` is withheld by having
+ * matters here: a literal added to `SPACE_PERMISSIONS` is withheld by having
  * been added, rather than by somebody remembering this file.
  *
  * A malformed literal under the root is not this function's problem — it never
  * reaches here, because `isValidScope` refuses it one step earlier.
  */
 export function isWithheldFromAllowlist(scope: string): boolean {
-  return isCapabilityScope(scope);
+  return isSpacePermission(scope);
 }
 
 /**

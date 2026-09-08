@@ -15,8 +15,8 @@
     "exports": 247
   },
   "@withmarfa/shared": {
-    "version": "7.4.0",
-    "hash": "f5a5872dda79081909a5daaddab8b2eeeaab4caabee3c494a56be7b0be2b6471",
+    "version": "7.5.0",
+    "hash": "9d52e3ccb81d4a6b0768998f7f52e1339b1e7b6a67c3555f3ce45949d39b8e5c",
     "exports": 277
   },
   "@withmarfa/webhooks": {

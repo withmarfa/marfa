@@ -37,7 +37,7 @@
 import { describe, it, expect } from "vitest";
 import type { ParsedScope } from "@withmarfa/shared";
 import {
-  CAPABILITY_SCOPES,
+  SPACE_PERMISSIONS,
   EDGE_TYPE_REGISTRY,
   parseScope,
   TYPE_REGISTRY,
@@ -46,7 +46,10 @@ import { buildAllowedScopes } from "../auth/oauth-provider.js";
 import { getPermissionBundles } from "../config.js";
 import { buildScopeDescriptions } from "./auth-consent.js";
 import { humanizeType, renderConsentScreen, SCOPE_LABELS } from "./consent.js";
-import { CAPABILITY_LABELS, capabilityLabel } from "./capability-labels.js";
+import {
+  SPACE_PERMISSION_LABELS,
+  spacePermissionLabel,
+} from "./space-permission-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
 import { renderDeviceConsentScreen } from "./device-pages.js";
 import { escapeHtml } from "./auth-html.js";
@@ -389,16 +392,16 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // empty — which is why the set is also held directly below it. A
     // capability becoming requestable is the event that makes the loop
     // matter, and it should not be the event that first writes the check.
-    for (const scope of distinctPatterns(["capability"])) {
-      const capability = scope.capability ?? scope.typePattern;
+    for (const scope of distinctPatterns(["space"])) {
+      const capability = scope.spacePermission ?? scope.typePattern;
       // Through the guard the device screen uses rather than an indexed
       // lookup, so a literal outside the closed set is answered rather than
       // asserted into a map that has no entry for it.
-      expect(capabilityLabel(capability), capability).toMatch(/\S/);
+      expect(spacePermissionLabel(capability), capability).toMatch(/\S/);
     }
-    expect(CAPABILITY_SCOPES.length).toBeGreaterThan(0);
-    for (const literal of CAPABILITY_SCOPES) {
-      expect(CAPABILITY_LABELS[literal], literal).toMatch(/\S/);
+    expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
+    for (const literal of SPACE_PERMISSIONS) {
+      expect(SPACE_PERMISSION_LABELS[literal], literal).toMatch(/\S/);
     }
   });
 

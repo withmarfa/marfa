@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import {
   expandBundlesToScopes,
-  isCapabilityScope,
+  isSpacePermission,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   parseScope,
@@ -129,23 +129,19 @@ describe("a bundle is not a way around the scope grammar", () => {
   });
 
   it("drops a near-miss under a reserved prefix", () => {
-    // The shape a capability typo takes. `capability.webhooks:write` reads
-    // as a capability grant and is not one, and `capability.*:read` is the
+    // The shape a capability typo takes. `space.webhooks:write` reads
+    // as a capability grant and is not one, and `space.*:read` is the
     // literal the parser has to claim so it cannot be read as an item-type
     // pattern instead.
     const scopes = new Set(
       buildAllowedScopes(
-        bundleOf([
-          "capability.webhook",
-          "capability.webhooks:write",
-          "capability.*:read",
-        ]),
+        bundleOf(["space.webhook", "space.webhooks:write", "space.*:read"]),
         [],
       ),
     );
-    expect(scopes.has("capability.webhook")).toBe(false);
-    expect(scopes.has("capability.webhooks:write")).toBe(false);
-    expect(scopes.has("capability.*:read")).toBe(false);
+    expect(scopes.has("space.webhook")).toBe(false);
+    expect(scopes.has("space.webhooks:write")).toBe(false);
+    expect(scopes.has("space.*:read")).toBe(false);
   });
 
   it("keeps the valid scopes of a bundle that also carries a bad one", () => {
@@ -205,7 +201,7 @@ describe("permission bundles bind to the type registry", () => {
       // the root is reserved. The day a bundle names one, a correct config
       // would be reported here as a deleted type. Asked of the parser rather
       // than of the characters, like everything else that classifies a scope.
-      if (isCapabilityScope(literal)) continue;
+      if (isSpacePermission(literal)) continue;
       // The profile family names the account's own record, a reserved root
       // no registered type can occupy, so the registry has nothing to say
       // about it; the parser owns that family and is asked here as well.

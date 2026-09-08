@@ -17,7 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type { PermissionBundle } from "@withmarfa/shared";
-import { CAPABILITY_SCOPES, requiresExplicitConsent } from "@withmarfa/shared";
+import { SPACE_PERMISSIONS, requiresExplicitConsent } from "@withmarfa/shared";
 import * as logger from "../middleware/logger.js";
 import { buildAllowedScopes } from "./oauth-provider.js";
 import { bundlePublishedScopes } from "./ceiling-catchup.js";
@@ -34,7 +34,7 @@ const CLAIMING_BUNDLE: PermissionBundle = {
   id: "operator-custom",
   label: "Operator custom",
   description: "Configured, not shipped.",
-  scopes: ["core.note:read", "capability.keys"],
+  scopes: ["core.note:read", "space.keys"],
   default_on: true,
 };
 
@@ -51,7 +51,7 @@ afterEach(() => {
 describe("the allowlist publishes the capability family", () => {
   it("emits every capability literal, so a client can ask for one", () => {
     const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
-    for (const literal of CAPABILITY_SCOPES) {
+    for (const literal of SPACE_PERMISSIONS) {
       expect(scopes.has(literal), literal).toBe(true);
     }
   });
@@ -61,7 +61,7 @@ describe("the allowlist publishes the capability family", () => {
     // depend on a configuration naming it, or an operator who ships none
     // has an instance whose gates can never be satisfied.
     const scopes = new Set(buildAllowedScopes([]));
-    for (const literal of CAPABILITY_SCOPES) {
+    for (const literal of SPACE_PERMISSIONS) {
       expect(scopes.has(literal), literal).toBe(true);
     }
   });
@@ -73,9 +73,9 @@ describe("a bundle still cannot be the reason one is publishable", () => {
     // registration row, where a literal outlives the configuration that
     // introduced it — and a row is not re-derived at boot the way the
     // allowlist is.
-    expect(
-      bundlePublishedScopes([CLAIMING_BUNDLE]).has("capability.keys"),
-    ).toBe(false);
+    expect(bundlePublishedScopes([CLAIMING_BUNDLE]).has("space.keys")).toBe(
+      false,
+    );
     expect(bundlePublishedScopes([CLAIMING_BUNDLE]).has("core.note:read")).toBe(
       true,
     );
@@ -86,7 +86,7 @@ describe("a bundle still cannot be the reason one is publishable", () => {
     const named = logSpy.mock.calls.filter(
       ([level, , data]) =>
         level === "warn" &&
-        (data as { scope?: string } | undefined)?.scope === "capability.keys",
+        (data as { scope?: string } | undefined)?.scope === "space.keys",
     );
     expect(named.length).toBeGreaterThanOrEqual(1);
   });
@@ -103,7 +103,7 @@ describe("a bundle still cannot be the reason one is publishable", () => {
     setActivePermissionBundles([CLAIMING_BUNDLE]);
     try {
       const defaults = dcrDefaultScopes();
-      expect(defaults).not.toContain("capability.keys");
+      expect(defaults).not.toContain("space.keys");
       expect(defaults).toContain("core.note:read");
     } finally {
       setActivePermissionBundles(null);

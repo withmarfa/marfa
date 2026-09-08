@@ -39,7 +39,10 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidId } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireCapability, requireSpaceAdmin } from "../middleware/auth.js";
+import {
+  requireSpacePermission,
+  requireSpaceAdmin,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { encryptSecret, SECRET_INFO } from "../crypto/secret-encryption.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -312,7 +315,7 @@ export function credentialRoutes(storage: Storage) {
 
   r.openapi(createOAuthProviderCredentialRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.credentials");
+    requireSpacePermission(c, "space.credentials");
     const body = c.req.valid("json");
 
     // Encryption failures propagate as 500 — a missing MARFA_SECRET_KEY is a server-config bug, not a caller bug.
@@ -364,7 +367,7 @@ export function credentialRoutes(storage: Storage) {
 
   r.openapi(createApiTokenCredentialRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.credentials");
+    requireSpacePermission(c, "space.credentials");
     const body = c.req.valid("json");
 
     const secret_encrypted = encryptSecret(
@@ -410,7 +413,7 @@ export function credentialRoutes(storage: Storage) {
 
   r.openapi(deleteCredentialRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.credentials");
+    requireSpacePermission(c, "space.credentials");
     const { id } = c.req.valid("param");
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid credential ID");

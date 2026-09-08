@@ -538,7 +538,7 @@ export function connectionConfigureRoutes(
       storage,
       options.auth,
       FORBIDDEN,
-      "capability.connections",
+      "space.connections",
     );
     if (caller instanceof Response) return caller;
     const spaceId = caller.spaceId;
@@ -668,7 +668,7 @@ export function connectionConfigureRoutes(
       storage,
       options.auth,
       FORBIDDEN,
-      "capability.connections",
+      "space.connections",
     );
     if (caller instanceof Response) return caller;
     const spaceId = caller.spaceId;

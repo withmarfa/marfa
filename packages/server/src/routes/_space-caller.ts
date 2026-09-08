@@ -20,11 +20,11 @@ import {
   parseMarfaRole,
   ROLE_RANK,
 } from "@withmarfa/shared";
-import type { CapabilityScope } from "@withmarfa/shared";
+import type { SpacePermission } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   hasSpaceAdminAuthority,
-  requireCapability,
+  requireSpacePermission,
 } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
@@ -57,7 +57,7 @@ export async function resolveSpaceAdminCaller(
   storage: Storage,
   auth: MarfaAuth | undefined,
   forbiddenMessage: string,
-  capability: CapabilityScope,
+  permission: SpacePermission,
 ): Promise<SpaceCaller | Response> {
   const apiKey = c.get("apiKey");
   if (apiKey) {
@@ -74,11 +74,11 @@ export async function resolveSpaceAdminCaller(
     // new surface cannot be added without answering the question.
     //
     // The bearer branch only. A browser session below carries no `apiKey`, so
-    // `requireCapability` would answer 401 to a person who is signed in — and
+    // `requireSpacePermission` would answer 401 to a person who is signed in — and
     // there is no grant behind a session for a capability to have been ticked
     // on, because these pages are part of the consent surface rather than
     // something reached through it.
-    requireCapability(c, capability);
+    requireSpacePermission(c, permission);
     return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
   }
   if (auth) {

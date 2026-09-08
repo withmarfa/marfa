@@ -39,7 +39,7 @@ import {
   scopesToProfilePermissions,
   PROFILE_ROWS,
   PROFILE_ROOT,
-  CAPABILITY_SCOPES,
+  SPACE_PERMISSIONS,
   TYPE_REGISTRY,
   EDGE_TYPE_REGISTRY,
   expandBundlesToScopes,
@@ -226,7 +226,7 @@ export function buildAllowedScopes(
     // consent screen and the device screen at their own call sites. The
     // bundle door below still drops a capability a configuration names,
     // which now guards the stored client ceiling rather than this list.
-    ...CAPABILITY_SCOPES,
+    ...SPACE_PERMISSIONS,
     // The content category, the parent grant over everything a person
     // saves. Withheld until this build for one reason: both literals share
     // the type pattern `content`, which is the key both consent surfaces

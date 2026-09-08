@@ -649,7 +649,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   let hostedCtx: TestContext;
   let spaceId: string;
 
-  const KEYS = "capability.keys";
+  const KEYS = "space.keys";
   const grantScopes = (...extra: string[]) => ["openid", KEYS, ...extra];
 
   beforeAll(async () => {

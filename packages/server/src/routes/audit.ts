@@ -5,7 +5,10 @@ import {
   MIN_PAGE_LIMIT,
 } from "../page-limits.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireCapability, requireSpaceAdmin } from "../middleware/auth.js";
+import {
+  requireSpacePermission,
+  requireSpaceAdmin,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -113,7 +116,7 @@ export function auditRoutes(storage: Storage) {
     // filtered by the caller's own space, so a space admin reading its
     // own space's trail stays inside its own data.
     requireSpaceAdmin(c);
-    requireCapability(c, "capability.audit_read");
+    requireSpacePermission(c, "space.audit_read");
     const { action, resource_type, resource_id, since, until, limit, cursor } =
       c.req.valid("query");
 
