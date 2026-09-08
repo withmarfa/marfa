@@ -45,6 +45,13 @@ const NEW_SET = [
   "space.item_purge",
 ];
 
+/** Deliberately not `OLD_SET`. The machine-to-machine ceiling is its own
+ *  column rather than a subset of the first, so a statement reading the wrong
+ *  source column would land one list in the other's place and still satisfy an
+ *  assertion that only checked the names had moved. */
+const M2M_SET = ["capability.audit_read", "core.task:write"];
+const M2M_SET_AFTER = ["space.audit_read", "core.task:write"];
+
 let ctx: TestContext;
 
 beforeAll(async () => {
@@ -91,8 +98,10 @@ describe.skipIf(!isPg)(
       VALUES (${userId}, ${suffix}, ${`${suffix}@test.marfa.so`}, now(), now())
     `);
       await db().execute(sql`
-      INSERT INTO auth_oauth_client (id, client_id, redirect_uris, scopes, user_id)
-      VALUES (${clientId}, ${clientId}, ARRAY[]::text[], ${textArray(OLD_SET)}, ${userId})
+      INSERT INTO auth_oauth_client
+        (id, client_id, redirect_uris, scopes, client_credentials_scopes, user_id)
+      VALUES (${clientId}, ${clientId}, ARRAY[]::text[],
+              ${textArray(OLD_SET)}, ${textArray(M2M_SET)}, ${userId})
     `);
       await db().execute(sql`
       INSERT INTO auth_oauth_refresh_token (id, token, client_id, user_id, scopes)
@@ -186,6 +195,12 @@ describe.skipIf(!isPg)(
 
       expect(
         await scalar(
+          sql`SELECT client_credentials_scopes FROM auth_oauth_client WHERE id = ${clientId}`,
+        ),
+      ).toEqual(M2M_SET_AFTER);
+
+      expect(
+        await scalar(
           sql`SELECT scope FROM oauth_device_codes WHERE id = 'dc-moves'`,
         ),
       ).toBe("openid core.note:read space.usage space.webhooks");
@@ -220,6 +235,15 @@ describe.skipIf(!isPg)(
           sql`SELECT properties->'scopes' FROM items WHERE id = 'grant-revoked-moves'`,
         ),
       ).toEqual(["space.audit_read"]);
+
+      // The rest of the document survives. A statement that replaced the whole
+      // properties bag rather than the one path would pass every assertion
+      // above and lose the grant's identity.
+      expect(
+        await scalar(
+          sql`SELECT properties - 'scopes' FROM items WHERE id = 'grant-live-moves'`,
+        ),
+      ).toEqual({ kind: "app", client_id: clientId });
     });
 
     it("leaves an integration manifest's capability alone", async () => {
@@ -234,13 +258,22 @@ describe.skipIf(!isPg)(
 
     it("stays put on a second run", async () => {
       await seed("idempotent");
+      // Every column, not just one: the two rewritten with `replace()` rather
+      // than through the array or JSON functions are where a second pass is
+      // most plausibly not a no-op.
+      const snapshot = async () =>
+        (await db().execute(sql`
+          SELECT (SELECT scopes FROM auth_oauth_consent WHERE id = 'cs-idempotent') AS consent,
+                 (SELECT scope FROM oauth_device_codes WHERE id = 'dc-idempotent') AS device,
+                 (SELECT value FROM auth_verification WHERE id = 'v-code-idempotent') AS code,
+                 (SELECT properties->'scopes' FROM items WHERE id = 'grant-live-idempotent') AS grant_scopes
+        `)) as unknown as Record<string, unknown>[];
       await replay();
+      const first = await snapshot();
       await replay();
-      expect(
-        await scalar(
-          sql`SELECT scopes FROM auth_oauth_consent WHERE id = 'cs-idempotent'`,
-        ),
-      ).toEqual(NEW_SET);
+      const second = await snapshot();
+      expect(second[0]?.consent).toEqual(NEW_SET);
+      expect(second).toEqual(first);
     });
   },
 );

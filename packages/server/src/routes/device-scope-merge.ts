@@ -310,7 +310,7 @@ function breadthKey(
   // Unreachable through `parseScope`, and kept anyway. The only shapes it
   // catches that the switch below does not are a `type`, `edge` or `metadata`
   // scope carrying no verb, which the parser cannot produce: the two
-  // verb-less families are `oidc` and `capability`, and both have arms of
+  // verb-less families are `oidc` and `space`, and both have arms of
   // their own. So this exists for a value built by hand or arriving from a
   // stale build, and it is not redundant with the switch even though it reads
   // that way. No test can reach it; deleting it is a decision, not a cleanup.

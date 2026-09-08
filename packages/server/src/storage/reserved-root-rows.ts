@@ -2,8 +2,8 @@
  * Reports a stored type whose identifier sits under a namespace nothing is
  * allowed to occupy.
  *
- * Two of the reserved roots name no namespace tier: `capability`, which holds
- * the administrative scope literals, and `content`, which holds the two
+ * Two of the reserved roots name no namespace tier: `space`, which holds
+ * the space-permission literals, and `content`, which holds the two
  * content-category scopes. Reserving them is what stops a registered type
  * ever sharing a first segment with a grant, so a row under either is a type
  * whose identifier collides with a permission literal — the one collision the

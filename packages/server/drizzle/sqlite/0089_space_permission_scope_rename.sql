@@ -37,6 +37,14 @@
 --
 -- Idempotent: a second run matches nothing.
 --
+-- **Claiming `space` as a reserved root was checked before this landed, which
+-- is what reserving a root owes.** A stored `custom_types` row, a custom edge
+-- type, an item type or a publisher handle sitting under a newly-reserved root
+-- is stranded: `parseScope` stops parsing its scopes and every grant over it
+-- dies silently rather than refusing. Both deployments were read directly and
+-- neither carries one — no type, edge type or item under `space` or `space.`,
+-- and no handle spelled `space`.
+--
 -- **The append-only history is deliberately not rewritten.** `versions`,
 -- `audit_log`, `event_log` and `outbound_webhook_deliveries` all carry a
 -- superseded scope list under the old spelling, and all four are records of
