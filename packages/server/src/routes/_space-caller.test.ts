@@ -73,6 +73,7 @@ async function resolve(user: User | null) {
     storageWith(user),
     auth,
     "Space admin authority required",
+    "capability.connections",
   );
 }
 
@@ -146,6 +147,7 @@ describe("resolveSpaceAdminCaller — the session branch", () => {
       {} as unknown as Storage,
       auth,
       "Space admin authority required",
+      "capability.connections",
     );
     expect(caller).toMatchObject({
       apiKeyId: "auth_user:auth-1",
@@ -191,8 +193,77 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
       storageWith(null),
       auth,
       "nope",
+      "capability.connections",
     );
     expect(caller).toMatchObject({ apiKeyId: "k1", spaceId: "space-1" });
+  });
+
+  /** A bearer context that reports itself as OAuth, with a granted scope set. */
+  function oauthContext(key: ApiKey, scopes: string[]): Context<AppEnv> {
+    return {
+      get: (name: string) =>
+        name === "apiKey"
+          ? key
+          : name === "authType"
+            ? "oauth"
+            : name === "oauthGrant"
+              ? { scopes, clientId: "c1", authUserId: "u1" }
+              : undefined,
+      req: {
+        raw: { headers: new Headers() },
+        header: () => "Bearer x",
+        url: "https://marfa.test/integrations/x/install",
+      },
+    } as unknown as Context<AppEnv>;
+  }
+
+  it("refuses a signed-in app that was not granted the capability", async () => {
+    // Rank is not enough here, and this is the case the resolver exists to
+    // answer: every hosted account is provisioned `space_admin`, so any app it
+    // authorizes projects that rank. Without this, the surfaces behind the
+    // resolver were reachable by any app at all — which is how the `GET` half
+    // of a door stayed open while its `POST` twin was closed.
+    await expect(
+      resolveSpaceAdminCaller(
+        oauthContext(fakeKey({ role: "space_admin" }), ["openid"]),
+        storageWith(null),
+        auth,
+        "nope",
+        "capability.connections",
+      ),
+    ).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("admits a signed-in app that holds it", async () => {
+    const caller = await resolveSpaceAdminCaller(
+      oauthContext(fakeKey({ role: "space_admin" }), [
+        "openid",
+        "capability.connections",
+      ]),
+      storageWith(null),
+      auth,
+      "nope",
+      "capability.connections",
+    );
+    expect(caller).toMatchObject({ apiKeyId: "k1", spaceId: "space-1" });
+  });
+
+  it("asks for the capability it was handed, not a fixed one", async () => {
+    // The parameter is what makes a new surface behind this resolver have to
+    // answer the question. A hard-coded literal would let one be added under
+    // the wrong authority and still look gated.
+    await expect(
+      resolveSpaceAdminCaller(
+        oauthContext(fakeKey({ role: "space_admin" }), [
+          "openid",
+          "capability.connections",
+        ]),
+        storageWith(null),
+        auth,
+        "nope",
+        "capability.credentials",
+      ),
+    ).rejects.toMatchObject({ code: "forbidden" });
   });
 
   it("refuses a member key", async () => {
@@ -202,6 +273,7 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
         storageWith(null),
         auth,
         "nope",
+        "capability.connections",
       ),
     ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
   });

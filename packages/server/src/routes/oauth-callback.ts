@@ -512,6 +512,7 @@ export function oauthStartRoutes(
       storage,
       options.auth,
       "OAuth start requires admin or platform credential",
+      "capability.credentials",
     );
     if (caller instanceof Response) return caller;
     const connectionId = c.req.param("id");

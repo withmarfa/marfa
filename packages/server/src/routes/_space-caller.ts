@@ -20,8 +20,12 @@ import {
   parseMarfaRole,
   ROLE_RANK,
 } from "@withmarfa/shared";
+import type { CapabilityScope } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { hasSpaceAdminAuthority } from "../middleware/auth.js";
+import {
+  hasSpaceAdminAuthority,
+  requireCapability,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
 
@@ -53,12 +57,28 @@ export async function resolveSpaceAdminCaller(
   storage: Storage,
   auth: MarfaAuth | undefined,
   forbiddenMessage: string,
+  capability: CapabilityScope,
 ): Promise<SpaceCaller | Response> {
   const apiKey = c.get("apiKey");
   if (apiKey) {
     if (!hasSpaceAdminAuthority(apiKey) && !apiKey.is_platform) {
       throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
     }
+    // **The capability belongs here rather than at the five call sites.** This
+    // resolver is not itself a surface — it answers which space a request acts
+    // in, which is why it carries no capability of its own — but everything it
+    // admits is one, and admitting on space-admin rank is reachable by an OAuth
+    // bearer through the projected role. Gating the callers one at a time is
+    // what left the `GET` half of a door open while its `POST` twin, one
+    // function away in the same file, was closed. A required parameter means a
+    // new surface cannot be added without answering the question.
+    //
+    // The bearer branch only. A browser session below carries no `apiKey`, so
+    // `requireCapability` would answer 401 to a person who is signed in — and
+    // there is no grant behind a session for a capability to have been ticked
+    // on, because these pages are part of the consent surface rather than
+    // something reached through it.
+    requireCapability(c, capability);
     return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
   }
   if (auth) {
