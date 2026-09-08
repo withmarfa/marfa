@@ -72,6 +72,7 @@ import { isWithheldFromAllowlist } from "../auth/allowlist-withholding.js";
 import { withConsentLock } from "../auth/consent-lock.js";
 import {
   auditGrantRevoked,
+  keysMintedByApp,
   revokeProjectedGrant,
 } from "../auth/grant-lifecycle.js";
 import {
@@ -587,6 +588,14 @@ export function authRoutes(
       spaceId,
       clientId,
       authUserId,
+      // Opt-in, and never inferred. A caller here has nobody to ask, so the
+      // keys the app minted survive unless this door was told to take them.
+      revokeKeys: c.req.query("revoke_keys") === "true",
+      // The grant's own space rather than the caller's, which an operator key
+      // resolves to undefined. Without this the sweep would read "space-less"
+      // on a hosted instance and take nothing, or — with a looser filter —
+      // reach a second space where the same app also holds a grant.
+      keysSpaceId: item.space_id ?? undefined,
     });
     auditGrantRevoked(storage, {
       spaceId,
@@ -1277,17 +1286,39 @@ export function authRoutes(
   }
 
   // The space's keys, mapped to the console's view shape.
+  //
+  // A key an app minted carries that app's client id, and the page groups by
+  // the app's display name rather than by that id — a person has no way to
+  // recognize a client id, and a heading made of one reads as a fault. The
+  // names are resolved once per distinct app rather than once per key, and a
+  // client whose registration has since gone falls back to its id, which is
+  // still better than dropping the key into the person's own list and telling
+  // them they made it.
   async function listSpaceKeys(spaceId: string): Promise<KeysPageKey[]> {
     const all = await storage.keys.list();
-    return all
-      .filter((k) => k.space_id === spaceId)
-      .map((k) => ({
-        id: k.id,
-        label: k.label,
-        source: k.source,
-        created_at: k.created_at,
-        last_used_at: k.last_used_at,
-      }));
+    const mine = all.filter((k) => k.space_id === spaceId);
+
+    const appNames = new Map<string, string>();
+    for (const clientId of new Set(
+      mine.map((k) => k.oauth_client_id).filter((id) => id !== undefined),
+    )) {
+      const name =
+        typeof storage.oauthProvider?.getClientName === "function"
+          ? await storage.oauthProvider.getClientName(clientId)
+          : undefined;
+      appNames.set(clientId, name ?? clientId);
+    }
+
+    return mine.map((k) => ({
+      id: k.id,
+      label: k.label,
+      created_at: k.created_at,
+      last_used_at: k.last_used_at,
+      app_name:
+        k.oauth_client_id === undefined
+          ? undefined
+          : appNames.get(k.oauth_client_id),
+    }));
   }
 
   const noSpacePage = (session: MarfaAuthSession): string =>
@@ -2014,6 +2045,11 @@ export function authRoutes(
         clientId && typeof storage.oauthProvider?.getClientName === "function"
           ? ((await storage.oauthProvider.getClientName(clientId)) ?? clientId)
           : clientId;
+      // What the revoke offer is about. Counted through the same helper the
+      // revoke itself uses, so the number on the page is the number of keys
+      // ticking the box would take rather than a second answer to the same
+      // question.
+      const appKeys = await keysMintedByApp(storage, { clientId, spaceId });
       grants.push({
         id: item.id,
         client_name: clientName,
@@ -2023,6 +2059,7 @@ export function authRoutes(
           typeof props.granted_at === "string" ? props.granted_at : "",
         last_used_at:
           typeof props.last_used_at === "string" ? props.last_used_at : null,
+        key_count: appKeys.length,
       });
     }
 
@@ -2066,6 +2103,22 @@ export function authRoutes(
     if (props.kind !== "app") {
       return c.redirect("/auth/security?notice=grant_not_found", 302);
     }
+    // The offer, as the person answered it. The checkbox arrives ticked, so
+    // the default is that disconnecting an app takes the keys it made — but
+    // it is a checkbox rather than a consequence, because those keys are the
+    // person's to keep and a script of theirs may be holding one.
+    //
+    // An unreadable body reads as unticked. The form always posts one, so this
+    // is the path where something else is calling the door, and the safe
+    // reading of "I could not tell what you asked for" is the one that leaves
+    // the credentials alone.
+    let revokeKeys: boolean;
+    try {
+      const form = await c.req.formData();
+      revokeKeys = form.get("revoke_keys") !== null;
+    } catch {
+      revokeKeys = false;
+    }
     // Cascade-revoke via plugin tables (same logic as DELETE /grants/:id).
     const clientId =
       typeof props.client_id === "string" ? props.client_id : undefined;
@@ -2078,6 +2131,7 @@ export function authRoutes(
         spaceId,
         clientId,
         authUserId,
+        revokeKeys,
       });
     } catch (err) {
       // The cascade refused, so nothing was revoked and the record still

@@ -33,6 +33,15 @@ export interface SecurityPageGrant {
   scopes: string[];
   granted_at: string;
   last_used_at: string | null;
+  /**
+   * How many live API keys this app minted in the space. Zero for an app that
+   * was never granted the permission to make one, which is most of them.
+   *
+   * Drives the offer on the revoke form. A count rather than a boolean because
+   * the person is being asked to destroy credentials and deserves to know how
+   * many, and because "1 key" and "9 keys" are different decisions.
+   */
+  key_count: number;
 }
 
 export interface SecurityPageSession {
@@ -281,6 +290,15 @@ export function renderSecurityPage(params: SecurityPageParams): string {
             const activity = g.last_used_at
               ? `Last used ${escapeHtml(formatDate(g.last_used_at))}`
               : `Connected ${escapeHtml(formatDate(g.granted_at))}`;
+            // The offer to take the app's keys with it, shown only when
+            // there are any. Ticked by default, because disconnecting an app
+            // and leaving a credential it made behind is the surprising half;
+            // untickable, because the key is the person's and something of
+            // theirs may be holding it.
+            const keyOffer =
+              g.key_count === 0
+                ? ""
+                : `<label class="row__meta"><input type="checkbox" name="revoke_keys" value="1" checked> Also revoke the ${String(g.key_count)} API ${g.key_count === 1 ? "key" : "keys"} this app made</label>`;
             return `<div class="row">
               <div class="row__main">
                 <div class="row__title">${safeName}</div>
@@ -288,6 +306,7 @@ export function renderSecurityPage(params: SecurityPageParams): string {
                 <div class="row__meta row__meta--faint">${activity}</div>
               </div>
               <form method="POST" action="/auth/grants/${safeId}/revoke" class="row__action">
+                ${keyOffer}
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>`;

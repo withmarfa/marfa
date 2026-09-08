@@ -30,6 +30,7 @@ const SAMPLE_GRANT: SecurityPageGrant = {
   scopes: ["core.note:read", "core.task:write"],
   granted_at: "2026-05-01T10:00:00Z",
   last_used_at: "2026-05-05T14:30:00Z",
+  key_count: 0,
 };
 
 const SAMPLE_SESSION: SecurityPageSession = {
@@ -97,6 +98,40 @@ describe("renderSecurityPage", () => {
       sessions: [],
     });
     expect(html).not.toContain("/auth/account/delete");
+  });
+
+  it("offers to revoke the keys an app made, ticked, when it made any", () => {
+    // Ticked because disconnecting an app and leaving a credential it made
+    // behind is the surprising half; a checkbox rather than a consequence
+    // because the key is the person's and something of theirs may hold it.
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [{ ...SAMPLE_GRANT, key_count: 2 }],
+      sessions: [],
+    });
+    expect(html).toContain('name="revoke_keys"');
+    expect(html).toContain("checked");
+    expect(html).toContain("2 API keys");
+  });
+
+  it("says one key rather than 1 keys", () => {
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [{ ...SAMPLE_GRANT, key_count: 1 }],
+      sessions: [],
+    });
+    expect(html).toContain("1 API key this app made");
+  });
+
+  it("makes no offer for an app that has made no keys", () => {
+    // Most apps. A checkbox reading "also revoke the 0 keys" is worse than
+    // no checkbox, and the box would post a sweep that finds nothing.
+    const html = renderSecurityPage({
+      email: "alice@example.com",
+      grants: [SAMPLE_GRANT],
+      sessions: [],
+    });
+    expect(html).not.toContain("revoke_keys");
   });
 
   it("renders the empty-state copy when no grants exist", () => {

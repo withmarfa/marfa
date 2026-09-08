@@ -357,7 +357,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`.",
+    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds, and a key created by an app is never widened at all — it holds what that app held, and any caller may only narrow it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -550,6 +550,83 @@ function refuseKeyReachAboveCreator(
       ErrorCode.FORBIDDEN,
       `This credential does not hold ${uncovered}, so it cannot give a key reach it does not hold itself.`,
       { required_scope: uncovered },
+    );
+  }
+}
+
+/**
+ * Refuse an edit that widens a key an app made.
+ *
+ * A key minted through a sign-in carries the app that minted it, and the
+ * consent screen's promise about that key is that it holds what the app held
+ * and never more. The mint clamp is only half of keeping that promise: the
+ * permission maps are writable through `PATCH` a moment later, and the person
+ * who signed in can reach that door with their own credential. Without this,
+ * "an app cannot make a key wider than itself" means "an app cannot make a
+ * key wider than itself in one step".
+ *
+ * **Absolute, with no exemption for the operator key.** Every other ceiling
+ * here measures a caller against what the caller holds, so the operator key
+ * falls outside it by having nothing to measure. This one is a property of
+ * the key rather than of whoever is editing it: the guarantee is worth
+ * something to a person reading the consent screen only if there is no
+ * credential anywhere that can quietly lift it. Narrowing stays open to
+ * everyone, because the promise is a ceiling and not a fixed shape.
+ *
+ * The key's own current set is the ceiling, so the comparison is the one the
+ * mint already makes, with `existing` in the creator's place.
+ */
+function refuseWideningAnAppsKey(
+  existing: ApiKey,
+  requested: RequestedReach,
+  requestedSpacePermissions: SpacePermission[] | undefined,
+  requestedProfilePermissions: Record<string, "read" | "write"> | undefined,
+): void {
+  if (existing.oauth_client_id === undefined) return;
+
+  const fixed =
+    "This key was created by an app, so it holds what that app held and is never widened afterwards.";
+
+  const namespace = firstUncoveredExtension(
+    existing.extension_permissions,
+    requested.extension_permissions,
+  );
+  if (namespace !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not hold the ${namespace} extension namespace. Narrow it, or create a key of your own.`,
+    );
+  }
+
+  // Profile rows carry the same two levels as an extension namespace and are
+  // absent-means-none in the same way, so the same comparison answers both.
+  const profileRow = firstUncoveredExtension(
+    existing.profile_permissions,
+    requestedProfilePermissions,
+  );
+  if (profileRow !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not hold the ${profileRow} profile row. Narrow it, or create a key of your own.`,
+    );
+  }
+
+  const uncovered = firstUncoveredScope(scopesHeldByMaps(existing), requested);
+  if (uncovered !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not hold ${uncovered}. Narrow it, or create a key of your own.`,
+      { required_scope: uncovered },
+    );
+  }
+
+  const held = existing.space_permissions ?? [];
+  const beyond = requestedSpacePermissions?.find((p) => !held.includes(p));
+  if (beyond !== undefined) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not hold ${beyond}. Narrow it, or create a key of your own.`,
+      { required_scope: beyond },
     );
   }
 }
@@ -894,6 +971,19 @@ export function keyRoutes(storage: Storage, salt: string) {
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
     };
+    const requestedSpacePermissions =
+      body.space_permissions?.filter(isSpacePermission);
+
+    // Before the caller's own ceiling, because it is the more specific answer:
+    // a caller who both lacks the reach and is editing an app's key is better
+    // told that this key can never hold more than told what it does not hold.
+    refuseWideningAnAppsKey(
+      existing,
+      requestedReach,
+      requestedSpacePermissions,
+      body.profile_permissions,
+    );
+
     if (c.get("authType") === "oauth") {
       refuseSessionReachAboveGrant(
         c.get("oauthGrant")?.scopes ?? [],
@@ -906,8 +996,6 @@ export function keyRoutes(storage: Storage, salt: string) {
     // **The space permissions are clamped here too, and were not.** They are
     // editable through this door like any other family, so a key holding one
     // permission could have given itself the other ten.
-    const requestedSpacePermissions =
-      body.space_permissions?.filter(isSpacePermission);
     if (requestedSpacePermissions !== undefined && !hasOperatorAuthority(key)) {
       const held = key.space_permissions ?? [];
       const beyond = requestedSpacePermissions.find(
