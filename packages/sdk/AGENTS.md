@@ -19,7 +19,7 @@ Four behaviours that only exist locally, each of which changes what a caller see
 - **Blobs queue with their bytes.** The reference can go on an item immediately, and every upload lands before any write that names it. On replay a `HEAD /blobs/:hash` probe distinguishes an upload that landed from one that was lost. An upload refused for good dead-letters the writes waiting on it and **keeps the bytes**, which leave only through `discard`.
 - **Search is offline**, over the same fields the server indexes, so the same term finds the same items. **Ranking may differ**, because bm25 is relative to the documents in the index. Results resolve through visible state, so an unsent write is findable and a queued delete is not returned.
 
-**Two properties are easy to break silently.** The search index is created on the raw libsql client at open, because Drizzle cannot express a virtual table, and an index found absent is refilled from the store — an empty one answers every search with nothing and looks exactly like a search that matched nothing. And transactions are serialized per store handle, because libsql runs an interactive transaction on a connection of its own and a second `BEGIN` is refused outright rather than waiting, so a busy timeout cannot help.
+**Two properties are easy to break silently.** The search index is created on the raw libsql client at open, because Drizzle cannot express a virtual table, and an index found absent is refilled from the store, because an empty one answers every search with nothing and looks exactly like a search that matched nothing. And transactions are serialized per store handle, because libsql runs an interactive transaction on a connection of its own and a second `BEGIN` is refused outright rather than waiting, so a busy timeout cannot help.
 
 ## Subpaths and optional peers
 
@@ -35,7 +35,7 @@ Each subpath has its own tsup entry so a consumer pays only for what it imports,
 
 ## Versioning
 
-Major when `@withmarfa/shared` majors, since every wire-shape change cascades, **and when a published surface is removed** — a subpath or an exported name — which the surface lock enforces rather than trusts. Minor for additive features, patch for fixes. The publish workflow skips packages whose version is already on npm.
+Major when `@withmarfa/shared` majors, since every wire-shape change cascades, **and when a published surface is removed**, meaning a subpath or an exported name, which the surface lock enforces rather than trusts. Minor for additive features, patch for fixes. The publish workflow skips packages whose version is already on npm.
 
 **`@tanstack/db` is a range rather than a caret, deliberately.** On a 0.x package a caret admits only the same minor, so two carets on different minors are disjoint and narrowing one to the other strands every consumer on the older line, which it did once. The floor is held by the projection binding three type parameters on `Collection`, which older releases fail to satisfy. Whether the projection alone holds the floor at exactly the current lower bound has not been measured, and the range is not narrowed on an assumption that it does. Widening it is safe; narrowing it is a breaking change to an optional peer and wants a major.
 

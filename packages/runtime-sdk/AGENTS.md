@@ -12,10 +12,10 @@ A dispatch is bounded. `ctx.budget.shouldYield` is what a page loop polls, and `
 
 **Four words, used precisely, because the design turns on the differences:**
 
-- **watermark** — how far a _finished_ sweep got, in the provider's own domain key space. Durable, committed as the sweep runs, and where a fresh sweep starts. Never an offset: "item 4,300" means nothing once the provider inserts something.
-- **checkpoint** — where _this slice_ stopped. It lives in the queue payload rather than the cursor, so a redelivered slice is deterministic and an unrelated dispatch running in the gap cannot read it.
-- **signpost** — the upper bound, frozen before the first page and held for the whole chain. Without one, a provider that keeps writing can feed a sweep forever and it never reaches an end it can report. An entry added mid-chain is next chain's problem.
-- **sweep id** — a correlation identity for one chain, handed to the author for idempotency keys and compared by the runtime, so a straggler from an abandoned chain is discarded rather than appended to a chain nothing is tracking.
+- **watermark** is how far a _finished_ sweep got, in the provider's own domain key space. Durable, committed as the sweep runs, and where a fresh sweep starts. Never an offset: "item 4,300" means nothing once the provider inserts something.
+- **checkpoint** is where _this slice_ stopped. It lives in the queue payload rather than the cursor, so a redelivered slice is deterministic and an unrelated dispatch running in the gap cannot read it.
+- **signpost** is the upper bound, frozen before the first page and held for the whole chain. Without one, a provider that keeps writing can feed a sweep forever and it never reaches an end it can report. An entry added mid-chain is next chain's problem.
+- **sweep id** is a correlation identity for one chain, handed to the author for idempotency keys and compared by the runtime, so a straggler from an abandoned chain is discarded rather than appended to a chain nothing is tracking.
 
 **`sweep()` does not carry a provider page token across a slice boundary unless the author opts in.** A token valid for hours and one valid for five minutes have the same type signature, and a slice boundary can be minutes wide. An expired token produces an error the author sees; one the provider silently reinterprets produces a sweep that skips records and reports success. The default re-derives from the watermark, which costs at most one re-fetched page and cannot skip. Opt in per integration, once, having read the provider's documentation on token lifetime.
 

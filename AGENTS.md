@@ -2,20 +2,20 @@
 
 Typed data layer. This monorepo holds the workspace packages, the sample apps under `examples/`, and the deploy shape under `infra/`.
 
-**Query the docs MCP before reading source** on any documented surface — types, edges, runtime substrates, connections, auth flows. `https://docs.marfa.so/mcp`, or `marfa docs search "<query>"` from the CLI.
+**Query the docs MCP before reading source** on any documented surface: types, edges, runtime substrates, connections, auth flows. `https://docs.marfa.so/mcp`, or `marfa docs search "<query>"` from the CLI.
 
 **Published docs live only in `withmarfa/docs`.** Never author docs pages here. In-repo READMEs stay tight; `AGENTS.md` carries agent and build context. A change touching a public surface opens a companion docs pull request as part of the same change.
 
 ## Packages
 
-- **`types`** — JSON schemas for the platform-shipped type set, the validator both authoring paths share, and the generator that emits the TypeScript registries. Private; bundled into `shared`.
-- **`shared`** — wire types, validation schemas, error codes, ID utilities, the OAuth scope grammar, the integration manifest schema. Every other package imports it.
-- **`server`** — the Hono HTTP server. Private; deployments build from source.
-- **`sdk`** — TypeScript HTTP client. `sdk/auth` holds the OAuth helpers; `sdk/auth/node` holds the Node-only credential store, kept separate so browser bundlers never see `node:fs`.
-- **`webhooks`** — inbound signature verification, Web Crypto only.
-- **`runtime-sdk`** — the SDK Integrations consume: dispatch engine, per-connection state, echo suppression.
-- **`runtime-test`** — an in-memory harness mirroring that surface, so an Integration can unit-test handlers without booting the server.
-- **`sync-manifest`** — the manifest the sync client installs against. Private, and not an Integration for the reason below.
+- **`types`** holds the JSON schemas for the platform-shipped type set, the validator both authoring paths share, and the generator that emits the TypeScript registries. Private; bundled into `shared`.
+- **`shared`** holds the wire types, validation schemas, error codes, ID utilities, the OAuth scope grammar, the integration manifest schema. Every other package imports it.
+- **`server`** is the Hono HTTP server. Private; deployments build from source.
+- **`sdk`** is the TypeScript HTTP client. `sdk/auth` holds the OAuth helpers; `sdk/auth/node` holds the Node-only credential store, kept separate so browser bundlers never see `node:fs`.
+- **`webhooks`** does inbound signature verification, Web Crypto only.
+- **`runtime-sdk`** is the SDK Integrations consume: dispatch engine, per-connection state, echo suppression.
+- **`runtime-test`** is an in-memory harness mirroring that surface, so an Integration can unit-test handlers without booting the server.
+- **`sync-manifest`** is the manifest the sync client installs against. Private, and not an Integration for the reason below.
 
 **Where the code has to run decides whether something is an Integration.** An Integration is installed into a deployment's integrations directory and dispatched by the runtime. A client's code can only run elsewhere: sync watches a filesystem, so it runs on the machine holding the files, ships a manifest and no handler, and that manifest ships with the server build rather than being installed. Installing as a Connection, with credentials, configuration and observability, is plumbing both kinds share and decides nothing.
 
@@ -62,7 +62,7 @@ pnpm --filter @withmarfa/server schema-sql:generate
 
 Migrations, the journal-stamp trap and the migrate-then-deploy ordering rule live in `packages/server/AGENTS.md`, which is where the work happens.
 
-**Three freshness jobs regenerate a committed artifact and fail on drift**: types codegen, the OpenAPI spec and the bootstrap `SCHEMA_SQL`. They are ordinary pull-request checks with nothing to fire by hand, each gated on the paths that can actually stale its artifact, and each path set covers the generated file as well as its sources — a hand-edit of a generated file is itself the defect, and without that a pull request touching only the output would run no check at all. `ci.yml`'s `changes` job holds the same lists; keep the two in step.
+**Three freshness jobs regenerate a committed artifact and fail on drift**: types codegen, the OpenAPI spec and the bootstrap `SCHEMA_SQL`. They are ordinary pull-request checks with nothing to fire by hand, each gated on the paths that can actually stale its artifact, and each path set covers the generated file as well as its sources, because a hand-edit of a generated file is itself the defect, and without that a pull request touching only the output would run no check at all. `ci.yml`'s `changes` job holds the same lists; keep the two in step.
 
 **Narrowing a contract that stored rows already match has no grace period unless you write one.** Several contracts here are validated against stored data on every read rather than only at write, the integration manifest most of all: re-parsed on every resolution, strictly, with a credential's permissions projected from the result, and a mint that fails closed. So a resolution failure is a stop rather than a degradation.
 
@@ -94,7 +94,7 @@ Every machine resource a test or script allocates is released by the same code, 
 ## Data model
 
 - **One validator across both authoring paths.** `validateTypeSchema` in `@withmarfa/types` is called by the in-tree codegen and by `POST /types` alike, so an in-tree JSON schema is a valid runtime submission verbatim.
-- **Three families ship with the platform** — core, integration and system — registering into one registry and resolving identically. The split is provenance, not behaviour: it exists so a catalog can tell a space which types are the common vocabulary and which exist because a specific upstream service does. Platform-shipped types cannot be modified or deleted through the API.
+- **Three families ship with the platform**, core, integration and system, all registering into one registry and resolving identically. The split is provenance, not behaviour: it exists so a catalog can tell a space which types are the common vocabulary and which exist because a specific upstream service does. Platform-shipped types cannot be modified or deleted through the API.
 - **Inheritance:** a child may add fields, and may re-state an inherited field only to sharpen its description or tighten it to required. Changing an inherited field's shape, or loosening a required one, is refused.
 - **Lifecycle is universal.** The metadata-layer `state` axis is `active | archived | trashed`; types do not declare their own state machines.
 - **Constrain an edge on a role whenever the set of valid endpoints is open.** A list of type names admits only what whoever wrote the edge had already thought of, and nobody outside this repository can add to it: `in-collection` named three platform containers and left every integration writing its own vocabulary with nothing it was allowed to point at. Roles are a closed set declared per type and inherited down the parent chain, and both authoring paths refuse an unknown one.
@@ -130,7 +130,7 @@ An isolated data boundary is a **space**, in code, in schemas, in database colum
 
 ## Comments
 
-Comments are self-contained and make sense to anyone reading this repository cold. Explain _why_ — the decision, constraint or non-obvious trade-off — not the _what_, which the code already states. Never reference internal trackers, ticket numbers or project phases. If a comment does not earn its place by capturing intent, delete it.
+Comments are self-contained and make sense to anyone reading this repository cold. Explain _why_ (the decision, constraint or non-obvious trade-off), not the _what_, which the code already states. Never reference internal trackers, ticket numbers or project phases. If a comment does not earn its place by capturing intent, delete it.
 
 ## Commits
 

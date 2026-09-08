@@ -103,7 +103,7 @@ Every page the server hands a person shares one voice, one layout and one styles
 
 ## Reserved extension namespaces
 
-`connection.runtime` holds per-Connection runtime state and `connection.runtime.idempotency` holds the inbound-delivery dedupe window. Both are writable only by the connection's own runtime credential. **They are separate namespaces because the writers are different** — the dispatch loop and the webhook receipt route, which runs on the HTTP thread outside the dispatch lock — and keeping them apart is what stops a receipt and a dispatch overwriting each other.
+`connection.runtime` holds per-Connection runtime state and `connection.runtime.idempotency` holds the inbound-delivery dedupe window. Both are writable only by the connection's own runtime credential. **They are separate namespaces because the writers are different**, the dispatch loop and the webhook receipt route, which runs on the HTTP thread outside the dispatch lock. Keeping them apart is what stops a receipt and a dispatch overwriting each other.
 
 ## Enrichment and the integrations runtime
 

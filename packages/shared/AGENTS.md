@@ -10,7 +10,7 @@ Wire types, runtime validation, error codes, ID utilities, the type and edge reg
 
 ## Type patterns
 
-Everything that resolves a `.*` pattern goes through `type-patterns.ts` — permission maps, OAuth scopes, webhook filters, the storage layer's `allowed_types` — because a pattern meaning one thing at the auth gate and another in the query admits a caller and then hides its rows.
+Everything that resolves a `.*` pattern goes through `type-patterns.ts`: permission maps, OAuth scopes, webhook filters and the storage layer's `allowed_types`. That is because a pattern meaning one thing at the auth gate and another in the query admits a caller and then hides its rows.
 
 - **Subtree wildcards are parent-inclusive.** `core.media.*` covers `core.media`.
 - **The deny direction is the one that surprises people.** `{"*": "write", "core.secret.*": "none"}` denies `core.secret` itself, because the longest-prefix winner for that identifier is the `none` entry. Fencing a subtree while leaving its root writable needs an explicit entry for the root.
@@ -28,7 +28,7 @@ Everything that resolves a `.*` pattern goes through `type-patterns.ts` — perm
 
 The grammar is `<type>:<verb>`, `edge.<type>:<verb>`, `metadata[.<subresource>]:<verb>`, the verb-less OIDC literals, `space.<surface>`, and the two content-category literals.
 
-**`content` and `space` are reserved roots claimed whole**, so nothing else under either parses. The content category is projected as a complement — the global wildcard at the granted level, minus the system types, with `marfa.*` clamped to read — which makes the projection registry-dependent. `ParsedScope["kind"]` is a required discriminant and every projection admits by naming the family it wants rather than skipping the ones it does not, so adding a family stops the package compiling until each site has classified it.
+**`content` and `space` are reserved roots claimed whole**, so nothing else under either parses. The content category is projected as a complement, the global wildcard at the granted level minus the system types, with `marfa.*` clamped to read, which makes the projection registry-dependent. `ParsedScope["kind"]` is a required discriminant and every projection admits by naming the family it wants rather than skipping the ones it does not, so adding a family stops the package compiling until each site has classified it.
 
 ## Build and test
 
