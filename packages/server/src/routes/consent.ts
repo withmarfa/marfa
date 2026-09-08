@@ -70,7 +70,10 @@ import {
   scopesOfferedOffByDefaultOnly,
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
-import { CAPABILITY_LABELS, capabilityShort } from "./capability-labels.js";
+import {
+  SPACE_PERMISSION_LABELS,
+  spacePermissionShort,
+} from "./space-permission-labels.js";
 import { oidcLabel, oidcShort } from "./oidc-labels.js";
 import { renderAuthLayout } from "./auth-layout.js";
 import { computeConsentDiff } from "./consent-diff.js";
@@ -291,7 +294,7 @@ function buildGroups(
   // without anybody naming it, and the whole reason it became a scope is so
   // somebody has to say yes. Arriving pre-ticked would grant it by silence,
   // which is what it exists to stop.
-  const otherCapability: ScopeGroup = {
+  const otherSpacePermission: ScopeGroup = {
     label: "Administrative access",
     desc: "Parts of your space this app asked to manage.",
     rows: [],
@@ -306,13 +309,13 @@ function buildGroups(
     // preference. `default_on` is a bundle's opinion about its own contents
     // and this is the platform's about the scope, so a configuration cannot
     // put administrative authority behind a content heading or inherit that
-    // heading's tick. Asked after, a bundle naming `capability.keys` rendered
+    // heading's tick. Asked after, a bundle naming `space.keys` rendered
     // it inside that bundle's group, pre-ticked, and the bucket built to say
     // otherwise never fired — the fallback only sees a literal no bundle
     // claimed. `forceDefaultOn` still outranks both, because a scope already
     // granted is being shown rather than offered.
     if (requiresExplicitConsent(scopeLiteralFor(scope))) {
-      otherCapability.rows.push({ scope, defaultOn: forceDefaultOn });
+      otherSpacePermission.rows.push({ scope, defaultOn: forceDefaultOn });
     } else if (bundle) {
       byBundle.get(bundle.id)?.rows.push({
         scope,
@@ -326,7 +329,7 @@ function buildGroups(
   }
   // Administrative access last: it is the widest thing on the screen, and a
   // reader scanning downward should not meet it between two content groups.
-  return [...byBundle.values(), otherRead, otherWrite, otherCapability]
+  return [...byBundle.values(), otherRead, otherWrite, otherSpacePermission]
     .filter((g) => g.rows.length > 0)
     .map((g) => ({ ...g, desc: summarize(g) }));
 }
@@ -463,19 +466,19 @@ function summarize(group: ScopeGroup): string {
     // descriptions through would put paragraph-length registry prose into a
     // comma-joined sentence, which is the failure the docstring above is
     // about, so the fix is a short form rather than the map — the shape
-    // `capabilityShort` and `oidcShort` already take.
+    // `spacePermissionShort` and `oidcShort` already take.
     //
     // Capabilities and the profile scopes resolve through their inline-list
     // forms rather than their toggle labels. A toggle label sits alone above
     // a switch, so it is capitalized and free to carry a comma; joined into
     // a sentence, the capital lands mid-clause and the comma turns one item
-    // into two. `CAPABILITY_SHORT` exists for precisely this and says so.
+    // into two. `SPACE_PERMISSION_SHORT` exists for precisely this and says so.
     // The OIDC lookup is asked only of an OIDC literal. The profile
     // category's pattern is the bare word `profile`, the same string as the
     // OIDC scope, and asked by pattern alone the lookup answered "your name"
     // for a grant over the whole profile surface.
     const label =
-      capabilityShort(scope.typePattern) ??
+      spacePermissionShort(scope.typePattern) ??
       (scope.kind === "oidc"
         ? oidcShort(scope.oidcScope ?? scope.typePattern)
         : undefined) ??
@@ -648,7 +651,7 @@ export const SCOPE_LABELS: Record<string, string> = {
   // separator guard in `consent-render.test.ts` forbids, correctly, because
   // `summarize` joins these into a list and an "and" inside one arrives there
   // as two items. Closing it needs a short inline form distinct from the
-  // toggle label, the shape `CAPABILITY_SHORT` already takes for exactly this
+  // toggle label, the shape `SPACE_PERMISSION_SHORT` already takes for exactly this
   // reason. That is a map, not a word, so it is not in this pass.
   "system.connection": "Connections",
   "system.integration": "Available integrations",
@@ -682,7 +685,7 @@ export const SCOPE_LABELS: Record<string, string> = {
  *
  * Lower case and free of anything that reads as an item boundary, because
  * {@link summarize} joins these into a list. That is the same contract
- * `CAPABILITY_SHORT` and `OIDC_SHORT` carry, and this is the third and last
+ * `SPACE_PERMISSION_SHORT` and `OIDC_SHORT` carry, and this is the third and last
  * family in that chain to get one — type scopes were the one branch of
  * `summarize`'s resolution with no short form, so a label was doing both
  * jobs and could only ever be good at the harder one.
@@ -729,13 +732,13 @@ const CHEVRON = `<svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="curr
  * nothing and reads as the user having unticked it.
  *
  * The verb-less families are named rather than defaulted. Appending
- * `:${operation}` to one produces `capability.webhooks:none`, a literal
+ * `:${operation}` to one produces `space.webhooks:none`, a literal
  * nothing signed and no parser accepts, and the failure is silent all the
  * way to a token that is missing the permission the user just approved.
  */
 function scopeLiteralFor(scope: ParsedScope): string {
   if (scope.kind === "oidc") return scope.oidcScope ?? scope.typePattern;
-  if (scope.kind === "capability") return scope.capability ?? scope.typePattern;
+  if (scope.kind === "space") return scope.spacePermission ?? scope.typePattern;
   return `${scope.typePattern}:${scope.operation}`;
 }
 
@@ -827,8 +830,11 @@ function scopeName(
     const lit = scope.oidcScope ?? scope.typePattern;
     return { text: oidcLabel(lit) ?? humanizeType(lit), isSentence: false };
   }
-  if (scope.kind === "capability" && scope.capability) {
-    return { text: CAPABILITY_LABELS[scope.capability], isSentence: false };
+  if (scope.kind === "space" && scope.spacePermission) {
+    return {
+      text: SPACE_PERMISSION_LABELS[scope.spacePermission],
+      isSentence: false,
+    };
   }
   const curated = SCOPE_LABELS[scope.typePattern];
   if (curated !== undefined) return { text: curated, isSentence: false };
@@ -1085,7 +1091,7 @@ export function renderConsentScreen(params: ConsentParams): string {
           // literal and the profile category's pattern, so the OIDC label
           // is consulted only for the OIDC kind.
           const name =
-            capabilityShort(typePattern) ??
+            spacePermissionShort(typePattern) ??
             (parsed?.kind === "oidc" ? oidcLabel(typePattern) : undefined) ??
             SCOPE_LABELS[typePattern] ??
             humanizeType(typePattern);

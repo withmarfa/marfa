@@ -73,7 +73,7 @@ async function resolve(user: User | null) {
     storageWith(user),
     auth,
     "Space admin authority required",
-    "capability.connections",
+    "space.connections",
   );
 }
 
@@ -147,7 +147,7 @@ describe("resolveSpaceAdminCaller — the session branch", () => {
       {} as unknown as Storage,
       auth,
       "Space admin authority required",
-      "capability.connections",
+      "space.connections",
     );
     expect(caller).toMatchObject({
       apiKeyId: "auth_user:auth-1",
@@ -193,7 +193,7 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
       storageWith(null),
       auth,
       "nope",
-      "capability.connections",
+      "space.connections",
     );
     expect(caller).toMatchObject({ apiKeyId: "k1", spaceId: "space-1" });
   });
@@ -229,7 +229,7 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
         storageWith(null),
         auth,
         "nope",
-        "capability.connections",
+        "space.connections",
       ),
     ).rejects.toMatchObject({ code: "forbidden" });
   });
@@ -238,12 +238,12 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
     const caller = await resolveSpaceAdminCaller(
       oauthContext(fakeKey({ role: "space_admin" }), [
         "openid",
-        "capability.connections",
+        "space.connections",
       ]),
       storageWith(null),
       auth,
       "nope",
-      "capability.connections",
+      "space.connections",
     );
     expect(caller).toMatchObject({ apiKeyId: "k1", spaceId: "space-1" });
   });
@@ -256,12 +256,12 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
       resolveSpaceAdminCaller(
         oauthContext(fakeKey({ role: "space_admin" }), [
           "openid",
-          "capability.connections",
+          "space.connections",
         ]),
         storageWith(null),
         auth,
         "nope",
-        "capability.credentials",
+        "space.credentials",
       ),
     ).rejects.toMatchObject({ code: "forbidden" });
   });
@@ -273,7 +273,7 @@ describe("resolveSpaceAdminCaller — the bearer branch is unchanged", () => {
         storageWith(null),
         auth,
         "nope",
-        "capability.connections",
+        "space.connections",
       ),
     ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
   });

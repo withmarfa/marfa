@@ -44,7 +44,7 @@ describe("bearer middleware role projection (OAuth)", () => {
       // this file is about the role half. The capability is present because
       // without it the request never reaches the role check, which would make
       // a passing test say nothing about what it is named for.
-      ["capability.keys"],
+      ["space.keys"],
       { spaceId: space.id, userRole: "instance_admin" },
     );
 
@@ -54,7 +54,7 @@ describe("bearer middleware role projection (OAuth)", () => {
 
   it("projects users.role 'space_admin' onto the OAuth principal — /keys CRUD succeeds (space-scoped)", async () => {
     const space = await spaces().create("space-admin-space");
-    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
+    const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {
       spaceId: space.id,
       userRole: "space_admin",
     });
@@ -65,10 +65,10 @@ describe("bearer middleware role projection (OAuth)", () => {
 
   it("does not let the capability stand in for the role", async () => {
     // The two axes are independent and the door reads both. A member holding
-    // `capability.keys` is still refused, which is what keeps role the ceiling
+    // `space.keys` is still refused, which is what keeps role the ceiling
     // on what a consent screen can hand over.
     const space = await spaces().create("member-with-capability-space");
-    const { token } = await seedOauthBearer(ctx.storage, ["capability.keys"], {
+    const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {
       spaceId: space.id,
       userRole: "member",
     });

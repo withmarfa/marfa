@@ -21,7 +21,7 @@ import {
 } from "@withmarfa/shared";
 import { getPermissionBundles } from "../config.js";
 import { renderAuthLayout } from "./auth-layout.js";
-import { capabilityLabel } from "./capability-labels.js";
+import { spacePermissionLabel } from "./space-permission-labels.js";
 import { oidcLabel } from "./oidc-labels.js";
 import { escapeHtml, confirmIcon } from "./auth-html.js";
 import { isOpenEnded, OPEN_ENDED_SENTENCE } from "./scope-openness.js";
@@ -121,14 +121,14 @@ function openEndedSuffixed(scope: ParsedScope, base: string): string {
  * The verb-less families are named rather than defaulted, because the
  * fallback is a literal this function rebuilds and the naive rebuild is
  * wrong for them. Appending `:${operation}` to a capability produces
- * `capability.webhooks:none`, which no parser accepts and nobody signed, and
+ * `space.webhooks:none`, which no parser accepts and nobody signed, and
  * this string is what a person reads on the device-approval screen when no
  * description resolves. Nothing is granted from it, so the failure is
  * cosmetic, but it is cosmetic on a screen whose only job is telling someone
  * what they are about to approve.
  */
 function scopeLiteral(s: ParsedScope): string {
-  return s.kind === "oidc" || s.kind === "capability"
+  return s.kind === "oidc" || s.kind === "space"
     ? s.typePattern
     : `${s.typePattern}:${s.operation}`;
 }
@@ -148,8 +148,8 @@ function describeScope(
         // apart from its neighbours here. Two screens disagreeing about
         // what one grant means is the worse of the two.
         (oidcLabel(s.oidcScope ?? s.typePattern) ?? literal)
-      : s.kind === "capability"
-        ? (capabilityLabel(s.typePattern) ?? literal)
+      : s.kind === "space"
+        ? (spacePermissionLabel(s.typePattern) ?? literal)
         : openEndedSuffixed(s, descriptions?.[s.typePattern] ?? literal);
   // What the grant reaches, then how far it reaches, then what it permits.
   // The permission goes last so the futurity clause stays beside the noun

@@ -3,7 +3,10 @@ import { DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT } from "../page-limits.js";
 import { MarfaError, ErrorCode } from "@withmarfa/shared";
 import type { ApiKey } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireCapability, requireSpaceAdmin } from "../middleware/auth.js";
+import {
+  requireSpacePermission,
+  requireSpaceAdmin,
+} from "../middleware/auth.js";
 import { reserveQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -500,7 +503,7 @@ export function webhookRoutes(storage: Storage) {
     // space_admin only. Storage filters by key.space_id, so cross-space
     // attempts return WEBHOOK_NOT_FOUND rather than 403.
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.webhooks");
+    requireSpacePermission(c, "space.webhooks");
     refuseScopedCredential(key);
 
     // Reserved around the create below rather than checked here, so
@@ -543,7 +546,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(listWebhooksRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.webhooks");
+    requireSpacePermission(c, "space.webhooks");
     const webhooks = await storage.outboundWebhooks.list(key.space_id);
     return c.json(
       {
@@ -558,7 +561,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(getWebhookRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.webhooks");
+    requireSpacePermission(c, "space.webhooks");
     const { id } = c.req.valid("param");
     const webhook = await storage.outboundWebhooks.get(id, key.space_id);
     if (!webhook) {
@@ -569,7 +572,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(updateWebhookRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.webhooks");
+    requireSpacePermission(c, "space.webhooks");
     // The update door too: it re-points `url` and rewrites `events`, so
     // admitting a scoped credential here would let it take over a
     // subscription it could not have created.
@@ -613,7 +616,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(deleteWebhookRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.webhooks");
+    requireSpacePermission(c, "space.webhooks");
     // Destroying a subscription this credential could not have created is
     // the same rationale as refusing to create one: the row belongs to
     // the space, not to the grant, and an app holding a subset of the
@@ -640,7 +643,7 @@ export function webhookRoutes(storage: Storage) {
 
   router.openapi(listDeliveriesRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.webhooks");
+    requireSpacePermission(c, "space.webhooks");
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");
 

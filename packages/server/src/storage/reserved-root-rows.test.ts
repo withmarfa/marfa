@@ -34,9 +34,9 @@ describe("reportReservedRootRows", () => {
     expect(
       reportReservedRootRows([
         row({ id: "content.note" }),
-        row({ id: "capability.webhooks" }),
+        row({ id: "space.webhooks" }),
       ]),
-    ).toEqual(["content.note", "capability.webhooks"]);
+    ).toEqual(["content.note", "space.webhooks"]);
     expect(logSpy).toHaveBeenCalledWith(
       "error",
       expect.stringContaining("reserved root"),

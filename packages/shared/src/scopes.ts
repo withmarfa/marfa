@@ -4,7 +4,7 @@ import type {
   TypePermission,
 } from "./types.js";
 import { isValidTypePattern, resolveTypePermission } from "./validation.js";
-import { CAPABILITY_ROOT, CONTENT_ROOT, PROFILE_ROOT } from "./scope-roots.js";
+import { SPACE_ROOT, CONTENT_ROOT, PROFILE_ROOT } from "./scope-roots.js";
 import { SYSTEM_TYPE_IDS } from "./type-registry.js";
 import {
   GLOBAL_TYPE_WILDCARD,
@@ -26,8 +26,8 @@ import {
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
- *   - capability:       "capability.webhooks"
- *                       → kind="capability", capability=<literal>, no operation suffix
+ *   - capability:       "space.webhooks"
+ *                       → kind="space", capability=<literal>, no operation suffix
  *   - OIDC literal:     "openid" / "profile" / "email"
  *                       → kind="oidc", oidcScope=<literal>, no operation suffix
  *
@@ -58,7 +58,7 @@ export type OidcScope = "openid" | "profile" | "email" | "offline_access";
  * point: the other five roots classify types, this one exists so that
  * nothing ever does.
  */
-export { CAPABILITY_ROOT } from "./scope-roots.js";
+export { SPACE_ROOT } from "./scope-roots.js";
 
 /**
  * Authority over one administrative surface, named and consented to rather
@@ -76,7 +76,7 @@ export { CAPABILITY_ROOT } from "./scope-roots.js";
  * capability beside it is indistinguishable from a type grant by inspection.
  *
  * **Why no verb.** A capability is one authority, not a read/write axis over
- * a resource: `capability.item_purge:read` names nothing, and admitting the
+ * a resource: `space.item_purge:read` names nothing, and admitting the
  * suffix would mean inventing a rule to refuse the halves that have no
  * meaning. Where a surface genuinely splits, the split is in the surface
  * name — `audit_read` grants reading the audit log and nothing writes it.
@@ -157,18 +157,18 @@ export { CAPABILITY_ROOT } from "./scope-roots.js";
  * consistent answer is relaxing that gate rather than inventing an
  * administrative capability to sit in front of a listing.
  */
-export type CapabilityScope =
-  | "capability.webhooks"
-  | "capability.connections"
-  | "capability.upstream_access"
-  | "capability.credentials"
-  | "capability.keys"
-  | "capability.app_grants"
-  | "capability.space_settings"
-  | "capability.space_usage"
-  | "capability.schema"
-  | "capability.item_purge"
-  | "capability.audit_read";
+export type SpacePermission =
+  | "space.webhooks"
+  | "space.connections"
+  | "space.upstream_access"
+  | "space.credentials"
+  | "space.keys"
+  | "space.app_grants"
+  | "space.settings"
+  | "space.usage"
+  | "space.schema"
+  | "space.item_purge"
+  | "space.audit_read";
 
 /**
  * Every capability scope, in the order a consent screen should offer them:
@@ -189,25 +189,25 @@ export type CapabilityScope =
  * makes reachability depend on a configuration, so an operator shipping no
  * bundles has an instance whose gates nobody can satisfy.
  */
-export const CAPABILITY_SCOPES: readonly CapabilityScope[] = [
-  "capability.webhooks",
-  "capability.connections",
-  "capability.schema",
-  "capability.space_usage",
-  "capability.space_settings",
-  "capability.audit_read",
-  "capability.item_purge",
-  "capability.upstream_access",
-  "capability.credentials",
-  "capability.keys",
-  "capability.app_grants",
+export const SPACE_PERMISSIONS: readonly SpacePermission[] = [
+  "space.webhooks",
+  "space.connections",
+  "space.schema",
+  "space.usage",
+  "space.settings",
+  "space.audit_read",
+  "space.item_purge",
+  "space.upstream_access",
+  "space.credentials",
+  "space.keys",
+  "space.app_grants",
 ];
 
-const CAPABILITY_SET: ReadonlySet<string> = new Set(CAPABILITY_SCOPES);
+const SPACE_PERMISSION_SET: ReadonlySet<string> = new Set(SPACE_PERMISSIONS);
 
 /** Returns true if the literal names a capability this build recognizes. */
-export function isCapabilityScope(scope: string): scope is CapabilityScope {
-  return CAPABILITY_SET.has(scope);
+export function isSpacePermission(scope: string): scope is SpacePermission {
+  return SPACE_PERMISSION_SET.has(scope);
 }
 
 /**
@@ -241,13 +241,13 @@ export function isCapabilityScope(scope: string): scope is CapabilityScope {
  * app's working tokens.
  *
  * A guard rather than a throw for an unrecognized literal, matching
- * `capabilityLabel` and for the same reason: the callers ask this of whatever
+ * `spacePermissionLabel` and for the same reason: the callers ask this of whatever
  * a client sent, and a malformed literal is already refused a step earlier by
  * `isValidScope`. Answering true here would report the typo as an
  * ungrantable permission rather than as the invalid scope it is.
  */
 export function requiresExplicitConsent(scope: string): boolean {
-  return isCapabilityScope(scope);
+  return isSpacePermission(scope);
 }
 
 /**
@@ -275,14 +275,14 @@ export function requiresExplicitConsent(scope: string): boolean {
  * because the shape of the fix is not obvious from the signature, and
  * because the wrong repair is to relax one of the three projections.
  */
-export function hasCapability(
+export function hasSpacePermission(
   held: readonly string[],
-  capability: CapabilityScope,
+  permission: SpacePermission,
 ): boolean {
   for (const scope of held) {
     const parsed = parseScope(scope);
-    if (parsed?.kind !== "capability") continue;
-    if (parsed.capability === capability) return true;
+    if (parsed?.kind !== "space") continue;
+    if (parsed.spacePermission === permission) return true;
   }
   return false;
 }
@@ -296,7 +296,7 @@ export function hasCapability(
  * `RESERVED_ROOTS`, so `POST /types` refuses to register anything beneath
  * it and no publisher handle can claim the word.
  *
- * Claimed WHOLE, exactly as {@link CAPABILITY_ROOT} is, and for the same
+ * Claimed WHOLE, exactly as {@link SPACE_ROOT} is, and for the same
  * reason rather than for symmetry. The claim does two things and the second
  * is the one worth writing down.
  *
@@ -393,14 +393,7 @@ export interface ParsedScope {
    * whatever nobody has thought of yet, and on the item-type axis being
    * admitted means having a pattern matched against the live type registry.
    */
-  kind:
-    | "type"
-    | "edge"
-    | "metadata"
-    | "oidc"
-    | "capability"
-    | "content"
-    | "profile";
+  kind: "type" | "edge" | "metadata" | "oidc" | "space" | "content" | "profile";
   /** Present when kind === "edge"; the edge type id or "*". */
   edgeType?: string;
   /** Present when kind === "metadata" and the scope names a sub-resource (e.g. "types"). */
@@ -414,8 +407,8 @@ export interface ParsedScope {
   profileRow?: string;
   /** Present when kind === "oidc"; one of the standard OIDC literals. */
   oidcScope?: OidcScope;
-  /** Present when kind === "capability"; the administrative surface named. */
-  capability?: CapabilityScope;
+  /** Present when kind === "space"; the administrative surface named. */
+  spacePermission?: SpacePermission;
 }
 
 /**
@@ -452,7 +445,7 @@ export function isTypeScope(parsed: ParsedScope): boolean {
     case "edge":
     case "metadata":
     case "oidc":
-    case "capability":
+    case "space":
       return false;
     case "profile":
       // Category 2 is its own axis. Rule 3 of the permission design says
@@ -575,24 +568,24 @@ export function parseScope(scope: string): ParsedScope | null {
   // The capability root is claimed whole, not matched shape-first: anything
   // under it that is not a member of the closed set is refused here rather
   // than left to fall through. That matters for one literal in particular.
-  // `capability.*:read` satisfies `isValidTypePattern` — the subtree-wildcard
+  // `space.*:read` satisfies `isValidTypePattern` — the subtree-wildcard
   // branch checks the prefix grammar and not the reserved roots, which is
   // why `core.*:read` is a scope the server issues — so without this claim it
   // would parse as an item-type grant that reads like a capability grant and
   // is neither. Refusing the whole namespace except its members is the only
   // reading with no second interpretation.
-  if (scope === CAPABILITY_ROOT || scope.startsWith(`${CAPABILITY_ROOT}.`)) {
-    if (!isCapabilityScope(scope)) return null;
+  if (scope === SPACE_ROOT || scope.startsWith(`${SPACE_ROOT}.`)) {
+    if (!isSpacePermission(scope)) return null;
     return {
       typePattern: scope,
       operation: "none",
-      kind: "capability",
-      capability: scope,
+      kind: "space",
+      spacePermission: scope,
     };
   }
   // The content root is claimed whole, on the same reasoning as the
   // capability root above: `content.*:read` clears `isValidTypePattern` for
-  // exactly the reason `capability.*:read` does, and would otherwise parse
+  // exactly the reason `space.*:read` does, and would otherwise parse
   // as an item-type grant that reads like the category grant and is neither.
   // The claim is also what admits the two members, since `content` is one
   // segment and the concrete-identifier branch requires two.
@@ -927,10 +920,10 @@ export function scopeCovers(
   // this returned true for a token that holds no capability, and false for
   // one that holds exactly the capability being asked about. A gate reaching
   // for the nearest helper would have inherited a fail-open one level above
-  // the one the capability kind exists to remove. Ask {@link hasCapability}.
+  // the one the capability kind exists to remove. Ask {@link hasSpacePermission}.
   if (
-    requiredType === CAPABILITY_ROOT ||
-    requiredType.startsWith(`${CAPABILITY_ROOT}.`)
+    requiredType === SPACE_ROOT ||
+    requiredType.startsWith(`${SPACE_ROOT}.`)
   ) {
     return false;
   }
@@ -1240,7 +1233,7 @@ export function grantCoversScope(
   // and no verb. Membership is the whole test for both, and letting either
   // fall through to a pattern matcher is the hazard the capability kind
   // exists to remove.
-  if (need.kind === "oidc" || need.kind === "capability") {
+  if (need.kind === "oidc" || need.kind === "space") {
     return held.includes(required);
   }
 

@@ -13,11 +13,11 @@ import {
   edgePermissionCovers,
   metadataPermissionCovers,
   profilePermissionCovers,
-  hasCapability,
+  hasSpacePermission,
 } from "@withmarfa/shared";
 import type {
   ApiKey,
-  CapabilityScope,
+  SpacePermission,
   MarfaRole,
   TypeFilter,
 } from "@withmarfa/shared";
@@ -48,7 +48,7 @@ export interface AppEnv extends Record<string, unknown> {
      * than over a resource, and admitting one into a projection would put
      * it on the data plane where a wildcard could reach it. So the granted
      * set has to travel beside the projections rather than through them,
-     * and `requireCapability` is the only thing that reads it.
+     * and `requireSpacePermission` is the only thing that reads it.
      *
      * `clientId` and `authUserId` are here for a second reason: an audit
      * row for an action an app took needs to name the grant it was taken
@@ -461,7 +461,7 @@ export function authMiddleware(
       });
       c.set("authType", "oauth");
       // The granted set, beside the projections rather than inside them.
-      // Read only by `requireCapability` and by the audit rows that name
+      // Read only by `requireSpacePermission` and by the audit rows that name
       // the grant an action was taken through.
       c.set("oauthGrant", {
         scopes: oauthToken.scopes,
@@ -1315,9 +1315,9 @@ export function requireMetadataPermission(
  * the role, which is not what refused them, and a client cannot narrow toward
  * a scope nobody told it about.
  */
-export function requireCapability(
+export function requireSpacePermission(
   c: Context<AppEnv>,
-  capability: CapabilityScope,
+  permission: SpacePermission,
 ): void {
   const key = c.get("apiKey");
   checkAuth(key);
@@ -1338,17 +1338,17 @@ export function requireCapability(
     if (key?.scope_enforced === true) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        `A scope-enforced credential cannot be used for ${capability}: it carries permissions rather than the scopes they came from, so the grant behind it cannot be read. Use the app session itself.`,
-        { required_scope: capability },
+        `A scope-enforced credential cannot be used for ${permission}: it carries permissions rather than the scopes they came from, so the grant behind it cannot be read. Use the app session itself.`,
+        { required_scope: permission },
       );
     }
     return;
   }
-  if (hasCapability(c.get("oauthGrant")?.scopes ?? [], capability)) return;
+  if (hasSpacePermission(c.get("oauthGrant")?.scopes ?? [], permission)) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,
-    `This app was not granted ${capability}`,
-    { required_scope: capability },
+    `This app was not granted ${permission}`,
+    { required_scope: permission },
   );
 }
 

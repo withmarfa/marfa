@@ -11,12 +11,12 @@ import {
 import { OIDC_LABELS, OIDC_SHORT } from "./oidc-labels.js";
 import { DEFAULT_PERMISSION_BUNDLES } from "../config.js";
 import {
-  CAPABILITY_LABELS,
-  CAPABILITY_SHORT,
-  capabilityLabel,
-} from "./capability-labels.js";
+  SPACE_PERMISSION_LABELS,
+  SPACE_PERMISSION_SHORT,
+  spacePermissionLabel,
+} from "./space-permission-labels.js";
 import {
-  CAPABILITY_SCOPES,
+  SPACE_PERMISSIONS,
   EDGE_TYPE_REGISTRY,
   GLOBAL_TYPE_WILDCARD,
   grantCoversScope,
@@ -210,15 +210,15 @@ describe("renderConsentScreen — soft-tile groups", () => {
         // The capability arm has to be here or the guard stops guarding:
         // without it a capability resolves through `humanizeType` to a
         // truthy "Webhooks" and the case passes while green-lighting the
-        // exact collision `CAPABILITY_LABELS` exists to prevent.
+        // exact collision `SPACE_PERMISSION_LABELS` exists to prevent.
         const label =
           parsed.kind === "oidc"
             ? OIDC_LABELS[
                 (parsed.oidcScope ??
                   parsed.typePattern) as keyof typeof OIDC_LABELS
               ]
-            : parsed.kind === "capability"
-              ? capabilityLabel(parsed.typePattern)
+            : parsed.kind === "space"
+              ? spacePermissionLabel(parsed.typePattern)
               : (SCOPE_LABELS[parsed.typePattern] ??
                 humanizeType(parsed.typePattern));
         expect(label, `no label resolves for ${literal}`).toBeTruthy();
@@ -769,7 +769,7 @@ describe("a grant that reaches things not yet created says so", () => {
    *  same way rather than imported, so the test fails if the renderer's
    *  answer stops matching the grammar's. */
   const openEnded = (scope: ParsedScope): boolean => {
-    if (scope.kind === "oidc" || scope.kind === "capability") return false;
+    if (scope.kind === "oidc" || scope.kind === "space") return false;
     if (scope.typePattern === GLOBAL_TYPE_WILDCARD) return true;
     if (subtreeWildcardRoot(scope.typePattern) !== null) return true;
     return (
@@ -1112,7 +1112,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // above is on the row and not in the label: saying it needs an "and",
     // and an "and" breaks the same list a comma does.
     //
-    // The conjunction is asserted here where `CAPABILITY_SHORT` deliberately
+    // The conjunction is asserted here where `SPACE_PERMISSION_SHORT` deliberately
     // leaves it alone, and the difference is what the two maps hold. A
     // capability's short form is a verb phrase, where "connect and
     // disconnect services" is one item and reads correctly in a list. Every
@@ -1134,7 +1134,7 @@ describe("a grant that reaches things not yet created says so", () => {
     // conjunction on its row: `system.activity` reads "Activity and
     // notifications" there, where the notifications half is the one a reader
     // cares about, and summarizes as "activity". That is the same split
-    // `CAPABILITY_SHORT` has always had, arriving on the third and last
+    // `SPACE_PERMISSION_SHORT` has always had, arriving on the third and last
     // family in the chain.
     const SEPARATORS = [",", ";", "/", "&", " and ", " or ", " plus "];
     for (const [pattern, label] of Object.entries(SCOPE_LABELS)) {
@@ -1451,7 +1451,7 @@ describe("a grant that reaches things not yet created says so", () => {
 // The label maps, which exist for one reason.
 //
 // `humanizeType` takes the last dotted segment, so an unnamed
-// `capability.webhooks` renders as "Webhooks" — byte-identical to what
+// `space.webhooks` renders as "Webhooks" — byte-identical to what
 // `system.webhook:read` gets from the same fallback. One grant is sight of a
 // webhook row and the other is the power to point a new webhook anywhere.
 // ---------------------------------------------------------------------------
@@ -1459,25 +1459,25 @@ describe("a grant that reaches things not yet created says so", () => {
 describe("capability labels", () => {
   it("names every capability in both shapes", () => {
     // The docstrings claim a test pins this. It is this one.
-    expect(CAPABILITY_SCOPES.length).toBeGreaterThan(0);
-    for (const literal of CAPABILITY_SCOPES) {
+    expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
+    for (const literal of SPACE_PERMISSIONS) {
       expect(
-        CAPABILITY_LABELS[literal],
+        SPACE_PERMISSION_LABELS[literal],
         `no toggle label: ${literal}`,
       ).toBeTruthy();
       expect(
-        CAPABILITY_SHORT[literal],
+        SPACE_PERMISSION_SHORT[literal],
         `no short label: ${literal}`,
       ).toBeTruthy();
     }
   });
 
   it("never collides with the humanized fallback it replaces", () => {
-    for (const literal of CAPABILITY_SCOPES) {
-      expect(capabilityLabel(literal)).not.toBe(humanizeType(literal));
+    for (const literal of SPACE_PERMISSIONS) {
+      expect(spacePermissionLabel(literal)).not.toBe(humanizeType(literal));
     }
     // The specific pair that motivated the map.
-    expect(capabilityLabel("capability.webhooks")).not.toBe(
+    expect(spacePermissionLabel("space.webhooks")).not.toBe(
       SCOPE_LABELS["system.webhook"],
     );
   });
@@ -1485,8 +1485,8 @@ describe("capability labels", () => {
   it("keeps the inline forms comma-free, since they are joined into a list", () => {
     // A label carrying its own comma turns one item into two when the
     // security page lists several in a sentence.
-    for (const literal of CAPABILITY_SCOPES) {
-      expect(CAPABILITY_SHORT[literal]).not.toContain(",");
+    for (const literal of SPACE_PERMISSIONS) {
+      expect(SPACE_PERMISSION_SHORT[literal]).not.toContain(",");
     }
   });
 });
@@ -1789,7 +1789,7 @@ describe("renderConsentScreen — a scope in two bundles", () => {
  * Every label that reaches a joined sentence needs a sentence form.
  *
  * `summarize` resolves OIDC scopes through `OIDC_SHORT` and capabilities
- * through `CAPABILITY_SHORT`, both separate maps from the toggle labels.
+ * through `SPACE_PERMISSION_SHORT`, both separate maps from the toggle labels.
  * Two maps with the same keys and no compile-time link is exactly how the
  * capitalization bug this replaced got in: adding a toggle label without
  * its sentence form breaks nothing that anything notices.
@@ -1810,12 +1810,12 @@ describe("sentence forms cover every label that can be joined into one", () => {
     // summarize capitalizes whichever one lands first and nothing else, so a
     // capitalized entry landing second reproduces exactly the defect these
     // maps exist to prevent. A label carrying its own comma turns one list
-    // item into two fragments. CAPABILITY_SHORT is checked here rather than
+    // item into two fragments. SPACE_PERMISSION_SHORT is checked here rather than
     // only for commas, because it is the larger map and the one whose toggle
     // labels are full sentences.
     for (const value of [
       ...Object.values(OIDC_SHORT),
-      ...Object.values(CAPABILITY_SHORT),
+      ...Object.values(SPACE_PERMISSION_SHORT),
     ]) {
       expect(value).not.toMatch(/,/);
       // A conjunction is NOT checked here, deliberately. It looked like the
@@ -1823,7 +1823,7 @@ describe("sentence forms cover every label that can be joined into one", () => {
       // items, so "your name and picture and your email address" reads as
       // three things. But no regex separates that from "connect and
       // disconnect services", where the conjunction is inside one verb
-      // phrase and reads correctly in a list. Two `CAPABILITY_SHORT` entries
+      // phrase and reads correctly in a list. Two `SPACE_PERMISSION_SHORT` entries
       // are of that shape and are right as they stand. The rendered
       // snapshots are what caught the real instance and are the guard that
       // can tell the two apart, because a person reads them.
@@ -2051,7 +2051,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
 
   it("leaves a capability out, because both screens name one without it", () => {
     // `labelFor` here and `describeScope` on the device screen both
-    // resolve a capability through `capability-labels.ts` and return before
+    // resolve a capability through `space-permission-labels.ts` and return before
     // they reach this map, so an entry would be computed and discarded on
     // every render. That is the whole reason the map has nothing for one.
     //
@@ -2059,8 +2059,8 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     // map holds. The absence is only safe while both screens still name a
     // capability unaided, and asserting the absence alone would pass equally
     // well on a screen that had started needing an entry and lost the words.
-    expect(CAPABILITY_SCOPES.length).toBeGreaterThan(0);
-    const scopes = CAPABILITY_SCOPES.map(parse);
+    expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
+    const scopes = SPACE_PERMISSIONS.map(parse);
     expect(buildScopeDescriptions(scopes)).toEqual({});
 
     const authorize = renderConsentScreen({
@@ -2075,9 +2075,9 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
       userCode: "ABCD-EFGH",
     });
 
-    for (const literal of CAPABILITY_SCOPES) {
-      expect(authorize, literal).toContain(CAPABILITY_LABELS[literal]);
-      expect(device, literal).toContain(CAPABILITY_LABELS[literal]);
+    for (const literal of SPACE_PERMISSIONS) {
+      expect(authorize, literal).toContain(SPACE_PERMISSION_LABELS[literal]);
+      expect(device, literal).toContain(SPACE_PERMISSION_LABELS[literal]);
       // The device screen's floor when nothing names a scope. Reached by the
       // same arm, so a capability arriving here as its own literal is the
       // shape a lost label takes rather than a second failure.

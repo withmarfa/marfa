@@ -13,7 +13,7 @@ import {
   requireAuth,
   actsAsConnection,
   hasSpaceAdminAuthority,
-  requireCapability,
+  requireSpacePermission,
   hasPlatformAuthority,
 } from "../middleware/auth.js";
 import type {
@@ -132,7 +132,7 @@ async function requireConnectionAccess(
   // ticked on. Requiring one unconditionally here would 403 an integration's
   // own dispatch. Reached only once admission is settled above, so a caller
   // that is not the connection got in on rank.
-  if (!isIntegration) requireCapability(c, "capability.connections");
+  if (!isIntegration) requireSpacePermission(c, "space.connections");
   return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
 }
 

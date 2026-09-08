@@ -5,7 +5,10 @@ import type {
   PreviewEventResult,
 } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireCapability, requireSpaceAdmin } from "../middleware/auth.js";
+import {
+  requireSpacePermission,
+  requireSpaceAdmin,
+} from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
   performPause,
@@ -839,7 +842,7 @@ export function connectionRoutes(
 
   r.openapi(installRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const {
       integration_id,
       credential_ref: credentialRef,
@@ -898,7 +901,7 @@ export function connectionRoutes(
 
   r.openapi(previewEventRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const spaceId = apiKey.space_id ?? undefined;
     const body = c.req.valid("json");
 
@@ -1091,7 +1094,7 @@ export function connectionRoutes(
 
   r.openapi(pauseRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const result = await applyRuntimeState("pause", id, apiKey, c.var.clientIp);
     return c.json(result, 200);
@@ -1099,7 +1102,7 @@ export function connectionRoutes(
 
   r.openapi(resumeRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const result = await applyRuntimeState(
       "resume",
@@ -1112,7 +1115,7 @@ export function connectionRoutes(
 
   r.openapi(uninstallRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const { id: connectionId } = c.req.valid("param");
     const spaceId = apiKey.space_id ?? undefined;
     const clientIp = c.var.clientIp;
@@ -1155,7 +1158,7 @@ export function connectionRoutes(
 
   r.openapi(runRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const spaceId = apiKey.space_id ?? undefined;
 
@@ -1277,7 +1280,7 @@ export function connectionRoutes(
 
   r.openapi(upgradePreviewRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     try {
       const preview = await previewUpgrade(storage, {
@@ -1296,7 +1299,7 @@ export function connectionRoutes(
   // saying because it looks like it should.
   r.openapi(pendingUpgradesRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const pending = await listPendingConsent(
       storage,
       apiKey.space_id ?? undefined,
@@ -1306,7 +1309,7 @@ export function connectionRoutes(
 
   r.openapi(approveUpgradeRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const { to_version } = c.req.valid("json");
     const spaceId = apiKey.space_id ?? undefined;
@@ -1392,7 +1395,7 @@ export function connectionRoutes(
 
   r.openapi(upgradeRoute, async (c) => {
     const apiKey = requireSpaceAdmin(c);
-    requireCapability(c, "capability.connections");
+    requireSpacePermission(c, "space.connections");
     const { id } = c.req.valid("param");
     const spaceId = apiKey.space_id ?? undefined;
     let result;

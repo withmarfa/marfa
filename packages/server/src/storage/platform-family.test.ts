@@ -86,7 +86,7 @@ describe("projectPlatformRows", () => {
       row({ id: "core.note", family: "core" }),
       row({
         id: "marfa.something",
-        family: "capability" as LoadedType["family"],
+        family: "nonesuch" as LoadedType["family"],
       }),
     ]);
     expect(families(rows)).toEqual([

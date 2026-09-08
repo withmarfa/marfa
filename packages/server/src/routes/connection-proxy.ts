@@ -6,7 +6,7 @@ import {
   requireAuth,
   actsAsConnection,
   hasSpaceAdminAuthority,
-  requireCapability,
+  requireSpacePermission,
 } from "../middleware/auth.js";
 import type { AuditLogEntry, Storage } from "../storage/interface.js";
 import {
@@ -769,7 +769,7 @@ async function requireConnectionProxyAccess(
   // ticked on. Requiring one unconditionally here would 403 an integration's
   // own dispatch. Reached only once admission is settled above, so a caller
   // that is not the connection got in on rank.
-  if (!isIntegration) requireCapability(c, "capability.upstream_access");
+  if (!isIntegration) requireSpacePermission(c, "space.upstream_access");
   return { spaceId, connection };
 }
 

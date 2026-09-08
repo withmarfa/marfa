@@ -59,7 +59,7 @@ import {
 export function isOpenEnded(scope: ParsedScope): boolean {
   switch (scope.kind) {
     case "oidc":
-    case "capability":
+    case "space":
       // No pattern and no verb between them. An OIDC literal names a claim
       // set and a capability names one administrative surface; neither
       // reaches anything registered later, because neither reaches anything

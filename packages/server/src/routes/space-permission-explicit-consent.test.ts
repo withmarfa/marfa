@@ -48,10 +48,10 @@ describe("the code-flow consent screen never pre-ticks a capability", () => {
   it("renders an unclaimed capability unticked", () => {
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("capability.keys")],
+      scopes: [parsed("core.note:read"), parsed("space.keys")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
-    expect(rowFor(html, "capability.keys")).not.toContain("checked");
+    expect(rowFor(html, "space.keys")).not.toContain("checked");
     // The ordinary literal beside it still arrives ticked, so the case is not
     // passing because nothing is ticked at all.
     expect(rowFor(html, "core.note:read")).toContain("checked");
@@ -67,15 +67,15 @@ describe("the code-flow consent screen never pre-ticks a capability", () => {
       id: "operator-custom",
       label: "Operator custom",
       description: "Configured, not shipped.",
-      scopes: ["core.note:read", "capability.keys"],
+      scopes: ["core.note:read", "space.keys"],
       default_on: true,
     };
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("capability.keys")],
+      scopes: [parsed("core.note:read"), parsed("space.keys")],
       bundles: [claiming],
     });
-    expect(rowFor(html, "capability.keys")).not.toContain("checked");
+    expect(rowFor(html, "space.keys")).not.toContain("checked");
     expect(rowFor(html, "core.note:read")).toContain("checked");
   });
 
@@ -87,14 +87,14 @@ describe("the code-flow consent screen never pre-ticks a capability", () => {
     // narrowing revoke.
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
-      scopes: [parsed("capability.keys"), parsed("core.note:read")],
+      scopes: [parsed("space.keys"), parsed("core.note:read")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
       // A standing grant, so this render is the re-consent diff: the
       // capability lands in "Already allowed", which is being shown rather
       // than offered.
-      priorScopes: ["capability.keys"],
+      priorScopes: ["space.keys"],
     });
-    expect(rowFor(html, "capability.keys")).toContain("checked");
+    expect(rowFor(html, "space.keys")).toContain("checked");
   });
 });
 
@@ -111,21 +111,21 @@ describe("the device-approval screen offers a capability as a toggle", () => {
     // nothing for "leaving it alone grants nothing" to mean on this screen.
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("capability.keys")],
+      scopes: [parsed("core.note:read"), parsed("space.keys")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
     expect(html).toContain('name="scopes"');
     expect(html).toContain('value="core.note:read"');
-    expect(html).toContain('value="capability.keys"');
+    expect(html).toContain('value="space.keys"');
   });
 
   it("leaves a capability unticked and everything else ticked", () => {
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
-      scopes: [parsed("core.note:read"), parsed("capability.keys")],
+      scopes: [parsed("core.note:read"), parsed("space.keys")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
     });
-    expect(rowFor(html, "capability.keys")).not.toContain("checked");
+    expect(rowFor(html, "space.keys")).not.toContain("checked");
     expect(rowFor(html, "core.note:read")).toContain("checked");
   });
 

@@ -1,7 +1,7 @@
 /**
  * The capability carrier and the gate that reads it.
  *
- * **The carrier is the half that did not exist.** `hasCapability` has shipped
+ * **The carrier is the half that did not exist.** `hasSpacePermission` has shipped
  * since the grammar landed and no route could call it, because a capability
  * deliberately projects into none of the permission maps: the bearer
  * middleware translated a token's scopes into `type_permissions`,
@@ -21,7 +21,7 @@ import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ApiKey } from "@withmarfa/shared";
 import { MarfaError } from "@withmarfa/shared";
-import { authMiddleware, requireCapability, type AppEnv } from "./auth.js";
+import { authMiddleware, requireSpacePermission, type AppEnv } from "./auth.js";
 import {
   createTestContext,
   seedOauthBearer,
@@ -62,7 +62,7 @@ function fakeContext(vars: {
   } as unknown as Context<AppEnv>;
 }
 
-describe("requireCapability", () => {
+describe("requireSpacePermission", () => {
   it("lets an API-key caller through, whatever it holds", () => {
     // A capability literal on an API key reaches no permission map and means
     // nothing there: the family exists to name what a person consented to
@@ -70,9 +70,9 @@ describe("requireCapability", () => {
     // one here would break every self-host in keys mode and the CLI's
     // ordinary admin work, for no security gain.
     expect(() => {
-      requireCapability(
+      requireSpacePermission(
         fakeContext({ apiKey: fakeKey(), authType: "api_key" }),
-        "capability.keys",
+        "space.keys",
       );
     }).not.toThrow();
   });
@@ -80,13 +80,13 @@ describe("requireCapability", () => {
   it("refuses an OAuth caller holding no capability, naming the literal", () => {
     let thrown: unknown;
     try {
-      requireCapability(
+      requireSpacePermission(
         fakeContext({
           apiKey: fakeKey({ scope_enforced: true }),
           authType: "oauth",
           oauthGrant: { scopes: ["openid", "core.note:read"] },
         }),
-        "capability.keys",
+        "space.keys",
       );
     } catch (err) {
       thrown = err;
@@ -97,19 +97,19 @@ describe("requireCapability", () => {
     // The refusal names what would satisfy it. A generic 403 on an
     // administrative surface sends the reader to the role, which is not what
     // refused them, and the client cannot narrow toward a scope it is not told.
-    expect(err.message).toContain("capability.keys");
-    expect(err.details).toMatchObject({ required_scope: "capability.keys" });
+    expect(err.message).toContain("space.keys");
+    expect(err.details).toMatchObject({ required_scope: "space.keys" });
   });
 
   it("admits an OAuth caller holding the capability", () => {
     expect(() => {
-      requireCapability(
+      requireSpacePermission(
         fakeContext({
           apiKey: fakeKey({ scope_enforced: true }),
           authType: "oauth",
-          oauthGrant: { scopes: ["openid", "capability.keys"] },
+          oauthGrant: { scopes: ["openid", "space.keys"] },
         }),
-        "capability.keys",
+        "space.keys",
       );
     }).not.toThrow();
   });
@@ -118,15 +118,15 @@ describe("requireCapability", () => {
     // The family is exact by construction: no wildcard reaches a capability
     // and holding every other member implies nothing about this one.
     expect(() => {
-      requireCapability(
+      requireSpacePermission(
         fakeContext({
           apiKey: fakeKey({ scope_enforced: true }),
           authType: "oauth",
           oauthGrant: {
-            scopes: ["capability.webhooks", "capability.audit_read"],
+            scopes: ["space.webhooks", "space.audit_read"],
           },
         }),
-        "capability.keys",
+        "space.keys",
       );
     }).toThrow(MarfaError);
   });
@@ -135,12 +135,12 @@ describe("requireCapability", () => {
     // Fails closed. A carrier that did not get set is a bug in the middleware,
     // and the safe reading of "I cannot tell what was granted" is "nothing was".
     expect(() => {
-      requireCapability(
+      requireSpacePermission(
         fakeContext({
           apiKey: fakeKey({ scope_enforced: true }),
           authType: "oauth",
         }),
-        "capability.keys",
+        "space.keys",
       );
     }).toThrow(MarfaError);
   });
@@ -151,7 +151,7 @@ describe("requireCapability", () => {
     // `if (!isBootstrap)` block rather than anything here. Pinned so the
     // answer is a decision rather than a surprise at the first call site.
     expect(() => {
-      requireCapability(fakeContext({}), "capability.keys");
+      requireSpacePermission(fakeContext({}), "space.keys");
     }).toThrow(MarfaError);
   });
 });
@@ -189,7 +189,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
   it("carries scopes, client id and user id for an OAuth bearer", async () => {
     const seeded = await seedOauthBearer(
       ctx.storage,
-      ["openid", "capability.keys", "core.note:read"],
+      ["openid", "space.keys", "core.note:read"],
       { userRole: "space_admin", spaceId },
     );
     const res = await probeApp().request("/probe", {
@@ -206,7 +206,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     };
     expect(body.authType).toBe("oauth");
     expect(body.grant).not.toBeNull();
-    expect(body.grant?.scopes).toContain("capability.keys");
+    expect(body.grant?.scopes).toContain("space.keys");
     expect(body.grant?.scopes).toContain("core.note:read");
     expect(body.grant?.clientId).toBe(seeded.clientId);
     expect(body.grant?.authUserId).toBeTruthy();
@@ -221,7 +221,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     // without this check because the gate would still pass.
     const seeded = await seedOauthBearer(
       ctx.storage,
-      ["openid", "capability.keys", "core.note:read"],
+      ["openid", "space.keys", "core.note:read"],
       { userRole: "space_admin", spaceId },
     );
     const app = new Hono<AppEnv>();
@@ -246,10 +246,10 @@ describe("the bearer middleware carries the grant onto the request", () => {
       grantScopes: string[];
       maps: (Record<string, string> | undefined)[];
     };
-    expect(body.grantScopes).toContain("capability.keys");
+    expect(body.grantScopes).toContain("space.keys");
     for (const map of body.maps) {
-      expect(Object.keys(map ?? {})).not.toContain("capability.keys");
-      expect(Object.keys(map ?? {})).not.toContain("capability");
+      expect(Object.keys(map ?? {})).not.toContain("space.keys");
+      expect(Object.keys(map ?? {})).not.toContain("space");
     }
     // And the ordinary literal beside it still projects, so the case is not
     // passing because nothing projected at all.

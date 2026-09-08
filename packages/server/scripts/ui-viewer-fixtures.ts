@@ -172,7 +172,7 @@ const scopeSet = (...literals: string[]): ParsedScope[] =>
  * label, which is exactly what makes this the only place their copy renders:
  * the description is the row.
  *
- * `capability.webhooks` cannot arrive here through a real request. Nothing in
+ * `space.webhooks` cannot arrive here through a real request. Nothing in
  * the scope allowlist emits a capability literal, so the only way one reaches a
  * consent screen today is an operator naming it in a permission bundle. It is
  * previewed anyway, because the screen already renders one, unticked and under
@@ -229,7 +229,7 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   "*:read",
   "user.*:read",
   // A capability, which no request can carry today. See above.
-  "capability.webhooks",
+  "space.webhooks",
   // The content category, both levels, which no request can carry today
   // either — `buildAllowedScopes` withholds the pair until copy exists that
   // tells the two apart. Previewed for the same reason the capability above

@@ -341,7 +341,7 @@ function breadthKey(
         key: parsed.profileRow ?? GLOBAL_TYPE_WILDCARD,
       };
     case "oidc":
-    case "capability":
+    case "space":
       return null;
     case "content":
       // Union verbatim, with the two membership families, even though this

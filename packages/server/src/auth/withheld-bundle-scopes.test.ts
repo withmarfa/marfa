@@ -17,7 +17,7 @@
  * inherit the bundle's `default_on` tick on the consent screen, and
  * `bundlePublishedScopes` is written into a stored client ceiling that outlives
  * the configuration. The reachability half is covered by
- * `capability-scopes-reachable.test.ts`.
+ * `space-permissions-reachable.test.ts`.
  *
  * **Every case here uses a CONFIGURED bundle rather than the shipped
  * defaults**, which is the population that can actually carry the defect. The
@@ -27,7 +27,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { MockInstance } from "vitest";
 import type { PermissionBundle } from "@withmarfa/shared";
-import { isValidScope, CAPABILITY_SCOPES } from "@withmarfa/shared";
+import { isValidScope, SPACE_PERMISSIONS } from "@withmarfa/shared";
 import * as logger from "../middleware/logger.js";
 import { buildAllowedScopes } from "./oauth-provider.js";
 import { bundlePublishedScopes } from "./ceiling-catchup.js";
@@ -42,7 +42,7 @@ const OPERATOR_BUNDLE: PermissionBundle = {
   id: "operator-custom",
   label: "Operator custom",
   description: "Configured, not shipped.",
-  scopes: ["core.note:read", "capability.keys", "metadata.types:write"],
+  scopes: ["core.note:read", "space.keys", "metadata.types:write"],
   default_on: false,
 };
 
@@ -61,8 +61,8 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     // The precondition, stated rather than assumed: this defect exists only
     // because a capability literal is grammatically valid. If `isValidScope`
     // ever starts refusing it, every case below passes for the wrong reason.
-    expect(isValidScope("capability.keys")).toBe(true);
-    expect(isWithheldFromAllowlist("capability.keys")).toBe(true);
+    expect(isValidScope("space.keys")).toBe(true);
+    expect(isWithheldFromAllowlist("space.keys")).toBe(true);
   });
 
   it("still warns when a bundle names one, even though it is published anyway", () => {
@@ -71,11 +71,11 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     // assertion. The warning is what survives at this door, and it is what
     // tells an operator their bundle is not doing what it looks like it does.
     const scopes = new Set(buildAllowedScopes([OPERATOR_BUNDLE]));
-    expect(scopes.has("capability.keys")).toBe(true);
+    expect(scopes.has("space.keys")).toBe(true);
     const named = logSpy.mock.calls.filter(
       ([level, , data]) =>
         level === "warn" &&
-        (data as { scope?: string } | undefined)?.scope === "capability.keys",
+        (data as { scope?: string } | undefined)?.scope === "space.keys",
     );
     expect(named.length).toBeGreaterThanOrEqual(1);
   });
@@ -84,9 +84,9 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     // The subtler of the two doors: this set is what a stored registration row
     // is widened by, so a literal admitted here outlives the configuration
     // that introduced it.
-    expect(
-      bundlePublishedScopes([OPERATOR_BUNDLE]).has("capability.keys"),
-    ).toBe(false);
+    expect(bundlePublishedScopes([OPERATOR_BUNDLE]).has("space.keys")).toBe(
+      false,
+    );
   });
 
   it("keeps the bundle's other scopes, so the drop is per scope", () => {
@@ -100,16 +100,16 @@ describe("a configured bundle cannot publish a withheld scope", () => {
     const named = logSpy.mock.calls.filter(
       ([level, , data]) =>
         level === "warn" &&
-        (data as { scope?: string } | undefined)?.scope === "capability.keys",
+        (data as { scope?: string } | undefined)?.scope === "space.keys",
     );
     expect(named.length).toBeGreaterThanOrEqual(1);
   });
 
   it("withholds every capability literal, not the one under test", () => {
-    // Asked of the closed set, so a literal added to `CAPABILITY_SCOPES` is
+    // Asked of the closed set, so a literal added to `SPACE_PERMISSIONS` is
     // withheld by having been added rather than by somebody editing the
     // withholding module.
-    for (const literal of CAPABILITY_SCOPES) {
+    for (const literal of SPACE_PERMISSIONS) {
       expect(isWithheldFromAllowlist(literal), literal).toBe(true);
     }
   });

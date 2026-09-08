@@ -266,7 +266,7 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
           // capability is checked first. Without it the request is refused
           // before the projection is consulted, and this test would pass or
           // fail on something other than what it is named for.
-          ["capability.keys"],
+          ["space.keys"],
           { spaceId: space.id, userRole: "instance_admin" },
         );
 

@@ -375,32 +375,29 @@ describe("mergeDeviceApprovalScopes, the axes beyond item types", () => {
   // carry it and must not invent one.
   it("unions capability and OIDC literals and invents neither", () => {
     const merged = mergeDeviceApprovalScopes(
-      ["capability.webhooks", "offline_access"],
-      ["capability.keys", "openid"],
+      ["space.webhooks", "offline_access"],
+      ["space.keys", "openid"],
     );
-    expect(merged).toContain("capability.webhooks");
-    expect(merged).toContain("capability.keys");
+    expect(merged).toContain("space.webhooks");
+    expect(merged).toContain("space.keys");
     expect(merged).toContain("offline_access");
     expect(merged).toContain("openid");
-    expect(grantCoversScope(merged, "capability.app_grants")).toBe(false);
+    expect(grantCoversScope(merged, "space.app_grants")).toBe(false);
   });
 
   // A wildcard reaching an administrative surface is the fail-open the
   // capability kind exists to remove, and a merge is a place it could be
-  // reintroduced: `capability.webhooks` parses with a `typePattern`, so
+  // reintroduced: `space.webhooks` parses with a `typePattern`, so
   // classifying it onto the item-type axis compiles, and the global wildcard
   // on the other side then resolves it. The capability is destroyed either
-  // way, since what gets emitted is `capability.webhooks:write`, which is not
+  // way, since what gets emitted is `space.webhooks:write`, which is not
   // a literal the grammar admits. The pairing is what this asserts: the
   // capability survives the merge, and nothing beside it reaches another one.
   it("does not project a capability onto the item-type axis", () => {
-    const merged = mergeDeviceApprovalScopes(
-      ["capability.webhooks"],
-      ["*:write"],
-    );
-    expect(merged).toContain("capability.webhooks");
-    expect(merged).not.toContain("capability.webhooks:write");
-    expect(grantCoversScope(merged, "capability.keys")).toBe(false);
+    const merged = mergeDeviceApprovalScopes(["space.webhooks"], ["*:write"]);
+    expect(merged).toContain("space.webhooks");
+    expect(merged).not.toContain("space.webhooks:write");
+    expect(grantCoversScope(merged, "space.keys")).toBe(false);
   });
 
   // Both sides carrying a literal the grammar has stopped understanding is
@@ -462,8 +459,8 @@ describe("mergeDeviceApprovalScopes, monotonicity over random grants", () => {
     "metadata.types:write",
     "openid",
     "offline_access",
-    "capability.webhooks",
-    "capability.keys",
+    "space.webhooks",
+    "space.keys",
     "a-scope-from-a-later-build",
   ];
 
@@ -487,9 +484,9 @@ describe("mergeDeviceApprovalScopes, monotonicity over random grants", () => {
   PROBES.push(
     "openid",
     "offline_access",
-    "capability.webhooks",
-    "capability.keys",
-    "capability.app_grants",
+    "space.webhooks",
+    "space.keys",
+    "space.app_grants",
     "a-scope-from-a-later-build",
   );
 
@@ -605,7 +602,7 @@ describe("mergeDeviceApprovalScopes, the prune over a fixed enumeration", () => 
     "edge.parent-of:read",
     "metadata:write",
     "metadata.types:read",
-    "capability.webhooks",
+    "space.webhooks",
     "openid",
   ];
 
@@ -645,8 +642,8 @@ describe("mergeDeviceApprovalScopes, the prune over a fixed enumeration", () => 
   const MEMBERSHIP = [
     "openid",
     "offline_access",
-    "capability.webhooks",
-    "capability.keys",
+    "space.webhooks",
+    "space.keys",
     UNPARSEABLE,
   ];
 
@@ -693,7 +690,7 @@ describe("mergeDeviceApprovalScopes, the prune over a fixed enumeration", () => 
 
     // The literal family has to be genuinely represented, or the mutation
     // that prunes it has nothing to break.
-    expect(parseScope("capability.webhooks")?.kind).toBe("capability");
+    expect(parseScope("space.webhooks")?.kind).toBe("space");
     expect(parseScope("openid")?.kind).toBe("oidc");
 
     // Concrete, on every axis. A probe with a `*` in it is a pattern.
@@ -869,7 +866,7 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
     "edge.parent-of:read",
     "edge.parent-of:write",
     "metadata:write",
-    "capability.webhooks",
+    "space.webhooks",
   ];
 
   const POINTS = [
@@ -888,7 +885,7 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
    * minimality clause below reads a capability literal as redundant, because
    * no concrete point can see it go.
    */
-  const MEMBERSHIP = ["capability.webhooks"];
+  const MEMBERSHIP = ["space.webhooks"];
 
   /** Grants of size one and two, each holding at least one malformed key. */
   const CARRIERS: string[][] = [];
@@ -1139,26 +1136,24 @@ describe("intersectDeviceScopes, the verb-less families", () => {
 
   it("intersects capability and OIDC literals by membership", () => {
     const issued = intersectDeviceScopes(
-      ["capability.webhooks", "capability.keys", "openid"],
-      ["capability.webhooks", "openid", "profile"],
+      ["space.webhooks", "space.keys", "openid"],
+      ["space.webhooks", "openid", "profile"],
     );
-    expect(issued).toContain("capability.webhooks");
+    expect(issued).toContain("space.webhooks");
     expect(issued).toContain("openid");
-    expect(issued).not.toContain("capability.keys");
+    expect(issued).not.toContain("space.keys");
     expect(issued).not.toContain("profile");
   });
 
   // A wildcard must not reach an administrative surface, here as in the
-  // merge: `capability.webhooks` parses with a `typePattern`, so classifying
+  // merge: `space.webhooks` parses with a `typePattern`, so classifying
   // it onto the item-type axis compiles and the global wildcard would then
   // resolve it.
   it("does not let a wildcard reach a capability the grant never named", () => {
     expect(
-      intersectDeviceScopes(["*:write"], ["capability.webhooks", "*:write"]),
-    ).not.toContain("capability.webhooks");
-    expect(intersectDeviceScopes(["capability.webhooks"], ["*:write"])).toEqual(
-      [],
-    );
+      intersectDeviceScopes(["*:write"], ["space.webhooks", "*:write"]),
+    ).not.toContain("space.webhooks");
+    expect(intersectDeviceScopes(["space.webhooks"], ["*:write"])).toEqual([]);
   });
 
   it("issues a literal this build cannot parse only where both sides name it", () => {
@@ -1478,7 +1473,7 @@ describe("intersectDeviceScopes, the pointwise minimum at every concrete id", ()
     "edge.a-b*.*:read",
     "metadata:write",
     "metadata.types:read",
-    "capability.webhooks",
+    "space.webhooks",
     "openid",
     "offline_access",
     "a-scope-from-a-later-build",
@@ -1528,8 +1523,8 @@ describe("intersectDeviceScopes, the pointwise minimum at every concrete id", ()
     "openid",
     "offline_access",
     "profile",
-    "capability.webhooks",
-    "capability.keys",
+    "space.webhooks",
+    "space.keys",
     "a-scope-from-a-later-build",
   ];
 

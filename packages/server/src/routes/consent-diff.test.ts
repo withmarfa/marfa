@@ -145,8 +145,8 @@ describe("computeConsentDiff, against a grant broader than the request", () => {
   it("does not let a wildcard grant cover a capability", () => {
     // The one arm where a wrong answer hands over authority rather than
     // showing a redundant tile. A capability is reached by naming it.
-    const diff = computeConsentDiff(["*:write"], ["capability.keys"]);
-    expect(diff.added).toEqual(["capability.keys"]);
+    const diff = computeConsentDiff(["*:write"], ["space.keys"]);
+    expect(diff.added).toEqual(["space.keys"]);
     expect(diff.kept).toEqual([]);
   });
 

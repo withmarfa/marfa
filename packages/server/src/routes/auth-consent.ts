@@ -1865,17 +1865,17 @@ function describeScope(scope: ParsedScope): string | undefined {
       // map, so anything written here for one was computed and discarded. A
       // third register existed to fill it and is gone with it.
       return undefined;
-    case "capability":
+    case "space":
       // Deliberately absent, for the reason above. `scopeName` in
       // `consent.ts` and `describeScope` in `device-pages.ts` both
-      // resolve a capability literal through `capability-labels.ts` and
+      // resolve a capability literal through `space-permission-labels.ts` and
       // return before they look at this map, so anything written here for
       // one was computed and discarded. The branch that filled it is gone
       // with it.
       //
       // Absent here is not a gap waiting on capability scopes reaching a
       // consent screen. They are already described when they get there, on
-      // both surfaces, by `CAPABILITY_LABELS` and `CAPABILITY_SHORT`.
+      // both surfaces, by `SPACE_PERMISSION_LABELS` and `SPACE_PERMISSION_SHORT`.
       // Whoever comes to put one in front of a person should extend those
       // maps rather than this one: an entry here is a third name for the
       // same grant, in the one place neither renderer reads.

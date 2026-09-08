@@ -126,7 +126,7 @@ describe.skipIf(SKIP)(
       const space = await storage.spaces!.create("keys-mode-space-1");
       const { token } = await seedOauthBearer(
         storage,
-        ["openid", "capability.audit_read"],
+        ["openid", "space.audit_read"],
         { spaceId: space.id, userRole: "instance_admin" },
       );
       const res = await request(app, "GET", "/audit", { key: token });
@@ -140,7 +140,7 @@ describe.skipIf(SKIP)(
       const space = await storage.spaces!.create("keys-mode-space-2");
       const { token } = await seedOauthBearer(
         storage,
-        ["openid", "capability.audit_read"],
+        ["openid", "space.audit_read"],
         { spaceId: space.id, userRole: "space_admin" },
       );
       const res = await request(app, "GET", "/audit", { key: token });

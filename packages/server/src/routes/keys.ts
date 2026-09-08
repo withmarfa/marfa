@@ -16,7 +16,7 @@ import {
   type RequestedReach,
 } from "../auth/mint-clamp.js";
 import {
-  requireCapability,
+  requireSpacePermission,
   requireSpaceAdmin,
   hashApiKey,
   isReservedCredentialSource,
@@ -111,7 +111,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. A signed-in app must hold `capability.keys`, and the key it mints may not reach past what its own grant covers — a request for more is refused naming the scope. Such a key is `scope_enforced`: its permission maps decide what it reaches and its role does not override them. Omitting the maps mints a key matching the session's own reach rather than an empty one. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
+    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely. The new key's space is always the caller's: a `space_id` in the body is rejected, and a caller that has no space cannot mint `role: \"space_admin\"` (the key would inherit no space, so its authority would not stop at the boundary its role names). Use `POST /admin/spaces/{id}/keys` to mint into a specific space. `role` may not exceed the caller's own role (admin > space_admin > member); asking for a higher one returns 403, and `is_platform` is granted only when the caller is itself a platform credential. A signed-in app must hold `space.keys`, and the key it mints may not reach past what its own grant covers — a request for more is refused naming the scope. Such a key is `scope_enforced`: its permission maps decide what it reaches and its role does not override them. Omitting the maps mints a key matching the session's own reach rather than an empty one. On a fresh server with zero keys, this runs in bootstrap mode (no auth, minted key is always admin); once any key exists, creation requires an admin or space_admin token.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -186,7 +186,7 @@ const createKeyRoute = createRoute({
         },
       },
       description:
-        "Caller is not an admin or space_admin, requested a role above its own, or is a signed-in app that was not granted `capability.keys` or asked for reach its grant does not cover. The last two name the missing scope in `details.required_scope`.",
+        "Caller is not an admin or space_admin, requested a role above its own, or is a signed-in app that was not granted `space.keys` or asked for reach its grant does not cover. The last two name the missing scope in `details.required_scope`.",
     },
   },
 });
@@ -483,10 +483,10 @@ export function keyRoutes(storage: Storage, salt: string) {
       // The blanket refusal that used to stand here was doing two jobs at once
       // — withholding the permission, and preventing the escalation a mint
       // makes possible. Both are still done, by two things that can be reasoned
-      // about separately: `requireCapability` here, and the breadth clamp plus
+      // about separately: `requireSpacePermission` here, and the breadth clamp plus
       // `scope_enforced` below. Removing one without the others is the mistake
       // to avoid; see `auth/mint-clamp.ts`.
-      requireCapability(c, "capability.keys");
+      requireSpacePermission(c, "space.keys");
     }
 
     const body = c.req.valid("json");
@@ -746,7 +746,7 @@ export function keyRoutes(storage: Storage, salt: string) {
     // space-bound `admin`, and a role-keyed fence would hand that
     // credential every other space's key inventory.
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.keys");
+    requireSpacePermission(c, "space.keys");
     const all = await storage.keys.list();
     const visible = key.space_id
       ? all.filter((k) => k.space_id === key.space_id)
@@ -756,7 +756,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(revokeKeyRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.keys");
+    requireSpacePermission(c, "space.keys");
     const { id } = c.req.valid("param");
 
     if (!isValidId(id)) {
@@ -791,7 +791,7 @@ export function keyRoutes(storage: Storage, salt: string) {
 
   router.openapi(updateKeyRoute, async (c) => {
     const key = requireSpaceAdmin(c);
-    requireCapability(c, "capability.keys");
+    requireSpacePermission(c, "space.keys");
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 

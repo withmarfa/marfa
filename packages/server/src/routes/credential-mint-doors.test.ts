@@ -218,7 +218,7 @@ const DOORS: MintDoor[] = [
       const space = await ctx.storage.spaces!.create(spaceId);
       const { token } = await seedOauthBearer(
         ctx.storage,
-        ["openid", "capability.keys"],
+        ["openid", "space.keys"],
         { userRole: "space_admin", spaceId: space.id },
       );
       const res = await request(ctx.app, "POST", "/keys", {
@@ -235,7 +235,7 @@ const DOORS: MintDoor[] = [
       const space = await ctx.storage.spaces!.create(
         `t-oauth-mint-${Math.random().toString(36).slice(2, 8)}`,
       );
-      const scopes = ["openid", "capability.keys", "core.note:read"];
+      const scopes = ["openid", "space.keys", "core.note:read"];
 
       // Over the ceiling: no capability, so the door does not open at all.
       const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {

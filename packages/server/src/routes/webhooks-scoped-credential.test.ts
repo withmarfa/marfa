@@ -51,7 +51,7 @@ describe("POST /webhooks and a scope-enforced credential", () => {
     const space = await spaces().create("scoped-webhook-space");
     const { token } = await seedOauthBearer(
       ctx.storage,
-      ["capability.keys", "capability.webhooks"],
+      ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
         userRole: "space_admin",
@@ -111,7 +111,7 @@ describe("POST /webhooks and a scope-enforced credential", () => {
 
     const { token } = await seedOauthBearer(
       ctx.storage,
-      ["capability.keys", "capability.webhooks"],
+      ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
         userRole: "space_admin",
@@ -161,7 +161,7 @@ describe("POST /webhooks and a scope-enforced credential", () => {
 
     const { token } = await seedOauthBearer(
       ctx.storage,
-      ["capability.keys", "capability.webhooks"],
+      ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
         userRole: "space_admin",
