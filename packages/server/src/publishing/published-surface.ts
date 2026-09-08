@@ -113,6 +113,16 @@
  * means hashing declarations this repository does not own and cannot
  * version. Deciding whether such a change needs a version bump is a
  * judgement this guard informs rather than makes.
+ *
+ * **What a moved surface costs, which this file used to state wrongly.**
+ * Removing an export is a break and ships as at least a minor, with a commit
+ * footer naming it — not as a major. Pre-launch nothing outside this estate
+ * consumes these packages, so a major buys no consumer anything, and on a
+ * workspace dependency it costs something real: a package still pinned to the
+ * old major resolves a second copy of it into the install tree beside the one
+ * every other package resolves, and two copies of a types package is two
+ * definitions of the same shape. The rule changes the day there is an external
+ * consumer to protect, and not before.
  */
 import { createHash } from "node:crypto";
 
@@ -386,7 +396,9 @@ export function describeSurfaceViolation(v: SurfaceViolation): string {
           ? `Still ${String(v.currentExports)} exported names, so a declaration changed shape or a name was swapped for another — neither moves the count. `
           : `${String(v.currentExports)} exported names now, ${String(v.lockedExports)} in the lock. `) +
         `A published version must name one surface: move the version if this one is already on the registry, then regenerate. ` +
-        `Removing an export is a major. ${REGENERATE}`
+        `Removing an export is at least a minor, with a commit footer naming the break. Not a major: nothing outside ` +
+        `this estate consumes these packages yet, and a major on a workspace dependency nests a second copy of it in ` +
+        `the install tree beside the one every other package resolves. ${REGENERATE}`
       );
     case "version-moved":
       return (
