@@ -1151,6 +1151,17 @@ export interface SearchStore {
   remove(itemId: string): Promise<void>;
 }
 
+/**
+ * What a revoke did, rather than whether it did anything.
+ *
+ * A revoke has three outcomes and a boolean carries two of them, which is
+ * how a route came to answer `{ ok: true }` for an id that matched no row at
+ * all: the one caller that skips the space fence had nothing else left to
+ * ask. `"already_revoked"` and `"not_found"` are both misses and both refuse,
+ * but they are different mistakes to have made and the answer says which.
+ */
+export type KeyRevokeOutcome = "revoked" | "already_revoked" | "not_found";
+
 export interface KeyStore {
   /**
    * Mint a key.
@@ -1212,11 +1223,18 @@ export interface KeyStore {
   ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
   update(id: string, input: UpdateKeyInput): Promise<ApiKey>;
   /**
-   * Stamp `revoked_at`. Returns whether this call was the one that revoked
-   * the key: a key already revoked answers `false`, so a caller listing the
-   * credentials it retired lists the ones it actually retired.
+   * Stamp `revoked_at`, and say which of the three things happened. Only
+   * `"revoked"` means this call was the one that retired the key, so a
+   * caller listing the credentials it retired lists the ones it actually
+   * retired.
+   *
+   * **The two misses are told apart here because nothing above can tell
+   * them apart.** `get` drops revoked rows, so an id nobody holds and a key
+   * already retired both read as absent through it, and a route asking that
+   * question afterwards would be answering from a second query against a
+   * row this call has already decided about.
    */
-  revoke(id: string): Promise<boolean>;
+  revoke(id: string): Promise<KeyRevokeOutcome>;
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;
   /**

@@ -25,7 +25,7 @@ import type {
   TypePermission,
   SpacePermission,
 } from "@withmarfa/shared";
-import type { KeyStore } from "../interface.js";
+import type { KeyRevokeOutcome, KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -358,13 +358,21 @@ export class SqliteKeyStore implements KeyStore {
     };
   }
 
-  async revoke(id: string): Promise<boolean> {
+  async revoke(id: string): Promise<KeyRevokeOutcome> {
     const result = await this.db
       .update(apiKeys)
       .set({ revoked_at: new Date().toISOString() })
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
       .run();
-    return result.rowsAffected > 0;
+    if (result.rowsAffected > 0) return "revoked";
+    // See the pg key-store: read only on the miss, and only to say which
+    // miss it was.
+    const row = await this.db
+      .select({ id: apiKeys.id })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, id))
+      .get();
+    return row ? "already_revoked" : "not_found";
   }
 
   /**

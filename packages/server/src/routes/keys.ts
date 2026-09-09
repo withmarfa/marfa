@@ -261,7 +261,7 @@ const revokeKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Revoke an API key",
   description:
-    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
+    "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission. A revoke that changes no row answers `404 api_key_not_found` rather than success, for every caller: an unknown id, an id in another space, and a key already revoked are all refused, and the message says which of the three it was where the caller could already tell.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -277,6 +277,14 @@ const revokeKeyRoute = createRoute({
       },
       description: "Key revoked",
     },
+    400: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["validation_error"]),
+        },
+      },
+      description: "Malformed key ID",
+    },
     401: {
       content: {
         "application/json": {
@@ -284,6 +292,24 @@ const revokeKeyRoute = createRoute({
         },
       },
       description: "Unauthorized",
+    },
+    403: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["forbidden"]),
+        },
+      },
+      description:
+        "`space.keys` required, unless the caller is the operator key",
+    },
+    404: {
+      content: {
+        "application/json": {
+          schema: makeErrorResponseSchema(["api_key_not_found"]),
+        },
+      },
+      description:
+        "No key was revoked: unknown, out of space, or already revoked",
     },
   },
 });
@@ -1311,7 +1337,27 @@ export function keyRoutes(
       }
     }
 
-    await storage.keys.revoke(id);
+    // **The answer is what happened, not what was asked for.** The fence
+    // above catches a space-bound caller reaching outside its own space, and
+    // catches a revoked key with it, because `keys.get` drops revoked rows.
+    // The operator key carries no space and takes neither branch, so before
+    // this it reached the store with any id at all and was told ok whatever
+    // came back — which is how a production key was revoked twice by the
+    // wrong id, twice successfully, and stayed live both times.
+    const outcome = await storage.keys.revoke(id);
+    if (outcome !== "revoked") {
+      throw new MarfaError(
+        ErrorCode.API_KEY_NOT_FOUND,
+        outcome === "already_revoked"
+          ? `Key ${id} was already revoked`
+          : `Key ${id} not found`,
+      );
+    }
+
+    // Under the refusal, so the log records revocations rather than
+    // attempts. An attempt that changed nothing is not an event in this
+    // key's life, and a row saying otherwise is the same false report the
+    // 200 was.
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       space_id: c.get("apiKey")?.space_id ?? null,

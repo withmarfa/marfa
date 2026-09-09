@@ -1557,9 +1557,13 @@ export function authRoutes(
     // space. A miss is silently treated as already-gone so cross-space
     // probes can't enumerate key ids.
     const target = await storage.keys.get(id);
-    const matched = target?.space_id === spaceId;
-    if (matched) {
-      await storage.keys.revoke(id);
+    // The revoke itself decides, not the read above it: between the two, a
+    // second tab can retire the same key, and the notice and the audit row
+    // would then both report a revocation this request did not make.
+    const revoked =
+      target?.space_id === spaceId &&
+      (await storage.keys.revoke(id)) === "revoked";
+    if (revoked) {
       void storage.audit.log({
         space_id: spaceId,
         action: "key.revoke",
@@ -1575,7 +1579,7 @@ export function authRoutes(
       renderKeysPage({
         email: gated.session.user.email,
         keys,
-        notice: matched
+        notice: revoked
           ? { kind: "success", text: "Key revoked." }
           : { kind: "error", text: "Key not found." },
       }),
