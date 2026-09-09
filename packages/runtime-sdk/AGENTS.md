@@ -2,7 +2,7 @@
 
 The SDK an Integration is written against: handler registration, per-Connection state, the connection-scoped client, echo suppression, and the dispatch glue the server's runtime calls into. **Published**, because an Integration outside this repository cannot depend on a workspace reference.
 
-**The breaking-change posture is the server's.** This package describes what the server's runtime will call and what it guarantees while doing so, so its major version tracks that contract rather than its own internals: a change that makes an existing handler stop compiling or stop behaving is a major, and everything else is not. It stays in this repository for the same reason, versioned in lockstep with the server that implements it.
+**The breaking-change posture is the server's.** This package describes what the server's runtime will call and what it guarantees while doing so, so its major version tracks that contract rather than its own internals: a change that makes an existing handler stop compiling or stop behaving is a break, shipped as at least a minor with a commit footer naming it (the published-surface check states the rule and why it is not a major), and everything else is not. It stays in this repository for the same reason, versioned in lockstep with the server that implements it.
 
 ## The resumption contract
 
