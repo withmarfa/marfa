@@ -77,7 +77,7 @@ The SDK ships two in-process test fixtures so consumers can exercise the client 
 
 ### Keys-mode fixture (`createKeysModeFixture`)
 
-For SDK surfaces that don't depend on `auth_user` resolution. Bootstraps a platform-admin API key over `POST /keys` and returns a client wired to it.
+For SDK surfaces that don't depend on `auth_user` resolution. Bootstraps the instance over `POST /keys` and returns a client wired to the working key that mint provisions.
 
 ```ts
 import { createKeysModeFixture } from "./test-harness.js";

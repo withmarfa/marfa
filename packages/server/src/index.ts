@@ -1,5 +1,9 @@
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
+import {
+  ensureBootstrapSecret,
+  isBootstrapped,
+} from "./auth/bootstrap-secret.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
@@ -1138,6 +1142,36 @@ async function main() {
   // on the same port, so the container image's HEALTHCHECK and the compose
   // wiring stay identical across roles. The worker's health answer is
   // process liveness — its real work is judged by the queues, not by HTTP.
+  // **The bootstrap window, announced.** An instance that has never minted a
+  // credential accepts one unauthenticated `POST /keys`, and the secret below
+  // is what binds that call to whoever is running the instance rather than to
+  // whoever reaches the port first. Printed at every boot until it is used, so
+  // a restart does not strand an operator who has already copied it, and
+  // printed by the web role only, since the worker serves no such route.
+  //
+  // Nothing is printed on an instance that already holds a credential, which
+  // is every deployment past its first minute.
+  if (runsWeb && !(await isBootstrapped(storage))) {
+    const secret = await ensureBootstrapSecret(storage);
+    // **Kept out of the telemetry mirror.** The redactor rewrites attributes
+    // and leaves the message body alone, on the reasoning that a body is
+    // Marfa-controlled and therefore safe. This body is a credential, so
+    // exporting it would put the key to the instance in whatever backend
+    // receives logs — turning "can read the boot log" into "can read the
+    // observability stack", which is not the claim this secret is meant to
+    // stand for.
+    log(
+      "warn",
+      `This instance holds no credential yet. Mint the first one with: ` +
+        `curl -X POST <url>/keys -H "Authorization: Bearer ${secret}" ` +
+        `-H 'Content-Type: application/json' ` +
+        `-d '{"label":"operator","source":"operator"}'. ` +
+        `This secret works once and is not shown again after that mint.`,
+      undefined,
+      { localOnly: true },
+    );
+  }
+
   let server: ReturnType<typeof serve>;
   if (runsWeb) {
     const app = createApp(

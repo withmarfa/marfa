@@ -16,11 +16,21 @@
 #    cannot find. To run with no integrations at all, put `none` in
 #    packages/server/installed-integrations.txt instead.
 # 3. docker compose up --build
-# 4. Mint the first admin key:
-#      marfa bootstrap http://localhost:8600
+# 4. Read the one-time bootstrap secret the server printed at startup:
+#      docker compose logs server | grep 'holds no credential yet'
+#    The first mint must present it, which is what binds that call to
+#    whoever is running the instance rather than to whoever reaches the
+#    port first. It works once.
+# 5. Mint the operator key with it:
+#      marfa bootstrap http://localhost:8600 --secret <secret>
 #    (or, without the CLI:
-#      curl -X POST http://localhost:8600/keys -H 'content-type: application/json' \
-#        -d '{"label":"admin","source":"bootstrap","role":"admin"}')
+#      curl -X POST http://localhost:8600/keys \
+#        -H "Authorization: Bearer <secret>" \
+#        -H 'content-type: application/json' \
+#        -d '{"label":"operator","source":"operator"}')
+#    The response also carries a working key bound to the instance's one
+#    space. The operator key runs the instance and holds no content reach,
+#    so the space key is the one to configure a client with.
 #
 # Runs Postgres (so the local integration runtime works), migrates the database,
 # then starts the server. See the self-hosting docs for email, S3 blobs, TLS,
