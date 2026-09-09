@@ -325,22 +325,23 @@ const putQuotasRoute = createRoute({
 });
 
 /**
- * The space a `/spaces/me/config` door acts on.
+ * The space a `/spaces/me/*` door acts on.
  *
  * **A space permission implies a space.** The eleven are held on a
  * credential's row or on its grant; the operator key is the only shape that
  * can carry no space, and it holds none of them and cannot be given one, so
- * `requireSpacePermission(c, "space.settings")` has already turned away every
- * space-less caller before this is reached.
+ * the `requireSpacePermission` on each of these doors has already turned away
+ * every space-less caller before this is reached.
  *
- * It exists so neither door carries a refusal no caller can reach, which
+ * It exists so none of these doors carries a refusal no caller can reach,
+ * which
  * would read as a protection somebody is relying on. Reaching the throw would
  * mean the gate above had stopped working, which is this file's mistake and
  * not a caller's, so it stops rather than answering as a bad request.
  */
 function spaceOfSettingsCaller(key: ApiKey): string {
   if (key.space_id === undefined) {
-    throw new Error("space.settings admitted a credential with no space");
+    throw new Error("a space permission admitted a credential with no space");
   }
   return key.space_id;
 }
@@ -406,15 +407,13 @@ export function spaceRoutes(storage: Storage) {
   router.openapi(getOwnQuotasRoute, async (c) => {
     const key = requireAuth(c);
     requireSpacePermission(c, "space.usage");
-    const spaceId = key.space_id;
-    if (!spaceId) {
-      // A credential with no space_id hits this — it should use
-      // the explicit `/spaces/{id}/quotas` route instead.
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Caller has no space_id; use GET /spaces/{id}/quotas with an explicit space id.",
-      );
-    }
+    // The last space-less caller this door could meet was a keys-mode bearer
+    // holding `space.usage` and no space, which is now refused at the
+    // middleware; a space-less key is the operator tier and holds none of the
+    // eleven, so the gate above turns that away. The refusal that used to sit
+    // here can no longer answer, and `/spaces/{id}/quotas` is still the route
+    // for naming a space explicitly.
+    const spaceId = spaceOfSettingsCaller(key);
     const quota = await storage.spaceQuotas.get(spaceId);
     return c.json(
       {

@@ -101,6 +101,7 @@ import {
   buildDefaultPermissionBundles,
   resolveRuntimeCustomNamespaces,
 } from "../auth/default-bundles.js";
+import { resolveSpaceIdForAuthUser } from "../auth/oauth-provider.js";
 import { renderConsentScreen } from "./consent.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
@@ -1229,11 +1230,12 @@ async function projectGrantOnConsent(
 ): Promise<void> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
-  let spaceId: string | undefined;
-  if (storage.users) {
-    const userRow = await storage.users.getByAuthUserId(opts.authUserId);
-    spaceId = userRow?.space_id ?? undefined;
-  }
+  // **The same resolver issuance uses.** The projection's space and the
+  // token's `reference_id` have to agree, or `findGrantItemId` looks in one
+  // bucket while the row sits in another and the revoke cascade ends nothing.
+  // They agreed by accident before: hosted read the user's row on both sides,
+  // and keys mode had nothing on either. Keys mode has a space now.
+  const spaceId = await resolveSpaceIdForAuthUser(storage, opts.authUserId);
 
   // Detect re-consent: update scopes in place if a projection exists,
   // insert on first consent. Either way the audit row and publish fire.
@@ -1791,6 +1793,10 @@ export async function resolveConsentBundles(
   // draws for the instance-wide fold; one bad environment variable should
   // cost one thing.
   if (hasUsablePermissionBundleOverride()) return getPermissionBundles();
+  // Deliberately the `users` row rather than the shared grant resolver: the
+  // consent screen's bundles are a hosted-mode derivation, and falling back
+  // to a keys-mode instance's one space here would replace the shipped
+  // bundles with derived ones and lose their `default_on` flags.
   if (!storage.users) return getPermissionBundles();
   const row = await storage.users.getByAuthUserId(authUserId);
   const spaceId = row?.space_id;

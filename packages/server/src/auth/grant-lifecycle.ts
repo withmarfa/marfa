@@ -1,6 +1,7 @@
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { withConsentLock } from "./consent-lock.js";
+import { resolveSpaceIdForAuthUser } from "./oauth-provider.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -202,11 +203,9 @@ export async function auditGrantReused(
   },
 ): Promise<void> {
   try {
-    let spaceId: string | undefined;
-    if (storage.users) {
-      const userRow = await storage.users.getByAuthUserId(opts.authUserId);
-      spaceId = userRow?.space_id ?? undefined;
-    }
+    // The resolver the projection was written through, so this lookup asks
+    // the bucket the row is in.
+    const spaceId = await resolveSpaceIdForAuthUser(storage, opts.authUserId);
     let grantItemId: string | null = null;
     if (typeof storage.oauthProvider?.findGrantItemId === "function") {
       grantItemId = await storage.oauthProvider.findGrantItemId({
