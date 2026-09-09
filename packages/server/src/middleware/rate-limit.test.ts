@@ -16,7 +16,9 @@ const SALT = "test-salt";
 interface Ctx {
   app: Hono<AppEnv>;
   storage: Storage;
-  adminKey: string;
+  /** An ordinary working key bound to the instance's one space — the shape a
+   *  self-hoster is handed, and the only shape that carries content reach. */
+  spaceKey: string;
   cleanup: () => Promise<void>;
 }
 
@@ -79,26 +81,26 @@ async function buildCtx(): Promise<Ctx> {
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `marfa_k1_rl_admin_${suffix}`;
+  const rawKey = `marfa_k1_rl_space_${suffix}`;
+  const space = await storage.spaces?.create("rate-limit");
   await storage.keys.create(
     {
-      label: "rl-admin",
-      source: `rl-admin-${suffix}`,
-      // Space-less and operator go together: the row constraint holds the
-      // pair, and the maps have to be named because nothing bypasses them.
-      is_operator: true,
+      label: "rl-space",
+      source: `rl-space-${suffix}`,
+      is_operator: false,
       space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },
     hashApiKey(rawKey, SALT),
+    space?.id,
   );
   await storage.settings.set("bootstrapped", "true");
 
   return {
     app,
     storage,
-    adminKey: rawKey,
+    spaceKey: rawKey,
     cleanup: async () => {
       try {
         await storage.close();
@@ -116,7 +118,7 @@ async function makeSpaceKey(ctx: Ctx, label: string): Promise<string> {
   const res = await ctx.app.request("/keys", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.adminKey}`,
+      Authorization: `Bearer ${ctx.spaceKey}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
@@ -295,25 +297,25 @@ async function buildAggCtx(): Promise<Ctx> {
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_rl_agg_${suffix}`;
+  const space = await storage.spaces?.create("rate-limit-aggregate");
   await storage.keys.create(
     {
-      label: "rl-agg-admin",
-      source: `rl-agg-admin-${suffix}`,
-      // Space-less and operator go together: the row constraint holds the
-      // pair, and the maps have to be named because nothing bypasses them.
-      is_operator: true,
+      label: "rl-agg-space",
+      source: `rl-agg-space-${suffix}`,
+      is_operator: false,
       space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "feed",
     },
     hashApiKey(rawKey, SALT),
+    space?.id,
   );
   await storage.settings.set("bootstrapped", "true");
 
   return {
     app,
     storage,
-    adminKey: rawKey,
+    spaceKey: rawKey,
     cleanup: async () => {
       try {
         await storage.close();
@@ -347,11 +349,11 @@ describe("rate-limit aggregate per-identifier window", () => {
     // proving the budget didn't multiply group-by-group.
     const hitItems = () =>
       aggCtx.app.request("/items", {
-        headers: { Authorization: `Bearer ${aggCtx.adminKey}` },
+        headers: { Authorization: `Bearer ${aggCtx.spaceKey}` },
       });
     const hitTypes = () =>
       aggCtx.app.request("/types", {
-        headers: { Authorization: `Bearer ${aggCtx.adminKey}` },
+        headers: { Authorization: `Bearer ${aggCtx.spaceKey}` },
       });
 
     expect((await hitItems()).status).toBe(200);
@@ -478,7 +480,7 @@ describe("rate-limit batched windows", () => {
     // freshly-usable budget.
     const hit = (path: string) =>
       batchCtx.app.request(path, {
-        headers: { Authorization: `Bearer ${batchCtx.adminKey}` },
+        headers: { Authorization: `Bearer ${batchCtx.spaceKey}` },
       });
     for (let i = 0; i < 4; i++) {
       expect((await hit("/items")).status).toBe(200);

@@ -18,12 +18,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
+  TEST_API_KEY_SALT,
   createTestContext,
-  request,
+  mintSpaceKey,
   readSse,
+  request,
   seedOauthBearer,
   settle,
-  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
@@ -42,23 +43,18 @@ beforeAll(async () => {
   // does not install one.
   initEventLog(ctx.storage.eventLog);
   const suffix = Math.random().toString(36).slice(2, 10);
-  scopedKey = `marfa_k1_extperm_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `extperm-${suffix}`,
-      source: `extperm-${suffix}`,
-      type_permissions: { "*": "write" },
-      // `mine` is readable; `theirs` is not named at all, so the caller
-      // holds nothing on it.
-      extension_permissions: { mine: "read" },
-      default_tier: "library",
-      // Keys mode leaves this key space-less, and a space-less key must be an
-      // operator key. Nothing here turns on that: the stream narrows on the
-      // extension map, which no credential bypasses.
-      is_operator: true,
-    },
-    hashApiKey(scopedKey, TEST_API_KEY_SALT),
-  );
+  scopedKey = await mintSpaceKey(ctx, ctx.spaceId, {
+    label: `extperm-${suffix}`,
+    source: `extperm-${suffix}`,
+    type_permissions: { "*": "write" },
+    // `mine` is readable; `theirs` is not named at all, so the caller
+    // holds nothing on it.
+    extension_permissions: { mine: "read" },
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    space_permissions: [],
+  });
 });
 
 afterAll(async () => {
@@ -358,6 +354,7 @@ describe("the replay's shape guard", () => {
     return ctx.storage.eventLog.append({
       event_type: eventType,
       item_id: itemId,
+      space_id: ctx.spaceId,
       payload,
     });
   }

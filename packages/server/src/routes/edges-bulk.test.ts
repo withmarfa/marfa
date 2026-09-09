@@ -1,7 +1,6 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 import { generateId } from "@withmarfa/shared";
 
 let ctx: TestContext;
@@ -382,21 +381,18 @@ describe("POST /edges/bulk", () => {
   it("admits a key with source-type + edge-type write (matches POST /edges)", async () => {
     // Bulk edge authorization mirrors single-edge POST /edges: a key holding
     // write on the source item's type AND the edge type succeeds.
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "edges-bulk-member-ok",
-        source: `edges-bulk-member-ok-${rawKey.slice(-6)}`,
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        // Keys mode gives this key no space, and a space-less key must be an
-        // operator key. The subject is the edge map, which an operator key
-        // does not bypass.
-        is_operator: true,
-      },
-      keyHash,
-    );
+    // The subject is the edge map, so the key is an ordinary space-bound one
+    // holding exactly the two families the door reads.
+    const rawKey = await mintSpaceKey(ctx, ctx.spaceId, {
+      label: "edges-bulk-member-ok",
+      source: `edges-bulk-member-ok-${Math.random().toString(36).slice(2, 8)}`,
+      type_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: {},
+      extension_permissions: {},
+      profile_permissions: {},
+      space_permissions: [],
+    });
     const { sourceId, targetId } = await makePair();
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
@@ -415,18 +411,16 @@ describe("POST /edges/bulk", () => {
   it("rejects a key lacking edge-type write (atomic 400)", async () => {
     // Has source-type write but no edge_permissions → edge_permission_denied,
     // surfaced as a bulk_atomic_rollback by the atomic pre-check.
-    const rawKey = `marfa_k1_member_${Math.random().toString(36).slice(2)}`;
-    const keyHash = hashApiKey(rawKey, "test-salt");
-    await ctx.storage.keys.create(
-      {
-        label: "edges-bulk-member-noedge",
-        source: `edges-bulk-member-noedge-${rawKey.slice(-6)}`,
-        type_permissions: { "*": "write" },
-        edge_permissions: {},
-        is_operator: true,
-      },
-      keyHash,
-    );
+    const rawKey = await mintSpaceKey(ctx, ctx.spaceId, {
+      label: "edges-bulk-member-noedge",
+      source: `edges-bulk-member-noedge-${Math.random().toString(36).slice(2, 8)}`,
+      type_permissions: { "*": "write" },
+      edge_permissions: {},
+      metadata_permissions: {},
+      extension_permissions: {},
+      profile_permissions: {},
+      space_permissions: [],
+    });
     const { sourceId, targetId } = await makePair();
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {

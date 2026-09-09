@@ -38,14 +38,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
-  request,
+  mintSpaceKey,
   readSse,
+  request,
   settle,
-  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -374,20 +373,16 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 describe("the replay's two checks on a row that names no item type", () => {
   it("does not hand it to a credential the permission maps apply to", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const raw = `marfa_k1_test_member_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: "type-filter member",
-        source: `type-filter-member-${suffix}`,
-        type_permissions: { "core.*": "read" },
-        default_tier: "library",
-        // Keys mode leaves this key space-less, which the row constraint
-        // pairs with operator. The narrowing under test reads the type map,
-        // which that flag does not widen.
-        is_operator: true,
-      },
-      hashApiKey(raw, TEST_API_KEY_SALT),
-    );
+    const raw = await mintSpaceKey(ctx, ctx.spaceId, {
+      label: "type-filter member",
+      source: `type-filter-member-${suffix}`,
+      type_permissions: { "core.*": "read" },
+      edge_permissions: {},
+      metadata_permissions: {},
+      extension_permissions: {},
+      profile_permissions: {},
+      space_permissions: [],
+    });
 
     await createItem("core.note", { body: "narrowing seed" });
     const cursor = await latestEventId();

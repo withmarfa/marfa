@@ -970,11 +970,12 @@ describe("RuntimeCredentialReaper.runOnce — legacy NULL-expiry drain", () => {
           source: "human",
           type_permissions: { "*": "write" },
           default_tier: "library",
-          // Space-less and operator go together: the row constraint holds the
-          // pair, so a human key on a keys-mode instance is an operator key.
-          is_operator: true,
+          // An ordinary working key: what the drain has to leave alone is a
+          // credential a person holds, and a person's key is space-bound.
+          is_operator: false,
         },
         hashApiKey("marfa_k1_human_reaper", TEST_API_KEY_SALT),
+        ctx.spaceId,
       )
     ).id;
 
@@ -1051,11 +1052,10 @@ describe("KeyStore.countRuntimeCredentials — operator visibility", () => {
         source: "human-count",
         type_permissions: { "*": "write" },
         default_tier: "library",
-        // Space-less and operator go together: the row constraint holds the
-        // pair, so a human key on a keys-mode instance is an operator key.
-        is_operator: true,
+        is_operator: false,
       },
       hashApiKey("marfa_k1_human_count", TEST_API_KEY_SALT),
+      ctx.spaceId,
     );
 
     const counts = await ctx.storage.keys.countRuntimeCredentials(
@@ -1215,11 +1215,10 @@ describe("KeyStore.list / count — expired credentials are not live", () => {
         source: "human-live",
         type_permissions: { "*": "write" },
         default_tier: "library",
-        // Space-less and operator go together: the row constraint holds the
-        // pair, so a human key on a keys-mode instance is an operator key.
-        is_operator: true,
+        is_operator: false,
       },
       hashApiKey("marfa_k1_human_live_list", TEST_API_KEY_SALT),
+      ctx.spaceId,
     );
     const listed = await ctx.storage.keys.list();
     expect(listed.map((k) => k.id)).toContain(human.id);

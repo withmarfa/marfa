@@ -40,7 +40,9 @@ async function rowFor(
   storage: { keys: { validate: (hash: string) => Promise<ApiKey | null> } },
   rawKey: string,
 ): Promise<ApiKey> {
-  const row = await storage.keys.validate(hashApiKey(rawKey, TEST_API_KEY_SALT));
+  const row = await storage.keys.validate(
+    hashApiKey(rawKey, TEST_API_KEY_SALT),
+  );
   if (!row) throw new Error("no api_keys row for that credential");
   return row;
 }

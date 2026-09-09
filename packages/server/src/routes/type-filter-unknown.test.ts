@@ -19,13 +19,8 @@
  * reached by id or under a wildcard.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 let narrowKey: string;
@@ -33,21 +28,19 @@ let narrowKey: string;
 beforeAll(async () => {
   ctx = await createTestContext();
   // A credential that reads tasks and nothing else, so `core.note` is a
-  // registered type it cannot read. `is_operator` is what the schema demands
-  // of a space-less key in keys mode; the narrow map is what this file tests,
-  // and no flag reads past it.
+  // registered type it cannot read. The narrow map is the whole subject, so
+  // the key is an ordinary space-bound one holding only that.
   const suffix = Math.random().toString(36).slice(2, 12);
-  narrowKey = `marfa_k1_narrow_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `narrow-${suffix}`,
-      source: `narrow-${suffix}`,
-      type_permissions: { "core.task": "read" },
-      default_tier: "library",
-      is_operator: true,
-    },
-    hashApiKey(narrowKey, TEST_API_KEY_SALT),
-  );
+  narrowKey = await mintSpaceKey(ctx, ctx.spaceId, {
+    label: `narrow-${suffix}`,
+    source: `narrow-${suffix}`,
+    type_permissions: { "core.task": "read" },
+    edge_permissions: {},
+    metadata_permissions: {},
+    extension_permissions: {},
+    profile_permissions: {},
+    space_permissions: [],
+  });
 });
 
 afterAll(async () => {
