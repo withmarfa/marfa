@@ -2145,6 +2145,11 @@ export class MarfaClient {
       });
     },
 
+    /** Revoke a key. Not idempotent: a revoke that changes no row is
+     * refused with a 404 `api_key_not_found`, so revoking a key twice, or
+     * revoking an id that matches nothing, throws rather than resolving.
+     * A caller retrying a revoke has to treat that 404 as the success it
+     * is retrying after. */
     revoke: async (id: string): Promise<void> => {
       await this.transport.request<undefined>("DELETE", path`/keys/${id}`);
     },

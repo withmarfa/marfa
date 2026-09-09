@@ -336,33 +336,12 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     return page.data.length;
   }
 
-  /**
-   * Revoke a freshly created key and wait for its audit row, so a later
-   * count is read after the writer has demonstrably drained rather than
-   * after a guess at how long it takes. Both rows are issued on the same
-   * store in call order, so a row the earlier request had in flight has
-   * landed by the time this one has.
-   */
-  async function auditedRevoke(): Promise<void> {
-    const { id } = await createKey();
-    const res = await request(ctx.app, "DELETE", `/keys/${id}`, {
-      key: ctx.spaceKey,
-    });
-    expect(res.status).toBe(200);
-    const rows = await waitForAudit(
-      () => revokeAudits(id),
-      (count) => count >= 1,
-    );
-    expect(rows).toBe(1);
-  }
-
   // **The operator key skips the space fence, so nothing stood between it and
   // a revoke that did nothing.** A space-bound caller is refused earlier by
   // the cross-space 404: `keys.get` drops revoked rows, so a revoked key and
-  // an unknown one both read as a miss there. The operator carries no space,
-  // takes neither branch, and reached the store with any id at all — a
-  // production key was revoked twice by the wrong id and answered ok both
-  // times, and the row read back unchanged is the only reason anyone noticed.
+  // an unknown one both read as a miss there. The operator carries no space
+  // and takes neither branch, so it reached the store with any id at all.
+  // The route handler carries what that cost.
   it("refuses an unknown id rather than answering ok", async () => {
     const unknown = generateId();
 
@@ -376,7 +355,9 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     const err = (await res.json()) as { error: { code: string } };
     expect(err.error.code).toBe("api_key_not_found");
 
-    await auditedRevoke();
+    // A barrier rather than a deadline: the absence below is read once the
+    // audit writer has settled, so a loaded machine cannot turn it red.
+    await ctx.storage.audit.drain();
     expect(
       await revokeAudits(unknown),
       "an audit row records a revocation that never happened",
@@ -390,10 +371,8 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
       key: ctx.operatorKey,
     });
     expect(first.status).toBe(200);
-    await waitForAudit(
-      () => revokeAudits(id),
-      (count) => count >= 1,
-    );
+    await ctx.storage.audit.drain();
+    expect(await revokeAudits(id)).toBe(1);
 
     const second = await request(ctx.app, "DELETE", `/keys/${id}`, {
       key: ctx.operatorKey,
@@ -412,7 +391,7 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     // operator reaches every space, so it costs nothing there.
     expect(err.error.message).toMatch(/already revoked/i);
 
-    await auditedRevoke();
+    await ctx.storage.audit.drain();
     expect(
       await revokeAudits(id),
       "the second revoke wrote an audit row for a revocation that changed nothing",
@@ -430,11 +409,8 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
 
-    const rows = await waitForAudit(
-      () => revokeAudits(id),
-      (count) => count >= 1,
-    );
-    expect(rows).toBe(1);
+    await ctx.storage.audit.drain();
+    expect(await revokeAudits(id)).toBe(1);
     expect(await ctx.storage.keys.get(id)).toBeNull();
   });
 });

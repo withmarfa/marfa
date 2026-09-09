@@ -2522,6 +2522,17 @@ export interface AuditStore {
    * account cascade is the one that does, and it says how.
    */
   logOrThrow(entry: AuditLogEntry): Promise<void>;
+  /**
+   * Resolve once every in-flight `log` write has settled.
+   *
+   * `close()` uses it so fire-and-forget rows drain before the pool is torn
+   * down. It is on the interface rather than only on the concrete stores
+   * because a test asserting a row was **not** written otherwise has to
+   * outwait the writer, and a deadline standing in for a barrier is an
+   * assertion that encodes a duration: green on a quiet machine, red under
+   * load, and silent about which it was.
+   */
+  drain(): Promise<void>;
   list(filters: {
     action?: string;
     resource_type?: string;
