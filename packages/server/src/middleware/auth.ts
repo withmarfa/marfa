@@ -111,12 +111,7 @@ export interface AppEnv extends Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 const KEY_PREFIX = "marfa_k1_";
-/** The opaque access token's prefix, which is also what the OAuth plugin is
- *  configured with. Exported so the provider wiring names it rather than
- *  restating the literal: this side strips it before hashing for lookup and
- *  the plugin strips it before hashing for storage, and the two agreeing is
- *  what makes a token in hand resolvable to its row. */
-export const ACCESS_TOKEN_PREFIX = "marfa_at_";
+const ACCESS_TOKEN_PREFIX = "marfa_at_";
 const DEBOUNCE_MS = 3600_000; // 1 hour
 
 /**

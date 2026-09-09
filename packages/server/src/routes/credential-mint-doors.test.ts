@@ -442,46 +442,17 @@ const DOORS: MintDoor[] = [
       expect(registered.has("*:write")).toBe(false);
       expect(registered.has("*:read")).toBe(false);
 
-      // The one grant with no user in it cannot be registered without
-      // authenticating — the fence in front of client_credentials. A machine
-      // client's token takes its space and its ceiling from the person who
-      // registered it, so a registration with nobody present has neither.
+      // The one grant with no user in it is not a grant this server has, so
+      // no client registers for it and there is no mint door to bound. A
+      // machine acting on a space is an API key, which the keys doors above
+      // already cover.
       const m2m = await request(ctx.app, "POST", "/auth/oauth2/register", {
         body: {
           grant_types: ["client_credentials"],
           client_name: "mint-door-m2m",
-          scope: "core.note:read",
         },
       });
       expect(m2m.status).toBe(400);
-
-      // At the ceiling, and clamped: a session may register one, and the
-      // machine allowlist it gets is the named set held to what that person
-      // holds. `openid` is inside the person's own grant and outside
-      // anything a machine token can spend, so it is the literal that shows
-      // the clamp ran rather than the request being echoed back.
-      const email = `mint-m2m-${Math.random().toString(36).slice(2, 8)}@example.com`;
-      const cookie = await signInAndCookie(email);
-      const owned = await request(ctx.app, "POST", "/auth/oauth2/register", {
-        body: {
-          grant_types: ["client_credentials"],
-          client_name: "mint-door-m2m-owned",
-          scope: "core.note:read openid",
-        },
-        headers: { origin: ORIGIN, cookie },
-      });
-      expect(owned.status).toBe(201);
-      const ownedBody = (await owned.json()) as {
-        client_secret?: string;
-        client_credentials_scopes?: string[];
-        public?: boolean;
-      };
-      // Confidential, because the plugin refuses the grant to a public
-      // client and a secretless machine credential is one anybody holding
-      // the client id has.
-      expect(typeof ownedBody.client_secret).toBe("string");
-      expect(ownedBody.public).toBe(false);
-      expect(ownedBody.client_credentials_scopes).toEqual(["core.note:read"]);
     },
   },
   {
@@ -678,10 +649,13 @@ describe("every way of asking for a credential is accounted for", () => {
     // A plugin upgrade that starts advertising a new grant type is a new
     // way of asking for a credential: it fails this pin and forces a
     // door row or a named exclusion, not a silent widening.
+    //
+    // `client_credentials` is absent because the server does not have it.
+    // The plugin advertises it unconditionally and the discovery document is
+    // filtered, so this pin is also what would notice the filter being lost.
     expect([...(body.grant_types_supported ?? [])].sort()).toEqual(
       [
         "authorization_code",
-        "client_credentials",
         "refresh_token",
         "urn:ietf:params:oauth:grant-type:device_code",
       ].sort(),

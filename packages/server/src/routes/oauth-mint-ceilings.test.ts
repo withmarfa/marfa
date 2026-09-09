@@ -1,26 +1,27 @@
 /**
- * Default-scope ceilings on the non-interactive minting paths.
+ * The non-interactive minting paths: one ceiling, and one grant that is
+ * gone.
  *
- * Two paths hand out authority with no consent screen in front of them,
- * and both defaulted to the entire scope allowlist — including the global
- * `*:write` wildcard — when the request simply omitted `scope`:
+ * Dynamic client registration hands out authority with no consent screen in
+ * front of it, and it used to default to the entire scope allowlist,
+ * including the global `*:write` wildcard, when the request simply omitted
+ * `scope`. The ceiling now comes from `auth/mint-ceiling.ts`: the bundle
+ * expansion, which is what a consent screen would have shown.
  *
- *  - Dynamic client registration (unauthenticated): an omitted `scope`
- *    registered the client with every requestable scope.
- *  - The `client_credentials` grant: a token request with no `scope`, for
- *    a client registered without scopes, fell back to the full allowlist.
- *    There is no user in that grant, so nothing ever reviewed it.
- *
- * The ceiling now comes from `auth/mint-ceiling.ts`: DCR defaults to the
- * bundle expansion (what a consent screen would have shown), and
- * `client_credentials` defaults to nothing — a machine client states what
- * it needs or gets no data-plane reach.
+ * The `client_credentials` grant was the other such path and it is no longer
+ * a grant this server has. A machine acting on a space is an API key, minted
+ * into that space and listed, narrowed, revoked and rotated on the keys page;
+ * a machine token has none of that, and it would hold space permissions no
+ * screen ever showed anybody. Registration refuses the grant and the token
+ * endpoint answers `unsupported_grant_type`, which is what the first block
+ * below pins, against a client seeded past registration so the refusal is
+ * shown to rest on the endpoint rather than on the registration door.
  */
 
 import { createHash } from "node:crypto";
 import { describe, it, expect, afterEach } from "vitest";
 import { expandBundlesToScopes } from "@withmarfa/shared";
-import { createTestContext, request, seedAuthUser } from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { getPermissionBundles } from "../config.js";
 import { withSessionScopes } from "../auth/mint-ceiling.js";
@@ -34,21 +35,14 @@ afterEach(async () => {
 
 const ORIGIN = "http://localhost:0";
 
-/** Seed a confidential `client_credentials` client directly in storage. The
- *  product registers one through an authenticated session, and the ceiling
- *  has to hold for a client that exists by other means too — an operator
- *  insert, a future admin surface, a bug.
- *
- *  The row carries a registering user because a machine client without one
- *  belongs to no space and is refused before its scopes are ever consulted,
- *  which would make every assertion below pass for the wrong reason. */
+/** Seed a confidential `client_credentials` client directly in storage.
+ *  Marfa's DCR surface refuses to register that grant type, so the only way
+ *  to hold the token endpoint to its own answer is to put a client in front
+ *  of it that registration would never have produced: an operator insert, a
+ *  row predating the removal, or a bug. */
 async function seedConfidentialClient(
   c: TestContext,
   secret: string,
-  /** The client's machine-grant allowlist. Omitted means the client
-   *  registered none, which the library reads as no authorized scopes
-   *  and refuses — the ceiling this suite exists to pin. */
-  clientCredentialsScopes?: string[],
 ): Promise<string> {
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
@@ -79,10 +73,6 @@ async function seedConfidentialClient(
     redirectUris: asArray([]),
     grantTypes: asArray(["client_credentials"]),
     tokenEndpointAuthMethod: "client_secret_basic",
-    userId: await seedAuthUser(c.storage),
-    ...(clientCredentialsScopes !== undefined
-      ? { clientCredentialsScopes: asArray(clientCredentialsScopes) }
-      : {}),
     public: false,
     disabled: false,
     createdAt: now,
@@ -97,9 +87,12 @@ async function clientCredentialsToken(
   clientId: string,
   secret: string,
   scope?: string,
+  /** Spelled out so a case can send a padded value and prove the guard
+   *  normalizes before it compares. */
+  grantType = "client_credentials",
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const basic = Buffer.from(`${clientId}:${secret}`).toString("base64");
-  const params = new URLSearchParams({ grant_type: "client_credentials" });
+  const params = new URLSearchParams({ grant_type: grantType });
   if (scope !== undefined) params.set("scope", scope);
   const res = await c.app.fetch(
     new Request(`${ORIGIN}/auth/oauth2/token`, {
@@ -118,42 +111,49 @@ async function clientCredentialsToken(
   };
 }
 
-describe("client_credentials default-scope ceiling", () => {
-  it("grants nothing when no scope is requested and the client registered none", async () => {
+describe("the client-credentials grant is not one this server has", () => {
+  it("refuses the token request with unsupported_grant_type", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
-    // The ceiling is that a client which registered no scopes gains no
-    // reach. The library now enforces that by refusing the grant outright
-    // rather than by issuing a token carrying nothing: a machine grant is
-    // authorized against an explicit per-client allowlist, and an absent
-    // allowlist means no authorized scopes. Refusing is the stricter of
-    // the two answers and the more useful one — a zero-scope token is
-    // indistinguishable from a working credential until the first call
-    // fails, so handing one back turns a registration mistake into a
-    // runtime mystery.
-    const token = await clientCredentialsToken(ctx, clientId, secret);
-    expect(token.status).toBe(400);
-    expect(token.body.error).toBe("unauthorized_client");
-    expect(token.body.access_token).toBeUndefined();
-  });
-
-  it("still grants an explicitly requested scope the client registered", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
-    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret, [
-      "core.note:read",
-    ]);
-
+    // The client authenticates correctly and asks for a scope the server
+    // publishes, so nothing before the grant check turns it away. What is
+    // being pinned is that the endpoint refuses the grant itself rather than
+    // minting a token that would reach nothing, which a client cannot tell
+    // from a working credential until its first data call fails.
     const token = await clientCredentialsToken(
       ctx,
       clientId,
       secret,
       "core.note:read",
     );
-    expect(token.status).toBe(200);
-    expect(token.body.scope).toBe("core.note:read");
+    expect(token.status).toBe(400);
+    expect(token.body.error).toBe("unsupported_grant_type");
+    expect(token.body.access_token).toBeUndefined();
+  });
+
+  it("is not stepped around by whitespace in grant_type", async () => {
+    ctx = await createTestContext({ authAllowSignup: false });
+    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
+    const clientId = await seedConfidentialClient(ctx, secret);
+
+    // Every guard on the token endpoint turns on an equality against a
+    // literal, and the refusal above is one of them. A body spelling the
+    // grant with a leading space is the same request to anything that trims
+    // and a different one to anything that does not, so the guards read the
+    // value through one normalizer. Without it this request walks past the
+    // refusal on a padded string.
+    const token = await clientCredentialsToken(
+      ctx,
+      clientId,
+      secret,
+      "core.note:read",
+      " client_credentials ",
+    );
+    expect(token.status).toBe(400);
+    expect(token.body.error).toBe("unsupported_grant_type");
+    expect(token.body.access_token).toBeUndefined();
   });
 });
 

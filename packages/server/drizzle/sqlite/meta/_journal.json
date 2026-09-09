@@ -659,6 +659,13 @@
       "when": 1788960467350,
       "tag": "0093_a_spaceless_credential_holds_nothing_check",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "6",
+      "when": 1788970000000,
+      "tag": "0094_drop_client_credentials_scopes",
+      "breakpoints": true
     }
   ]
 }

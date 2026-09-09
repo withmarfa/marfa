@@ -13,7 +13,8 @@ import type { TestContext } from "../test-utils.js";
  *   - 400 validation paths matching the plugin's existing rejection
  *     shape so a third-party SDK previously calling the plugin's DCR
  *     sees no regression: missing `redirect_uris` for `authorization_code`,
- *     `client_credentials` (requires auth), `refresh_token` standalone,
+ *     `client_credentials` (a grant this server does not have),
+ *     `refresh_token` standalone,
  *     `javascript:` / non-loopback http: redirect URIs.
  *   - 400 invalid_scope when the body's `scope` literal is not in the
  *     server's allowed-scope set.
@@ -129,7 +130,7 @@ describe("POST /auth/oauth2/register", () => {
     expect(body.error).toBe("invalid_redirect_uri");
   });
 
-  it("rejects unauthenticated client_credentials grant", async () => {
+  it("rejects the client_credentials grant, which this server does not have", async () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {

@@ -54,6 +54,14 @@ export class PgSpaceStore implements SpaceStore {
     return rows.map(spaceFromRow);
   }
 
+  async soleSpaceId(): Promise<string | null> {
+    // Two rows, not all of them: the second row is the whole of what
+    // distinguishes "one space" from "more than one", and this runs on a
+    // request path.
+    const rows = await this.db.select({ id: spaces.id }).from(spaces).limit(2);
+    return rows.length === 1 ? (rows[0]?.id ?? null) : null;
+  }
+
   async getConfig(id: string): Promise<SpaceConfig | null> {
     const [row] = await this.db
       .select({ config: spaces.config })

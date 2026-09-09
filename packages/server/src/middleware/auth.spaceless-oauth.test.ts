@@ -14,7 +14,7 @@
  * written when a self-host bound nothing to a space, so a space-less bearer
  * there was the only shape there was. Keys mode has a space now, issuance
  * binds to it, and the exemption would have admitted exactly the principal
- * the row constraint exists to make unwritable — reached through the one path
+ * the row constraint exists to make unwritable, reached through the one path
  * that builds a credential in memory rather than reading a row.
  */
 
@@ -138,7 +138,7 @@ describe("space-less OAuth tokens in keys mode", () => {
       keysCtx.storage,
       "auth-user-with-no-row",
     );
-    expect(resolved).toBe(only!.id);
+    expect(resolved).toBe(only?.id);
   });
 
   it("resolves nothing where the instance has more than one space", async () => {

@@ -3,6 +3,7 @@ import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
+import { resolveSpaceIdForAuthUser } from "./auth/oauth-provider.js";
 import type { AppConfig } from "./config.js";
 import type { EmailTransport } from "./email/transport.js";
 import type { DeadLetterOps } from "./integrations/local-runtime/dead-letters.js";
@@ -243,40 +244,6 @@ export async function closeTestContexts(
  *                           stored — a user row carries no role and nothing
  *                           projects one. Hosted-mode storage only.
  */
-/**
- * Seed a Better Auth user row and hand back its id.
- *
- * Exists for the fixtures that need a person to exist without needing one to
- * sign in: a machine client's row carries the person who registered it, and
- * the FK on that column refuses a client whose registering user is invented.
- * `seedOauthBearer` does the same insert inline; this is the same statement
- * for callers that want only the user.
- */
-export async function seedAuthUser(
-  storage: Storage,
-  authUserId = `auth_user_${Math.random().toString(36).slice(2, 10)}`,
-): Promise<string> {
-  const now = new Date();
-  if (storage.betterAuthDialect === "sqlite") {
-    await requireSqliteRun(storage)(
-      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
-      [
-        authUserId,
-        "Test User",
-        `${authUserId}@test.local`,
-        Math.floor(now.getTime() / 1000),
-        Math.floor(now.getTime() / 1000),
-      ],
-    );
-  } else {
-    await requirePgClient(storage)(
-      "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
-      [authUserId, "Test User", `${authUserId}@test.local`, now.toISOString()],
-    );
-  }
-  return authUserId;
-}
-
 export async function seedOauthBearer(
   storage: Storage,
   scopes: string[],
@@ -295,22 +262,6 @@ export async function seedOauthBearer(
       "seedOauthBearer requires storage.oauthProvider + betterAuthDb",
     );
   }
-
-  // **Bound the way issuance binds.** A token whose `reference_id` is NULL is
-  // refused by the middleware in either mode, because a space-less bearer is
-  // a principal the storage layer applies no space predicate to. Omitting the
-  // space here used to produce exactly that, so a fixture minted a token no
-  // deployment can issue and every test through it authenticated as something
-  // the product cannot make. `null` still means unbound, for the cases that
-  // are about the refusal.
-  const boundSpaceId =
-    opts.spaceId === undefined
-      ? await (async () => {
-          const spaces = (await storage.spaces?.list()) ?? [];
-          const [only] = spaces;
-          return spaces.length === 1 && only ? only.id : undefined;
-        })()
-      : (opts.spaceId ?? undefined);
 
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `client_pk_${Math.random().toString(36).slice(2, 10)}`;
@@ -397,8 +348,8 @@ export async function seedOauthBearer(
     // **The projection item stays where the caller put it, which is normally
     // nowhere.** A `system.connection` row with `kind: "app"` is a grant
     // projection, and the provider store resolves those space-less on
-    // purpose — the keys-mode migration excludes them from its move for the
-    // same reason. Only the token's `reference_id` binds to a space.
+    // purpose, and the keys-mode migration excludes them from its move for
+    // the same reason. Only the token's `reference_id` binds to a space.
     opts.spaceId ?? undefined,
   );
 
@@ -409,6 +360,23 @@ export async function seedOauthBearer(
   const rawToken = `marfa_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const rawRefresh = `marfa_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const { hashApiKey } = await import("./middleware/auth.js");
+  // **Bound the way issuance binds.** A token whose `reference_id` is NULL is
+  // refused by the middleware in either mode, because a space-less bearer is
+  // a principal the storage layer applies no space predicate to. Omitting the
+  // space here used to produce exactly that, so a fixture minted a token no
+  // deployment can issue and every test through it authenticated as something
+  // the product cannot make. `null` still means unbound, for the cases that
+  // are about the refusal.
+  //
+  // Through the resolver rather than a copy of it. A fixture that answered
+  // this question its own way would drift from issuance silently, and a
+  // fixture that drifts from the thing it stands in for is the reason this
+  // helper needed repairing in the first place.
+  const boundSpaceId =
+    opts.spaceId === undefined
+      ? await resolveSpaceIdForAuthUser(storage, authUserId)
+      : (opts.spaceId ?? undefined);
+
   await storage.oauthProvider.mintTokenPair({
     accessTokenHash: hashApiKey(
       rawToken.slice("marfa_at_".length),

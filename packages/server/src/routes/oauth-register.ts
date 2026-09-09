@@ -43,27 +43,19 @@
  *   - 201 with credentials for `grant_types: ["authorization_code"]`.
  *   - 201 with credentials for `grant_types: ["urn:...device_code"]`
  *     (Marfa's Zod accepts the device-code URN).
- *   - 201 with a client secret for `grant_types: ["client_credentials"]`
- *     when a session registers it, and 400 when nobody does: that grant has
- *     no user of its own, so the person registering is the only one it will
- *     ever have.
  *
  * (Gap 1 — `device_code` in `grant_types_supported` and the
  * `device_authorization_endpoint` field — is handled separately by the
  * augmented discovery handlers in `app.ts`.)
  */
 
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "@hono/zod-openapi";
 import type { AppEnv } from "../middleware/auth.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OauthProviderStore, Storage } from "../storage/interface.js";
-import {
-  dcrDefaultScopes,
-  machineClientCeiling,
-  withSessionScopes,
-} from "../auth/mint-ceiling.js";
+import { dcrDefaultScopes, withSessionScopes } from "../auth/mint-ceiling.js";
 import {
   buildAllowedScopes,
   resolveSpaceIdForAuthUser,
@@ -79,6 +71,11 @@ import { DEVICE_CODE_GRANT_TYPE as DEVICE_CODE_GRANT } from "./auth-pages.js";
  * `refresh_token`) plus the device-code URN. Refresh-token grants are
  * still valid alongside any of the others — the OAuth2 spec treats
  * `refresh_token` as a refinement on grants that issue refresh tokens.
+ *
+ * `client_credentials` is here so it reaches the handler and gets the
+ * RFC 7591 refusal below, which names the reason. Dropping it from the enum
+ * would answer the same request with a schema-validation error that tells a
+ * client nothing about why the grant it asked for does not exist.
  *
  * Note that the @better-auth/oauth-provider plugin's
  * `/auth/oauth2/token` endpoint still only knows how to dispatch the
@@ -244,40 +241,8 @@ export function oauthRegisterRoutes(
 
     const body: RegisterBody = parsed.data;
 
-    // **Who is registering, resolved before anything decides on it.** The
-    // `client_credentials` fence below needs the answer, and so does the
-    // space binding written onto the row; resolving once at the top is what
-    // stops the two disagreeing about whether a session was present.
-    //
-    // Failure here is non-fatal for an ordinary registration — the client
-    // still registers, just unbound — and fatal for a machine one, which the
-    // fence enforces by requiring a resolved person rather than by inspecting
-    // the error.
-    let registeringUserId: string | null = null;
-    let registeringSpaceId: string | null = null;
-    if (auth) {
-      try {
-        const session = await auth.getSession(c.req.raw.headers);
-        if (session?.user.id) {
-          const spaceId = await resolveSpaceIdForAuthUser(
-            storage,
-            session.user.id,
-          );
-          if (spaceId) {
-            registeringUserId = session.user.id;
-            registeringSpaceId = spaceId;
-          }
-        }
-      } catch (err) {
-        log("warn", "oauth dcr: space resolution failed", {
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
     // RFC 7591 §2: default to `authorization_code` when omitted — matches plugin behavior.
     const grantTypes = body.grant_types ?? ["authorization_code"];
-    const isMachineClient = grantTypes.includes("client_credentials");
 
     // `refresh_token` is only valid alongside a primary grant that
     // issues refresh tokens. The plugin guards this at config-time;
@@ -297,17 +262,19 @@ export function oauthRegisterRoutes(
       );
     }
 
-    // `client_credentials` requires an authenticated registration, per
-    // RFC 7591 §3.2.1 and the plugin's own DCR. The grant carries no user and
-    // no consent, so the person present at registration is the only person it
-    // will ever have: their space is the token's space and their permissions
-    // are its ceiling. A registration with nobody present therefore has no
-    // space to bind to and nothing to be bounded by, and is refused.
-    if (isMachineClient && !registeringUserId) {
+    // The client-credentials grant is not one this server has, so no client
+    // registers for it. A machine acting on a space is an API key: minted
+    // into that space by a person or by a key, and listed, narrowed, revoked
+    // and rotated on the keys page. A client-credentials token would carry
+    // none of that, and it would hold space permissions no consent screen
+    // ever showed anybody. The token endpoint answers `unsupported_grant_type`
+    // for the same reason; refusing here means a client learns it at
+    // registration rather than at its first token request.
+    if (grantTypes.includes("client_credentials")) {
       return c.json(
         dcrError(
           "invalid_client_metadata",
-          "client_credentials grant requires authenticated registration",
+          "This server does not support the client_credentials grant. Use an API key for a machine caller.",
         ),
         400,
       );
@@ -378,49 +345,9 @@ export function oauthRegisterRoutes(
       }
     }
 
-    // **The machine allowlist is a second column and a second clamp.** The
-    // grant is authorized against `client_credentials_scopes` alone — the
-    // plugin never consults the `scopes` ceiling on that path — so a machine
-    // client's real reach is decided here. It is the named set held to what
-    // the registering person's own credential holds, which today is
-    // everything in their space; `machineClientCeiling` is where that stops
-    // being everything when a person can hold less.
-    //
-    // A machine registration names its scopes or gets none: the bundle
-    // default behind `requestedScopes` is what a consent screen would have
-    // offered a person, and there is no person here to be offered it. An
-    // empty allowlist is a client the token endpoint answers
-    // `unauthorized_client` forever, so the refusal is at the door instead,
-    // where whoever registered it can act on it.
-    let clientCredentialsScopes: string[] | null = null;
-    if (isMachineClient) {
-      const ceiling = machineClientCeiling(allowedScopes);
-      clientCredentialsScopes = namedScopes.filter((sc) => ceiling.has(sc));
-      if (clientCredentialsScopes.length === 0) {
-        return c.json(
-          dcrError(
-            "invalid_scope",
-            "client_credentials grant requires an explicit scope the registering account holds",
-          ),
-          400,
-        );
-      }
-    }
-
-    // DCR registers public clients — mirror the plugin's `auth_method=none`
-    // enforcement (`dist/index.mjs:1175-1183`) so SDK response shapes stay
-    // identical.
-    //
-    // A machine client is the exception and has to be: the plugin refuses the
-    // `client_credentials` grant to a public client outright, because a
-    // credential with no secret and nobody in front of it is a credential
-    // anyone who has read the client id holds.
-    const tokenEndpointAuthMethod = isMachineClient
-      ? "client_secret_basic"
-      : "none";
-    const clientSecret = isMachineClient
-      ? `marfa_cs_${randomBytes(32).toString("hex")}`
-      : null;
+    // Unauthenticated DCR is always public — mirror the plugin's `auth_method=none`
+    // enforcement (`dist/index.mjs:1175-1183`) so SDK response shapes stay identical.
+    const tokenEndpointAuthMethod = "none";
     const clientType =
       body.type === "web" ? undefined : (body.type ?? undefined);
 
@@ -435,31 +362,41 @@ export function oauthRegisterRoutes(
       );
     }
 
+    // Mirrors the plugin's `clientReference` callback. Unauthenticated DCR
+    // binds null; space accountability lands later at the consent step.
+    let referenceId: string | null = null;
+    if (auth) {
+      try {
+        const session = await auth.getSession(c.req.raw.headers);
+        if (session?.user.id) {
+          const spaceId = await resolveSpaceIdForAuthUser(
+            storage,
+            session.user.id,
+          );
+          referenceId = spaceId ?? null;
+        }
+      } catch (err) {
+        // Failure here is non-fatal — the client still registers,
+        // just unbound. Log and continue.
+        log("warn", "oauth dcr: space resolution failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     let created;
     try {
       created = await oauthProvider.createClient({
         clientId,
         name: body.client_name ?? null,
-        isPublic: !isMachineClient,
+        isPublic: true,
         grantTypes,
         responseTypes,
         tokenEndpointAuthMethod,
         scopes: requestedScopes,
-        clientCredentialsScopes,
         redirectUris,
         postLogoutRedirectUris,
-        // Mirrors the plugin's `clientReference` callback. Unauthenticated
-        // DCR binds null; space accountability lands later at the consent
-        // step. A machine client never takes that path, which is why the
-        // fence above requires the binding rather than hoping for it.
-        referenceId: registeringSpaceId,
-        registeringUserId,
-        // The plugin stores secrets as unpadded base64url SHA-256 by default
-        // (`storeClientSecret` is unset and the JWT plugin is enabled), so
-        // this is the shape `verifyStoredClientSecret` compares against.
-        clientSecretHash: clientSecret
-          ? createHash("sha256").update(clientSecret).digest("base64url")
-          : null,
+        referenceId,
         clientUri: body.client_uri ?? null,
         logoUri: body.logo_uri ?? null,
         tosUri: body.tos_uri ?? null,
@@ -493,18 +430,7 @@ export function oauthRegisterRoutes(
         grant_types: grantTypes,
         response_types: responseTypes,
         scope: requestedScopes.join(" "),
-        ...(clientSecret !== null && {
-          // Handed back once, in this response body, and never readable
-          // again — the row keeps only the hash. RFC 7591 §3.2.1 names
-          // `client_secret_expires_at`, and `0` is its spelling of "does not
-          // expire".
-          client_secret: clientSecret,
-          client_secret_expires_at: 0,
-        }),
-        ...(clientCredentialsScopes !== null && {
-          client_credentials_scopes: clientCredentialsScopes,
-        }),
-        public: !isMachineClient,
+        public: true,
         disabled: false,
         ...(clientType !== undefined && { type: clientType }),
         ...(body.client_uri !== undefined && { client_uri: body.client_uri }),

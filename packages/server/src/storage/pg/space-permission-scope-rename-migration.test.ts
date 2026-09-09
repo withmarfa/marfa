@@ -57,10 +57,28 @@ let ctx: TestContext;
 beforeAll(async () => {
   if (!isPg) return;
   ctx = await createTestContext();
+  // **Restore the premise, rather than dropping the column from the case.**
+  // `client_credentials_scopes` was the machine grant's per-client ceiling,
+  // and it was dropped with the grant itself. 0103 still has to rewrite it,
+  // because a database upgrading from before either change runs 0103 while
+  // the column is still there and only meets the drop afterwards. This suite
+  // replays 0103 against a database already migrated to head, so the column
+  // it is asked about has to be put back first. The alternative, deleting the
+  // case, would leave that statement in 0103 unguarded on the dialect the
+  // deployments run.
+  await (ctx.storage.pgDb as PgDb).execute(
+    sql`ALTER TABLE auth_oauth_client ADD COLUMN IF NOT EXISTS client_credentials_scopes text[]`,
+  );
 });
 
 afterAll(async () => {
   if (!isPg) return;
+  // Owned by this suite because it created it, on the way out and in the
+  // same place, so a later suite sharing the database never meets a column
+  // the schema says is gone.
+  await (ctx.storage.pgDb as PgDb).execute(
+    sql`ALTER TABLE auth_oauth_client DROP COLUMN IF EXISTS client_credentials_scopes`,
+  );
   await ctx.cleanup();
 });
 

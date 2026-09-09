@@ -231,20 +231,12 @@ const getOwnQuotasRoute = createRoute({
   tags: ["Spaces"],
   summary: "Get current space quotas",
   description:
-    "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. A credential with no space binding receives `400` — use `GET /spaces/{id}/quotas` with an explicit id instead. Requires `space.usage`.",
+    "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. Requires `space.usage`, which only a space-bound credential can hold; `GET /spaces/{id}/quotas` is the route for naming a space explicitly.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
       content: { "application/json": { schema: QuotaSchema } },
       description: "Quota row for the calling space.",
-    },
-    400: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["validation_error"]),
-        },
-      },
-      description: "Caller has no space binding.",
     },
     401: {
       content: {
@@ -325,7 +317,8 @@ const putQuotasRoute = createRoute({
 });
 
 /**
- * The space a `/spaces/me/*` door acts on.
+ * The space one of the three `/spaces/me/*` doors acts on: reading the
+ * config, writing it, and reading the quota row.
  *
  * **A space permission implies a space.** The eleven are held on a
  * credential's row or on its grant; the operator key is the only shape that
@@ -333,13 +326,13 @@ const putQuotasRoute = createRoute({
  * the `requireSpacePermission` on each of these doors has already turned away
  * every space-less caller before this is reached.
  *
- * It exists so none of these doors carries a refusal no caller can reach,
- * which
- * would read as a protection somebody is relying on. Reaching the throw would
- * mean the gate above had stopped working, which is this file's mistake and
- * not a caller's, so it stops rather than answering as a bad request.
+ * It is one function so that none of the three carries a refusal no caller
+ * can reach, which would read as a protection somebody is relying on.
+ * Reaching the throw would mean the gate above had stopped working, which is
+ * this file's mistake and not a caller's, so it stops rather than answering
+ * as a bad request.
  */
-function spaceOfSettingsCaller(key: ApiKey): string {
+function ownSpaceOfCaller(key: ApiKey): string {
   if (key.space_id === undefined) {
     throw new Error("a space permission admitted a credential with no space");
   }
@@ -364,7 +357,7 @@ export function spaceRoutes(storage: Storage) {
     if (!storage.spaces) {
       return c.json({}, 200);
     }
-    const spaceId = spaceOfSettingsCaller(key);
+    const spaceId = ownSpaceOfCaller(key);
     const config = await storage.spaces.getConfig(spaceId);
     return c.json(config ?? {}, 200);
   });
@@ -385,7 +378,7 @@ export function spaceRoutes(storage: Storage) {
       );
     }
 
-    const spaceId = spaceOfSettingsCaller(key);
+    const spaceId = ownSpaceOfCaller(key);
 
     await storage.spaces.updateConfig(spaceId, body);
     void storage.audit.log({
@@ -413,7 +406,7 @@ export function spaceRoutes(storage: Storage) {
     // eleven, so the gate above turns that away. The refusal that used to sit
     // here can no longer answer, and `/spaces/{id}/quotas` is still the route
     // for naming a space explicitly.
-    const spaceId = spaceOfSettingsCaller(key);
+    const spaceId = ownSpaceOfCaller(key);
     const quota = await storage.spaceQuotas.get(spaceId);
     return c.json(
       {

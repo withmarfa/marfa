@@ -49,12 +49,7 @@ import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
 import { deriveCustomTypeNamespaces } from "./default-bundles.js";
-import {
-  CLIENT_CREDENTIALS_DEFAULT_SCOPES,
-  dcrDefaultScopes,
-  SESSION_CRITICAL_SCOPES,
-} from "./mint-ceiling.js";
-import { ACCESS_TOKEN_PREFIX } from "../middleware/auth.js";
+import { dcrDefaultScopes, SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 import {
   bundlePublishedScopes,
@@ -97,9 +92,6 @@ interface HookCtxLite {
    *  the context merge Better Auth performs on a before-hook's returned
    *  `context`. See {@link resolveClientRevoke}. */
   revokeResolution?: RevokeResolution;
-  /** The space a `client_credentials` request resolved to, handed forward
-   *  the same way. See {@link resolveMachineGrantSpace}. */
-  machineGrantSpaceId?: string;
   context?: {
     session?: { user?: { id?: string } } | null;
     /** What the endpoint produced. On a redirect this is the thrown
@@ -370,14 +362,32 @@ function warnOnceAboutBundleScope(scope: string): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve a Better Auth user's space_id by joining through the `users`
- * table. Returns `undefined` in keys-mode (no users
- * table) or when the user has no space assigned yet.
+ * **Which space a grant belongs to, asked in one place.**
+ *
+ * With a `users` store, hosted mode, it is the space on the consenting
+ * person's row. Without one, keys mode, it is the instance's only space.
+ * `undefined` means no space could be resolved: a person with no space yet,
+ * or a keys-mode instance holding anything other than exactly one.
+ *
+ * Every surface that decides a grant's space calls this, because the token's
+ * `reference_id` and the `system.connection` projection have to name the same
+ * bucket. `findGrantItemId` looks in exactly one, so a second copy of the
+ * question that answered differently would leave a revoke finding nothing to
+ * revoke and reporting success. They agreed by accident until keys mode got a
+ * space: hosted read the person's row on both sides, and keys mode had
+ * nothing on either.
  *
  * Used by:
- *   - `clientReference` at client-registration time
- *   - `customAccessTokenClaims` at token-issuance time
- *   - the consent after-hook when projecting `system.connection`
+ *   - `clientReference`, at client registration, and the Marfa-owned DCR's
+ *     own binding in `routes/oauth-register.ts`
+ *   - `postLogin.consentReferenceId`, at token issuance
+ *   - the two consents that write the projection: `projectGrantOnConsent`
+ *     in `routes/auth-consent.ts` and `createUserAppGrant` in
+ *     `routes/auth-pages.ts`
+ *   - `auditGrantReused` in `auth/grant-lifecycle.ts`, which looks the
+ *     projection up
+ *   - the security page's grant list and its form revoke, in
+ *     `routes/auth-pages.ts`
  */
 export async function resolveSpaceIdForAuthUser(
   storage: Storage,
@@ -397,10 +407,10 @@ export async function resolveSpaceIdForAuthUser(
   //
   // Exactly one, or nothing. Two spaces is a state nothing here can choose
   // between, and issuing against a guess would bind the token to whichever
-  // the store happened to return first.
-  const spaces = (await storage.spaces?.list()) ?? [];
-  const [only] = spaces;
-  return spaces.length === 1 && only ? only.id : undefined;
+  // the store happened to return first. `soleSpaceId` is the bounded read of
+  // that question; enumerating every space to answer it would put an
+  // unbounded scan on a request path.
+  return (await storage.spaces?.soleSpaceId()) ?? undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -485,9 +495,11 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // `/auth/post-login` page is never hit. We only wire this block
     // for the `consentReferenceId` field.
     //
-    // Single-space self-hosts return `undefined` here (no `users`
-    // store, so no space to resolve); their tokens land with
-    // `reference_id=NULL` which is correct for keys-mode.
+    // Keys mode resolves too, to the instance's one space. It used to
+    // answer `undefined` here and mint a NULL `reference_id`, which the
+    // bearer middleware then admitted as a principal the storage layer
+    // applies no space predicate to. A token that still arrives unbound is
+    // refused rather than promoted.
     postLogin: {
       page: "/auth/post-login",
       shouldRedirect: () => false,
@@ -510,13 +522,11 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     advertisedMetadata: {
       scopes_supported: buildAllowedScopes(undefined, []),
     },
-    // Ceilings for the paths with no consent screen in front of them —
-    // values owned by `auth/mint-ceiling.ts` so the plugin options and
-    // the Marfa-owned DCR mirror cannot drift. Without these, both
-    // defaults fall through to `scopes` (the ENTIRE allowlist, `*:write`
-    // included): a scope-less client_credentials request and a
-    // scope-less registration each inherited everything.
-    clientCredentialGrantDefaultScopes: CLIENT_CREDENTIALS_DEFAULT_SCOPES,
+    // The ceiling for the one path with no consent screen in front of it,
+    // owned by `auth/mint-ceiling.ts` so the plugin option and the
+    // Marfa-owned DCR mirror cannot drift. Without it the default falls
+    // through to `scopes`, the ENTIRE allowlist with `*:write` included, so
+    // a scope-less registration inherited everything.
     clientRegistrationDefaultScopes: dcrDefaultScopes(),
 
     // ----- Token storage -----
@@ -532,7 +542,7 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // distinguish OAuth tokens from API keys (`marfa_k1_*`). The middleware
     // ignores anything not matching one of these prefixes.
     prefix: {
-      opaqueAccessToken: ACCESS_TOKEN_PREFIX,
+      opaqueAccessToken: "marfa_at_",
       refreshToken: REFRESH_TOKEN_PREFIX,
     },
 
@@ -727,19 +737,21 @@ export function buildOauthProjectionPlugin(opts: {
                   cascadeClientRevoke(ctx, storage),
                 ),
               },
-              {
-                // Stamps the space onto the token a machine grant just
-                // minted. Second half of a pair; the first is the
-                // before-hook below. See `bindMachineGrantSpace`.
-                matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
-                handler: createAuthMiddleware((ctx: HookCtxLite) =>
-                  bindMachineGrantSpace(ctx, storage, refreshHasher),
-                ),
-              },
             ]
           : []),
       ],
       before: [
+        {
+          // The client-credentials grant is not one this server has. Not
+          // gated on anything below: a deployment serving the token endpoint
+          // at all must answer this the same way. See
+          // `refuseClientCredentialsGrant`.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+          handler: createAuthMiddleware((ctx: HookCtxLite) => {
+            refuseClientCredentialsGrant(ctx);
+            return Promise.resolve();
+          }),
+        },
         {
           // Narrows the requested scope set on the authorize endpoint so a
           // scope the server cannot grant costs the requester that scope
@@ -763,22 +775,6 @@ export function buildOauthProjectionPlugin(opts: {
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
             narrowAuthorizeScopes(ctx, storage, liveScopes, bundleScopes),
-          ),
-        },
-        {
-          // Resolves the space a machine grant's token belongs to before the
-          // plugin mints it, and refuses the grant when there is none. See
-          // `resolveMachineGrantSpace`; the after-hook that stamps the row it
-          // resolved for is above.
-          //
-          // **Outside the salt gate the other token hooks sit behind**,
-          // because the refusal needs no hasher and it is the half that
-          // matters: a client with no space is turned away here whatever the
-          // instance is configured with, and only the stamping needs a salt
-          // to find the row it wrote.
-          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
-          handler: createAuthMiddleware((ctx: HookCtxLite) =>
-            resolveMachineGrantSpace(ctx, storage),
           ),
         },
         ...(acceptedResources
@@ -1240,147 +1236,6 @@ async function cascadeClientRevoke(
       repair:
         "the grant's records may disagree; Disconnect on the security page or POST /admin/oauth-clients/{client_id}/delete repairs them",
       error: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-// ---------------------------------------------------------------------------
-// The machine grant's space (before- and after-hook pair)
-// ---------------------------------------------------------------------------
-
-/**
- * Before-hook for `/oauth2/token` with `grant_type=client_credentials`:
- * resolve the space the minted token will belong to, and refuse the grant
- * when there is none.
- *
- * **A machine client is a credential a person created.** The grant carries no
- * user and no consent, so neither of the plugin's `consentReferenceId` call
- * sites runs and the token it mints has a NULL `reference_id`. A space-less
- * bearer is refused by the middleware, and before it was refused it read
- * every space on the instance, so "no space" is not a shape this grant is
- * allowed to have in either direction. The answer the model gives is the
- * registering person's: the client row records who registered it, and that
- * person's space is the token's.
- *
- * **Resolved through the person rather than read off the client's own
- * `reference_id`.** That column is the space as it stood at registration and
- * nothing refreshes it, so a token minted from it would be bound to where the
- * person used to be. One resolver answers this question everywhere, and this
- * is the same call the consent path makes.
- *
- * A client with no registering user is refused with `unauthorized_client` and
- * mints nothing. Registration already requires an authenticated session for
- * this grant, so reaching here means a row that predates that rule or one
- * inserted around it; either way there is no person to inherit from and a
- * token would be the unbound shape.
- *
- * The resolution is handed to the after-hook through the context merge Better
- * Auth performs on a before-hook's returned `context`, rather than resolved
- * twice.
- */
-async function resolveMachineGrantSpace(
-  ctx: HookCtxLite,
-  storage: Storage,
-): Promise<{ context: { machineGrantSpaceId: string } } | undefined> {
-  const body = ctx.body;
-  if (!body || typeof body !== "object") return undefined;
-  if (body.grant_type !== "client_credentials") return undefined;
-  const clientId = resolveRevokeClientId({ body, headers: ctx.headers });
-  if (!clientId) return undefined;
-
-  let spaceId: string | undefined;
-  try {
-    const client = await storage.oauthProvider?.getClient(clientId);
-    // An unknown client is not this hook's refusal to make: the plugin
-    // authenticates the client and answers `invalid_client` for it, and
-    // pre-empting that would tell an unauthenticated caller which client ids
-    // exist.
-    if (!client) return undefined;
-    if (client.registeringUserId) {
-      spaceId = await resolveSpaceIdForAuthUser(
-        storage,
-        client.registeringUserId,
-      );
-    }
-  } catch (err) {
-    // Fail closed. Every other guard on this endpoint falls through to the
-    // plugin on a lookup fault because the plugin then answers correctly
-    // without them; here the plugin's correct answer is a token bound to
-    // nothing, so a blip must refuse rather than mint.
-    log("warn", "oauth machine grant: space resolution failed", {
-      client_id: clientId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw new APIError("BAD_REQUEST", {
-      error: "unauthorized_client",
-      error_description:
-        "The space this client belongs to could not be resolved.",
-    });
-  }
-
-  if (!spaceId) {
-    log("info", "oauth machine grant refused: client has no space", {
-      client_id: clientId,
-    });
-    throw new APIError("BAD_REQUEST", {
-      error: "unauthorized_client",
-      error_description:
-        "This client was not registered by an account, so it belongs to no space.",
-    });
-  }
-  return { context: { machineGrantSpaceId: spaceId } };
-}
-
-/**
- * After-hook for the same request: stamp the space onto the row the plugin
- * just minted.
- *
- * The token is read from the response the plugin produced, which is the only
- * thing that names the row: the mint has no user and no consent record to
- * find it by, and picking the newest row for the client would take another
- * request's token under any concurrency at all. Hashing the returned string
- * through the same hasher the plugin stored it under is an exact lookup.
- *
- * **A failure here has to be loud, and it is loud by being a dead token.**
- * The row stays unbound, the middleware refuses it on first use, and the
- * error above is logged. The alternative — resolving the space at read time
- * in the bearer middleware — would make a machine token the one bearer whose
- * space is not on its own row.
- */
-async function bindMachineGrantSpace(
-  ctx: HookCtxLite,
-  storage: Storage,
-  hasher: (token: string) => string,
-): Promise<void> {
-  const spaceId = ctx.machineGrantSpaceId;
-  if (!spaceId) return;
-  const returned = ctx.context?.returned;
-  if (!returned || typeof returned !== "object") return;
-  const accessToken = (returned as { access_token?: unknown }).access_token;
-  if (typeof accessToken !== "string" || accessToken.length === 0) return;
-  // The plugin strips its own prefix before hashing; the middleware and the
-  // device-flow mint do the same, so the stored value is the hash of the bare
-  // token.
-  const bare = accessToken.startsWith(ACCESS_TOKEN_PREFIX)
-    ? accessToken.slice(ACCESS_TOKEN_PREFIX.length)
-    : accessToken;
-  try {
-    const bound = await storage.oauthProvider?.bindAccessTokenSpace(
-      hasher(bare),
-      spaceId,
-    );
-    if (bound) return;
-    log("error", "oauth machine grant: minted token was not bound to a space", {
-      space_id: spaceId,
-      repair:
-        "the token is refused on first use; the client should request another",
-    });
-  } catch (err) {
-    log("error", "oauth machine grant: space binding failed", {
-      space_id: spaceId,
-      error: err instanceof Error ? err.message : String(err),
-      repair:
-        "the token is refused on first use; the client should request another",
     });
   }
 }
@@ -2025,6 +1880,52 @@ function logAuthorizeOutcome(ctx: HookCtxLite): void {
   }
 }
 
+/**
+ * What a token request is asking for, read once so every guard on
+ * `/oauth2/token` reads it the same way.
+ *
+ * Each guard below turns on an equality against a literal, and an equality
+ * against a raw body value is only as strong as what the body may hold. A
+ * form post spelling `grant_type` with a leading space is the same request
+ * to anything that trims and a different one to anything that does not, so a
+ * guard reading the raw value can be walked around by whitespace while the
+ * endpoint behind it still dispatches. Answering `undefined` for a
+ * non-string keeps a caller from reaching a comparison with an array or an
+ * object, which is the other way a strict equality quietly says "no".
+ */
+function requestedGrantType(ctx: HookCtxLite): string | undefined {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return undefined;
+  const raw = body.grant_type;
+  return typeof raw === "string" ? raw.trim() : undefined;
+}
+
+/**
+ * Before-hook for `/oauth2/token`: the client-credentials grant is not a
+ * grant this server has.
+ *
+ * A machine acting on a space is an API key, minted by a person or by a key
+ * into that space, with the keys page as its lifecycle: listed, narrowed,
+ * revoked, rotated. A client-credentials token has none of that. It carries
+ * no space of its own, no consent row, nothing on the security page, and no
+ * way for the person accountable for it to end it, and it would hand out
+ * space permissions no screen ever showed anybody. So the grant is gone
+ * rather than bound to a space, and the endpoint says so in the words RFC
+ * 6749 section 5.2 reserves for it.
+ *
+ * Registration refuses the grant as well, so reaching this means a client
+ * that predates the removal or one asking for something it never registered.
+ * Both want the same answer.
+ */
+function refuseClientCredentialsGrant(ctx: HookCtxLite): void {
+  if (requestedGrantType(ctx) !== "client_credentials") return;
+  throw new APIError("BAD_REQUEST", {
+    error: "unsupported_grant_type",
+    error_description:
+      "This server does not issue client-credentials tokens. Use an API key for a machine caller.",
+  });
+}
+
 async function guardRefreshTokenGrant(
   ctx: HookCtxLite,
   storage: Storage,
@@ -2032,7 +1933,7 @@ async function guardRefreshTokenGrant(
 ): Promise<void> {
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
-  if (body.grant_type !== "refresh_token") return;
+  if (requestedGrantType(ctx) !== "refresh_token") return;
   const refreshTokenRaw = body.refresh_token;
   if (typeof refreshTokenRaw !== "string" || refreshTokenRaw.length === 0)
     return;
@@ -2127,7 +2028,7 @@ async function guardAuthorizationCodeGrant(
 ): Promise<void> {
   const body = ctx.body;
   if (!body || typeof body !== "object") return;
-  if (body.grant_type !== "authorization_code") return;
+  if (requestedGrantType(ctx) !== "authorization_code") return;
   const code = body.code;
   if (typeof code !== "string" || code.length === 0) return;
   if (

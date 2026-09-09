@@ -7,16 +7,7 @@
  * after-hooks.
  */
 
-import {
-  eq,
-  and,
-  desc,
-  lt,
-  isNull,
-  isNotNull,
-  sql,
-  notInArray,
-} from "drizzle-orm";
+import { eq, and, desc, lt, isNotNull, sql, notInArray } from "drizzle-orm";
 import { FIRST_PARTY_CLIENT_IDS } from "../../auth/first-party-clients.js";
 import { generateId } from "@withmarfa/shared";
 import { safeJsonParse } from "../json-utils.js";
@@ -112,7 +103,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
         scopes: auth_oauth_client.scopes,
         grantTypes: auth_oauth_client.grantTypes,
-        registeringUserId: auth_oauth_client.userId,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
@@ -168,7 +158,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       redirectUris,
       postLogoutRedirectUris,
       referenceId: row.referenceId,
-      registeringUserId: row.registeringUserId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
       scopes,
       grantTypes,
@@ -224,28 +213,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
       )
       .returning({ id: auth_oauth_client.id });
     return updated.length > 0;
-  }
-
-  /**
-   * Bind a minted access token to a space while it is still unbound. The
-   * `IS NULL` predicate in the WHERE is the whole guard: this writes a
-   * binding and never rewrites one, so it cannot be a way to move a token
-   * between spaces.
-   */
-  async bindAccessTokenSpace(
-    tokenHash: string,
-    spaceId: string,
-  ): Promise<boolean> {
-    const result = await this.db
-      .update(auth_oauth_access_token)
-      .set({ referenceId: spaceId })
-      .where(
-        and(
-          eq(auth_oauth_access_token.token, tokenHash),
-          isNull(auth_oauth_access_token.referenceId),
-        ),
-      );
-    return result.rowsAffected > 0;
   }
 
   async updateClientLogoutConfig(
@@ -520,21 +487,14 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     await this.db.insert(auth_oauth_client).values({
       id,
       clientId: input.clientId,
-      clientSecret: input.clientSecretHash ?? null,
+      clientSecret: null,
       disabled: false,
       // `JSON.stringify(null)` is the four-character string `"null"`, which
       // is a present value, not an absent one — the plugin's
       // `client.scopes ?? opts.scopes` would never fall through and the
       // ceiling would be whatever that string parses to. Write SQL NULL.
       scopes: input.scopes === null ? null : JSON.stringify(input.scopes),
-      // An absent machine allowlist is SQL NULL rather than `[]` for
-      // legibility only: the plugin refuses on both.
-      clientCredentialsScopes:
-        input.clientCredentialsScopes === null ||
-        input.clientCredentialsScopes === undefined
-          ? null
-          : JSON.stringify(input.clientCredentialsScopes),
-      userId: input.registeringUserId ?? null,
+      userId: null,
       createdAt: now,
       updatedAt: now,
       name: input.name,

@@ -162,7 +162,6 @@ CREATE TABLE IF NOT EXISTS public.auth_oauth_client (
     application_type text,
     backchannel_logout_session_required boolean,
     backchannel_logout_uri text,
-    client_credentials_scopes text[],
     client_discovery_id text,
     dpop_bound_access_tokens boolean,
     jwks text,

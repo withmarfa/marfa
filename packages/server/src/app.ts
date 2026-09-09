@@ -592,11 +592,19 @@ export function createApp(
       }
       // Inject the device-code URN into `grant_types_supported`
       // (idempotent — guards against the plugin starting to advertise
-      // it natively in a future version).
+      // it natively in a future version), and drop the client-credentials
+      // grant, which the plugin advertises unconditionally and this server
+      // does not have. A document naming a grant the token endpoint answers
+      // `unsupported_grant_type` for is worse than one that omits it: client
+      // discovery is where a machine integration decides how to authenticate,
+      // and it would pick the one path that cannot work.
       const URN = DEVICE_CODE_GRANT_TYPE;
       const grantsRaw = payload.grant_types_supported;
       const grants = Array.isArray(grantsRaw)
-        ? grantsRaw.filter((g): g is string => typeof g === "string")
+        ? grantsRaw.filter(
+            (g): g is string =>
+              typeof g === "string" && g !== "client_credentials",
+          )
         : [];
       if (!grants.includes(URN)) grants.push(URN);
       payload.grant_types_supported = grants;
