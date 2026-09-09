@@ -379,8 +379,9 @@ export const IntegrationManifestSchema = z
      * because nobody may claim the platform's own name and the platform
      * publishes under it anyway. Validating this as a claimable handle
      * would take the field from wrong in five manifests to refused in
-     * sixteen. Registration already exempts platform credentials from the
-     * handle-ownership rule, so the carve-out is one the model has.
+     * sixteen. Registration is gated on the operator key, which the
+     * handle-ownership rule does not bind, so the carve-out is one the
+     * model has.
      */
     publisher: z
       .string()

@@ -61,7 +61,7 @@ const VALID_MANIFEST = {
 
 // Written through storage rather than `POST /items`, because neither
 // credential can do this over the wire: the reserved namespace admits only a
-// platform credential, and that one holds no space to put the row in. A
+// operator key, and that one holds no space to put the row in. A
 // connection is the install pipeline's to create, and it names the space.
 async function createConnection(refOverride?: string): Promise<string> {
   const item = await ctx.storage.items.create(

@@ -63,11 +63,11 @@ export async function resolveSpaceCaller(
     // closed. A required parameter means a new surface cannot be added without
     // answering the question.
     //
-    // It is also the whole gate now. There used to be a rank test in front of
-    // it, admitting a caller on rank or on the operator flag before the
-    // permission was consulted at all; a bearer that cleared the rank and held
-    // nothing reached every surface behind this resolver. One question, asked
-    // once.
+    // It is also the whole gate now. A rank test used to sit in front of it,
+    // admitting a caller on its rank or on the operator flag before the
+    // permission was consulted at all, so a bearer that cleared the rank and
+    // held nothing reached every surface behind this resolver. One question,
+    // asked once.
     requireSpacePermission(c, permission);
     return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
   }

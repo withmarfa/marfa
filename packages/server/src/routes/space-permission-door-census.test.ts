@@ -8,7 +8,7 @@
  * property worth asserting is the shape of the whole surface.
  *
  * **What this can and cannot see, now that there is no rank.** It used to scan
- * for handlers admitting on space-admin rank and report the ones with no
+ * for handlers admitting on the retired rank gate and report the ones with no
  * capability beside them, and that worked because rank had a distinctive
  * signature in the source. It has none now: `requireAuth` is ordinary
  * authentication and sits on nearly every door, so a scan keyed on it reports
@@ -235,7 +235,7 @@ describe("every administrative door consults a space permission", () => {
 
   it("matches the surface exactly, in both directions", () => {
     // **The count is pinned, not only the permission**, and that is what the
-    // rank gate used to give for free. `requireSpaceAdmin` marked which doors
+    // rank gate used to give for free. The rank check marked which doors
     // needed a permission, so a new one arriving unmarked was visible in the
     // source; with rank retired nothing marks them, and a door added to a
     // space surface with no permission beside it reads exactly like a door

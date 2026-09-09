@@ -78,7 +78,7 @@ export interface SupervisorConfig {
   apiUrl: string;
   apiKeySalt: string;
   /** Whether this deployment has spaces. Threaded into the mint so a
-   *  Connection with no space cannot produce a platform-tier credential
+   *  Connection with no space cannot produce an operator-tier credential
    *  on a multi-space instance. */
   authMode: "hosted" | "keys";
   registrations: LocalIntegrationRegistration[];

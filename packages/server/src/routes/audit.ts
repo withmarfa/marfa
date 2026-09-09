@@ -15,7 +15,8 @@ const AuditEntrySchema = z.object({
   key_id: z.string().nullable(),
   /**
    * Space scope. Stamped at write time from the calling api key's
-   * `space_id`. Null for system-initiated audits and the bootstrap credential.
+   * `space_id`. Null for system-initiated audits and for the operator key,
+   * which is the only credential that may carry no space.
    */
   space_id: z.string().nullable(),
   action: z.string(),

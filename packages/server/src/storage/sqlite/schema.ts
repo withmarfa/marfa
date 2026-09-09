@@ -652,11 +652,16 @@ export const auditLog = sqliteTable(
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
     /**
-     * Space scope. Stamped from the calling api key's `space_id`
-     * (or `null` for system-initiated audits and for the operator key, which
-     * has no space). Reads filter by this column when the caller is
-     * space-scoped; a space-less caller is the operator tier and sees all
-     * rows. Indexed because `GET /audit` filters here on every hosted-mode
+     * Space scope. Stamped from the calling api key's `space_id`, and null
+     * when there was no space to stamp: system-initiated audits, and the
+     * operator key. What can be read back is decided by `GET /audit`, which
+     * takes the `space.audit_read` space permission and then filters on the
+     * caller's own space.
+     *
+     * **A null here is not a key to the whole trail.** The operator key is
+     * the only api key row that may be space-less, and a space-less row holds
+     * no space permission at all, so that gate refuses it before this column
+     * is consulted. Indexed because the filter runs on every hosted-mode
      * request.
      */
     space_id: text("space_id"),

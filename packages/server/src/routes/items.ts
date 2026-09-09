@@ -2535,7 +2535,7 @@ export function itemRoutes(storage: Storage) {
 
     // The item and its neighbors are one batch, so they take one resolution
     // between them. Each is still judged against its own space: neighbors
-    // are fetched under the caller's fence, which for a platform key is no
+    // are fetched under the caller's fence, which for the operator key is no
     // fence at all.
     const orphanScope = await resolveOrphanScope(storage, [
       item,

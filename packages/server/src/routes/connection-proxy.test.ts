@@ -44,7 +44,7 @@ async function createCredential(
   };
   // Through storage, and in the connection's space: the proxy resolves
   // `credential_ref` fenced to the caller's space, and the reserved namespace
-  // over the wire admits only the space-less platform credential.
+  // over the wire admits only the space-less operator key.
   const item = await ctx.storage.items.create(
     {
       type: "system.credential",
@@ -98,7 +98,7 @@ async function createConnection(opts?: {
   }
   // Written through storage rather than `POST /items`, because neither
   // credential can do this over the wire: the reserved namespace admits only
-  // a platform credential, and that one holds no space to put the row in. A
+  // the operator key, and that one holds no space to put the row in. A
   // connection is the install pipeline's to create, and it names the space.
   const item = await ctx.storage.items.create(
     { type: "system.connection", properties },

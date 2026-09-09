@@ -984,7 +984,7 @@ describe("a schema refusal from the server (seam: online)", () => {
     });
     const space = await operator.admin.spaces.create({ name: "strict-space" });
     const minted = await operator.admin.keys.create(space.id, {
-      label: "strict-space-admin",
+      label: "strict-space-key",
       source: "sdk-test-local",
     });
     const spaceClient = new MarfaClient({

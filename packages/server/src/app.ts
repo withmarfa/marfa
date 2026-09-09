@@ -861,7 +861,7 @@ export function createApp(
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
-  // Operator surface — `my platform` CLI calls into these.
+  // Operator surface: the `marfa operator` CLI command tree calls into these.
   app.route(
     "/admin",
     adminRoutes(storage, {

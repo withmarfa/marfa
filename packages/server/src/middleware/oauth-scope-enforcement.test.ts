@@ -86,14 +86,14 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
     });
 
     it("excludes out-of-scope types from list reads (implicit denial via allowed_types)", async () => {
-      // Seed items of two types as admin so both are present in the DB.
-      const admin = ctx.spaceKey;
+      // Seed items of two types as the seeder so both are present in the DB.
+      const seeder = ctx.spaceKey;
       await request(ctx.app, "POST", "/items", {
-        key: admin,
+        key: seeder,
         body: { type: "core.note", properties: { body: "in-scope" } },
       });
       await request(ctx.app, "POST", "/items", {
-        key: admin,
+        key: seeder,
         body: {
           type: "core.task",
           properties: { title: "out-of-scope" },
@@ -158,10 +158,10 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
     });
 
     it("rejects single-item GET on an out-of-scope type with 403", async () => {
-      const admin = ctx.spaceKey;
+      const seeder = ctx.spaceKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: { type: "core.task", properties: { title: "task" } },
         })
       ).json()) as { item: { id: string } };
@@ -206,17 +206,17 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["core.note:write"],
       });
-      // Seed two notes via admin so there are referencable items.
-      const admin = ctx.spaceKey;
+      // Seed two notes via the seeder so there are referencable items.
+      const seeder = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: { type: "core.note", properties: { body: "A" } },
         })
       ).json()) as { item: { id: string } };
       const b = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: { type: "core.note", properties: { body: "B" } },
         })
       ).json()) as { item: { id: string } };
@@ -239,17 +239,17 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["core.note:write", "edge.parent-of:write"],
       });
-      // Seed two notes via admin.
-      const admin = ctx.spaceKey;
+      // Seed two notes via the seeder.
+      const seeder = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: { type: "core.note", properties: { body: "A" } },
         })
       ).json()) as { item: { id: string } };
       const b = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: { type: "core.note", properties: { body: "B" } },
         })
       ).json()) as { item: { id: string } };
@@ -268,16 +268,16 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["core.note:write", "edge.*:write"],
       });
-      const admin = ctx.spaceKey;
+      const seeder = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: { type: "core.note", properties: { body: "A" } },
         })
       ).json()) as { item: { id: string } };
       const b = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: { type: "core.note", properties: { body: "B" } },
         })
       ).json()) as { item: { id: string } };
@@ -340,10 +340,10 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
   describe("malformed scope grants are inert", () => {
     it("a token with only nonsense scopes returns empty data on list and 403 on direct access", async () => {
-      const admin = ctx.spaceKey;
+      const seeder = ctx.spaceKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
-          key: admin,
+          key: seeder,
           body: {
             type: "core.note",
             properties: { body: "secret" },

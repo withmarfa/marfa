@@ -58,11 +58,11 @@ const ORIGIN = "http://localhost:0";
 // Fixture
 // ---------------------------------------------------------------------------
 
-async function mintSpaceAdmin(spaceId: string): Promise<string> {
+async function mintFullSpaceKey(spaceId: string): Promise<string> {
   const raw = `marfa_k1_minttest_${Math.random().toString(36).slice(2, 14)}`;
   await ctx.storage.keys.create(
     {
-      label: "mint-door-space-admin",
+      label: "mint-door-space-key",
       source: `mint-door-${Math.random().toString(36).slice(2, 10)}`,
       space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
@@ -147,7 +147,7 @@ const DOORS: MintDoor[] = [
     specRoute: "post /keys",
     forgedSource: async () => {
       const spaceId = `t-forge-${Math.random().toString(36).slice(2, 10)}`;
-      const caller = await mintSpaceAdmin(spaceId);
+      const caller = await mintFullSpaceKey(spaceId);
       const res = await request(ctx.app, "POST", "/keys", {
         key: caller,
         body: {
@@ -159,11 +159,11 @@ const DOORS: MintDoor[] = [
     },
     ceiling: async () => {
       const spaceId = `t-mint-${Math.random().toString(36).slice(2, 10)}`;
-      const spaceAdmin = await mintSpaceAdmin(spaceId);
+      const spaceKey = await mintFullSpaceKey(spaceId);
 
       // Over the ceiling: naming a space — binding is inherited, never chosen.
       const crossSpace = await request(ctx.app, "POST", "/keys", {
-        key: spaceAdmin,
+        key: spaceKey,
         body: {
           label: "aim",
           source: "mint-aim",
@@ -177,7 +177,7 @@ const DOORS: MintDoor[] = [
       // sits outside the permission model and nothing in a permission set
       // reaches it.
       const platform = await request(ctx.app, "POST", "/keys", {
-        key: spaceAdmin,
+        key: spaceKey,
         body: {
           label: "flag",
           source: "mint-flag",
@@ -188,7 +188,7 @@ const DOORS: MintDoor[] = [
 
       // At the ceiling: a mint narrower than the creator works.
       const member = await request(ctx.app, "POST", "/keys", {
-        key: spaceAdmin,
+        key: spaceKey,
         body: {
           label: "down",
           source: "mint-down",

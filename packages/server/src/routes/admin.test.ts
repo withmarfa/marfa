@@ -64,9 +64,9 @@ describe("admin auth gate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("GET /admin/spaces — 403 with a non-platform key", async () => {
+  it("GET /admin/spaces — 403 with a space-bound key", async () => {
     if (!ctx.storage.spaces) return;
-    const t = await ctx.storage.spaces.create("space-non-platform");
+    const t = await ctx.storage.spaces.create("space-non-operator");
     const memberKey = await mintSpaceKey(t.id);
     const res = await request(ctx.app, "GET", "/admin/spaces", {
       key: memberKey,
@@ -365,7 +365,7 @@ describe("admin happy paths", () => {
   it("the operator key reads another space's metrics + show + keys cross-space", async () => {
     if (!ctx.storage.spaces) return;
     const spaceB = await ctx.storage.spaces.create("cross-space-target");
-    // Mint a non-platform key inside spaceB so listForSpace has a hit.
+    // Mint a space-bound key inside spaceB so listForSpace has a hit.
     await mintSpaceKey(spaceB.id);
 
     const showRes = await request(
@@ -604,7 +604,7 @@ describe("POST /admin/account-deletion/purge-now", () => {
     expect(res.status).toBe(401);
   });
 
-  it("403 with a non-platform key", async () => {
+  it("403 with a space-bound key", async () => {
     if (!ctx.storage.spaces) return;
     const t = await ctx.storage.spaces.create("purge-now-403");
     const memberKey = await mintSpaceKey(t.id);

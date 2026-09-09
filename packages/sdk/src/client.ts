@@ -336,12 +336,12 @@ export interface SpaceApiKeySummary {
 
 /**
  * One shipped type an instance still carries that its running build no
- * longer names, as returned by the platform-admin drift listing.
+ * longer names, as returned by the operator drift listing.
  *
  * The seed is an upsert with no prune, so deleting a type's JSON removes
  * it from a fresh instance and from no existing one. `/health` publishes
  * only the count of these, because it is unauthenticated; the identifiers
- * live here, behind a platform-admin read.
+ * live here, behind a read the operator key gates.
  */
 export interface DriftedPlatformType {
   id: string;
@@ -2137,9 +2137,8 @@ export class MarfaClient {
     },
 
     /** Update mutable fields on an existing key (PATCH semantics —
-     * omitted fields are left untouched). `source` and `role` are
-     * immutable after creation and cannot be changed; the server rejects
-     * them with a 400. */
+     * omitted fields are left untouched). `source` is immutable after
+     * creation and cannot be changed; the server rejects it with a 400. */
     update: async (id: string, input: UpdateKeyInput): Promise<ApiKey> => {
       return this.transport.request<ApiKey>("PATCH", path`/keys/${id}`, {
         body: input,
@@ -2307,7 +2306,7 @@ export class MarfaClient {
      * Defaults to all subscribers in the caller's space; pass
      * `connection_id` to filter to one. The optional `cycle` override
      * lets you reproduce reactive scenarios ("what if hop_count was N?").
-     * Space-admin only.
+     * Takes the connections space permission.
      */
     previewEvent: async (
       input: PreviewEventRequest,
@@ -2326,7 +2325,7 @@ export class MarfaClient {
    * enforcement levers (`strict_mode`, `source_allowlist`,
    * `source_filter`) and the per-space cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
-   * `trash_retention_days`). All endpoints are admin-only. */
+   * `trash_retention_days`). Both endpoints take `space.settings`. */
   readonly spaces = {
     /** Returns the current space's config. Empty object when nothing
      * is configured. */
@@ -2346,10 +2345,12 @@ export class MarfaClient {
      *  the instance defaults from env. Quotas are operator-managed. */
     quotas: {
       /**
-       * Read the calling space's quota row. Resolves the space from
-       * the bearer's `space_id`; rejects with 400 when the credential
-       * is space-less, which is the operator key and nothing else. Use
-       * `getById` instead in that case.
+       * Read the calling space's quota row. Takes `space.usage`, and
+       * resolves the space from the bearer's `space_id`. The operator key
+       * holds no space permission, so it is refused with 403 rather than
+       * answered here; use `getById` for another space's row. The 400 is
+       * for a credential that holds `space.usage` and still has no space,
+       * which only a space-less OAuth bearer can be.
        */
       getOwn: async (): Promise<SpaceQuota> => {
         return this.transport.request<SpaceQuota>("GET", "/spaces/me/quotas");

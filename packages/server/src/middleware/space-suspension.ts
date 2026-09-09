@@ -29,8 +29,8 @@
  *     unsuspend it.
  *
  * **Runtime-credential keys are NOT exempt.** Integration runtime keys
- * (`is_runtime_credential: true`) carry a `space_id` and are
- * non-platform — they hit the gate like any other space credential.
+ * (`is_runtime_credential: true`) carry a `space_id` and are not the
+ * operator key, so they hit the gate like any other space credential.
  * Suspending a space therefore stops their integrations from writing
  * upstream, which is the desired blast-radius.
  *

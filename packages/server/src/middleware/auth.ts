@@ -552,7 +552,7 @@ export function checkAuth(apiKey: ApiKey | undefined): ApiKey {
 /**
  * Operator gate. Guards the surfaces whose authority is instance-wide
  * rather than space-bounded: space CRUD, cross-space quota writes,
- * instance metrics, the audit log, archive restore, blob reconciliation.
+ * instance metrics, archive restore, blob reconciliation.
  *
  * Operator authority is authority that is NOT confined to a space, so the
  * gate tests two things: `is_operator` AND the absence of a space binding.

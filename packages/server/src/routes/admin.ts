@@ -1,6 +1,6 @@
 /**
  * `/admin/*` operator surface. Every route in this file is operator-key
- * only (`requireOperatorKey` enforces). The CLI's `my platform` command
+ * only (`requireOperatorKey` enforces). The CLI's `marfa operator` command
  * tree is the canonical consumer; the routes are also reachable directly
  * via the SDK's `client.admin` namespace.
  *

@@ -801,8 +801,8 @@ describe("bootstrap sentinel", () => {
       const bootstrapRes = await request(app, "POST", "/keys", {
         key: bootstrapSecret,
         body: {
-          label: "bootstrap-admin",
-          source: "bootstrap-admin",
+          label: "bootstrap-key",
+          source: "bootstrap-key",
           type_permissions: { "*": "write" },
         },
       });

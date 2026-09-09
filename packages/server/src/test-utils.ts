@@ -1261,8 +1261,8 @@ export async function settle(ms = 50): Promise<void> {
 export function collectItemEvents(
   signal: AbortSignal,
   /** The same fence `GET /events` applies for a scoped viewer, so a frame
-   *  published without a space — or with the wrong one — is invisible here
-   *  too. Omit it to watch everything, which is what a platform key sees. */
+   *  published without a space, or with the wrong one, is invisible here
+   *  too. Omit it to watch everything, which is what the operator key sees. */
   spaceId?: string,
 ): {
   events: ItemEventWithId[];
