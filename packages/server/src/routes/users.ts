@@ -183,8 +183,8 @@ export function userAuthRoutes(storage: Storage) {
     }
 
     // The same category, reached through a different file — which is why
-    // T-960's own route table missed these two. `GET /users/me` answers the
-    // profile alongside the space, so a caller reading it is reading
+    // the Category 2 route table missed these two. `GET /users/me` answers
+    // the profile alongside the space, so a caller reading it is reading
     // Category 2 whatever the path says.
     requireProfilePermission(c, GLOBAL_TYPE_WILDCARD, "read");
     return c.json({ user, space }, 200);

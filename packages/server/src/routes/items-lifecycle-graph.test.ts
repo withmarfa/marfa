@@ -118,7 +118,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
 
     // Built through the store rather than the API, and it has to be: the
     // create route now refuses this exact state for this exact type, which
-    // is the other half of this ticket. The store stays permissive so the
+    // is the other half of the same fix. The store stays permissive so the
     // archive restore can replay it, so it is the only way to reach the row
     // shape the restore gate exists for.
     const trashed = await c.storage.items.create(
@@ -341,8 +341,8 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
     expect(stored?.type).toBe(SYSTEM_TYPE);
     expect(stored?.state).toBe("trashed");
 
-    // And the chain the ticket is about is still closed at the other end:
-    // the row exists, and the graph still refuses to walk it out to active.
+    // And the same chain is still closed at the other end: the row exists,
+    // and the graph still refuses to walk it out to active.
     const restore = await request(
       c.app,
       "POST",

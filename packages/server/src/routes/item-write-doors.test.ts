@@ -972,10 +972,10 @@ describe("every route that can write an item is accounted for", () => {
     //
     // `idempotent-write-doors.test.ts` derives its scope from the tree
     // instead, and its header argues against exactly this walk. Bringing
-    // this one onto that mechanism is T-1302: the walk is already
-    // generic, and the work is the twenty-three writers it makes visible,
-    // each needing a row or a stated reason. Sized rather than started, so
-    // this control is not mistaken for the fix.
+    // this one onto that mechanism is unstarted follow-up work: the walk
+    // is already generic, and the work is the twenty-three writers it makes
+    // visible, each needing a row or a stated reason. Sized rather than
+    // started, so this control is not mistaken for the fix.
 
     // A new route that mutates items lands here. Give it a row in
     // `DOORS` if it can write properties, or an entry in
@@ -1306,8 +1306,8 @@ describe("destroying a sibling's row (D64)", () => {
   });
 
   it("narrows a bulk transition to rows the caller wrote", async () => {
-    // The call the ticket was filed on: `filter.source` names the stamp both
-    // connections share, so one request reached every row the sibling wrote.
+    // The narrowing case: `filter.source` names the stamp both connections
+    // share, so one request reached every row the sibling wrote.
     // Narrowed rather than refused, which is this route's answer on every
     // other axis — one unreachable row must not fail an action over
     // thousands.

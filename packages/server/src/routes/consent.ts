@@ -944,9 +944,9 @@ export function renderConsentScreen(params: ConsentParams): string {
    *  toggles in the body. */
   const group = (g: ScopeGroup): string => {
     if (g.rows.length === 0) return "";
-    // **Keyed on the literal, never on the rendered label.** T-997's fix
-    // makes a read-and-write pair render two rows that differ only in their
-    // operation, and both resolve the same name — so a `seen` set keyed on
+    // **Keyed on the literal, never on the rendered label.** A read-and-write
+    // pair renders two rows that differ only in their operation, and both
+    // resolve the same name — so a `seen` set keyed on
     // what the row says would collapse the pair and take the write half off
     // the screen, which is the defect this file already carries a docstring
     // about avoiding. `scopeLiteralFor` is what the checkbox submits, so two

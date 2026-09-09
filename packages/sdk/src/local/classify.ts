@@ -229,8 +229,8 @@ export function classifyFailure(error: unknown, kind: MutationKind): Verdict {
   // recomputing the version is exactly what a correct client must do
   // when an inbound event moves the row, so a frozen version would
   // remove this refusal by guaranteeing a version conflict instead.
-  // Whether a rebased mutation should carry a new key is open, with a
-  // ticket and a measurement against it.
+  // Whether a rebased mutation should carry a new key is still open, and
+  // needs a measurement before it is decided.
   if (code === KEY_REUSED) {
     return { class: "blocked", reason: "needs_review", message };
   }

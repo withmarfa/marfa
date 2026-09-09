@@ -170,8 +170,8 @@ const EDGE_KEBAB_NAME = /^[a-z](?:[a-z0-9_-]*[a-z0-9])?$/;
  * A namespaced edge type is a namespaced identifier, so it should be the same
  * identifier the type axis means — same tiers, same arity per tier, same
  * reserved-root refusals. Writing a second dotted grammar here is how the two
- * axes drift, which is the defect this ticket is about, arriving from the
- * other direction.
+ * axes drift, which is exactly the defect this guards against, arriving
+ * from the other direction.
  *
  * What this replaces was not a looser grammar but an escape hatch:
  * `!isValidTypeIdentifier(id) && !id.includes("-")` admitted the kebab set by

@@ -45,8 +45,10 @@ import {
  *     against and the route it read. Without that it is a major, because a
  *     manifest somebody wrote against the permissive reading is refused on
  *     the next resolution and a mint fails closed. The instance is the
- *     2.2.0 strictness pass; the record is in the vault artifact this
- *     policy's ticket names.
+ *     2.2.0 strictness pass: every stored row on staging and production was
+ *     pulled through `GET /integrations` and checked against the new rules
+ *     before it shipped, recorded against the build each environment was
+ *     running.
  *
  * The majors the server accepts are declared by
  * `MANIFEST_SCHEMA_VERSION_ACCEPTED_MAJORS` below, and anything outside

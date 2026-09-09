@@ -471,7 +471,7 @@ describe("an open-ended group keeps saying it is open-ended", () => {
 
 describe("one literal named twice is one row", () => {
   /**
-   * The measurement from the ticket, reproduced here as the fixture:
+   * The measurement behind this case, reproduced here as the fixture:
    *
    *   input:  core.note:read, core.note:read, core.task:read
    *   before: ["Notes (read only)", "Notes (read only)", "Tasks (read only)"]
@@ -493,8 +493,8 @@ describe("one literal named twice is one row", () => {
     // The constraint the fix has to respect, and the reason the `seen` set
     // is keyed on the literal rather than on the rendered label. Both of
     // these resolve the name "Notes", so a label-keyed set would collapse
-    // them and take the write half off the screen — which is the defect
-    // T-997 closed, arriving from the other direction.
+    // them and take the write half off the screen — the same defect the
+    // consent screen closes, arriving here from the other direction.
     const rows = rowLabels(
       authorize(["core.note:read", "core.note:write"].map(parse)),
     );
@@ -526,7 +526,7 @@ describe("one literal named twice is one row", () => {
 
 describe("a fallback bucket says what is in it", () => {
   /**
-   * **The residue T-808 asks about, settled rather than removed.** "Other
+   * **The residue this settles rather than removes.** "Other
    * read access" and "Other write access" can each render twice on the
    * incremental screen, because `buildGroups` runs once per section and a
    * scope outside every bundle lands in a fallback bucket either way. The

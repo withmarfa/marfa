@@ -38,8 +38,8 @@ import type { LocalEngineEvent } from "../src/local/types.js";
  * A server on a real port, over a real socket.
  *
  * `MARFA_SMOKE_LOCAL=1` boots this repository's own server on SQLite and
- * points the run at it. That is the third target the ticket asks for and
- * the only one anybody can run without a deployment, and it is deliberately
+ * points the run at it. That is the third target this needs and the only
+ * one anybody can run without a deployment, and it is deliberately
  * the same code path as the hosted targets: a real listener, a real socket,
  * a real HTTP client. The one thing it does not exercise is Postgres.
  *

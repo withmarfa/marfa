@@ -2,7 +2,7 @@
  * The roster of scanned columns has to keep up with the storage layer, and
  * nothing about writing a new store makes anybody think about it.
  *
- * This is the failure the ticket demonstrated on itself. Its inventory of
+ * This is the failure demonstrated on the fix itself. Its inventory of
  * bare casts was counted by hand, and by the time the work started one row
  * of it was wrong: `spaces.status` had been closed and consolidated into
  * `storage/stored-space-status.ts`, so the table still named a defect that

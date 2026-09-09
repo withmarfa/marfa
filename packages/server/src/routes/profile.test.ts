@@ -586,7 +586,7 @@ describe("Profile routes", () => {
 
     it("refuses a name change to a token that was granted no profile write", async () => {
       // The defect in one line: this is what "any token can change a name"
-      // meant, and it is the case the ticket was filed for.
+      // meant.
       const { token } = await bearerWith(
         [...OIDC_ONLY, "profile:read"],
         "renamer",
@@ -600,7 +600,7 @@ describe("Profile routes", () => {
 
     it("refuses a handle claim, which is the type-namespacing identifier", async () => {
       // `PUT /auth/me/handle` lives in another file, which is why the
-      // ticket's own route table missed it. A handle namespaces published
+      // Category 2 route table missed it. A handle namespaces published
       // types as `<handle>.<type>`, so an ungated write here hands an app the
       // string the type grammar is built on.
       const { token } = await bearerWith(

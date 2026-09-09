@@ -57,8 +57,8 @@ export interface ScannedColumn {
    * Carried so `scanned-columns.test.ts` can tie a bare `row.x as T` cast
    * in the storage sources back to an entry here. Without it the roster
    * has no way to notice a column that grew a union after this was
-   * written, which is exactly how the ticket's own inventory table went
-   * stale.
+   * written, which is exactly how that inventory's own hand-counted
+   * predecessor went stale.
    */
   castType: string;
   /**

@@ -286,8 +286,8 @@ async function refresh(
  *
  *  This used to call `/profile/me`, described here as "the cheapest route that
  *  any authenticated credential can reach" — which was true and was the defect
- *  T-960 closed: Category 2 is now gated, so an OAuth token reaches the profile
- *  only if its grant asked for it. These grants ask for `core.note:read`, so
+ *  closed by gating Category 2: an OAuth token now reaches the profile only if
+ *  its grant asked for it. These grants ask for `core.note:read`, so
  *  the listing is the route they actually cover, and this helper goes back to
  *  proving liveness rather than incidentally proving a gate was missing. */
 async function callWithAccessToken(

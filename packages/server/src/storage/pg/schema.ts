@@ -1130,8 +1130,8 @@ export const auth_oauth_access_token = pgTable(
      *  it was issued under: deleting the session erases the only evidence the
      *  link ever existed. A later reader finding a null here cannot tell an
      *  orphaned token from one that never carried a session at all, and that
-     *  is exactly how a ticket came to be filed claiming session-scoped
-     *  revocation did not work. It does; the forensic trail is what does not
+     *  is exactly the confusion that once looked like session-scoped
+     *  revocation not working. It does; the forensic trail is what does not
      *  survive. Observed end to end on 23 August 2026: a bearer that answered
      *  200 returned 401 after a sign-out on its issuing session. */
     sessionId: text("session_id").references(() => auth_session.id, {

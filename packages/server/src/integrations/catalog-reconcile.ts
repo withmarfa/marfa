@@ -25,7 +25,7 @@
  *
  * **It reports what it did.** A reconcile that quietly registered nothing
  * is indistinguishable from one that never ran, which is the failure mode
- * the whole ticket is about.
+ * this exists to catch.
  */
 import type { IntegrationManifest } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";

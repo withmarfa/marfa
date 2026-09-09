@@ -378,10 +378,9 @@ const UNIVERSAL_RESPONSE_HEADERS = [
  *
  * Declared here rather than on each route for the same reason the
  * `Idempotency-Key` parameter is: the limiter is middleware mounted across
- * `*`, so every operation can answer 429 and not one of them said so. The
- * `Retry-After` header this ticket exists to declare has nowhere to hang
- * without it — a header is declared on a response, and the response was
- * missing too.
+ * `*`, so every operation can answer 429 and not one of them said so.
+ * Without this declaration, the `Retry-After` header has nowhere to hang —
+ * a header is declared on a response, and the response was missing too.
  */
 const RATE_LIMITED_RESPONSE = {
   description:

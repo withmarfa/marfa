@@ -41,7 +41,7 @@ const MetricsResponseSchema = z.object({
       active: z.number(),
     }),
   }),
-  // Drift is the number T-709's automatic pass exists to keep at zero, and
+  // Drift is the number the auto-upgrade pass exists to keep at zero, and
   // it had no aggregate surface at all: `previewUpgrade` answers for one
   // connection, so "how much drift is there" was only answerable by
   // iterating by hand. `behind` above zero on a settled deployment means
