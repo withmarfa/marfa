@@ -122,7 +122,7 @@ export interface KeysModeFixture {
   /** The space-bound working key (`marfa_k1_*`) the client bears. Holds every
    *  space permission and the whole content set. Use to mint additional keys
    *  in tests that need them. */
-  adminKey: string;
+  spaceKey: string;
   /** The operator key minted by the first, unauthenticated request. Holds no
    *  space and no permission: it reaches the instance routes and nothing else.
    *  Use where a test is about the instance tier rather than about work. */
@@ -240,7 +240,7 @@ export async function createKeysModeFixture(
 
   return {
     client,
-    adminKey: key,
+    spaceKey: key,
     operatorKey,
     spaceId,
     fetch,
@@ -258,7 +258,7 @@ export async function createKeysModeFixture(
 
 export interface HostedModeFixture extends Omit<
   KeysModeFixture,
-  "adminKey" | "operatorKey" | "spaceId"
+  "spaceKey" | "operatorKey" | "spaceId"
 > {
   /** Email of the signed-up + email-verified user. */
   email: string;

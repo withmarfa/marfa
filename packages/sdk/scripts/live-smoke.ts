@@ -76,7 +76,7 @@ async function bootLocal(): Promise<{
   if (port === 0) throw new Error("the local server did not take a port");
   return {
     url: `http://127.0.0.1:${String(port)}`,
-    apiKey: fixture.adminKey,
+    apiKey: fixture.spaceKey,
     close: async () => {
       await new Promise<void>((done) => {
         server.close(() => {

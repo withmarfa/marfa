@@ -49,7 +49,7 @@ beforeEach(async () => {
   seam = createOfflineSeam(fixture.fetch);
   client = new MarfaClient({
     url: "http://localhost",
-    apiKey: fixture.adminKey,
+    apiKey: fixture.spaceKey,
     fetch: seam.fetch,
   });
   dir = mkdtempSync(join(tmpdir(), "marfa-local-scenarios-"));
@@ -1121,7 +1121,7 @@ describe("an attachment made offline (seam: offline, lost_response, then online)
     blobSeam = createOfflineSeam(blobFixture.fetch);
     blobClient = new MarfaClient({
       url: "http://localhost",
-      apiKey: blobFixture.adminKey,
+      apiKey: blobFixture.spaceKey,
       fetch: blobSeam.fetch,
     });
     blobDir = mkdtempSync(join(tmpdir(), "marfa-local-blobs-"));

@@ -44,7 +44,7 @@ beforeEach(async () => {
   seam = createOfflineSeam(fixture.fetch);
   client = new MarfaClient({
     url: "http://localhost",
-    apiKey: fixture.adminKey,
+    apiKey: fixture.spaceKey,
     fetch: seam.fetch,
   });
   dir = mkdtempSync(join(tmpdir(), "marfa-local-engine-"));

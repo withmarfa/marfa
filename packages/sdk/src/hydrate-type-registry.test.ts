@@ -54,7 +54,7 @@ const PROBES: Probe[] = [
 
 let client: MarfaClient;
 let fetchFn: typeof globalThis.fetch;
-let adminKey: string;
+let spaceKey: string;
 let cleanup: () => void;
 let hydrated: string[] = [];
 let converged: string[] = [];
@@ -63,7 +63,7 @@ beforeAll(async () => {
   const fixture = await createKeysModeFixture();
   client = fixture.client;
   fetchFn = fixture.fetch;
-  adminKey = fixture.adminKey;
+  spaceKey = fixture.spaceKey;
   cleanup = fixture.cleanup;
 
   await client.types.register({
@@ -102,7 +102,7 @@ async function serverAccepts(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${adminKey}`,
+      Authorization: `Bearer ${spaceKey}`,
     },
     body: JSON.stringify({ type, properties }),
   });
