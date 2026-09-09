@@ -428,10 +428,11 @@ export function edgeRoutes(storage: Storage) {
 
     // Dual gate: the source item's type permission and the edge type's, and
     // nothing bypasses either. There is no rank left to bypass on, and the
-    // operator key is not an exception here — it carries empty maps, so it is
-    // refused on an ordinary edge like any other credential holding none.
-    // The one carve-out either helper makes is for a reserved namespace, and
-    // that does not fire for an ordinary type.
+    // operator flag is not an exception — it is not consulted here at all, so
+    // a credential carrying it is refused on an ordinary edge exactly like
+    // any other credential whose maps do not cover it. The one carve-out
+    // either helper makes is for a reserved namespace, and that does not fire
+    // for an ordinary type.
     const sourceItem = await storage.items.get(body.source_id, spaceId);
     if (!sourceItem) {
       throw new MarfaError(

@@ -4,7 +4,7 @@
  * Two endpoints that complete the OAuth Authorization Code dance for
  * integration connections:
  *
- *   - `POST /connections/:id/oauth/start` (admin-gated): builds the
+ *   - `POST /connections/:id/oauth/start` (`space.credentials`): builds the
  *     upstream provider's authorize URL with a server-signed `state`
  *     param + the connection's stored client_id + this deployment's
  *     own callback URI. Returns the URL for the install script (or
@@ -398,7 +398,7 @@ async function buildAuthorizeUrl(
 }
 
 /**
- * `POST /connections/:id/oauth/start` — admin-gated. Returns the
+ * `POST /connections/:id/oauth/start` — needs `space.credentials`. Returns the
  * upstream authorize URL (including signed state, PKCE challenge) the
  * install script or consent UI should open in the user's browser. Body:
  *   {

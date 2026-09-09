@@ -30,7 +30,6 @@ export function filterMetadataForCaller(
       metadata.extensions,
       apiKey?.extension_permissions,
       extensionLabelOf(apiKey),
-      false,
     ),
   };
 }

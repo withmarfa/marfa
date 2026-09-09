@@ -29,7 +29,6 @@ export async function hydrateExtensionsForItems(
         extensions,
         apiKey?.extension_permissions,
         extensionLabelOf(apiKey),
-        false,
       ),
     );
   }

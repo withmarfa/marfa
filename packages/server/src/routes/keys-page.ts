@@ -263,7 +263,7 @@ export function renderKeysPage(params: KeysPageParams): string {
         </div>
         <div>
           <p class="lsec" style="margin-top:2px">Everything in your space</p>
-          <p class="field__hint" style="margin:0 0 10px">Everything you can do, not just your content: this key can also create and revoke keys, set up webhooks, connect and disconnect services, use the accounts you have connected, read the security log, change settings and types, permanently delete past the trash, and disconnect other apps. For moving a whole space in or out, or for a key you run the space with. Leave it off for a key you are giving to an app.</p>
+          <p class="field__hint" style="margin:0 0 10px">Everything you can do, not just your content, and including anything added later: this key can also create and revoke keys, set up webhooks, connect and disconnect services, use the accounts you have connected, see how much room is left, read the security log, change settings and types, permanently delete past the trash, and disconnect other apps. For moving a whole space in or out, or for a key you run the space with. Leave it off for a key you are giving to an app.</p>
           <div class="t-soft">
             <div class="subrow">
               <span>Full access</span>

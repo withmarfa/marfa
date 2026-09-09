@@ -252,7 +252,7 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
       }
     });
 
-    it("the bearer middleware still resolves a signed-in caller's space with RLS enabled", async () => {
+    it("a bearer resolves its space and reaches a space-fenced door with RLS enabled", async () => {
       const ctx = await createTestContext({
         rlsEnforce: true,
         authMode: "hosted",
@@ -271,9 +271,11 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
         );
 
         // `GET /keys` is gated on `space.keys` and fenced on the caller's
-        // space, so it answers 200 only if the bearer middleware's
-        // `users.getByAuthUserId` lookup (owner connection, no GUC) resolved
-        // that space — which a FORCE on `users` would have broken.
+        // space, so a 200 says the bearer's space survived the RLS wrapper.
+        // The space comes off the grant rather than from a `users` lookup —
+        // that read is the cookie-session path's, covered by the case above —
+        // so what this adds is the end-to-end half: a signed-in caller
+        // reaching a fenced door with policies installed.
         const res = await request(ctx.app, "GET", "/keys", { key: token });
         expect(res.status).toBe(200);
       } finally {

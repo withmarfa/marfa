@@ -116,9 +116,8 @@ function formatDate(iso: string): string {
  *
  * **Every scope is counted before anything is said.** Two earlier versions
  * returned on first sight — one arm for a write, one for a space
- * permission — and neither implied the other, so the sentence depended on the
- * order the
- * scopes happened to arrive in. `["space.app_grants", "core.note:write"]` and
+ * permission — and neither implied the other, so the sentence depended on
+ * the order the scopes happened to arrive in. `["space.app_grants", "core.note:write"]` and
  * the same pair reversed produced different lines, each omitting what the
  * other named, and the page renders exactly one line, so the loser was not
  * merely unnamed but unmentioned. The default flow landed on the worse of the

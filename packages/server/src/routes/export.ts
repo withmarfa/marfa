@@ -110,14 +110,14 @@ function resolveExportSpace(
     }
     return callerSpace;
   }
-  // Space-less caller — the operator key OR a single-space self-host.
-  // The presence of `target_space_id` distinguishes them: the operator
-  // key on hosted multi-space sets it explicitly; single-space
-  // self-hosts leave it unset.
+  // Space-less caller — the operator key, which is the only credential that
+  // can be space-less. Naming a space scopes the export to it; naming none
+  // exports the space-less rows, which on any instance is the manifest
+  // catalogue and the grant projections rather than anybody's content.
   if (targetParam !== undefined) {
-    return targetParam; // the operator key scoping to a specific space
+    return targetParam;
   }
-  return undefined; // single-space self-host fallback
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,13 +292,13 @@ export function exportRoutes(
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    // The space resolved once above, as the archive path passes it: a
-    // the operator key exporting another space names that space's types.
+    // The space resolved once above, as the archive path passes it: the
+    // operator key exporting another space names that space's types.
     assertTypeFilter(type, spaceId);
 
     // Same resolution as `GET /items`, sentinel included. Export shares the
     // storage filter with the listing, so a door that could not name every
-    // state was a route-layer gap rather than a missing capability.
+    // state was a route-layer gap rather than a missing permission.
     const { state, all_states: allStates } = resolveStateFilter(query.state);
 
     const timestampAfter = query.timestamp_after;

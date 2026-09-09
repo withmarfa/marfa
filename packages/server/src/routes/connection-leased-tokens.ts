@@ -93,13 +93,18 @@ async function requireConnectionAccess(
   // runtime credential stamped with this `connection_id`.
   const isIntegration = actsAsConnection(key, connectionId);
   // Defense-in-depth: any credential that would resolve to an undefined
-  // spaceId below must be entitled to cross-space reach, because the
-  // storage call sites treat `undefined` as "any space". The test is
-  // the operator key, which is what a space-less credential now is — and not
-  // a space permission, which says nothing about whether the credential is
-  // confined. Runtime credentials and OAuth bearers issued for this connection
-  // are exempt: their `connection_id` or source-prefix binding is its own
-  // scope.
+  // spaceId below must be entitled to cross-space reach, because the storage
+  // call sites treat `undefined` as "any space". The test is the operator
+  // flag and not a space permission, which says nothing about whether the
+  // credential is confined.
+  //
+  // The row constraint makes space-less and operator the same set, so the
+  // flag check reads as redundant with `!key.space_id`. It is kept because
+  // this is the check standing between a mis-shaped row and every space's
+  // upstream tokens, and a defense-in-depth test that trusts a constraint to
+  // hold is not one. Runtime credentials and OAuth bearers issued for this
+  // connection are exempt: their `connection_id` or source-prefix binding is
+  // its own scope.
   if (!key.space_id && !isIntegration && !hasOperatorAuthority(key)) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,

@@ -6,10 +6,13 @@
  * This coupling is intentional — the key label IS the namespace identity.
  * Additional access can be granted via extension_permissions on the key.
  *
- * Reserved namespaces (core, marfa, system) take the operator key, and for
- * `system.*` nothing can write through the API at all: the namespace gate
- * wants the operator flag and the permission-map check then refuses its empty
- * maps. Every real writer goes through the storage layer instead.
+ * Reserved namespaces (core, marfa, system) take the operator key. Two gates
+ * stand in series and both have to pass: the namespace gate wants the
+ * operator flag, and the extension permission map is then consulted like any
+ * other caller's. The flag opens the namespace and grants no reach inside it,
+ * so a credential minted through `POST /keys` — which takes no maps at
+ * bootstrap — writes nothing here. Every real writer goes through the storage
+ * layer instead.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -337,7 +340,6 @@ export function extensionRoutes(storage: Storage) {
       extensions,
       apiKey?.extension_permissions,
       extensionLabelOf(apiKey),
-      false,
     );
 
     return c.json({ extensions: filtered }, 200);
@@ -397,10 +399,9 @@ export function extensionRoutes(storage: Storage) {
     // the matching connection's item.
     //
     // **The reason this used to give was that operators could still read it,
-    // and no code path grants that read.** Every call site of
-    // `filterExtensionsByPermission` passes its privileged argument as a
-    // hardcoded `false`, and the read handler carries no carve-out for this
-    // namespace at all. The write refusal stands on its own: hot state a
+    // and no code path grants that read.** `filterExtensionsByPermission` has
+    // no privileged reader at all, and the read handler carries no carve-out
+    // for this namespace. The write refusal stands on its own: hot state a
     // runtime writes about itself is not something another credential should
     // be able to forge.
 

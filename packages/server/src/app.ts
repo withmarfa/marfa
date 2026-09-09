@@ -829,7 +829,7 @@ export function createApp(
       pgDb: (storage.pgDb as PgDb | undefined) ?? null,
     }),
   );
-  // OAuth bootstrap — POST /connections/:id/oauth/start (admin-gated)
+  // OAuth bootstrap — POST /connections/:id/oauth/start (`space.credentials`)
   // returns the upstream authorize URL with signed state; the public
   // GET /oauth/callback exchanges the code and persists tokens under the
   // same connectionOauthTokens row the proxy reads.
@@ -843,7 +843,7 @@ export function createApp(
   // /lease-tokens/validate (separate router so it can be reached by
   // upstream services that don't otherwise touch /connections).
   app.route("/connections", connectionLeasedTokenRoutes(storage));
-  // Connection management — POST /connections/:id/uninstall (admin-gated)
+  // Connection management — POST /connections/:id/uninstall (`space.connections`)
   // orchestrates a full teardown across credentials, OAuth tokens, leased
   // tokens, inbound webhooks, and the connection's lifecycle state.
   app.route("/connections", connectionMappingRoutes(storage));

@@ -28,9 +28,10 @@
 --      (auth/instance.ts databaseHooks.user.create.after) inserts the new
 --      `users` row on the unwrapped owner connection (Better Auth manages
 --      its own connection context outside the data-plane RLS middleware).
---   2. The bearer path resolves an OAuth principal's user row via
+--   2. The cookie-session paths resolve a signed-in person's user row via
 --      `users.getByAuthUserId`, which runs before the per-request RLS
 --      transaction wrapper is installed — i.e. on the owner connection.
+--      Token issuance does the same read for the same reason.
 -- A FORCE here would policy-check those owner inserts/reads against an
 -- empty GUC and fail them, stranding every new sign-up. Plain ENABLE
 -- keeps the owner exempt (it bypasses RLS by virtue of ownership) while

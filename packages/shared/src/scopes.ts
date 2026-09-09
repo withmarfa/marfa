@@ -1181,9 +1181,14 @@ export function edgePermissionCovers(
  * refused there. That direction is harmless — a screen skipped for access
  * that then does not work — but it is the direction to check before adding an
  * arm.
- * The two verb-less families have no middleware counterpart at all: no route
- * gates on a space permission yet, and OIDC literals are read by the id_token
- * and userinfo callbacks rather than by the request principal.
+ *
+ * The two verb-less families diverge from each other here. A space permission
+ * has a middleware counterpart and is enforced on the request path:
+ * `requireSpacePermission` reads the caller's held set through
+ * {@link hasSpacePermission}, which is the same membership test this function
+ * makes, so the two agree by construction. OIDC literals have none — they are
+ * read by the id_token and userinfo callbacks rather than by the request
+ * principal, so nothing here is a gate for them.
  *
  * **That is a stricter requirement than "reuse a helper that looks right",
  * and the difference is not cosmetic.** {@link scopeCovers} sits beside this

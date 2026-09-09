@@ -373,9 +373,10 @@ export interface ApiKey {
    * Per-edge-type permissions map. Keyed by edge type id (`parent-of`,
    * `about`, `karakeep.list-member`, …) or `*` for wildcard. Empty object
    * means no edge permissions granted, and a credential with no entries
-   * cannot create, update or delete edges — the operator key included, since
-   * it holds no maps at all. Reads fall back to the source item's
-   * `type_permissions`.
+   * cannot create, update or delete edges. The operator flag buys nothing
+   * here — the edge gate never reads it — so a credential carrying it is
+   * refused like any other holding no entries. Reads fall back to the source
+   * item's `type_permissions`.
    */
   edge_permissions?: Record<string, EdgePermission>;
   /**
@@ -839,7 +840,7 @@ export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
 /**
  * Wire shape accepted by `POST /connections/install`. The JSON install
  * sibling of the HTML consent flow — skips the human-consent step (no
- * browser approval) and is admin-only.
+ * browser approval) and needs `space.connections`.
  */
 export interface ConnectionInstallInput {
   /** id of the `system.integration` item (a manifest registered via
@@ -948,7 +949,7 @@ export interface PreviewEventCycleOverride {
  * `QueueMessageBody` envelopes the reactive-run bridge would emit, and for
  * each subscribing connection that wouldn't be dispatched, the reason why.
  * Pure server-side transform — no handler invocation, no queue producer call.
- * Space-admin scoped.
+ * Needs `space.connections`.
  */
 export interface PreviewEventRequest {
   /** id of an existing item the operator wants to simulate fanout for. */
@@ -1238,14 +1239,14 @@ export interface SpaceQuota {
 export type QuotaResource =
   "items" | "webhooks" | "blobs" | "storage_bytes" | "rate_per_minute";
 
-/** Space-level configuration. Admin-writable via `/spaces/me/config`. */
+/** Space-level configuration. Written through `/spaces/me/config` on `space.settings`. */
 export interface SpaceConfig {
   enforcement?: EnforcementSettings;
   /**
    * Maximum number of hops a single event may traverse before the bus
    * drops it as a suspected cycle. Integration reactions can publish further
    * events; without a budget, a malformed integration could spin a feedback
-   * loop. Default 5; admins can raise it for deeply pipelined integrations
+   * loop. Default 5; it is raised on `space.settings` for deeply pipelined integrations
    * or lower it to tighten the leash.
    */
   max_event_hop_budget?: number;

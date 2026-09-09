@@ -75,8 +75,9 @@ beforeAll(async () => {
     ctx.spaceId,
   );
 
-  // A member credential, not an admin: reconciliation is a user gesture,
-  // so the suite exercises the tier that actually performs it.
+  // A credential holding only what the reconcile itself needs, rather than
+  // the file's own: reconciliation is a user gesture, so the suite exercises
+  // the reach that actually performs it.
   const memberRes = await request(ctx.app, "POST", "/keys", {
     key: ctx.adminKey,
     body: {

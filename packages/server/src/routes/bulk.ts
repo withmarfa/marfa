@@ -319,7 +319,7 @@ const bulkActionRoute = createRoute({
 // Poll endpoint for a queued / running / terminal job. The job envelope
 // is identical to what `POST /items/bulk-actions` returns initially;
 // subsequent calls reflect the worker's progress until the row reaches
-// a terminal status. Auth: the originating credential or an admin.
+// a terminal status. Auth: the originating credential or the operator key.
 const bulkActionStatusRoute = createRoute({
   method: "get",
   path: "/bulk-actions/jobs/{id}",

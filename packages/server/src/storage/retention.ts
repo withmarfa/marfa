@@ -286,10 +286,10 @@ export class RevokedGrantPurger {
  *
  * A grant lasted for as long as nobody revoked it: the tokens under it
  * rotated forever, the consent row and the projection stood, and the app
- * kept its access to a space it had stopped reading. Three `space_admin`
- * keys accumulated on production from finished sessions the same way, and
- * the rule for keys is the rule here: standing privilege nobody is tracking
- * needs an owner in code.
+ * kept its access to a space it had stopped reading. Three keys holding a
+ * whole space accumulated on production from finished sessions the same way,
+ * and the rule for keys is the rule here: standing authority nobody is
+ * tracking needs an owner in code.
  *
  * Every live app grant whose `last_used_at`, or `granted_at` where it was
  * never used, is older than the window goes through the same cascade the

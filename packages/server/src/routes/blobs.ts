@@ -565,7 +565,7 @@ export function blobRoutes(
     return c.json({ url, expires_in: ttl }, 200);
   });
 
-  // POST /blobs/cleanup — remove unreferenced blobs (admin only)
+  // POST /blobs/cleanup — remove unreferenced blobs (operator key only)
   router.openapi(cleanupBlobsRoute, async (c) => {
     requireOperatorKey(c);
 
@@ -647,7 +647,8 @@ export function blobRoutes(
     );
   });
 
-  // POST /blobs/reconcile — compare storage backend against database (admin only)
+  // POST /blobs/reconcile — compare storage backend against database
+  // (operator key only)
   router.openapi(reconcileBlobsRoute, async (c) => {
     requireOperatorKey(c);
 

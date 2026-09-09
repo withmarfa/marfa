@@ -121,7 +121,7 @@ async function requireConnectionAccess(
       "Connection not found",
     );
   }
-  // Space-bounded admin authority, matching
+  // Space-bounded authority, on `space.connections`, matching
   // `requireConnectionProxyAccess`: the connection lookup above is fenced
   // on `key.space_id`, so the permission decides what the caller may do and
   // the fence decides which connections it can see.
