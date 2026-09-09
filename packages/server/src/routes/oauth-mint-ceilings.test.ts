@@ -138,12 +138,12 @@ describe("the client-credentials grant is not one this server has", () => {
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
-    // Every guard on the token endpoint turns on an equality against a
-    // literal, and the refusal above is one of them. A body spelling the
-    // grant with a leading space is the same request to anything that trims
-    // and a different one to anything that does not, so the guards read the
-    // value through one normalizer. Without it this request walks past the
-    // refusal on a padded string.
+    // The endpoint matches `grant_type` against the grants this server has,
+    // exactly, so a padded spelling is refused rather than dispatched to the
+    // handler the padding was hiding. Pinned because the alternative shape --
+    // a tolerant read of the value, or a guard bolted on in front that trims
+    // where the endpoint does not -- is one where the two disagree about what
+    // the request is, and the request walks between them.
     const token = await clientCredentialsToken(
       ctx,
       clientId,

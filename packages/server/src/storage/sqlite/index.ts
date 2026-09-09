@@ -198,10 +198,10 @@ export async function createSqliteStorage(
     // collapses to "still correct in-process".
     rateLimits: new SqliteRateLimitStore(db),
     // Space store is wired unconditionally so the per-space cleanup
-    // fan-out has one code path on every deployment. Space rows are only
-    // ever created by the hosted sign-up flow, so on an instance with no
-    // deployment this lists zero spaces and the cleanup falls through to
-    // the NULL-bucket sweep.
+    // fan-out has one code path on every deployment, and because every mode
+    // has spaces now: hosted sign-up provisions one per account, and keys-mode
+    // bootstrap provisions the single space its working key is minted into.
+    // A sign-in resolves its grant's space through this store in both.
     spaces: new SqliteSpaceStore(db),
     ...(options?.authMode === "hosted" && {
       users: new SqliteUserStore(db),

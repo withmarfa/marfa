@@ -76,10 +76,20 @@ afterAll(async () => {
   // Owned by this suite because it created it, on the way out and in the
   // same place, so a later suite sharing the database never meets a column
   // the schema says is gone.
-  await (ctx.storage.pgDb as PgDb).execute(
-    sql`ALTER TABLE auth_oauth_client DROP COLUMN IF EXISTS client_credentials_scopes`,
-  );
-  await ctx.cleanup();
+  //
+  // The drop is bracketed rather than sequenced ahead of the cleanup. A
+  // failing `ALTER` here -- a lock, a connection already closed by a dying
+  // run -- would otherwise skip `ctx.cleanup()` and leak the whole test
+  // database, trading a column somebody notices for a container nobody does.
+  // The column goes with the database either way, so the cleanup is the half
+  // that must not be conditional on the tidying in front of it.
+  try {
+    await (ctx.storage.pgDb as PgDb).execute(
+      sql`ALTER TABLE auth_oauth_client DROP COLUMN IF EXISTS client_credentials_scopes`,
+    );
+  } finally {
+    await ctx.cleanup();
+  }
 });
 
 describe.skipIf(!isPg)(

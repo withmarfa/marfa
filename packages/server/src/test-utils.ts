@@ -3,7 +3,7 @@ import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
-import { resolveSpaceIdForAuthUser } from "./auth/oauth-provider.js";
+import { resolveSpaceIdForAuthUser } from "./auth/grant-space.js";
 import type { AppConfig } from "./config.js";
 import type { EmailTransport } from "./email/transport.js";
 import type { DeadLetterOps } from "./integrations/local-runtime/dead-letters.js";
@@ -230,11 +230,11 @@ export async function closeTestContexts(
  * @param scopes literal scope strings (e.g. `["core.note:read"]`)
  * @param opts.clientName    visible client name (defaults to "Test App")
  * @param opts.spaceId      the space to bind the token to. Omitted, it
- *                           resolves the instance's one space, which is what
- *                           issuance does; a fixture that skipped that minted
- *                           a token no deployment can produce. Pass `null`
- *                           deliberately for the unbound shape, which the
- *                           middleware refuses.
+ *                           resolves the space issuance would, and throws
+ *                           when nothing resolves rather than minting the
+ *                           unbound token a fixture used to get by accident.
+ *                           Pass `null` deliberately for the unbound shape,
+ *                           which the middleware refuses.
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
  * @param opts.seedUserRow   Seed a `users` row bound to the `auth_user`, so
@@ -372,10 +372,30 @@ export async function seedOauthBearer(
   // this question its own way would drift from issuance silently, and a
   // fixture that drifts from the thing it stands in for is the reason this
   // helper needed repairing in the first place.
-  const boundSpaceId =
-    opts.spaceId === undefined
-      ? await resolveSpaceIdForAuthUser(storage, authUserId)
-      : (opts.spaceId ?? undefined);
+  //
+  // **Nothing unresolved is minted silently.** When the caller named no space
+  // and the resolver answers nothing, there is no shape to fall back to: an
+  // unbound token is refused on every request, so a permission test written
+  // through it stops testing the permission and starts re-testing the
+  // refusal, and it does that while staying green. That is the failure this
+  // helper has already caused once. Throwing names the two ways to get here
+  // -- no user row for the id, or an instance holding other than one space --
+  // and points at `spaceId: null` for a case that genuinely wants the unbound
+  // token.
+  let boundSpaceId: string | undefined;
+  if (opts.spaceId === undefined) {
+    boundSpaceId = await resolveSpaceIdForAuthUser(storage, authUserId);
+    if (boundSpaceId === undefined) {
+      throw new Error(
+        "seedOauthBearer: no space resolved for this bearer, so the token would " +
+          "be minted unbound and refused on every request. Seed a users row for " +
+          `"${authUserId}" or a single space, pass an explicit spaceId, or pass ` +
+          "spaceId: null if the unbound token is what the case is about.",
+      );
+    }
+  } else {
+    boundSpaceId = opts.spaceId ?? undefined;
+  }
 
   await storage.oauthProvider.mintTokenPair({
     accessTokenHash: hashApiKey(

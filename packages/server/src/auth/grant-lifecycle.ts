@@ -1,7 +1,7 @@
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { withConsentLock } from "./consent-lock.js";
-import { resolveSpaceIdForAuthUser } from "./oauth-provider.js";
+import { resolveSpaceIdForAuthUser } from "./grant-space.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -30,10 +30,12 @@ import { log } from "../middleware/logger.js";
  * **The space is required for the answer to be safe, and an absent one means
  * space-less rather than every space.** One client can hold a grant in more
  * than one space on a hosted instance, so a filter on the client id alone
- * would let a revocation in one space reach keys in another. Callers that can
- * address any space — the operator key on `DELETE /grants/{id}` — pass the
- * grant's own space; keys mode passes nothing and gets the space-less rows,
- * which on such an instance is all of them.
+ * would let a revocation in one space reach keys in another. Every caller
+ * passes the space the grant resolved to, keys mode included: a sign-in binds
+ * to the instance's one space there rather than to nothing. The space-less
+ * arm is left for the operator key, which is the only credential that can
+ * still hold no space, and it addresses a grant's own space explicitly on
+ * `DELETE /grants/{id}` rather than relying on the arm.
  *
  * Both arms exclude revoked rows. **They differ on expiry** — `list` also
  * drops a key past its `expires_at` and `listForSpace` does not — and the

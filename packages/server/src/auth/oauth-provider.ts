@@ -49,6 +49,7 @@ import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
 import { deriveCustomTypeNamespaces } from "./default-bundles.js";
+import { resolveSpaceIdForAuthUser } from "./grant-space.js";
 import { dcrDefaultScopes, SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 import {
@@ -358,62 +359,6 @@ function warnOnceAboutBundleScope(scope: string): void {
 }
 
 // ---------------------------------------------------------------------------
-// Space resolution (auth_user.id → space_id via users table)
-// ---------------------------------------------------------------------------
-
-/**
- * **Which space a grant belongs to, asked in one place.**
- *
- * With a `users` store, hosted mode, it is the space on the consenting
- * person's row. Without one, keys mode, it is the instance's only space.
- * `undefined` means no space could be resolved: a person with no space yet,
- * or a keys-mode instance holding anything other than exactly one.
- *
- * Every surface that decides a grant's space calls this, because the token's
- * `reference_id` and the `system.connection` projection have to name the same
- * bucket. `findGrantItemId` looks in exactly one, so a second copy of the
- * question that answered differently would leave a revoke finding nothing to
- * revoke and reporting success. They agreed by accident until keys mode got a
- * space: hosted read the person's row on both sides, and keys mode had
- * nothing on either.
- *
- * Used by:
- *   - `clientReference`, at client registration, and the Marfa-owned DCR's
- *     own binding in `routes/oauth-register.ts`
- *   - `postLogin.consentReferenceId`, at token issuance
- *   - the two consents that write the projection: `projectGrantOnConsent`
- *     in `routes/auth-consent.ts` and `createUserAppGrant` in
- *     `routes/auth-pages.ts`
- *   - `auditGrantReused` in `auth/grant-lifecycle.ts`, which looks the
- *     projection up
- *   - the security page's grant list and its form revoke, in
- *     `routes/auth-pages.ts`
- */
-export async function resolveSpaceIdForAuthUser(
-  storage: Storage,
-  authUserId: string,
-): Promise<string | undefined> {
-  if (storage.users) {
-    const user = await storage.users.getByAuthUserId(authUserId);
-    return user?.space_id ?? undefined;
-  }
-  // **No user store is keys mode, and keys mode has one space.** This used to
-  // answer `undefined` there, on the reasoning that a self-host bound nothing
-  // to a space so a token binding to none was the only shape available. That
-  // stopped being true when keys mode got a space: a token with no space
-  // becomes a principal the storage layer applies no space predicate to,
-  // which is the reach of the operator key handed to whatever app the person
-  // consented to.
-  //
-  // Exactly one, or nothing. Two spaces is a state nothing here can choose
-  // between, and issuing against a guess would bind the token to whichever
-  // the store happened to return first. `soleSpaceId` is the bounded read of
-  // that question; enumerating every space to answer it would put an
-  // unbounded scan on a request path.
-  return (await storage.spaces?.soleSpaceId()) ?? undefined;
-}
-
-// ---------------------------------------------------------------------------
 // Plugin construction
 // ---------------------------------------------------------------------------
 
@@ -528,6 +473,25 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // through to `scopes`, the ENTIRE allowlist with `*:write` included, so
     // a scope-less registration inherited everything.
     clientRegistrationDefaultScopes: dcrDefaultScopes(),
+
+    // ----- Grants -----
+    // **The grants this server has, stated once.** The plugin defaults to
+    // its three and dispatches on that list, so leaving it unset and bolting
+    // a refusal on in front of the token endpoint left the removal resting on
+    // a hook: the endpoint still knew how to mint a client-credentials token,
+    // the discovery document still advertised the grant, and a client reading
+    // that document would pick the one path that cannot work. Named here, the
+    // list is what `grant_types_supported` publishes and what the endpoint
+    // checks before its switch, so the grant is absent rather than declined.
+    //
+    // The device-code URN is not here. It is a Marfa route rather than a
+    // plugin grant (`POST /auth/device/token`), so the plugin has no handler
+    // to reach for it, and the discovery document appends it separately. The
+    // plugin's own registration validator does hold a client's `grant_types`
+    // to this list, which would refuse a device-code registration -- and does
+    // not, because Marfa's DCR route writes through its own store and the
+    // plugin's registration and client-management endpoints answer 404 here.
+    grantTypes: ["authorization_code", "refresh_token"],
 
     // ----- Token storage -----
     // Custom hash matching `hashApiKey(token, salt)` in middleware/auth.ts
@@ -741,17 +705,6 @@ export function buildOauthProjectionPlugin(opts: {
           : []),
       ],
       before: [
-        {
-          // The client-credentials grant is not one this server has. Not
-          // gated on anything below: a deployment serving the token endpoint
-          // at all must answer this the same way. See
-          // `refuseClientCredentialsGrant`.
-          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
-          handler: createAuthMiddleware((ctx: HookCtxLite) => {
-            refuseClientCredentialsGrant(ctx);
-            return Promise.resolve();
-          }),
-        },
         {
           // Narrows the requested scope set on the authorize endpoint so a
           // scope the server cannot grant costs the requester that scope
@@ -1885,45 +1838,25 @@ function logAuthorizeOutcome(ctx: HookCtxLite): void {
  * `/oauth2/token` reads it the same way.
  *
  * Each guard below turns on an equality against a literal, and an equality
- * against a raw body value is only as strong as what the body may hold. A
- * form post spelling `grant_type` with a leading space is the same request
- * to anything that trims and a different one to anything that does not, so a
- * guard reading the raw value can be walked around by whitespace while the
- * endpoint behind it still dispatches. Answering `undefined` for a
- * non-string keeps a caller from reaching a comparison with an array or an
- * object, which is the other way a strict equality quietly says "no".
+ * against a raw body value is only as strong as what the body may hold. Two
+ * shapes are the reason this exists. A `grant_type` that is not a string
+ * reaches a comparison with an array or an object, which is a way a strict
+ * equality quietly says "no" and skips a guard. And a value spelled with
+ * surrounding whitespace is the same request to anything that trims and a
+ * different one to anything that does not, so a guard reading it raw would
+ * decline to run on a request another reader treats as the grant it names.
+ *
+ * The endpoint itself is strict rather than tolerant: it matches `grant_type`
+ * against the supported list exactly, so a padded value is refused there
+ * rather than dispatched. This keeps the guards and the endpoint answering
+ * about the same request; it is not the only thing between a padded body and
+ * a mint.
  */
 function requestedGrantType(ctx: HookCtxLite): string | undefined {
   const body = ctx.body;
   if (!body || typeof body !== "object") return undefined;
   const raw = body.grant_type;
   return typeof raw === "string" ? raw.trim() : undefined;
-}
-
-/**
- * Before-hook for `/oauth2/token`: the client-credentials grant is not a
- * grant this server has.
- *
- * A machine acting on a space is an API key, minted by a person or by a key
- * into that space, with the keys page as its lifecycle: listed, narrowed,
- * revoked, rotated. A client-credentials token has none of that. It carries
- * no space of its own, no consent row, nothing on the security page, and no
- * way for the person accountable for it to end it, and it would hand out
- * space permissions no screen ever showed anybody. So the grant is gone
- * rather than bound to a space, and the endpoint says so in the words RFC
- * 6749 section 5.2 reserves for it.
- *
- * Registration refuses the grant as well, so reaching this means a client
- * that predates the removal or one asking for something it never registered.
- * Both want the same answer.
- */
-function refuseClientCredentialsGrant(ctx: HookCtxLite): void {
-  if (requestedGrantType(ctx) !== "client_credentials") return;
-  throw new APIError("BAD_REQUEST", {
-    error: "unsupported_grant_type",
-    error_description:
-      "This server does not issue client-credentials tokens. Use an API key for a machine caller.",
-  });
 }
 
 async function guardRefreshTokenGrant(

@@ -33,8 +33,11 @@ import { buildScopeDescriptions } from "./auth-consent.js";
 import {
   buildAllowedScopes,
   REFRESH_TOKEN_PREFIX,
-  resolveSpaceIdForAuthUser,
 } from "../auth/oauth-provider.js";
+import {
+  NO_GRANT_SPACE_MESSAGE,
+  resolveSpaceIdForAuthUser,
+} from "../auth/grant-space.js";
 import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
@@ -234,10 +237,13 @@ async function createUserAppGrant(
   // `cycleMiddleware`) — `publish()` reads it automatically.
   const spaceId = await resolveSpaceIdForAuthUser(storage, consentingUser.id);
   if (!spaceId) {
-    throw new MarfaError(
-      ErrorCode.UNAUTHORIZED,
-      "No Marfa space is provisioned for this account; complete onboarding first",
-    );
+    // The same words the code flow refuses in, because it is the same
+    // situation and the reader has no way to tell which surface they are on.
+    // The copy this replaced named onboarding, which is true of an account
+    // with no space and simply wrong about a self-hosted server holding more
+    // than one, and it sent a self-hoster looking for a step that does not
+    // exist.
+    throw new MarfaError(ErrorCode.UNAUTHORIZED, NO_GRANT_SPACE_MESSAGE);
   }
   const now = new Date().toISOString();
 

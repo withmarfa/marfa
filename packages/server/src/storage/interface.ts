@@ -1677,6 +1677,15 @@ export interface SpaceStore {
    * exactly one" rather than a guess, because binding a credential to
    * whichever row a store happened to return first is how a token ends up in
    * a space nobody chose.
+   *
+   * **A suspended space still counts, deliberately.** Suspension is not
+   * deletion: it is still the instance's one space, and answering `null` for
+   * it would refuse the sign-in outright rather than admitting a credential
+   * the suspension then governs. So a grant binds to it, and the write-guard
+   * sitting after the bearer middleware turns its writes away while its reads
+   * go through -- which is exactly what an API key in that space gets. One
+   * rule covering both credential kinds beats a second one reachable only
+   * here.
    */
   soleSpaceId(): Promise<string | null>;
   getConfig(

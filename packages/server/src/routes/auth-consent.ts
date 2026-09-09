@@ -101,7 +101,10 @@ import {
   buildDefaultPermissionBundles,
   resolveRuntimeCustomNamespaces,
 } from "../auth/default-bundles.js";
-import { resolveSpaceIdForAuthUser } from "../auth/oauth-provider.js";
+import {
+  NO_GRANT_SPACE_MESSAGE,
+  resolveSpaceIdForAuthUser,
+} from "../auth/grant-space.js";
 import { renderConsentScreen } from "./consent.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
@@ -370,6 +373,38 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       return c.text(`Unknown client: ${clientId}`, 404);
     }
     const clientName = client.name ?? clientId;
+
+    // **A grant needs a space, and this is the last screen that can say so.**
+    // The projection and the token both name the space this resolves, and a
+    // grant with none is refused rather than written: the bearer middleware
+    // turns away a space-less token on every request, so consenting to one
+    // would hand the app a credential that mints and then reaches nothing,
+    // with nothing on any surface naming the cause. The device flow has
+    // always refused up front; this path carried on and wrote a space-less
+    // projection instead.
+    //
+    // Asked here rather than beside the projection write, because by then the
+    // plugin has minted the code. Both ways a code is produced from this
+    // route are below it: the covered-grant skip and the rendered screen the
+    // decision handler answers.
+    const grantSpaceId = await resolveSpaceIdForAuthUser(
+      deps.storage,
+      session.user.id,
+    );
+    if (grantSpaceId === undefined) {
+      // `prompt=none` promised the client an answer at its callback rather
+      // than a screen, and that promise holds for a refusal too. Not
+      // `interaction_required`: no amount of interaction fixes this.
+      if (promptNone) {
+        return promptNoneError(
+          client.redirectUris,
+          "access_denied",
+          NO_GRANT_SPACE_MESSAGE,
+        );
+      }
+      setNoStore(c);
+      return c.html(renderAuthorizeExpiredPage("no_space"), 403);
+    }
 
     // ----- Consent skip (already-granted → silent re-authorization) -----
     // The plugin's own already-consented check runs only at
@@ -713,6 +748,20 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       const bounce = new URLSearchParams(oauthQuery);
       bounce.set(CONSENT_ERROR_PARAM, "no_scopes_selected");
       return c.redirect(`/auth/authorize?${bounce.toString()}`, 302);
+    }
+
+    // The same refusal the GET path makes, because this handler is reachable
+    // on its own: a form POST is an ordinary browser request and nothing
+    // guarantees the screen in front of it was rendered by the check above.
+    // Before the proxy rather than after, because the proxy is what mints the
+    // code.
+    if (
+      accept &&
+      (await resolveSpaceIdForAuthUser(deps.storage, session.user.id)) ===
+        undefined
+    ) {
+      setNoStore(c);
+      return c.html(renderAuthorizeExpiredPage("no_space"), 403);
     }
 
     const scopeStr = formScopes.join(" ");
@@ -1236,13 +1285,25 @@ async function projectGrantOnConsent(
   // They agreed by accident before: hosted read the user's row on both sides,
   // and keys mode had nothing on either. Keys mode has a space now.
   const spaceId = await resolveSpaceIdForAuthUser(storage, opts.authUserId);
+  if (spaceId === undefined) {
+    // Unreachable through the route, which refuses before the code is minted,
+    // and stated here anyway because the alternative is silent: a space-less
+    // projection is invisible to the security page and to every revoke door,
+    // so the next re-consent inserts a second row beside it and the person
+    // holding the grant is never shown either. A caller reaching this has
+    // gotten past the guard, which is this file's mistake rather than
+    // theirs.
+    throw new Error(
+      "projectGrantOnConsent: no space resolved for the consenting account",
+    );
+  }
 
   // Detect re-consent: update scopes in place if a projection exists,
   // insert on first consent. Either way the audit row and publish fire.
   let grantItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     grantItemId = await storage.oauthProvider.findGrantItemId({
-      spaceId: spaceId ?? null,
+      spaceId,
       clientId: opts.clientId,
       authUserId: opts.authUserId,
     });
@@ -1380,7 +1441,7 @@ async function projectGrantOnConsent(
   });
 
   void storage.audit.log({
-    space_id: spaceId ?? null,
+    space_id: spaceId,
     action: "auth.grant.created",
     resource_type: "oauth_grant",
     resource_id: opts.clientId,

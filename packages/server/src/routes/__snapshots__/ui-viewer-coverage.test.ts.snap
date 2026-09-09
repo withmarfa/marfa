@@ -186,6 +186,27 @@ exports[`every gallery variant renders > renders 'auth/consent/first-time' 1`] =
 </html>"
 `;
 
+exports[`every gallery variant renders > renders 'auth/consent/no-space' 1`] = `
+"<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>There is no space to grant access in</title>
+  <link rel="stylesheet" href="/auth/static/auth.css">
+</head>
+<body>
+  <main class="card card--confirm" aria-label="There is no space to grant access in">
+    
+    <div class="confirm-icon"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+    <h1 class="title">There is no space to grant access in</h1>
+    <p class="sub" role="alert">An account is given a space when it is created, and a self-hosted server grants in the one space it holds. Ask whoever runs this server to check that this account has a space and that the server holds exactly one.</p>
+  
+  </main>
+</body>
+</html>"
+`;
+
 exports[`every gallery variant renders > renders 'auth/consent/re-consent' 1`] = `
 "<!DOCTYPE html>
 <html lang="en">

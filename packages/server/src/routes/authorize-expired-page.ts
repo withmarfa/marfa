@@ -31,16 +31,19 @@
  *
  * Recovery starts at the app either way. A "try again" control here
  * could only point back at the request that just failed, and the only
- * party able to mint a fresh one is the client.
+ * party able to mint a fresh one is the client. The one exception is the
+ * no-space arm, where retrying changes nothing until somebody with access to
+ * the server changes something, so that copy points at them instead.
  */
 
 import { renderAuthLayout } from "./auth-layout.js";
 import { confirmIcon } from "./auth-html.js";
 
-/** Why the request could not proceed. Mirrors the non-valid arms of
- *  `SignedQueryVerdict`, so a new failure mode has to choose its words
- *  here rather than inheriting somebody else's. */
-export type AuthorizeFailure = "expired" | "unverifiable";
+/** Why the request could not proceed: the non-valid arms of
+ *  `SignedQueryVerdict`, plus the states the authorize route refuses in its
+ *  own right. A new failure mode has to choose its words here rather than
+ *  inheriting somebody else's. */
+export type AuthorizeFailure = "expired" | "unverifiable" | "no_space";
 
 const COPY: Record<AuthorizeFailure, { title: string; sub: string }> = {
   expired: {
@@ -50,6 +53,10 @@ const COPY: Record<AuthorizeFailure, { title: string; sub: string }> = {
   unverifiable: {
     title: "We could not verify this request",
     sub: "This sign-in request is not one we recognize, so we stopped rather than continue with it. Go back to the app you were signing in to and start again.",
+  },
+  no_space: {
+    title: "There is no space to grant access in",
+    sub: "An account is given a space when it is created, and a self-hosted server grants in the one space it holds. Ask whoever runs this server to check that this account has a space and that the server holds exactly one.",
   },
 };
 

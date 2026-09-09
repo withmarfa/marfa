@@ -56,10 +56,8 @@ import type { AppEnv } from "../middleware/auth.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OauthProviderStore, Storage } from "../storage/interface.js";
 import { dcrDefaultScopes, withSessionScopes } from "../auth/mint-ceiling.js";
-import {
-  buildAllowedScopes,
-  resolveSpaceIdForAuthUser,
-} from "../auth/oauth-provider.js";
+import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import { resolveSpaceIdForAuthUser } from "../auth/grant-space.js";
 import { log } from "../middleware/logger.js";
 
 import { DEVICE_CODE_GRANT_TYPE as DEVICE_CODE_GRANT } from "./auth-pages.js";

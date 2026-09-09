@@ -21,7 +21,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { request, createTestContext, seedOauthBearer } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { resolveSpaceIdForAuthUser } from "../auth/oauth-provider.js";
+import { resolveSpaceIdForAuthUser } from "../auth/grant-space.js";
 
 let ctx: TestContext;
 
