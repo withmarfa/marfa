@@ -443,14 +443,45 @@ const DOORS: MintDoor[] = [
       expect(registered.has("*:read")).toBe(false);
 
       // The one grant with no user in it cannot be registered without
-      // authenticating — the fence in front of client_credentials.
+      // authenticating — the fence in front of client_credentials. A machine
+      // client's token takes its space and its ceiling from the person who
+      // registered it, so a registration with nobody present has neither.
       const m2m = await request(ctx.app, "POST", "/auth/oauth2/register", {
         body: {
           grant_types: ["client_credentials"],
           client_name: "mint-door-m2m",
+          scope: "core.note:read",
         },
       });
       expect(m2m.status).toBe(400);
+
+      // At the ceiling, and clamped: a session may register one, and the
+      // machine allowlist it gets is the named set held to what that person
+      // holds. `openid` is inside the person's own grant and outside
+      // anything a machine token can spend, so it is the literal that shows
+      // the clamp ran rather than the request being echoed back.
+      const email = `mint-m2m-${Math.random().toString(36).slice(2, 8)}@example.com`;
+      const cookie = await signInAndCookie(email);
+      const owned = await request(ctx.app, "POST", "/auth/oauth2/register", {
+        body: {
+          grant_types: ["client_credentials"],
+          client_name: "mint-door-m2m-owned",
+          scope: "core.note:read openid",
+        },
+        headers: { origin: ORIGIN, cookie },
+      });
+      expect(owned.status).toBe(201);
+      const ownedBody = (await owned.json()) as {
+        client_secret?: string;
+        client_credentials_scopes?: string[];
+        public?: boolean;
+      };
+      // Confidential, because the plugin refuses the grant to a public
+      // client and a secretless machine credential is one anybody holding
+      // the client id has.
+      expect(typeof ownedBody.client_secret).toBe("string");
+      expect(ownedBody.public).toBe(false);
+      expect(ownedBody.client_credentials_scopes).toEqual(["core.note:read"]);
     },
   },
   {

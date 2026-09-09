@@ -36,6 +36,47 @@ import { publishableBundleScopes } from "./allowlist-withholding.js";
 export const CLIENT_CREDENTIALS_DEFAULT_SCOPES: string[] = [];
 
 /**
+ * The four literals the OAuth plugin treats as delegated by a person, and
+ * therefore refuses on the `client_credentials` grant (verified in
+ * `@better-auth/oauth-provider@1.7.1`, `isUserDelegatedScope`).
+ *
+ * Restated here rather than imported because the plugin does not export it,
+ * and the copy is load-bearing in one direction only: a literal this set
+ * misses is one a machine ceiling would carry and the token endpoint would
+ * then refuse, which fails at the mint rather than silently.
+ */
+const USER_DELEGATED_SCOPES: ReadonlySet<string> = new Set([
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+]);
+
+/**
+ * The ceiling on a machine client: what the person registering it holds.
+ *
+ * **Today that is everything grantable in their space**, because the first
+ * person in a space holds everything and an account belongs to exactly one
+ * space. It is written as a clamp against a stated set rather than as "the
+ * check would pass, so skip it", for the reason the one model states the rule
+ * at all: the day a person holds less than their whole space, this is the
+ * line that has to narrow, and a clamp nobody wrote is a clamp nobody will
+ * find.
+ *
+ * The user-delegated literals are out of it whatever the person holds. They
+ * name a session and a machine grant has none, so a ceiling carrying one is a
+ * ceiling the token endpoint will refuse to spend.
+ */
+export function machineClientCeiling(held: Iterable<string>): Set<string> {
+  const out = new Set<string>();
+  for (const scope of held) {
+    if (USER_DELEGATED_SCOPES.has(scope)) continue;
+    out.add(scope);
+  }
+  return out;
+}
+
+/**
  * The scopes that carry a session rather than data: `openid` mints the
  * id_token a sign-out needs, `offline_access` the refresh token a client
  * needs to stay signed in without asking again.

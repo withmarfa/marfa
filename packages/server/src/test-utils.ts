@@ -243,6 +243,40 @@ export async function closeTestContexts(
  *                           stored — a user row carries no role and nothing
  *                           projects one. Hosted-mode storage only.
  */
+/**
+ * Seed a Better Auth user row and hand back its id.
+ *
+ * Exists for the fixtures that need a person to exist without needing one to
+ * sign in: a machine client's row carries the person who registered it, and
+ * the FK on that column refuses a client whose registering user is invented.
+ * `seedOauthBearer` does the same insert inline; this is the same statement
+ * for callers that want only the user.
+ */
+export async function seedAuthUser(
+  storage: Storage,
+  authUserId = `auth_user_${Math.random().toString(36).slice(2, 10)}`,
+): Promise<string> {
+  const now = new Date();
+  if (storage.betterAuthDialect === "sqlite") {
+    await requireSqliteRun(storage)(
+      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
+      [
+        authUserId,
+        "Test User",
+        `${authUserId}@test.local`,
+        Math.floor(now.getTime() / 1000),
+        Math.floor(now.getTime() / 1000),
+      ],
+    );
+  } else {
+    await requirePgClient(storage)(
+      "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
+      [authUserId, "Test User", `${authUserId}@test.local`, now.toISOString()],
+    );
+  }
+  return authUserId;
+}
+
 export async function seedOauthBearer(
   storage: Storage,
   scopes: string[],

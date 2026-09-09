@@ -6,7 +6,7 @@
  * reads here support the consent-page render and the projection after-hooks.
  */
 
-import { eq, and, desc, sql, notInArray } from "drizzle-orm";
+import { eq, and, desc, isNull, sql, notInArray } from "drizzle-orm";
 import { FIRST_PARTY_CLIENT_IDS } from "../../auth/first-party-clients.js";
 import { generateId } from "@withmarfa/shared";
 import type {
@@ -96,6 +96,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
         tokenEndpointAuthMethod: auth_oauth_client.tokenEndpointAuthMethod,
         scopes: auth_oauth_client.scopes,
         grantTypes: auth_oauth_client.grantTypes,
+        registeringUserId: auth_oauth_client.userId,
       })
       .from(auth_oauth_client)
       .where(eq(auth_oauth_client.clientId, clientId))
@@ -125,6 +126,7 @@ export class PgOauthProviderStore implements OauthProviderStore {
       redirectUris,
       postLogoutRedirectUris,
       referenceId: row.referenceId,
+      registeringUserId: row.registeringUserId,
       isPublic: isPublicClient(row.public, row.tokenEndpointAuthMethod),
       scopes,
       grantTypes,
@@ -174,6 +176,29 @@ export class PgOauthProviderStore implements OauthProviderStore {
         ),
       )
       .returning({ id: auth_oauth_client.id });
+    return updated.length > 0;
+  }
+
+  /**
+   * Bind a minted access token to a space while it is still unbound. The
+   * `IS NULL` predicate in the WHERE is the whole guard: this writes a
+   * binding and never rewrites one, so it cannot be a way to move a token
+   * between spaces.
+   */
+  async bindAccessTokenSpace(
+    tokenHash: string,
+    spaceId: string,
+  ): Promise<boolean> {
+    const updated = await this.db
+      .update(auth_oauth_access_token)
+      .set({ referenceId: spaceId })
+      .where(
+        and(
+          eq(auth_oauth_access_token.token, tokenHash),
+          isNull(auth_oauth_access_token.referenceId),
+        ),
+      )
+      .returning({ id: auth_oauth_access_token.id });
     return updated.length > 0;
   }
 
@@ -454,13 +479,20 @@ export class PgOauthProviderStore implements OauthProviderStore {
     await this.db.insert(auth_oauth_client).values({
       id,
       clientId: input.clientId,
-      clientSecret: null,
+      clientSecret: input.clientSecretHash ?? null,
       disabled: false,
       // `null` must reach the column as SQL NULL, not as an empty array:
       // the plugin's `client.scopes ?? opts.scopes` only falls through on
       // null, so `[]` would register a ceiling permitting nothing.
       scopes: input.scopes === null ? null : [...input.scopes],
-      userId: null,
+      // An absent machine allowlist is SQL NULL rather than `[]` for
+      // legibility only: the plugin refuses on both.
+      clientCredentialsScopes:
+        input.clientCredentialsScopes === null ||
+        input.clientCredentialsScopes === undefined
+          ? null
+          : [...input.clientCredentialsScopes],
+      userId: input.registeringUserId ?? null,
       createdAt: now,
       updatedAt: now,
       name: input.name,

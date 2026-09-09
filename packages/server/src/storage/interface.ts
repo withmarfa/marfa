@@ -1944,6 +1944,17 @@ export interface OauthClientRow {
   /** Space binding from `clientReference` (Marfa: space_id). */
   referenceId: string | null;
   /**
+   * The person whose credential registered this client, or `null` when it
+   * was registered by nobody.
+   *
+   * Read by the `client_credentials` grant, which has no user of its own:
+   * a machine client is a credential a person created, so its token belongs
+   * to that person's space. `referenceId` above is the space as it stood at
+   * registration and is a snapshot; this is the person, and resolving
+   * through it is what makes the token follow them.
+   */
+  registeringUserId: string | null;
+  /**
    * `true` when the client is a public client (PKCE, no secret) —
    * `token_endpoint_auth_method: none` and/or `public: true`. Public
    * clients are the shape every unauthenticated Dynamic Client
@@ -2046,6 +2057,27 @@ export interface CreateClientInput {
   /** Space binding from the resolver — null for unauthenticated /
    *  keys-mode DCR. Mirrors `clientReference` in the plugin's wiring. */
   referenceId: string | null;
+  /**
+   * The Better Auth user whose session authorized this registration, or
+   * `null` for an unauthenticated one. Written to `auth_oauth_client.user_id`
+   * and read back as {@link OauthClientRow.registeringUserId}.
+   */
+  registeringUserId?: string | null;
+  /**
+   * The client secret as the plugin stores it (unpadded base64url SHA-256),
+   * or `null` for a public client. A confidential client is the only shape
+   * the `client_credentials` grant accepts.
+   */
+  clientSecretHash?: string | null;
+  /**
+   * The machine-grant allowlist, or `null` to register none.
+   *
+   * `null` and `[]` are the same answer here and both are refusals — the
+   * plugin reads an absent allowlist as no authorized scopes and answers
+   * `unauthorized_client` — which is the opposite of {@link scopes} above
+   * and worth stating, because the two columns sit beside each other.
+   */
+  clientCredentialsScopes?: readonly string[] | null;
   /** Optional client metadata fields (passed through to the row). */
   clientUri?: string | null;
   logoUri?: string | null;
@@ -2217,6 +2249,21 @@ export interface OauthProviderStore {
    *  has expired. Opaque tokens carry no embedded claims, so the row is
    *  read directly. */
   validateAccessToken(tokenHash: string): Promise<OauthAccessTokenRow | null>;
+  /**
+   * Bind a minted access token to a space, but only while it is still
+   * unbound. Returns true when the write landed.
+   *
+   * One caller: the `client_credentials` grant, whose token the plugin mints
+   * with a NULL `reference_id` because there is no consent and no person for
+   * `consentReferenceId` to run against. The bearer middleware refuses a
+   * space-less bearer, so the binding has to exist before the token's first
+   * use, and it is written here rather than resolved at read time so a
+   * machine token resolves exactly like every other bearer.
+   *
+   * The `reference_id IS NULL` guard is what keeps this from being a way to
+   * move a token between spaces: it writes a binding, it never rewrites one.
+   */
+  bindAccessTokenSpace(tokenHash: string, spaceId: string): Promise<boolean>;
   /** Cascade revocation for a grant: delete every access + refresh token
    *  for (clientId, authUserId). Used by the `/auth/grants/:id/revoke`
    *  handler when the user revokes an app's access. The grant's

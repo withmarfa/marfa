@@ -20,7 +20,7 @@
 import { createHash } from "node:crypto";
 import { describe, it, expect, afterEach } from "vitest";
 import { expandBundlesToScopes } from "@withmarfa/shared";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, request, seedAuthUser } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { getPermissionBundles } from "../config.js";
 import { withSessionScopes } from "../auth/mint-ceiling.js";
@@ -34,10 +34,14 @@ afterEach(async () => {
 
 const ORIGIN = "http://localhost:0";
 
-/** Seed a confidential `client_credentials` client directly in storage —
- *  Marfa's DCR surface deliberately refuses to register that grant type,
- *  and the ceiling has to hold even for a client that exists by other
- *  means (an operator insert, a future admin surface, a bug). */
+/** Seed a confidential `client_credentials` client directly in storage. The
+ *  product registers one through an authenticated session, and the ceiling
+ *  has to hold for a client that exists by other means too — an operator
+ *  insert, a future admin surface, a bug.
+ *
+ *  The row carries a registering user because a machine client without one
+ *  belongs to no space and is refused before its scopes are ever consulted,
+ *  which would make every assertion below pass for the wrong reason. */
 async function seedConfidentialClient(
   c: TestContext,
   secret: string,
@@ -75,6 +79,7 @@ async function seedConfidentialClient(
     redirectUris: asArray([]),
     grantTypes: asArray(["client_credentials"]),
     tokenEndpointAuthMethod: "client_secret_basic",
+    userId: await seedAuthUser(c.storage),
     ...(clientCredentialsScopes !== undefined
       ? { clientCredentialsScopes: asArray(clientCredentialsScopes) }
       : {}),

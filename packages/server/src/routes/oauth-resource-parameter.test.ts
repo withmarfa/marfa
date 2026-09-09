@@ -10,11 +10,19 @@
  * `invalid_target`), and an accepted `resource` flipped the mint to a
  * JWT-format access token that the opaque-token middleware cannot resolve —
  * a token that verifies nowhere.
+ *
+ * The client is registered through an authenticated session rather than
+ * inserted, because a machine client's token takes its space from the person
+ * who registered it and a client nobody registered gets no token at all. A
+ * seeded row would exercise a shape the product cannot produce.
  */
 
-import { createHash } from "node:crypto";
 import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext | undefined;
@@ -26,52 +34,47 @@ afterEach(async () => {
 
 const ORIGIN = "http://localhost:0";
 
-/** Storage-level confidential client seed, mirroring the mint-ceiling
- *  suite: Marfa's DCR refuses the client_credentials grant, so the client
- *  exists by operator insert. */
-async function seedConfidentialClient(
-  c: TestContext,
-  secret: string,
-): Promise<string> {
-  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
-  const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
-  if (!c.storage.betterAuthDb) {
-    throw new Error("seedConfidentialClient: storage.betterAuthDb missing");
-  }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
-  const db = c.storage.betterAuthDb as unknown as {
-    insert: (table: unknown) => {
-      values: (v: Record<string, unknown>) => {
-        run?: () => Promise<unknown>;
-        execute?: () => Promise<unknown>;
-      };
-    };
-  };
-  const now = new Date();
-  const asArray = (values: string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? values : JSON.stringify(values);
-  const op = db.insert(schemaModule.auth_oauth_client).values({
-    id: clientPk,
-    clientId,
-    clientSecret: createHash("sha256").update(secret).digest("base64url"),
-    name: "Resource Param Test",
-    redirectUris: asArray([]),
-    grantTypes: asArray(["client_credentials"]),
-    tokenEndpointAuthMethod: "client_secret_basic",
-    // 1.7 authorizes machine grants against an explicit per-client
-    // allowlist; a NULL here reads as "no authorized scopes" and the
-    // token endpoint answers unauthorized_client.
-    clientCredentialsScopes: asArray(["core.note:read"]),
-    public: false,
-    disabled: false,
-    createdAt: now,
-    updatedAt: now,
+/** Sign up, verify and sign in; hand back the session cookie. */
+async function signInCookie(c: TestContext): Promise<string> {
+  const email = `resource-param-${Math.random().toString(36).slice(2, 10)}@marfa.so`;
+  const password = "correct horse battery";
+  await request(c.app, "POST", "/auth/sign-up/email", {
+    body: { email, password, name: "Resource Param" },
+    headers: { origin: ORIGIN },
   });
-  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
-  return clientId;
+  await markEmailVerified(c.storage, email);
+  const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
+    body: { email, password },
+    headers: { origin: ORIGIN },
+  });
+  expect(signIn.status).toBe(200);
+  const cookie = (signIn.headers.get("set-cookie") ?? "")
+    .split(/,\s*(?=[a-zA-Z0-9_-]+=)/)
+    .map((chunk) => chunk.split(";")[0])
+    .find((head) => head?.includes("session_token"));
+  expect(cookie).toBeTruthy();
+  return cookie ?? "";
+}
+
+/** Register the confidential machine client the way the product mints one. */
+async function registerConfidentialClient(
+  c: TestContext,
+): Promise<{ clientId: string; secret: string }> {
+  const cookie = await signInCookie(c);
+  const res = await request(c.app, "POST", "/auth/oauth2/register", {
+    body: {
+      grant_types: ["client_credentials"],
+      client_name: "Resource Param Test",
+      scope: "core.note:read",
+    },
+    headers: { origin: ORIGIN, cookie },
+  });
+  expect(res.status).toBe(201);
+  const body = (await res.json()) as {
+    client_id: string;
+    client_secret: string;
+  };
+  return { clientId: body.client_id, secret: body.client_secret };
 }
 
 async function tokenRequest(
@@ -107,11 +110,11 @@ describe("resource parameter on the token endpoint", () => {
   it("accepts the MCP endpoint's canonical URI and mints a resolvable token", async () => {
     const base = "http://localhost:0";
     ctx = await createTestContext({
-      authAllowSignup: false,
+      authMode: "hosted",
+      authAllowSignup: true,
       authBaseUrl: base,
     });
-    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret);
+    const { clientId, secret } = await registerConfidentialClient(ctx);
 
     const token = await tokenRequest(ctx, clientId, secret, {
       resource: `${base}/mcp`,
@@ -128,9 +131,11 @@ describe("resource parameter on the token endpoint", () => {
   });
 
   it("still mints identically when no resource is sent", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
-    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret);
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    const { clientId, secret } = await registerConfidentialClient(ctx);
 
     const token = await tokenRequest(ctx, clientId, secret, {});
     expect(token.status).toBe(200);
@@ -147,11 +152,11 @@ describe("resource parameter on the token endpoint", () => {
     // RFC 8707 names for it.
     const base = "http://localhost:0";
     ctx = await createTestContext({
-      authAllowSignup: false,
+      authMode: "hosted",
+      authAllowSignup: true,
       authBaseUrl: base,
     });
-    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret);
+    const { clientId, secret } = await registerConfidentialClient(ctx);
 
     const token = await tokenRequest(ctx, clientId, secret, {
       resource: "https://evil.example.com/api",
