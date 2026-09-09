@@ -52,15 +52,18 @@
 -- **Three tables keep some of their space-less rows, and each has a
 -- discriminator.**
 --
--- `items` keeps two kinds. A `system.integration` row is the registered
--- manifest catalogue, written with no space precisely so one registration is
--- visible everywhere, and read through the deliberate `space_id = $1 OR
--- space_id IS NULL` widening. A `system.connection` row with `kind = 'app'` is
--- an OAuth grant projection, and the provider store resolves those with an
--- inline `IS NULL` predicate rather than through the space fence — keys mode
--- has no user store, so the space it resolves for a sign-in stays undefined
--- whatever this migration does. Moving those rows would leave re-consent
--- unable to find a standing grant and minting a duplicate beside it.
+-- `items` keeps two kinds, and only one of them for good. A
+-- `system.integration` row is the registered manifest catalogue, written with
+-- no space precisely so one registration is visible everywhere, and read
+-- through the deliberate `space_id = $1 OR space_id IS NULL` widening; it
+-- stays where it is. A `system.connection` row with `kind = 'app'` is an
+-- OAuth grant projection, and it was held back here on the premise that keys
+-- mode resolves no space for a sign-in, so a projection had nowhere truthful
+-- to go. That premise did not survive: a sign-in on a keys-mode instance
+-- resolves the instance's one space now, and a projection left space-less is
+-- invisible to the security page and to every revoke door. The later
+-- `app_grants_join_the_sole_space` moves them. Nothing changes in this file,
+-- which has already run everywhere it applies.
 --
 -- `custom_types` keeps `origin = 'platform'` and `origin = 'integration'`. The
 -- shipped set is upserted into the `''` bucket at every boot and would simply

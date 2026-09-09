@@ -764,6 +764,13 @@
       "when": 1788970000000,
       "tag": "0108_drop_client_credentials_scopes",
       "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1788971800000,
+      "tag": "0109_app_grants_join_the_sole_space",
+      "breakpoints": true
     }
   ]
 }
