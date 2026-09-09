@@ -1,3 +1,4 @@
+import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { withConsentLock } from "./consent-lock.js";
 import { log } from "../middleware/logger.js";
@@ -16,6 +17,42 @@ import { log } from "../middleware/logger.js";
  * hooks alike, so a door added later cannot move one record and not the
  * other.
  */
+
+/**
+ * The live keys an app minted in one space.
+ *
+ * A key minted through a sign-in records the app that minted it, which is what
+ * lets the keys page group by app and lets a revocation offer to take them.
+ * Both callers ask this rather than filtering a key list of their own, so the
+ * offer counts exactly the rows the revoke would take.
+ *
+ * **The space is required for the answer to be safe, and an absent one means
+ * space-less rather than every space.** One client can hold a grant in more
+ * than one space on a hosted instance, so a filter on the client id alone
+ * would let a revocation in one space reach keys in another. Callers that can
+ * address any space — the operator key on `DELETE /grants/{id}` — pass the
+ * grant's own space; keys mode passes nothing and gets the space-less rows,
+ * which on such an instance is all of them.
+ *
+ * Both arms exclude revoked rows. **They differ on expiry** — `list` also
+ * drops a key past its `expires_at` and `listForSpace` does not — and the
+ * count is currently right anyway, because the only door that stamps a
+ * lifetime is the runtime-credential mint and it never stamps an app. If an
+ * app-minted key ever gains one, this is where the offer starts overstating
+ * itself and the sweep starts touching dead rows.
+ */
+export async function keysMintedByApp(
+  storage: Storage,
+  opts: { clientId: string | undefined; spaceId: string | undefined },
+): Promise<ApiKey[]> {
+  if (!opts.clientId) return [];
+  if (opts.spaceId !== undefined) {
+    const keys = await storage.keys.listForSpace(opts.spaceId);
+    return keys.filter((k) => k.oauth_client_id === opts.clientId);
+  }
+  const keys = await storage.keys.list();
+  return keys.filter((k) => k.oauth_client_id === opts.clientId && !k.space_id);
+}
 
 /**
  * Flip a projected `system.connection { kind: "app" }` grant to revoked
@@ -49,6 +86,27 @@ export async function revokeProjectedGrant(
     spaceId: string | undefined;
     clientId: string | undefined;
     authUserId: string | undefined;
+    /**
+     * Also revoke the keys this app minted in the space.
+     *
+     * Off unless the caller asks, because a key is not a token: it was minted
+     * deliberately, it appears on the person's own keys page, and it is meant
+     * to outlive the session that made it. So the security page asks and the
+     * API door takes an explicit flag, and the expiry sweep — which has nobody
+     * to ask — leaves them alone.
+     */
+    revokeKeys?: boolean;
+    /**
+     * The space to sweep keys in, when it is not the caller's own.
+     *
+     * `spaceId` above is the caller's scope and fences the record update, so
+     * an operator key addressing another space's grant resolves it to
+     * undefined — which is the right fence and the wrong space to sweep,
+     * because "no space" means the space-less rows. The grant's own space is
+     * passed here instead. Defaults to `spaceId`, which is what every
+     * space-bound caller wants.
+     */
+    keysSpaceId?: string;
   },
 ): Promise<void> {
   const cascade = async (): Promise<void> => {
@@ -91,6 +149,19 @@ export async function revokeProjectedGrant(
     // doors and already holds the consent lock, so keeping the sweep here
     // means one writer rather than two that can drift apart.
     await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
+    // Keys beside the device codes and for the same reason: a key this app
+    // minted is standing access that outlives every token above it, so a
+    // revocation asked to take them has not happened until they are gone.
+    // Before the record flip, so a fault here leaves the projection honestly
+    // reading active rather than describing a disconnection that stopped
+    // half-way.
+    if (opts.revokeKeys === true) {
+      const keys = await keysMintedByApp(storage, {
+        clientId: opts.clientId,
+        spaceId: opts.keysSpaceId ?? opts.spaceId,
+      });
+      for (const key of keys) await storage.keys.revoke(key.id);
+    }
     await storage.items.update(
       opts.itemId,
       {

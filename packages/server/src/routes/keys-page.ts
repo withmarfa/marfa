@@ -15,8 +15,16 @@
  * Creating a key swaps the list out for a focused create form — name it and
  * choose what it can reach (the same soft-tile permission groups the consent
  * screen uses) in one step — then the one-time secret is shown on its own
- * screen. The chosen permissions are real — a scoped key is a `member` key
- * carrying the selected per-type permissions, not a blanket admin credential.
+ * screen. The chosen permissions are the whole of what the key can do: a key
+ * holds one permission set and no door admits it on anything else.
+ *
+ * **A key an app made is listed under that app.** A key minted through a
+ * sign-in records which app minted it, and this page groups by that rather
+ * than mixing the two, because the two are not the same kind of thing to the
+ * person reading: one is theirs and lives until they revoke it, the other
+ * arrived with an app they connected and goes when they disconnect it, if
+ * they ask for that. The rows carry no revoke button of a different colour
+ * and no extra affordance — the grouping is the whole of the distinction.
  *
  * Uses the shared auth-page layout, wide variant.
  */
@@ -27,9 +35,22 @@ import { escapeHtml, confirmIcon } from "./auth-html.js";
 export interface KeysPageKey {
   id: string;
   label: string;
-  source: string;
   created_at: string;
   last_used_at: string | null;
+  /**
+   * The app that minted this key, when one did. Absent for a key the person
+   * made themselves, which is what puts it in the first group.
+   *
+   * **Two fields because the grouping key and the heading are not the same
+   * thing.** Registration is open and `client_name` is caller-chosen, so two
+   * apps can share a display name; grouping on the name would file a second
+   * app's key under the first app's heading. The id is what identifies an app
+   * and the name is what a person can read, so one groups and the other
+   * renders. The caller resolves the name, falling back to the id when the
+   * registration is gone.
+   */
+  app_id?: string;
+  app_name?: string;
 }
 
 export interface KeysPageNotice {
@@ -166,17 +187,13 @@ export function renderKeysPage(params: KeysPageParams): string {
       }">${escapeHtml(params.notice.text)}</div>`
     : "";
 
-  const keysList =
-    params.keys.length === 0
-      ? `<p class="field__hint">You have no API keys yet. Create one with the + button.</p>`
-      : params.keys
-          .map((k) => {
-            const safeId = escapeHtml(k.id);
-            const safeLabel = escapeHtml(k.label);
-            const activity = k.last_used_at
-              ? `Last used ${escapeHtml(formatDate(k.last_used_at))}`
-              : "Not used yet";
-            return `<div class="row">
+  const keyRow = (k: KeysPageKey): string => {
+    const safeId = escapeHtml(k.id);
+    const safeLabel = escapeHtml(k.label);
+    const activity = k.last_used_at
+      ? `Last used ${escapeHtml(formatDate(k.last_used_at))}`
+      : "Not used yet";
+    return `<div class="row">
               <div class="row__main">
                 <div class="row__title">${safeLabel}</div>
                 <div class="row__meta">Added ${escapeHtml(formatDate(k.created_at))}</div>
@@ -186,8 +203,41 @@ export function renderKeysPage(params: KeysPageParams): string {
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>`;
-          })
-          .join("\n");
+  };
+
+  // Own keys first, then one group per app that minted one. The apps are
+  // ordered by name so the page does not reshuffle between loads on nothing
+  // more than the order the store happened to return rows in.
+  const ownKeys = params.keys.filter((k) => k.app_id === undefined);
+  const byApp = new Map<string, { name: string; keys: KeysPageKey[] }>();
+  for (const k of params.keys) {
+    if (k.app_id === undefined) continue;
+    const name = k.app_name ?? k.app_id;
+    const group = byApp.get(k.app_id);
+    if (group) group.keys.push(k);
+    else byApp.set(k.app_id, { name, keys: [k] });
+  }
+  const apps = [...byApp.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  // The headings appear only once there are two groups to tell apart: a person
+  // with no connected apps sees exactly the list they saw before, with no
+  // section label inviting them to wonder what the other section is.
+  const parts: string[] = [];
+  if (ownKeys.length === 0 && apps.length === 0) {
+    parts.push(
+      `<p class="field__hint">You have no API keys yet. Create one with the + button.</p>`,
+    );
+  } else {
+    if (ownKeys.length > 0) {
+      if (apps.length > 0) parts.push(`<p class="lsec">Your keys</p>`);
+      parts.push(...ownKeys.map(keyRow));
+    }
+    for (const app of apps) {
+      parts.push(`<p class="lsec">Made by ${escapeHtml(app.name)}</p>`);
+      parts.push(...app.keys.map(keyRow));
+    }
+  }
+  const keysList = parts.join("\n");
 
   // Focused create view. The + button swaps the list out for this form (a
   // single step — name + permissions together, no mid-page stepper); Cancel

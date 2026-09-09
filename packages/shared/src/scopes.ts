@@ -1332,6 +1332,124 @@ export function grantCoversScope(
   }
 }
 
+/** The four permission-map axes that carry a verb. Extensions are not here:
+ *  no scope names a namespace, so they are compared map to map by their own
+ *  rule rather than through anything in this file. */
+export type PermissionMapAxis = "type" | "edge" | "metadata" | "profile";
+
+/** Whether a level is at least what was asked for. `write` implies `read`. */
+function atLeast(
+  have: "read" | "write" | "none",
+  want: "read" | "write",
+): boolean {
+  return have === "write" || (have === "read" && want === "read");
+}
+
+/**
+ * The first thing a requested permission map reaches that a held one does
+ * not, or null when the held map covers all of it.
+ *
+ * **This is the ceiling question, and it is not the question
+ * {@link grantCoversScope} answers.** A grant is a list of literals and a list
+ * cannot say "everything except this", so measuring a request against a grant
+ * only ever has to ask whether each requested literal is reached. A permission
+ * map is different in kind: an exact entry outranks every wildcard, so
+ * `{"*":"read","system.credential":"none"}` is a denial rather than an
+ * absence, and that shape is what every `content:*` grant projects to. Reduce
+ * such a map to the literals it confers and the denials vanish — the caller
+ * then asks for `{"*":"read"}`, which reads as a no-op and is a widening,
+ * because the child resolves `read` on the row its parent was refused.
+ *
+ * So the comparison is over what the two maps *resolve to* rather than over
+ * what either lists. For every witness, the requested map may not resolve
+ * higher than the held one; `none` on the requested side asks for nothing and
+ * is skipped.
+ *
+ * **The witnesses are both maps' keys, plus the root of every subtree
+ * wildcard among them, and that finite set is enough for an infinite type
+ * space.** Resolution is decided by the ranked patterns the two maps between
+ * them name, so any two identifiers matched by the same keys resolve
+ * identically in both. Where they are matched by different keys, the more
+ * specific of the two responsible keys is itself matched by the less specific
+ * one — a subtree root is a prefix of everything inside it — so evaluating at
+ * that key reproduces the pair exactly. The roots are added because a subtree
+ * wildcard is parent-inclusive and the parent is not otherwise named.
+ *
+ * Requested keys are walked before held ones so the answer names what the
+ * caller asked for where it can, rather than the entry that refused it.
+ */
+export function firstReachBeyondMap(
+  axis: PermissionMapAxis,
+  held: Readonly<Record<string, "read" | "write" | "none">> | undefined,
+  requested: Readonly<Record<string, "read" | "write" | "none">> | undefined,
+): string | null {
+  const heldMap = held ?? {};
+  const requestedMap = requested ?? {};
+
+  // The axis's own resolver, so the ceiling is measured by whatever the
+  // request path runs rather than by a second reading of the same map. The
+  // three levelled axes carry no `none` in their types; one arriving from a
+  // hand-made row resolves as covering nothing, which refuses rather than
+  // admits.
+  const resolverFor =
+    (map: Readonly<Record<string, "read" | "write" | "none">>) =>
+    (key: string): "read" | "write" | "none" => {
+      switch (axis) {
+        case "type":
+          // No cast: `TypePermission` is exactly the three levels this map
+          // carries, which is what makes the type axis the one that can deny.
+          return resolveTypePermission(key, map);
+        case "edge":
+          return effectiveLevel((op) =>
+            edgePermissionCovers(
+              map as Record<string, "read" | "write">,
+              key,
+              op,
+            ),
+          );
+        case "metadata":
+          return effectiveLevel((op) =>
+            metadataPermissionCovers(
+              map as Record<string, MetadataPermission>,
+              key,
+              op,
+            ),
+          );
+        case "profile":
+          return effectiveLevel((op) =>
+            profilePermissionCovers(
+              map as Record<string, ProfilePermission>,
+              key,
+              op,
+            ),
+          );
+      }
+    };
+
+  const resolveHeld = resolverFor(heldMap);
+  const resolveRequested = resolverFor(requestedMap);
+
+  const witnesses: string[] = [];
+  const seen = new Set<string>();
+  const add = (key: string): void => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    witnesses.push(key);
+  };
+  for (const key of [...Object.keys(requestedMap), ...Object.keys(heldMap)]) {
+    add(key);
+    const root = subtreeWildcardRoot(key);
+    if (root !== null) add(root);
+  }
+
+  for (const witness of witnesses) {
+    const want = resolveRequested(witness);
+    if (want === "none") continue;
+    if (!atLeast(resolveHeld(witness), want)) return witness;
+  }
+  return null;
+}
+
 /** Turns an axis's boolean `covers(op)` into the level it resolves to, so one
  *  breadth rule can be written over every axis without a second resolver. */
 function effectiveLevel(

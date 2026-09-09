@@ -16,21 +16,32 @@
  * ordinary thing: a key holding `space.keys` and read on one type is a
  * coherent credential, and nothing about holding the permission to mint says
  * anything about how far what it mints may reach. So the ceiling is asked of
- * every creator, and `scopesHeldByMaps` is what lets a key's own maps be
- * compared by the same rule a grant is.
+ * every creator, and `firstReachBeyondCredential` is what lets a key's own
+ * maps be compared by a rule of the same standing a grant gets.
  *
- * **Every comparison goes through `grantCoversScope`.** It is the platform's
- * own answer to "does this grant reach that", it understands wildcards,
- * subtree patterns and verb ranking, and `scopes.ts` records five earlier
- * hand-rolled comparisons that disagreed with the real rule. A sixth is
- * recorded in the Raycast extension's own notes. There is no version of this
- * that is safe to write by hand.
+ * **Two carriers, two comparisons, and one of them is not the other.** A
+ * session holds a list of scope literals, so the question is whether the grant
+ * covers each thing asked for, and `grantCoversScope` is the platform's own
+ * answer to it. A key holds permission maps, where an exact entry outranks
+ * every wildcard, so a map can deny a row rather than merely omit it — and a
+ * list cannot express that. Measuring a map by first reducing it to the
+ * literals it confers loses exactly the denials, which is the escalation
+ * `firstReachBeyondCredential` exists to close.
+ *
+ * **Neither comparison is written by hand.** `scopes.ts` records five earlier
+ * hand-rolled comparisons that disagreed with the real rule, and a sixth is
+ * recorded in the Raycast extension's own notes. Both of the two here are
+ * that file's own functions, over the same resolvers the request path runs.
  */
 import {
+  firstReachBeyondMap,
   grantCoversScope,
+  GLOBAL_TYPE_WILDCARD,
+  typeMatchesPattern,
   type EdgePermission,
   type ExtensionPermission,
   type MetadataPermission,
+  type ProfilePermission,
   type TypePermission,
 } from "@withmarfa/shared";
 
@@ -40,6 +51,7 @@ export interface RequestedReach {
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
   extension_permissions?: Record<string, ExtensionPermission>;
+  profile_permissions?: Record<string, ProfilePermission>;
 }
 
 /**
@@ -66,46 +78,87 @@ export interface RequestedReach {
  * grant, so this is the common path rather than an edge case.
  */
 export function scopeForEntry(
-  family: "type" | "edge" | "metadata",
+  family: "type" | "edge" | "metadata" | "profile",
   key: string,
   level: string,
 ): string | null {
   if (level === "none") return null;
   if (family === "type") return `${key}:${level}`;
   if (family === "edge") return `edge.${key}:${level}`;
+  if (family === "profile") {
+    return key === "*" ? `profile:${level}` : `profile.${key}:${level}`;
+  }
   return key === "*" ? `metadata:${level}` : `metadata.${key}:${level}`;
 }
 
 /**
- * The scope literals a credential's own permission maps confer.
+ * The first reach the request asks for that the credential does not itself
+ * hold, or null when the credential covers all of it.
  *
- * A session arrives holding scopes and a key arrives holding maps, and the
- * ceiling has to be the same question of both. Projecting the maps back into
- * literals is what makes that possible: from here on there is one comparison,
- * through `grantCoversScope`, rather than a second hand-rolled rule for keys —
- * which is the sixth hand-rolled comparison this file's own header warns
- * against writing.
+ * **Projecting a credential's maps into scope literals and reusing
+ * `grantCoversScope` was the obvious way to write this, and it is unsound.**
+ * A map entry at `none` names no literal, so the projection drops it — and on
+ * the requesting side that is correct, because asking for nothing cannot
+ * exceed anything. On the *holding* side it is a hole. An exact entry outranks
+ * every wildcard, so `{"*":"read","system.credential":"none"}` denies that row
+ * rather than omitting it, and that map is what an ordinary `content:read`
+ * grant projects to. Reduced to `["*:read"]` the denials are gone, and a child
+ * asking for `{"*":"read"}` — which reads as a no-op — resolves `read` on rows
+ * its parent was refused.
  *
- * Lossy in exactly one direction, and safely. A map entry at `none` produces
- * no literal, so it confers nothing, which is what `none` means. Extensions
- * are absent because no literal expresses one; they are clamped by the direct
- * map comparison in `firstUncoveredExtension` instead, which a key's creator
- * can answer and a grant cannot.
+ * A second failure came free with the same projection: a `type_permissions`
+ * key of `metadata` produced the literal `metadata:write`, which parses into
+ * the metadata family, so a type entry conferred a metadata grant.
+ *
+ * `firstReachBeyondMap` compares the two maps by what they resolve to rather
+ * than by what either lists, per axis, so neither can happen. Extensions are
+ * not an axis there — no literal names a namespace — and stay a direct map
+ * comparison in `firstUncoveredExtension`.
  */
-export function scopesHeldByMaps(held: RequestedReach): string[] {
-  const scopes: string[] = [];
-  const families = [
-    ["type", held.type_permissions],
-    ["edge", held.edge_permissions],
-    ["metadata", held.metadata_permissions],
+export function firstReachBeyondCredential(
+  held: RequestedReach,
+  requested: RequestedReach,
+): string | null {
+  const axes = [
+    ["type", held.type_permissions, requested.type_permissions],
+    ["edge", held.edge_permissions, requested.edge_permissions],
+    ["metadata", held.metadata_permissions, requested.metadata_permissions],
+    ["profile", held.profile_permissions, requested.profile_permissions],
   ] as const;
-  for (const [family, map] of families) {
-    for (const [key, level] of Object.entries(map ?? {})) {
-      const scope = scopeForEntry(family, key, level);
-      if (scope !== null) scopes.push(scope);
+  for (const [axis, heldMap, requestedMap] of axes) {
+    const key = firstReachBeyondMap(axis, heldMap, requestedMap);
+    if (key === null) continue;
+    // The witness may be a key only the held map named, in which case the
+    // level to report is what the request resolves there — which is the reach
+    // being refused, and is never `none` or the witness would not have been
+    // returned.
+    const level = resolveRequestedLevel(axis, requestedMap, key);
+    return scopeForEntry(axis, key, level) ?? `${key}:${level}`;
+  }
+  return null;
+}
+
+/** What the requested map gives at one key, for the refusal message alone. */
+function resolveRequestedLevel(
+  axis: "type" | "edge" | "metadata" | "profile",
+  requested: Record<string, string> | undefined,
+  key: string,
+): string {
+  const map = requested ?? {};
+  const exact = map[key];
+  if (exact !== undefined && exact !== "none") return exact;
+  // Reached through a wildcard rather than named. `write` is the honest
+  // ceiling to report: it is the most the wildcard could have conferred, and
+  // the message is about breadth rather than about an exact level.
+  const wildcard = map[GLOBAL_TYPE_WILDCARD];
+  if (wildcard !== undefined && wildcard !== "none") return wildcard;
+  if (axis === "type") {
+    for (const [pattern, level] of Object.entries(map)) {
+      if (level === "none") continue;
+      if (typeMatchesPattern(key, pattern)) return level;
     }
   }
-  return scopes;
+  return "write";
 }
 
 /**
@@ -157,6 +210,9 @@ export function firstUncoveredScope(
     ["type", requested.type_permissions],
     ["edge", requested.edge_permissions],
     ["metadata", requested.metadata_permissions],
+    // Profile is measurable against a grant — `profile:<verb>` and
+    // `profile.<row>:<verb>` are real literals — and was not being measured.
+    ["profile", requested.profile_permissions],
   ] as const;
   for (const [family, map] of families) {
     for (const [key, level] of Object.entries(map ?? {})) {

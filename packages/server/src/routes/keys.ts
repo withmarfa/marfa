@@ -11,10 +11,10 @@ import {
 import type { Context } from "hono";
 import type { AppEnv } from "../middleware/auth.js";
 import {
+  firstReachBeyondCredential,
   firstUncoveredExtension,
   firstUncoveredScope,
   refuseUnclampableExtensions,
-  scopesHeldByMaps,
   type RequestedReach,
 } from "../auth/mint-clamp.js";
 import {
@@ -357,7 +357,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`.",
+    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds, the operator key excepted, since running the instance sits outside the permission model. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -513,9 +513,9 @@ function refuseSessionReachAboveGrant(
  * Refuse a key-minted key that reaches past the key that minted it.
  *
  * The sibling of `refuseSessionReachAboveGrant`, asking one question of a
- * different carrier: a session holds scopes, a key holds maps, and
- * `scopesHeldByMaps` projects the second into the first so both go through
- * `grantCoversScope`.
+ * different carrier: a session holds scopes and a key holds maps, and the two
+ * are compared by the rule that fits each — see `mint-clamp.ts`, where turning
+ * the second into the first is recorded as the unsound move it is.
  *
  * **The operator key is exempt because it has nothing to be measured against.**
  * Running the instance is fenced outside the permission model, so its maps are
@@ -544,12 +544,79 @@ function refuseKeyReachAboveCreator(
     );
   }
 
-  const uncovered = firstUncoveredScope(scopesHeldByMaps(creator), requested);
+  const uncovered = firstReachBeyondCredential(creator, requested);
   if (uncovered !== null) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       `This credential does not hold ${uncovered}, so it cannot give a key reach it does not hold itself.`,
       { required_scope: uncovered },
+    );
+  }
+}
+
+/**
+ * Refuse an edit that widens a key an app made.
+ *
+ * A key minted through a sign-in carries the app that minted it, and the
+ * consent screen's promise about that key is that it holds what the app held
+ * and never more. The mint clamp is only half of keeping that promise: the
+ * permission maps are writable through `PATCH` a moment later, and the person
+ * who signed in can reach that door with their own credential. Without this,
+ * "an app cannot make a key wider than itself" means "an app cannot make a
+ * key wider than itself in one step".
+ *
+ * **Absolute, with no exemption for the operator key.** Every other ceiling
+ * here measures a caller against what the caller holds, so the operator key
+ * falls outside it by having nothing to measure. This one is a property of
+ * the key rather than of whoever is editing it: the guarantee is worth
+ * something to a person reading the consent screen only if there is no
+ * credential anywhere that can quietly lift it. Narrowing stays open to
+ * everyone, because the promise is a ceiling and not a fixed shape.
+ *
+ * The key's own current set is the ceiling, so the comparison is the one the
+ * mint already makes, with `existing` in the creator's place — which is only
+ * true because that comparison is a map against a map. Measuring the ceiling
+ * by the literals it confers loses every `none` entry, and a `none` on the
+ * holding side is a denial rather than an absence; `mint-clamp.ts` carries
+ * the reasoning.
+ */
+function refuseWideningAnAppsKey(
+  existing: ApiKey,
+  requested: RequestedReach,
+  requestedSpacePermissions: SpacePermission[] | undefined,
+): void {
+  if (existing.oauth_client_id === undefined) return;
+
+  const fixed =
+    "This key was created by an app, so it holds what that app held and is never widened afterwards.";
+
+  const namespace = firstUncoveredExtension(
+    existing.extension_permissions,
+    requested.extension_permissions,
+  );
+  if (namespace !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not hold the ${namespace} extension namespace. Narrow it, or create a key of your own.`,
+    );
+  }
+
+  const uncovered = firstReachBeyondCredential(existing, requested);
+  if (uncovered !== null) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not hold ${uncovered}. Narrow it, or create a key of your own.`,
+      { required_scope: uncovered },
+    );
+  }
+
+  const held = existing.space_permissions ?? [];
+  const beyond = requestedSpacePermissions?.find((p) => !held.includes(p));
+  if (beyond !== undefined) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      `${fixed} It does not hold ${beyond}. Narrow it, or create a key of your own.`,
+      { required_scope: beyond },
     );
   }
 }
@@ -681,6 +748,7 @@ export function keyRoutes(storage: Storage, salt: string) {
       edge_permissions: body.edge_permissions,
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
+      profile_permissions: body.profile_permissions,
     };
     // **The ceiling is asked of every creator, not only of a session.** A
     // session is measured against its granted scopes; a key is measured against
@@ -893,7 +961,20 @@ export function keyRoutes(storage: Storage, salt: string) {
       edge_permissions: body.edge_permissions,
       metadata_permissions: body.metadata_permissions,
       extension_permissions: body.extension_permissions,
+      profile_permissions: body.profile_permissions,
     };
+    const requestedSpacePermissions =
+      body.space_permissions?.filter(isSpacePermission);
+
+    // Before the caller's own ceiling, because it is the more specific answer:
+    // a caller who both lacks the reach and is editing an app's key is better
+    // told that this key can never hold more than told what it does not hold.
+    refuseWideningAnAppsKey(
+      existing,
+      requestedReach,
+      requestedSpacePermissions,
+    );
+
     if (c.get("authType") === "oauth") {
       refuseSessionReachAboveGrant(
         c.get("oauthGrant")?.scopes ?? [],
@@ -906,8 +987,6 @@ export function keyRoutes(storage: Storage, salt: string) {
     // **The space permissions are clamped here too, and were not.** They are
     // editable through this door like any other family, so a key holding one
     // permission could have given itself the other ten.
-    const requestedSpacePermissions =
-      body.space_permissions?.filter(isSpacePermission);
     if (requestedSpacePermissions !== undefined && !hasOperatorAuthority(key)) {
       const held = key.space_permissions ?? [];
       const beyond = requestedSpacePermissions.find(

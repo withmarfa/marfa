@@ -831,7 +831,8 @@ exports[`every gallery variant renders > renders 'auth/keys/default' 1`] = `
     <div data-list-view>
       <p class="sub">Keys let the Marfa API and command line act on your behalf. Signed in as <strong>jonah@example.com</strong>.</p>
       
-      <div class="row">
+      <p class="lsec">Your keys</p>
+<div class="row">
               <div class="row__main">
                 <div class="row__title">Personal laptop</div>
                 <div class="row__meta">Added 10 May 2026</div>
@@ -848,6 +849,38 @@ exports[`every gallery variant renders > renders 'auth/keys/default' 1`] = `
                 <div class="row__meta row__meta--faint">Not used yet</div>
               </div>
               <form method="POST" action="/auth/keys/key-2/revoke" class="row__action">
+                <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
+              </form>
+            </div>
+<p class="lsec">Made by Obsidian Sync</p>
+<div class="row">
+              <div class="row__main">
+                <div class="row__title">Sync</div>
+                <div class="row__meta">Added 2 Feb 2026</div>
+                <div class="row__meta row__meta--faint">Last used 10 Jun 2026</div>
+              </div>
+              <form method="POST" action="/auth/keys/key-5/revoke" class="row__action">
+                <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
+              </form>
+            </div>
+<p class="lsec">Made by Raycast</p>
+<div class="row">
+              <div class="row__main">
+                <div class="row__title">Raycast</div>
+                <div class="row__meta">Added 12 May 2026</div>
+                <div class="row__meta row__meta--faint">Last used 19 Jun 2026</div>
+              </div>
+              <form method="POST" action="/auth/keys/key-3/revoke" class="row__action">
+                <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
+              </form>
+            </div>
+<div class="row">
+              <div class="row__main">
+                <div class="row__title">Raycast (second device)</div>
+                <div class="row__meta">Added 1 Jun 2026</div>
+                <div class="row__meta row__meta--faint">Not used yet</div>
+              </div>
+              <form method="POST" action="/auth/keys/key-4/revoke" class="row__action">
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>
@@ -1357,6 +1390,7 @@ exports[`every gallery variant renders > renders 'auth/security/default' 1`] = `
                 <div class="row__meta row__meta--faint">Last used 18 Jun 2026</div>
               </div>
               <form method="POST" action="/auth/grants/grant-1/revoke" class="row__action">
+                <label class="row__meta"><input type="checkbox" name="revoke_keys" value="1" checked> Also revoke the 2 API keys this app made</label>
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>
@@ -1367,6 +1401,7 @@ exports[`every gallery variant renders > renders 'auth/security/default' 1`] = `
                 <div class="row__meta row__meta--faint">Connected 11 Apr 2026</div>
               </div>
               <form method="POST" action="/auth/grants/grant-2/revoke" class="row__action">
+                
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>
@@ -1377,6 +1412,7 @@ exports[`every gallery variant renders > renders 'auth/security/default' 1`] = `
                 <div class="row__meta row__meta--faint">Last used 19 Jun 2026</div>
               </div>
               <form method="POST" action="/auth/grants/grant-3/revoke" class="row__action">
+                
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>
@@ -1387,6 +1423,7 @@ exports[`every gallery variant renders > renders 'auth/security/default' 1`] = `
                 <div class="row__meta row__meta--faint">Connected 14 Jan 2026</div>
               </div>
               <form method="POST" action="/auth/grants/grant-4/revoke" class="row__action">
+                
                 <button type="submit" class="btn btn--outline btn--sm">Revoke</button>
               </form>
             </div>
