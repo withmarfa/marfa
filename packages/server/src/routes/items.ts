@@ -16,6 +16,7 @@ import {
   SYSTEM_DEFAULT_STATE,
   validateTransition,
   hasBoundedLifecycle,
+  softDeleteState,
   resolveEnforcement,
   isTypeInStrictMode,
   getSourceAllowlist,
@@ -2992,7 +2993,12 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, targetItem.type, "write");
-    refuseUnlessUninstalled(targetItem);
+    // **No live-connection refusal on the named row.** `requireTypeAccess`
+    // above refuses a `system.connection` write to every credential the
+    // product can mint, so a refusal here could never answer. The cascade
+    // below is a different matter and keeps its check: the type gate ran
+    // against the row named in the URL, and a `parent-of` edge can carry a
+    // connection out through a delete of something else entirely.
     // D64: an integration may only destroy what it wrote. Trashing a sibling
     // connection's corpus was the destructive half D63 left open — the
     // property write was refused and the delete was not, which is the
@@ -3267,21 +3273,28 @@ export function itemRoutes(storage: Storage) {
     // Two doors refuse one operation, and reading only the second one sends
     // you somewhere there is nothing to find.
     //
-    // Purging is trash-then-purge, so a caller meets `DELETE /items/{id}`
-    // first. For a reserved-namespace row a space-scoped credential is
-    // refused there, by name: "only the operator key may write marfa.*
-    // items". The row therefore never becomes trashed, and this door then
-    // answers "Only trashed items can be purged" — which is true, and reads
-    // as an ordering mistake the caller did not make. Somebody following it
-    // goes looking for the trash step they think they skipped.
+    // Purging is soft-delete-then-purge, so a caller meets `DELETE
+    // /items/{id}` first. For a reserved-namespace row every credential is
+    // refused there, by name: "only the operator key may write system.*
+    // items". The row therefore never reaches its soft-deleted state, and
+    // this door would answer "Only revoked items can be purged", which is
+    // true and reads as an ordering mistake the caller did not make.
+    // Somebody following it goes looking for a step they never skipped.
+    // Asking the write rule here names the real reason instead, and runs
+    // only where the purge was going to be refused anyway.
     //
-    // Asking the write rule on the not-trashed path names the real reason
-    // and changes nothing else: a trashed row is purged exactly as before,
-    // so a reserved-namespace item the operator key already trashed is
-    // still purgeable, and the caller who genuinely forgot to trash first
-    // still gets the message about trashing. This runs only where the purge
-    // was going to be refused anyway.
-    if (purgeTarget && purgeTarget.state !== "trashed") {
+    // **The state compared is the type's own, never the literal `trashed`.**
+    // `softDeleteState` resolves `revoked` for a type with a bounded
+    // lifecycle, which `system.connection` has, so a literal comparison sent
+    // every revoked connection down this branch to be refused by the write
+    // rule that no credential passes. That left the rows uninstall produces
+    // permanently unpurgeable. `items.purge` gates on the same derived
+    // state, and the two have to agree or one of them refuses what the
+    // other admits.
+    if (
+      purgeTarget &&
+      purgeTarget.state !== softDeleteState(purgeTarget.type)
+    ) {
       checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
     }
 
