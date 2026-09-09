@@ -868,7 +868,7 @@ describe("POST /types — publisher-tier handle ownership", () => {
     expect(res.status).toBe(201);
   });
 
-  it("binds the operator key too, which used to be exempt", async () => {
+  it("the publisher rule answers for a credential the operator key can no longer mint", async () => {
     // The exemption was asked after the metadata map, so it needed a
     // credential holding `metadata.types:write` and `is_operator` at once.
     // The row constraint makes `is_operator` and space-less the same thing
@@ -885,6 +885,9 @@ describe("POST /types — publisher-tier handle ownership", () => {
       },
     });
     expect(minted.status).toBe(403);
+    expect(
+      ((await minted.json()) as { error: { message: string } }).error.message,
+    ).toContain("A credential with no space is the operator tier");
 
     // Through the door with a credential that does hold `metadata.types`,
     // which is what pins the removal: the publisher rule now answers for it

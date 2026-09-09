@@ -1011,6 +1011,16 @@ export function keyRoutes(
       // The bootstrap key takes nothing, because it is the operator key: the
       // instance tier is fenced outside the model rather than expressed as a
       // full set inside it.
+      // One declaration of what the body asks for, read by all three
+      // ceilings below. A sixth permission family added to only one of them
+      // would fail open in whichever was missed.
+      const requested = {
+        type_permissions: body.type_permissions,
+        edge_permissions: body.edge_permissions,
+        metadata_permissions: body.metadata_permissions,
+        extension_permissions: body.extension_permissions,
+        profile_permissions: body.profile_permissions,
+      };
       const callerHeldSpacePermissions: SpacePermission[] = isBootstrap
         ? []
         : mintingFromSession
@@ -1021,10 +1031,14 @@ export function keyRoutes(
 
       // **The new key's space is the caller's, so a caller with none mints a
       // credential with none**, which is the operator tier and holds nothing.
-      // Derived from the space rather than from the caller's operator flag so
-      // the code says what it means: the two agree for a key by the row
-      // constraint, and a bearer admitted without a space would otherwise
-      // reach the insert and be turned away by that constraint as a 500.
+      // Derived from the space the minted key will have rather than from the
+      // caller's operator flag, so the code says what it means. The two agree
+      // for a key by the row constraint; they part for a bearer admitted with
+      // no space, which is the keys-mode gap `middleware/auth.ts` records
+      // against itself. Such a bearer now reads the refusal below when it
+      // names reach, instead of reaching the insert; a request from one that
+      // names nothing still meets the row constraint there, and closing that
+      // is the bearer change rather than this one.
       //
       // Asked ahead of the two ceilings below because it is the more specific
       // answer. Either would refuse a named permission first, with a message
@@ -1032,16 +1046,7 @@ export function keyRoutes(
       // tier is exactly what is not true.
       const mintsASpacelessKey = !isBootstrap && !c.get("apiKey")?.space_id;
       if (mintsASpacelessKey) {
-        refuseReachOnASpacelessKey(
-          {
-            type_permissions: body.type_permissions,
-            edge_permissions: body.edge_permissions,
-            metadata_permissions: body.metadata_permissions,
-            extension_permissions: body.extension_permissions,
-            profile_permissions: body.profile_permissions,
-          },
-          requestedSpacePermissions,
-        );
+        refuseReachOnASpacelessKey(requested, requestedSpacePermissions);
       }
 
       if (requestedSpacePermissions !== undefined) {
@@ -1067,13 +1072,6 @@ export function keyRoutes(
           ? []
           : (requestedSpacePermissions ?? callerHeldSpacePermissions);
 
-      const requested = {
-        type_permissions: body.type_permissions,
-        edge_permissions: body.edge_permissions,
-        metadata_permissions: body.metadata_permissions,
-        extension_permissions: body.extension_permissions,
-        profile_permissions: body.profile_permissions,
-      };
       // **The ceiling is asked of every creator, not only of a session.** A
       // session is measured against its granted scopes; a key is measured against
       // the literals its own maps confer, which is the same question through the

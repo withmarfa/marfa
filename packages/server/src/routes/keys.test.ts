@@ -1616,6 +1616,56 @@ describe("POST /keys — space binding", () => {
     expect(row?.details).toMatchObject({ platform_tier: true });
   });
 
+  it("hands down nothing from an operator key that already holds something", async () => {
+    // The guard measures the request body and this asserts what the row is
+    // built from: a mint naming no reach at all takes the creator's whole
+    // set, so a body carrying only a label would have copied whatever the
+    // caller held. An instance that ran the build where an operator key
+    // could be widened may hold exactly such a caller, and the migration
+    // that clears those rows does not reach a self-hoster who has not
+    // upgraded yet.
+    //
+    // Seeded through the store, because no door writes this shape any more.
+    // The row constraint ties `space_id` to `is_operator` and says nothing
+    // about the maps, which is the gap the forcing closes.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const rawWide = `marfa_k1_wide_operator_${suffix}`;
+    await hostedCtx.storage.keys.create(
+      {
+        label: `wide-operator-${suffix}`,
+        source: `wide-operator-${suffix}`,
+        default_tier: "library",
+        is_operator: true,
+        type_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+        metadata_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        profile_permissions: { "*": "write" },
+        space_permissions: ["space.keys"],
+      },
+      hashApiKey(rawWide, TEST_API_KEY_SALT),
+      undefined,
+    );
+
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: rawWide,
+      body: {
+        label: `inherits-nothing-${suffix}`,
+        source: `inherits-nothing-${suffix}`,
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.space_id ?? null).toBeNull();
+    expect(stored?.type_permissions).toEqual({});
+    expect(stored?.edge_permissions).toEqual({});
+    expect(stored?.metadata_permissions).toEqual({});
+    expect(stored?.extension_permissions).toEqual({});
+    expect(stored?.profile_permissions).toEqual({});
+    expect(stored?.space_permissions).toEqual([]);
+  });
+
   it("mints the two-hop credential chain a black-box client relies on", async () => {
     // The conformance suite provisions with the operator key and then runs as
     // a space-bound credential minted into the run's own space, which mints

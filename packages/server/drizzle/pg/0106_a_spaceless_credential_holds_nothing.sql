@@ -14,9 +14,13 @@
 -- the same change; this clears the ones an instance may already hold, because
 -- a rule the code enforces and the data contradicts is not a rule.
 --
--- Revoked rows are cleared too. They cannot authenticate, but leaving a wide
--- map on them would leave the estate holding a shape that is no longer
--- writable, which is exactly what makes the next reader doubt the rule.
+-- Revoked rows are cleared too, and that is a trade rather than a tidy-up. A
+-- revoked credential's stored maps are a record of what it could reach while
+-- it was live, which is what an incident review would want. They are also the
+-- weaker copy of that record: the audit trail already carries every mint and
+-- every edit, with the fields each one touched, and it is immutable where a
+-- column is not. What a column can do instead is make the next reader doubt
+-- the rule, by leaving the estate holding a shape nothing can write any more.
 UPDATE "api_keys"
 SET type_permissions      = '{}',
     edge_permissions      = '{}',

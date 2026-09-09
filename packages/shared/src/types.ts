@@ -312,10 +312,10 @@ export interface ApiKey {
   item_source?: string;
   /**
    * Operator-key gate. When `true`, the credential passes the fence in front
-   * of the reserved-namespace types (`core.*`, `system.*`, `marfa.*`) — and
-   * meets its own empty type map immediately after, which is what actually
-   * closes those writes to everything. It does not admit reserved-namespace
-   * registration:
+   * of the reserved-namespace types (`system.*` and `marfa.*`; `core.*` is
+   * user-facing and carries no fence) — and meets its own empty type map
+   * immediately after, which is what actually closes those writes to
+   * everything. It does not admit reserved-namespace registration:
    * `POST /types` refuses a reserved-root type for every credential, the
    * operator key included — those types arrive with the build. The first
    * credential created at server install is the seed operator key; only an

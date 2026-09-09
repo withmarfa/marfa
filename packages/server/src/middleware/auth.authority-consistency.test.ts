@@ -382,7 +382,7 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Extensions — the reserved-namespace gate reads the operator flag
+// Extensions — the reserved namespaces are closed to every credential
 // ---------------------------------------------------------------------------
 
 describe("extensions — the reserved namespaces are nobody's", () => {
