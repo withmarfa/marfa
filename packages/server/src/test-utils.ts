@@ -228,8 +228,12 @@ export async function closeTestContexts(
  *
  * @param scopes literal scope strings (e.g. `["core.note:read"]`)
  * @param opts.clientName    visible client name (defaults to "Test App")
- * @param opts.spaceId      space for the system.connection item
- *                           (defaults to undefined — keys-mode self-host)
+ * @param opts.spaceId      the space to bind the token to. Omitted, it
+ *                           resolves the instance's one space, which is what
+ *                           issuance does; a fixture that skipped that minted
+ *                           a token no deployment can produce. Pass `null`
+ *                           deliberately for the unbound shape, which the
+ *                           middleware refuses.
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
  * @param opts.seedUserRow   Seed a `users` row bound to the `auth_user`, so
@@ -244,7 +248,7 @@ export async function seedOauthBearer(
   scopes: string[],
   opts: {
     clientName?: string;
-    spaceId?: string;
+    spaceId?: string | null;
     authUserId?: string;
     seedUserRow?: boolean;
   } = {},
@@ -257,6 +261,22 @@ export async function seedOauthBearer(
       "seedOauthBearer requires storage.oauthProvider + betterAuthDb",
     );
   }
+
+  // **Bound the way issuance binds.** A token whose `reference_id` is NULL is
+  // refused by the middleware in either mode, because a space-less bearer is
+  // a principal the storage layer applies no space predicate to. Omitting the
+  // space here used to produce exactly that, so a fixture minted a token no
+  // deployment can issue and every test through it authenticated as something
+  // the product cannot make. `null` still means unbound, for the cases that
+  // are about the refusal.
+  const boundSpaceId =
+    opts.spaceId === undefined
+      ? await (async () => {
+          const spaces = (await storage.spaces?.list()) ?? [];
+          const [only] = spaces;
+          return spaces.length === 1 && only ? only.id : undefined;
+        })()
+      : (opts.spaceId ?? undefined);
 
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const clientPk = `client_pk_${Math.random().toString(36).slice(2, 10)}`;
@@ -340,7 +360,12 @@ export async function seedOauthBearer(
       },
       source: "test/oauth-bearer",
     },
-    opts.spaceId,
+    // **The projection item stays where the caller put it, which is normally
+    // nowhere.** A `system.connection` row with `kind: "app"` is a grant
+    // projection, and the provider store resolves those space-less on
+    // purpose — the keys-mode migration excludes them from its move for the
+    // same reason. Only the token's `reference_id` binds to a space.
+    opts.spaceId ?? undefined,
   );
 
   // Mint the token pair via the plugin's storage helper. Hash the BARE
@@ -361,7 +386,7 @@ export async function seedOauthBearer(
     ),
     clientId,
     authUserId,
-    referenceId: opts.spaceId ?? null,
+    referenceId: boundSpaceId ?? null,
     scopes,
     accessTtlMs: 3600_000,
   });

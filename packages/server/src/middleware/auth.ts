@@ -298,11 +298,15 @@ export function _clearOAuthLastUsedCacheForTesting(): void {
 // Auth middleware
 // ---------------------------------------------------------------------------
 
-export function authMiddleware(
-  storage: Storage,
-  salt: string,
-  authMode: "keys" | "hosted" = "keys",
-) {
+/**
+ * **The deployment mode is not a parameter here any more, and that is the
+ * point.** It was one so that a space-less bearer could be tolerated in keys
+ * mode and refused in hosted, which was the last place in this file where
+ * what a caller may do depended on how the instance was configured rather
+ * than on the credential in hand. Keys mode has a space now, so the answer is
+ * the same in both and there is nothing left to branch on.
+ */
+export function authMiddleware(storage: Storage, salt: string) {
   // Bounded LRU keyed by `key:<api-key-id>` for the stored-key path.
   // OAuth grants get their throttle from `oauthLastUsedCache` (module-
   // scoped) so route-handler stampers can share the same window.
@@ -385,20 +389,20 @@ export function authMiddleware(
       // Space id from the plugin's referenceId column (= our clientReference
       // output, which returns the user's space_id at consent time).
       const oauthSpaceId = oauthToken.referenceId ?? undefined;
-      // A NULL reference binds the token to no space, which is never a
-      // valid credential shape: the storage layer drops its space predicate
-      // for a space-less caller, so honoring the token would hand the reach
-      // of the operator key to whatever consent gap produced it.
+      // **A NULL reference binds the token to no space, and that is never a
+      // valid credential shape in either mode.** The storage layer drops its
+      // space predicate for a space-less caller, so honoring the token would
+      // hand the reach of the operator key to whatever consent gap produced
+      // it. Refuse like any other unresolvable bearer.
       //
-      // **The `hosted` condition is a known gap and is not a justification.**
-      // It was written when keys mode bound nothing to a space, so a
-      // space-less bearer there was the only shape there was. Keys mode has
-      // a space now, and `resolveSpaceIdForAuthUser` still answers
-      // `undefined` without a `users` store — so a keys-mode deployment with
-      // better-auth wired issues tokens this branch then admits space-less.
-      // Closing it needs issuance to bind the token to the instance's one
-      // space, which is a change to the provider rather than to this line.
-      if (authMode === "hosted" && oauthSpaceId === undefined) {
+      // This used to be conditioned on hosted mode, because keys mode bound
+      // nothing to a space and a space-less bearer there was the only shape
+      // there was. Keys mode has a space now and issuance binds to it, so the
+      // exemption became a hole rather than a carve-out: a keys-mode
+      // deployment with better-auth wired issued tokens this branch then
+      // admitted space-less, and the row constraint that makes space-less
+      // mean operator does not reach a principal built in memory.
+      if (oauthSpaceId === undefined) {
         c.set("apiKey", undefined);
         c.set("authType", undefined);
         return next();

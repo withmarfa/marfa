@@ -379,9 +379,24 @@ export async function resolveSpaceIdForAuthUser(
   storage: Storage,
   authUserId: string,
 ): Promise<string | undefined> {
-  if (!storage.users) return undefined;
-  const user = await storage.users.getByAuthUserId(authUserId);
-  return user?.space_id ?? undefined;
+  if (storage.users) {
+    const user = await storage.users.getByAuthUserId(authUserId);
+    return user?.space_id ?? undefined;
+  }
+  // **No user store is keys mode, and keys mode has one space.** This used to
+  // answer `undefined` there, on the reasoning that a self-host bound nothing
+  // to a space so a token binding to none was the only shape available. That
+  // stopped being true when keys mode got a space: a token with no space
+  // becomes a principal the storage layer applies no space predicate to,
+  // which is the reach of the operator key handed to whatever app the person
+  // consented to.
+  //
+  // Exactly one, or nothing. Two spaces is a state nothing here can choose
+  // between, and issuing against a guess would bind the token to whichever
+  // the store happened to return first.
+  const spaces = (await storage.spaces?.list()) ?? [];
+  const [only] = spaces;
+  return spaces.length === 1 && only ? only.id : undefined;
 }
 
 // ---------------------------------------------------------------------------

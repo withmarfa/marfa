@@ -208,7 +208,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
    *  test, so nothing else should be able to explain the answer. */
   function probeApp() {
     const app = new Hono<AppEnv>();
-    app.use("*", authMiddleware(ctx.storage, TEST_API_KEY_SALT, "hosted"));
+    app.use("*", authMiddleware(ctx.storage, TEST_API_KEY_SALT));
     app.get("/probe", (c) =>
       c.json({
         authType: c.get("authType") ?? null,
@@ -257,7 +257,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
       { seedUserRow: true, spaceId },
     );
     const app = new Hono<AppEnv>();
-    app.use("*", authMiddleware(ctx.storage, TEST_API_KEY_SALT, "hosted"));
+    app.use("*", authMiddleware(ctx.storage, TEST_API_KEY_SALT));
     app.get("/probe", (c) => {
       const key = c.get("apiKey");
       return c.json({
