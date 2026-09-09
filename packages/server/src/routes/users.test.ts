@@ -25,7 +25,7 @@ const SALT = "test-salt";
 //
 // Legacy `POST /auth/signup` + `POST /auth/session` retired — Better Auth
 // at `/auth/sign-up/email` is the canonical sign-up surface. Tests below
-// mint user + space + admin key directly through storage rather than
+// mint user + space + a working key directly through storage rather than
 // driving signup as the test-fixture path.
 interface HostedContext {
   app: Hono<AppEnv>;

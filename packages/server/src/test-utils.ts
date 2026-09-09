@@ -87,7 +87,7 @@ export interface TestContext {
    * A credential bound to `spaceId`, holding every space permission and
    * writing every content family — an ordinary working key, and what a
    * self-hoster is handed alongside the operator key. This is the suite's
-   * working credential: content, space administration, everything but the
+   * working credential: content, the space permissions, everything but the
    * instance routes.
    */
   spaceKey: string;

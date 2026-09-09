@@ -501,7 +501,8 @@ const PLATFORM_TIER_MEMBERSHIP: Readonly<Record<NamespaceTier, boolean>> = {
 
 /**
  * The tiers the platform owns outright — exactly the three that `POST /types`
- * and an archive restore refuse for every credential, platform included. An
+ * and an archive restore refuse for every credential, the operator key
+ * included. An
  * id under one of them can only have arrived by being seeded, never by being
  * registered, which is what lets a caller classify one by name alone.
  *

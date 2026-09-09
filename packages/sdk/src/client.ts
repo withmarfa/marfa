@@ -318,7 +318,7 @@ export interface MetadataInput {
 }
 
 /**
- * Compact API-key summary returned by the admin keys-list route. The
+ * Compact API-key summary returned by the instance keys-list route. The
  * full `ApiKey` shape carries permission maps; the operator surface
  * deliberately surfaces only the identifying fields + timestamps needed
  * for emergency revocation.
@@ -2216,8 +2216,8 @@ export class MarfaClient {
      * JSON install of an Integration manifest — server-side sibling of
      * the browser consent flow at `POST /integrations/:id/install`.
      * Skips the HTML consent screen so operators and tooling can install
-     * connections non-interactively. Admin-only; space admins install
-     * into their own space scope.
+     * connections non-interactively. Takes the connections space
+     * permission, and installs into the caller's own space.
      *
      * `integration_id` references a `system.integration` item (registered
      * via `POST /integrations`).
@@ -2245,8 +2245,8 @@ export class MarfaClient {
      *
      * Idempotent at the artifact level — revoking already-revoked
      * tokens is a no-op — but rejects with 400 when the connection
-     * itself is already in state `revoked`. Admin-only; space admins
-     * can uninstall connections in their own space scope.
+     * itself is already in state `revoked`. Takes the connections space
+     * permission, and acts on the caller's own space.
      */
     uninstall: async (id: string): Promise<ConnectionUninstallResult> => {
       return this.transport.request<ConnectionUninstallResult>(
@@ -2343,19 +2343,19 @@ export class MarfaClient {
     },
 
     /** Per-space resource quotas. Empty / missing limits fall back to
-     *  the instance defaults from env. Quotas are platform-admin-managed. */
+     *  the instance defaults from env. Quotas are operator-managed. */
     quotas: {
       /**
        * Read the calling space's quota row. Resolves the space from
        * the bearer's `space_id`; rejects with 400 when the credential
-       * is space-less (platform admin, single-space self-host
-       * bootstrap). Use `getById` instead in that case.
+       * is space-less, which is the operator key and nothing else. Use
+       * `getById` instead in that case.
        */
       getOwn: async (): Promise<SpaceQuota> => {
         return this.transport.request<SpaceQuota>("GET", "/spaces/me/quotas");
       },
 
-      /** Read a specific space's quota row (platform admin only). */
+      /** Read a specific space's quota row (operator key only). */
       getById: async (spaceId: string): Promise<SpaceQuota> => {
         return this.transport.request<SpaceQuota>(
           "GET",
@@ -2363,7 +2363,7 @@ export class MarfaClient {
         );
       },
 
-      /** Replace a space's quota row (platform admin only). Pass null
+      /** Replace a space's quota row (operator key only). Pass null
        *  on a field to clear it (revert to env default). */
       set: async (
         spaceId: string,
@@ -2387,15 +2387,15 @@ export class MarfaClient {
   // ---- Admin ----
 
   /**
-   * Operator-level admin surface — the `my admin` CLI command tree's
-   * backing endpoints. Every method requires a platform-admin key
-   * (`is_operator: true`). Non-platform credentials get a `403
-   * forbidden`; render `"this command requires a platform-admin key"`
+   * The instance surface — the `marfa operator` CLI command tree's
+   * backing endpoints. Every method requires the operator key
+   * (`is_operator: true`). Every other credential gets a `403
+   * forbidden`; render `"this command requires the operator key"`
    * in CLI / UI layers.
    *
    * Quota read/write is intentionally NOT duplicated here — it lives on
-   * `client.spaces.quotas.{getById, set}` and is already platform-
-   * admin-gated. The admin namespace mirrors what the CLI's `my admin`
+   * `client.spaces.quotas.{getById, set}` and is already gated on the
+   * operator key. This namespace mirrors what the CLI's `marfa operator`
    * tree exposes; quotas are reached via the existing spaces surface.
    */
   readonly admin = {
@@ -2448,8 +2448,8 @@ export class MarfaClient {
       /**
        * Flip the space's status to `'suspended'`. Future non-GET
        * requests from credentials in the space return HTTP 403
-       * `space_suspended`. Reads pass through; platform-admin keys
-       * bypass. Idempotent.
+       * `space_suspended`. Reads pass through; the operator key
+       * bypasses. Idempotent.
        */
       suspend: async (spaceId: string): Promise<Space> => {
         return this.transport.request<Space>(
@@ -2492,12 +2492,12 @@ export class MarfaClient {
        * Mint a key bound to the named space. The raw key value is returned
        * exactly once, same as `client.keys.create`.
        *
-       * This is the route to reach for when a platform admin needs to issue
-       * a credential for someone else's space. `client.keys.create` always
-       * binds the new key to the *caller's* space, so a platform admin
-       * (which has none) cannot produce a space-bound key through it at
-       * all. `role` defaults to `member`; the route cannot mint a platform
-       * credential.
+       * This is the route to reach for when the operator needs to issue a
+       * credential for someone else's space. `client.keys.create` always
+       * binds the new key to the *caller's* space, and the operator key has
+       * none, so it cannot produce a space-bound key through that route at
+       * all. The mint takes everything in the named space unless the request
+       * asks for less, and the route cannot mint another operator key.
        */
       create: async (
         spaceId: string,

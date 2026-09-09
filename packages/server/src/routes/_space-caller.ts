@@ -64,9 +64,10 @@ export async function resolveSpaceCaller(
     // answering the question.
     //
     // It is also the whole gate now. There used to be a rank test in front of
-    // it, admitting a space admin or an operator flag before the permission was
-    // consulted at all; a bearer that cleared the rank and held nothing reached
-    // every surface behind this resolver. One question, asked once.
+    // it, admitting a caller on rank or on the operator flag before the
+    // permission was consulted at all; a bearer that cleared the rank and held
+    // nothing reached every surface behind this resolver. One question, asked
+    // once.
     requireSpacePermission(c, permission);
     return { apiKeyId: apiKey.id, spaceId: apiKey.space_id };
   }

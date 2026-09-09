@@ -1234,7 +1234,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       action: "key.create",
       resource_type: "key",
       resource_id: stored.id,
-      details: { issued_by_platform_admin: true },
+      details: { issued_by_operator_key: true },
     });
 
     return c.json(

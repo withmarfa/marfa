@@ -2498,7 +2498,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
     }
   });
 
-  it("admin keys still see every extension namespace", async () => {
+  it("a key holding every namespace still sees every extension", async () => {
     const id = await seedItemWithExtensions();
     const res = await request(ctx.app, "GET", `/items/${id}`, {
       key: ctx.spaceKey,

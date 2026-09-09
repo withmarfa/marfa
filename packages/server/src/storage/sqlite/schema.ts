@@ -653,10 +653,11 @@ export const auditLog = sqliteTable(
     key_id: text("key_id"),
     /**
      * Space scope. Stamped from the calling api key's `space_id`
-     * (or `null` for system-initiated audits / bootstrap-admin keys with no
-     * space). Reads filter by this column when the caller is space-scoped;
-     * keys without a space (the bootstrap credential) see all rows. Indexed
-     * because `GET /audit` filters here on every hosted-mode request.
+     * (or `null` for system-initiated audits and for the operator key, which
+     * has no space). Reads filter by this column when the caller is
+     * space-scoped; a space-less caller is the operator tier and sees all
+     * rows. Indexed because `GET /audit` filters here on every hosted-mode
+     * request.
      */
     space_id: text("space_id"),
     action: text("action").notNull(),

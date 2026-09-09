@@ -790,12 +790,12 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("admin-issued POST /keys emits `key.create`, not `key.bootstrap`", async () => {
-    // Self-contained — bootstrap a fresh app, then use the bootstrap
-    // admin to mint a second key on the now-closed (non-bootstrap)
-    // branch. Avoids depending on the shared `ctx` because freshApp()
-    // tests under PG truncate the shared container, which would wipe
-    // the ctx's admin key and sentinel between tests.
+  it("operator-issued POST /keys emits `key.create`, not `key.bootstrap`", async () => {
+    // Self-contained — bootstrap a fresh app, then use the first key it
+    // mints to mint a second on the now-closed (non-bootstrap) branch.
+    // Avoids depending on the shared `ctx` because freshApp() tests under
+    // PG truncate the shared container, which would wipe the ctx's key and
+    // sentinel between tests.
     const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const bootstrapRes = await request(app, "POST", "/keys", {
@@ -894,7 +894,7 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("concurrent unauthenticated POST /keys mints exactly one admin key", async () => {
+  it("concurrent unauthenticated POST /keys mints exactly one operator key", async () => {
     const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const N = 8;
@@ -1613,7 +1613,7 @@ describe("POST /keys — space binding", () => {
       (r) => r.data.some((row) => row.resource_id === minted.id),
     );
     const row = audits.data.find((r) => r.resource_id === minted.id);
-    expect(row?.details).toMatchObject({ platform_tier: true });
+    expect(row?.details).toMatchObject({ operator_tier: true });
   });
 
   it("hands down nothing from an operator key that already holds something", async () => {

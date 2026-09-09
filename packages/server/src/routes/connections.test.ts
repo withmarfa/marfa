@@ -67,10 +67,10 @@ async function installFresh(): Promise<{
   connectionId: string;
   credentialId: string;
 }> {
-  const adminKey = await ctx.storage.keys
+  const operatorKey = await ctx.storage.keys
     .list()
     .then((keys) => keys.find((k) => k.is_operator));
-  if (!adminKey) throw new Error("admin key not found in test ctx");
+  if (!operatorKey) throw new Error("operator key not found in test ctx");
 
   const integrationName = `acme/uninstall-route-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
   const integration = await ctx.storage.items.create(
@@ -89,7 +89,7 @@ async function installFresh(): Promise<{
   );
 
   const result = await performInstall(ctx.storage, {
-    apiKeyId: adminKey.id,
+    apiKeyId: operatorKey.id,
     spaceId: ctx.spaceId,
     integrationItemId: integration.id,
     manifest: manifest(integrationName),
@@ -512,10 +512,10 @@ function manifestWithItemEventTrigger(name: string): IntegrationManifest {
 async function installItemEventConnection(): Promise<{
   connectionId: string;
 }> {
-  const adminKey = await ctx.storage.keys
+  const operatorKey = await ctx.storage.keys
     .list()
     .then((keys) => keys.find((k) => k.is_operator));
-  if (!adminKey) throw new Error("admin key not found in test ctx");
+  if (!operatorKey) throw new Error("operator key not found in test ctx");
 
   const integrationName = `acme/preview-event-${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
   const integration = await ctx.storage.items.create(
@@ -533,7 +533,7 @@ async function installItemEventConnection(): Promise<{
     undefined,
   );
   const result = await performInstall(ctx.storage, {
-    apiKeyId: adminKey.id,
+    apiKeyId: operatorKey.id,
     spaceId: ctx.spaceId,
     integrationItemId: integration.id,
     manifest: manifestWithItemEventTrigger(integrationName),

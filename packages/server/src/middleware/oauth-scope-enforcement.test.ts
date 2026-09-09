@@ -58,10 +58,10 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:read"],
       });
 
-      // First seed an item via the admin key so there's something to read.
-      const admin = ctx.spaceKey;
+      // First seed an item via the space key so there's something to read.
+      const seeder = ctx.spaceKey;
       const created = await request(ctx.app, "POST", "/items", {
-        key: admin,
+        key: seeder,
         body: {
           type: "core.note",
           properties: { body: "hello" },

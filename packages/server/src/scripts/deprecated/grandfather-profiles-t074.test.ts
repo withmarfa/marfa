@@ -104,7 +104,7 @@ describe("grandfatherProfilesT074", () => {
     await ctx.cleanup();
   });
 
-  it("provisions space + users + admin key for an orphan auth_user row", async () => {
+  it("provisions space + users + key for an orphan auth_user row", async () => {
     const id = `auth_${randomBytes(4).toString("hex")}`;
     await insertAuthUser(ctx.storage, {
       id,
