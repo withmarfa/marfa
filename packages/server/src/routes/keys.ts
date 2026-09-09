@@ -599,6 +599,35 @@ function refuseReachOnASpacelessKey(
 }
 
 /**
+ * The reach an edit writes to a credential that holds nothing: empty where the
+ * body named a family, untouched where it did not.
+ *
+ * **The guard above refuses everything a `none` entry is not, and a `none`
+ * entry is the hole.** It is a denial rather than a request, so it names
+ * nothing and is skipped, exactly as the creator ceiling skips it. What
+ * reaches the store is then a non-empty map bound for a row the constraint
+ * says holds `{}`, and the caller reads a database refusal where a route
+ * answer belongs. The mint forces the same families empty for the same reason,
+ * and `PATCH` is that door a moment later.
+ *
+ * A family the body did not name stays `undefined`, which the stores read as
+ * "leave it alone". Rewriting one the request never mentioned would be a write
+ * the audit trail's field list does not account for.
+ */
+function nothingWhereNamed(requested: RequestedReach): RequestedReach {
+  return {
+    type_permissions: requested.type_permissions === undefined ? undefined : {},
+    edge_permissions: requested.edge_permissions === undefined ? undefined : {},
+    metadata_permissions:
+      requested.metadata_permissions === undefined ? undefined : {},
+    extension_permissions:
+      requested.extension_permissions === undefined ? undefined : {},
+    profile_permissions:
+      requested.profile_permissions === undefined ? undefined : {},
+  };
+}
+
+/**
  * Refuse a key-minted key that reaches past the key that minted it.
  *
  * The sibling of `refuseSessionReachAboveGrant`, asking one question of a
@@ -1367,9 +1396,18 @@ export function keyRoutes(
     // an operator caller named one — its own row included, which is the
     // shortest path there is from the instance tier to reach over every
     // space.
-    if (!existing.space_id) {
+    //
+    // Refused where the body asks for something, and written empty where it
+    // asks for nothing in a non-empty way: `nothingWhereNamed` carries which
+    // bodies take the second path and why the row constraint is not the right
+    // place to find out.
+    const targetHoldsNothing = !existing.space_id;
+    if (targetHoldsNothing) {
       refuseReachOnASpacelessKey(requestedReach, requestedSpacePermissions);
     }
+    const writtenReach = targetHoldsNothing
+      ? nothingWhereNamed(requestedReach)
+      : requestedReach;
 
     // **The space permissions are clamped here too, and were not.** They are
     // editable through this door like any other family, so a key holding one
@@ -1391,12 +1429,16 @@ export function keyRoutes(
     const updated = await storage.keys.update(id, {
       label: body.label,
       default_tier: body.default_tier,
-      type_permissions: body.type_permissions,
-      extension_permissions: body.extension_permissions,
-      edge_permissions: body.edge_permissions,
-      metadata_permissions: body.metadata_permissions,
+      type_permissions: writtenReach.type_permissions,
+      extension_permissions: writtenReach.extension_permissions,
+      edge_permissions: writtenReach.edge_permissions,
+      metadata_permissions: writtenReach.metadata_permissions,
+      // The space permissions need no forcing: the guard above refuses a
+      // non-empty list outright, because no entry in one is a denial the way a
+      // `none` map entry is, so the only list that reaches a space-less row is
+      // already the empty one.
       space_permissions: requestedSpacePermissions,
-      profile_permissions: body.profile_permissions,
+      profile_permissions: writtenReach.profile_permissions,
     });
 
     void storage.audit.log({

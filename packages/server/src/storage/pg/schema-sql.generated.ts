@@ -68,7 +68,8 @@ CREATE TABLE IF NOT EXISTS public.api_keys (
     space_permissions text DEFAULT '[]'::text NOT NULL,
     oauth_client_id text,
     profile_permissions text DEFAULT '{}'::text NOT NULL,
-    CONSTRAINT api_keys_operator_iff_space_less CHECK (((space_id IS NULL) = is_operator))
+    CONSTRAINT api_keys_operator_iff_space_less CHECK (((space_id IS NULL) = is_operator)),
+    CONSTRAINT api_keys_space_less_holds_nothing CHECK (((space_id IS NOT NULL) OR ((type_permissions = '{}'::text) AND (edge_permissions = '{}'::text) AND (metadata_permissions = '{}'::text) AND (extension_permissions = '{}'::text) AND (profile_permissions = '{}'::text) AND (space_permissions = '[]'::text))))
 );
 
 CREATE TABLE IF NOT EXISTS public.audit_log (

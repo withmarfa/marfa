@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   primaryKey,
   customType,
+  check,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -311,6 +312,13 @@ export const apiKeys = pgTable(
      * expressed inside it.
      */
     space_permissions: text("space_permissions").notNull().default("[]"),
+    /**
+     * **The wildcard default is legal only on a space-bound row.** A row with
+     * no space is the operator tier and holds nothing on any axis, which
+     * `api_keys_space_less_holds_nothing` below refuses in bytes, so an insert
+     * that leaves this column to its default must name a space or the row does
+     * not land. Every space-less mint writes `{}` explicitly for that reason.
+     */
     type_permissions: text("type_permissions")
       .notNull()
       .default('{"*":"write"}'),
@@ -355,6 +363,31 @@ export const apiKeys = pgTable(
     index("idx_api_keys_runtime_credential")
       .on(table.is_runtime_credential)
       .where(sql`is_runtime_credential`),
+    // **The two halves of the model's one sentence about the instance tier.**
+    // The migrations create both, and the database is what refuses. Declared
+    // here so the table definition states the shape it writes into: without
+    // them a reader of this file meets the rule for the first time as a driver
+    // error naming a constraint nothing in the source mentions.
+    //
+    // A space-less credential is the operator key and nothing else.
+    check(
+      "api_keys_operator_iff_space_less",
+      sql`(${table.space_id} IS NULL) = ${table.is_operator}`,
+    ),
+    // And running the instance is not a permission, so the tier that runs it
+    // holds none. Compared as bytes rather than semantically, because both
+    // stores write these columns through `JSON.stringify` and `{}` and `[]`
+    // are the exact bytes an empty map and an empty list take.
+    check(
+      "api_keys_space_less_holds_nothing",
+      sql`${table.space_id} IS NOT NULL OR (
+        ${table.type_permissions} = '{}' AND
+        ${table.edge_permissions} = '{}' AND
+        ${table.metadata_permissions} = '{}' AND
+        ${table.extension_permissions} = '{}' AND
+        ${table.profile_permissions} = '{}' AND
+        ${table.space_permissions} = '[]')`,
+    ),
   ],
 );
 

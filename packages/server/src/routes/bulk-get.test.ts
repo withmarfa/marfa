@@ -198,9 +198,8 @@ describe("POST /items/bulk-get", () => {
   });
 
   it("omits items whose type the caller cannot read (implicit denial)", async () => {
-    // A key that can read core.note but not core.bookmark. It carries no
-    // space, so the schema requires the operator flag; the type map is still
-    // the whole of what it can read.
+    // A key that can read core.note but not core.bookmark, bound to the
+    // context's space. The type map is the whole of what it can read.
     const suffix = Math.random().toString(36).slice(2, 8);
     const rawKey = `marfa_k1_bulkget_narrow_${suffix}`;
     await ctx.storage.keys.create(
@@ -209,9 +208,10 @@ describe("POST /items/bulk-get", () => {
         source: `bulkget-narrow-${suffix}`,
         type_permissions: { "core.note": "read" },
         default_tier: "library",
-        is_operator: true,
+        is_operator: false,
       },
       hashApiKey(rawKey, TEST_API_KEY_SALT),
+      ctx.spaceId,
     );
 
     const noteRes = await request(ctx.app, "POST", "/items", {

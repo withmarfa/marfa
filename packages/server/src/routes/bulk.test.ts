@@ -542,11 +542,8 @@ describe("POST /items/bulk", () => {
 
   it("admits a credential with write on the item's type (matches POST /items)", async () => {
     // Bulk write authorization mirrors single-item POST /items: a credential
-    // holding write on the type can bulk-create it.
-    //
-    // `is_operator` is what the schema demands of a space-less key in keys
-    // mode. It opens the reserved namespaces and nothing else, so the type
-    // map is still what decides `core.note`.
+    // holding write on the type can bulk-create it. Bound to the context's
+    // space, so the type map is the whole of what decides `core.note`.
     const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
     const keyHash = hashApiKey(rawKey, "test-salt");
     await ctx.storage.keys.create(
@@ -554,9 +551,10 @@ describe("POST /items/bulk", () => {
         label: "bulk-scoped-allowed",
         source: `bulk-scoped-ok-${rawKey.slice(-6)}`,
         type_permissions: { "core.note": "write" },
-        is_operator: true,
+        is_operator: false,
       },
       keyHash,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
@@ -580,9 +578,10 @@ describe("POST /items/bulk", () => {
         label: "bulk-scoped-denied",
         source: `bulk-scoped-no-${rawKey.slice(-6)}`,
         type_permissions: {},
-        is_operator: true,
+        is_operator: false,
       },
       keyHash,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
@@ -607,9 +606,10 @@ describe("POST /items/bulk", () => {
         label: "bulk-scoped-mixed",
         source: `bulk-scoped-mix-${rawKey.slice(-6)}`,
         type_permissions: { "core.note": "write" },
-        is_operator: true,
+        is_operator: false,
       },
       keyHash,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/items/bulk", {

@@ -72,9 +72,23 @@ function parseDialect(): Dialect {
 /**
  * Apply migrations to an in-memory libsql DB and dump the resulting schema.
  *
- * Order: tables first (in `rootpage` order, which is creation order), then
- * indexes grouped by table. `rootpage` is stable for a given migration set —
- * sqlite assigns it on table creation and never reuses it.
+ * Order: tables first, in `rootpage` order, then indexes grouped by table.
+ *
+ * `rootpage` is the page the table's b-tree starts on, not a creation counter.
+ * SQLite allocates it when the table is created and reallocates it when the
+ * table is created again, so a table a later migration rebuilds sorts by that
+ * rebuild rather than by when it first appeared: `api_keys` is the standing
+ * example, since SQLite cannot add a CHECK in place and every constraint it
+ * gains arrives as a drop and a recreate. Freed pages go on the freelist and
+ * are handed out again, and VACUUM renumbers the file wholesale, so the value
+ * carries no history at all.
+ *
+ * What it does give is the one property this needs: applying one migration
+ * chain to one empty database is deterministic, so the dump comes out in the
+ * same order every run and the freshness check compares like with like.
+ * Nothing downstream reads the order as meaning anything. Indexes are emitted
+ * in a second pass so they always follow their table, and the equality test
+ * sorts both sides by name before comparing.
  */
 async function dumpSqlite(): Promise<string> {
   // Use a shared-cache in-memory URL so the migrator and dump connection see

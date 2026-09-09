@@ -750,6 +750,13 @@
       "when": 1788953826744,
       "tag": "0106_a_spaceless_credential_holds_nothing",
       "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1788960467350,
+      "tag": "0107_a_spaceless_credential_holds_nothing_check",
+      "breakpoints": true
     }
   ]
 }
