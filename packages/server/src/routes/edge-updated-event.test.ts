@@ -116,7 +116,7 @@ describe("edge.updated", () => {
   });
 
   it("emits for a bulk upsert that edits an existing edge", async () => {
-    // The second silence the ticket names. A subscriber cannot tell a bulk
+    // The second silence of the same kind. A subscriber cannot tell a bulk
     // edit from a single one, so emitting for one route and not the other
     // makes propagation depend on which the writer happened to use.
     const edge = await seedEdge();

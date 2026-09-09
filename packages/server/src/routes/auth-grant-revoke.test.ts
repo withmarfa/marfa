@@ -621,10 +621,10 @@ describe("revocation reaches outstanding device codes", () => {
     //
     // **This used to park a request inside `approveDeviceCode` and revoke
     // while it waited.** That worked because the binding ran outside the
-    // consent lock, which is the window T-1005 closed: the binding now runs
-    // inside the lock, so a parked approval holds it and the revoke below
-    // would block on it forever. The old fixture deadlocks against the fix,
-    // which is the fix being real rather than a problem with it.
+    // consent lock; closing that window moved the binding inside the lock,
+    // so a parked approval holds it and the revoke below would block on it
+    // forever. The old fixture deadlocks against the fix, which is the fix
+    // being real rather than a problem with it.
     //
     // **The guard this test is about is unaffected and still worth having.**
     // It refuses at poll time on the grant's own state, and it now defends a

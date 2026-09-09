@@ -36,7 +36,8 @@ import type { SpacePermission } from "@withmarfa/shared";
 let ctx: TestContext;
 let spaceId: string;
 
-/** Writes on bookmarks, reads on notes — the shape T-1338 is about. */
+/** Writes on bookmarks, reads on notes: the mixed-permission shape this
+ *  file narrows on. */
 let readerWriterKey: string;
 /** A source the space's `source_filter` approves, and one it does not. */
 let trustedKey: string;

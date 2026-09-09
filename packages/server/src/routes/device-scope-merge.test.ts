@@ -166,10 +166,11 @@ describe("mergeDeviceApprovalScopes, record stability", () => {
     }
   });
 
-  // The measured shape behind the ticket: a standing `*:write` and forty-five
-  // logins each naming one further concrete type at `:read` took the record to
-  // forty-six entries, every added one already conferred by the wildcard and
-  // every one written at `:write` though the client only ever asked `:read`.
+  // The measured shape that motivated this: a standing `*:write` and
+  // forty-five logins each naming one further concrete type at `:read` took
+  // the record to forty-six entries, every added one already conferred by
+  // the wildcard and every one written at `:write` though the client only
+  // ever asked `:read`.
   // Nothing here is a repeat, so record stability cannot come from
   // de-duplicating a spelling: each login names a key the record has never
   // held, and the entry is dropped because the record already confers it.

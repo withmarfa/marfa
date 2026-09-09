@@ -298,10 +298,10 @@ describe("every route that can set an item's state on create is accounted for", 
     //
     // `idempotent-write-doors.test.ts` derives its scope from the tree
     // instead, and its header argues against exactly this walk. Bringing
-    // this one onto that mechanism is T-1302: the walk is already
-    // generic, and the work is the twenty-three writers it makes visible,
-    // each needing a row or a stated reason. Sized rather than started, so
-    // this control is not mistaken for the fix.
+    // this one onto that mechanism is unstarted follow-up work: the walk
+    // is already generic, and the work is the twenty-three writers it makes
+    // visible, each needing a row or a stated reason. Sized rather than
+    // started, so this control is not mistaken for the fix.
 
     // A new route that can write items lands here. Give it a row in `DOORS`
     // if it accepts a state on create, or an entry above saying why it does

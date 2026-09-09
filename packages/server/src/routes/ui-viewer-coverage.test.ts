@@ -2,7 +2,7 @@
  * The preview covers every page the server hands a person, and every one
  * of them actually renders.
  *
- * T-507's premise: anything only visible by reaching a hard-to-reach state
+ * The premise here: anything only visible by reaching a hard-to-reach state
  * gets built once and never looked at again. The invalid-scope failure was
  * first seen by the operator on production rather than by anyone building
  * it, because the page that rendered it had no preview.

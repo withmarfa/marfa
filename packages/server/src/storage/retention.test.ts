@@ -1498,10 +1498,10 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
   });
 
   it("leaves an integration's revoked connection alone", async () => {
-    // **Demonstrated rather than assumed**, which the ticket asks for by name.
-    // An uninstall writes the same `revoked` status as a matter of routine
-    // onto a row somebody may reinstall against. Widening the predicate to
-    // every revoked connection reddens this and nothing else.
+    // **Demonstrated rather than assumed.** An uninstall writes the same
+    // `revoked` status as a matter of routine onto a row somebody may
+    // reinstall against. Widening the predicate to every revoked connection
+    // reddens this and nothing else.
     const integration = await seedTombstone(OLD, "integration");
     const app = await seedTombstone(OLD, "app");
     const deleted =
@@ -1573,8 +1573,8 @@ describe("RevokedGrantPurger.runOnce — the tombstone sweep", () => {
   });
 
   it("cannot be reached by the sweep that owns trash", async () => {
-    // The correction this ticket needed: a predicate keyed on the item's
-    // `state` the way the trash purge is matches none of these, because an
+    // The needed correction: a predicate keyed on the item's `state` the
+    // way the trash purge is matches none of these, because an
     // ordinarily-revoked grant sits at `state: "active"`.
     const id = await seedTombstone(OLD);
     expect(await ctx.storage.items.purgeTrashedOlderThan(CUTOFF)).toBe(0);

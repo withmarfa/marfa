@@ -319,8 +319,8 @@ describe("the consent copy guard derives the scopes it checks", () => {
     // uncovered is exactly what a newly un-curated scope looks like. So the
     // hatch is a paste. Delete a sentence from the description map, add a
     // plausible line to the list, and the coverage check goes green over a
-    // surface that has quietly shrunk — which is this ticket's own defect,
-    // one level up from where it was found.
+    // surface that has quietly shrunk — the same defect, one level up from
+    // where it was found.
     //
     // A count is what closes it, because a count is the one property a
     // paste cannot satisfy. Held to equality rather than a ceiling: a

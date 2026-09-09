@@ -6,7 +6,7 @@
  *
  * Two properties pull against each other and both are pinned here. The
  * scan must **report** — a value outside the union has to reach an
- * operator with a number attached, which is the whole ticket. And it must
+ * operator with a number attached, which is the whole point. And it must
  * **not stop the boot**, on either the unrecognized-value path or the
  * failed-query path, because one image runs every process role from this
  * code and the realistic population is a rollback, where refusing makes

@@ -8,7 +8,7 @@ import type { TestContext } from "../test-utils.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 /**
- * Onboarding provisioning + self-serve key tests (T-326).
+ * Onboarding provisioning + self-serve key tests.
  *
  * Two guarantees:
  *   1. A Marfa space + users row is provisioned for EVERY new account,
@@ -45,7 +45,7 @@ async function signIn(
   return res.headers.get("set-cookie")?.split(";")[0] ?? null;
 }
 
-describe("onboarding space provisioning (T-326)", () => {
+describe("onboarding space provisioning", () => {
   it("provisions a space + derived handle on the programmatic sign-up path", async () => {
     ctx = await createTestContext({
       authMode: "hosted",
@@ -127,7 +127,7 @@ describe("onboarding space provisioning (T-326)", () => {
   });
 });
 
-describe("self-serve API keys at /auth/keys (T-326)", () => {
+describe("self-serve API keys at /auth/keys", () => {
   it("redirects to sign-in when unauthenticated", async () => {
     ctx = await createTestContext({
       authMode: "hosted",
@@ -281,8 +281,8 @@ describe("self-serve keys can fill their own space", () => {
     const aId = ((await a.json()) as { item: { id: string } }).item.id;
     const bId = ((await b.json()) as { item: { id: string } }).item.id;
 
-    // This is the assertion the whole ticket turns on. Before the fix it was
-    // 403 edge_permission_denied — "Missing edge.references:write permission".
+    // The key assertion: before the fix this was 403 edge_permission_denied
+    // — "Missing edge.references:write permission".
     const edgeRes = await request(ctx.app, "POST", "/edges", {
       key,
       body: { source_id: aId, target_id: bId, edge_type: "references" },

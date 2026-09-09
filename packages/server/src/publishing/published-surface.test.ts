@@ -294,7 +294,7 @@ describe("readPublishedSurfaces", () => {
   });
 
   it("records the shape behind a re-exported name, not the specifier", () => {
-    // The ticket's own defect, one level down. Every root export of two
+    // The same failure shape, one level down. Every root export of two
     // published packages arrives through `export { X } from "./y.js"`, and
     // if an alias is not resolved the printer emits the specifier —
     // `Inner as Outer` — which is non-empty, hashes consistently, and

@@ -1732,7 +1732,7 @@ describe("an off-by-default bundle grants nothing without a tick", () => {
 // A literal named twice
 //
 // The rendering half is in `consent-operation.test.ts`, against the renderer.
-// This is the half that made the ticket worth more than a tidy-up: the
+// This is the half that made this more than a tidy-up: the
 // duplicate did not stop at the screen. `formScopes` kept both copies,
 // `projectGrantOnConsent` wrote them verbatim into `properties.scopes` on the
 // `system.connection` item, and every surface that later reads or diffs that

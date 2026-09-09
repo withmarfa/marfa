@@ -92,7 +92,7 @@ describe("the copy does not over-state what a scope grants", () => {
 /**
  * Copy has one home per family, and stays that way.
  *
- * The guard the ticket asked for, and the only one that would have caught
+ * The guard this needed, and the only one that would have caught
  * what happened: a fix written against the maps its author found, leaving the
  * ones they did not. It reads the sources rather than trusting a count,
  * because a count is the thing that was wrong.
