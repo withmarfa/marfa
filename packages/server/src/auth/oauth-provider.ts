@@ -491,9 +491,12 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // plugin grant (`POST /auth/device/token`), so the plugin has no handler
     // to reach for it, and the discovery document appends it separately. The
     // plugin's own registration validator does hold a client's `grant_types`
-    // to this list, which would refuse a device-code registration -- and does
-    // not, because Marfa's DCR route writes through its own store and the
-    // plugin's registration and client-management endpoints answer 404 here.
+    // to this list, which would refuse a device-code registration -- and
+    // never runs, because Marfa's `POST /oauth2/register` is mounted ahead of
+    // the plugin's and validates and persists through its own store. The
+    // plugin's client-management endpoints are fenced to 404 separately;
+    // registration is shadowed rather than fenced, which `oauth-plugin-fence`
+    // records.
     grantTypes: ["authorization_code", "refresh_token"],
 
     // ----- Token storage -----

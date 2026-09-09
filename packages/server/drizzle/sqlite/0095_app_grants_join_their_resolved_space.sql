@@ -27,9 +27,18 @@
 -- would sweep an orphan whose account is gone into a space belonging to
 -- somebody else, and the security page lists a space's grants without
 -- filtering by person, so that somebody would be shown an app they never
--- authorized and offered a button to disconnect it. `NOT EXISTS (SELECT 1
--- FROM users)` is the SQL spelling of "no user store": hosted always has
--- rows, keys mode never does.
+-- authorized and offered a button to disconnect it.
+--
+-- `NOT EXISTS (SELECT 1 FROM users)` stands in for "no user store", and the
+-- substitution is worth naming rather than assuming. The runtime reads
+-- configuration: the store is wired in hosted mode and absent in keys mode. A
+-- migration has no configuration to read, so it asks the rows instead, and
+-- the two answers part on two shapes. A hosted instance whose accounts have
+-- all been deleted, holding one space, takes the sole-space arm; a keys-mode
+-- instance carrying rows from an earlier hosted life takes the account arm
+-- the runtime there never consults. Both are narrow and neither is
+-- impossible, so read this as what the estate looks like rather than as an
+-- invariant something enforces.
 --
 -- Neither arm guesses. An instance answering neither keeps its rows where
 -- they are, the same way issuance declines to bind a token it cannot place.
@@ -46,14 +55,26 @@
 -- **Only the newest of several stranded rows for one pair moves.** The guard
 -- below compares against the target space, and a single statement sees one
 -- snapshot, so two space-less rows for the same app and person would both
--- move and land beside each other. The newest is the one a caller would have
--- been served, so it is the one that moves; the rest stay where they are,
--- under the paragraph above.
+-- move and land beside each other. The newest carries the most recent
+-- consent, so it is the one that moves and the rest stay where they are,
+-- under the paragraph above. Not because it is the one a caller was served:
+-- the lookup has no ordering and takes an arbitrary row, which is the reason
+-- two of them in one space is the shape to avoid rather than a tie-break to
+-- reproduce here. `id` is time-sortable, so comparing it orders by age.
 --
 -- **Only a live row moves.** A projection soft-deleted through the type's
 -- own lifecycle is invisible to every read surface, and the guard below
 -- already ignores one, so moving it would be the one asymmetry in the
 -- statement.
+--
+-- **A consent during the deploy window lands behind the sweep.** Migrations
+-- run before the stack rolls, so the old build goes on resolving keys-mode
+-- sign-ins to no space for as long as the roll takes, and a projection
+-- written in that window is space-less with this statement already past. It
+-- is one inert orphan rather than a duplicate inside a space: the next
+-- re-consent resolves the space, finds the row that moved and updates that
+-- one. Re-running this statement is the repair if anybody wants the orphan
+-- gone.
 UPDATE `items` AS `orphan`
 SET `space_id` = `resolved`.`space_id`
 FROM (

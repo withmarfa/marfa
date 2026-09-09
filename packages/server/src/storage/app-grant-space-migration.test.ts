@@ -209,21 +209,21 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
     expect(await spaceOf(client, "grant")).toBe(SOLE);
   });
 
-  it("leaves the manifest catalogue where it is", async () => {
+  it("leaves the manifest catalog where it is", async () => {
     // The other space-less `items` row, and the one that is space-less on
     // purpose: a `system.integration` row is read through the deliberate
     // "this space or none" widening so one registration is visible
     // everywhere. A predicate keyed on the type alone would sweep it up.
-    const client = await seeded("catalogue", async (c) => {
+    const client = await seeded("catalog", async (c) => {
       await insertSpace(c, SOLE);
       await insertItem(c, {
-        id: "catalogue",
+        id: "catalog",
         space_id: null,
         type: "system.integration",
         properties: "{}",
       });
     });
-    expect(await spaceOf(client, "catalogue")).toBeNull();
+    expect(await spaceOf(client, "catalog")).toBeNull();
   });
 
   it("moves nothing on an instance holding more than one space and no account row", async () => {
@@ -450,15 +450,15 @@ describe.skipIf(!isPg || !adminUrl)(
       });
     });
 
-    it("leaves the manifest catalogue where it is", async () => {
-      await withDb("catalogue", async (sql, url) => {
+    it("leaves the manifest catalog where it is", async () => {
+      await withDb("catalog", async (sql, url) => {
         await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${SOLE}, 'sole', ${NOW}, 'active')`;
         await sql`
           INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
-          VALUES ('catalogue', NULL, 'system.integration', 'active', '{}'::jsonb, ${NOW}, ${NOW}, ${NOW})
+          VALUES ('catalog', NULL, 'system.integration', 'active', '{}'::jsonb, ${NOW}, ${NOW}, ${NOW})
         `;
         await runPgMigrations(url);
-        expect(await spaceOf(sql, "catalogue")).toBeNull();
+        expect(await spaceOf(sql, "catalog")).toBeNull();
       });
     });
 
