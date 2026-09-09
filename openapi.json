@@ -20733,7 +20733,7 @@
           "Keys"
         ],
         "summary": "Create an API key",
-        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it.\n\nIn keys mode the bootstrap call also provisions the instance's one space and mints a working key into it, returned as `space` and `space_key`. The operator key is not a working key — it holds no space and no permissions, because running the instance sits outside the permission model — so the space key is the one to configure a client with.",
+        "description": "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. Such a mint may name no reach at all: a credential with no space holds no permissions, so a body naming any map entry or space permission is refused, and one naming none produces a second operator key carrying nothing. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it.\n\nIn keys mode the bootstrap call also provisions the instance's one space and mints a working key into it, returned as `space` and `space_key`. The operator key is not a working key — it holds no space and no permissions, because running the instance sits outside the permission model — so the space key is the one to configure a client with.",
         "security": [
           {
             "bearerAuth": []
@@ -21236,7 +21236,7 @@
             }
           },
           "403": {
-            "description": "Caller does not hold `space.keys`, asked for reach its own credential does not cover, or asked to mint across the instance tier in either direction. A missing permission is named in `details.required_scope`.",
+            "description": "Caller does not hold `space.keys`, asked for reach its own credential does not cover, asked to give reach to a credential that will have no space, or asked to mint across the instance tier in either direction. A missing permission is named in `details.required_scope`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -21837,7 +21837,7 @@
           "Keys"
         ],
         "summary": "Update an API key",
-        "description": "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds, the operator key excepted, since running the instance sits outside the permission model. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
+        "description": "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but a key with no space is the operator tier and may hold nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
         "security": [
           {
             "bearerAuth": []
@@ -26936,10 +26936,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "A caller with no space binding scopes the export to one space with this; a space-bound caller exports its own space and may not name another"
+              "description": "Must match the caller's own space when supplied; naming another space is refused"
             },
             "required": false,
-            "description": "A caller with no space binding scopes the export to one space with this; a space-bound caller exports its own space and may not name another",
+            "description": "Must match the caller's own space when supplied; naming another space is refused",
             "name": "target_space_id",
             "in": "query"
           }

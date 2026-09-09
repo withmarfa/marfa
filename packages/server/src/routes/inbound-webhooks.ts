@@ -14,7 +14,6 @@ import {
   requireAuth,
   actsAsConnection,
   requireSpacePermission,
-  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import type { Storage, InboundWebhookRow } from "../storage/interface.js";
 import { resolveConnectionManifest } from "../connections/resolve-manifest.js";
@@ -88,26 +87,27 @@ async function requireConnectionAccess(
   storage: Storage,
   connectionId: string,
 ): Promise<{
+  /** The caller's space, which is also the subscription's. The lookup
+   *  below is fenced on it and no admitted caller is space-less, so the
+   *  connection cannot be in a different one. */
   spaceId: string | undefined;
-  /** The connection's own space, distinct from the caller's: the operator
-   *  key carries no space, but a subscription row must live in the
-   *  connection's space or the webhook receipt route's space-fenced
-   *  lookup will never find it. */
-  connectionSpaceId: string | undefined;
 }> {
   const key = requireAuth(c);
   // Shared with the connection-proxy and leased-token routes: the
   // caller is the Connection itself, either as an OAuth grant or as a
   // runtime credential stamped with this `connection_id`.
   const isIntegration = actsAsConnection(key, connectionId);
-  // Defense-in-depth, matching the leased-tokens sibling: a credential
-  // that resolves to an undefined spaceId below reads "any space" at the
-  // storage call sites, and since subscription rows land in the
-  // CONNECTION's space, a space-less caller admitted here would create a
-  // live subscription inside a space it does not belong to. Platform
-  // authority and connection-bound credentials are the only space-less
-  // shapes entitled to that reach.
-  if (!key.space_id && !isIntegration && !hasOperatorAuthority(key)) {
+  // A credential that resolves to an undefined spaceId below reads "any
+  // space" at the storage call sites, and subscription rows land in the
+  // connection's space, so a space-less caller admitted here would create a
+  // live subscription inside a space it does not belong to.
+  //
+  // **A connection-bound credential is the only space-less shape that gets
+  // past this**, and it is bound by its `connection_id` rather than by a
+  // space. The operator key used to be admitted here too, which was dead:
+  // it holds no permissions at all, so it fails the `space.connections`
+  // check below whatever this line says.
+  if (!key.space_id && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Space scope required for this credential",
@@ -141,7 +141,7 @@ async function requireConnectionAccess(
   // once admission is settled above, so a caller that is not the connection is
   // holding `space.connections` or is not here.
   if (!isIntegration) requireSpacePermission(c, "space.connections");
-  return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
+  return { spaceId };
 }
 
 // ---------------------------------------------------------------------------
@@ -433,11 +433,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
   // POST /connections/:id/inbound-webhooks
   r.openapi(createInboundWebhookRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { spaceId, connectionSpaceId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
     const body = c.req.valid("json");
 
     const { manifest } = await resolveConnectionManifest(
@@ -471,11 +467,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     const id = generateId();
     const row = await storage.inboundWebhooks.create({
       id,
-      // The connection's space, not the caller's: the operator key has no
-      // space, and a space-less row is invisible to the receipt route's
-      // space-fenced subscription lookup, so the webhook it subscribes
-      // would never deliver.
-      space_id: connectionSpaceId,
+      space_id: spaceId,
       connection_id: connectionId,
       external_service_id: body.external_service_id,
       secret_encrypted,
@@ -486,10 +478,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      // The subscription's own space, so the owning space's audit view
-      // shows the event that created a row inside it even when a
-      // platform (space-less) caller created it.
-      space_id: connectionSpaceId ?? null,
+      space_id: spaceId ?? null,
       key_id: c.get("apiKey")?.id,
       action: "inbound_webhook.create",
       resource_type: "inbound_webhook",

@@ -30,7 +30,7 @@ describe("oauth last-used stamp drains at close", () => {
 
   async function createItem(): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { title: "stamp target", body: "" },
@@ -44,8 +44,10 @@ describe("oauth last-used stamp drains at close", () => {
   it("drain() resolves only after an in-flight stamp has landed", async () => {
     const id = await createItem();
 
-    // Fire-and-forget, exactly as the middleware does.
-    void ctx.storage.oauth.updateLastUsedAt(id, null, 30_000);
+    // Fire-and-forget, exactly as the middleware does. The stamp is
+    // space-scoped, so it takes the space the row was written into: a null
+    // space matches only a row with no space and would stamp nothing.
+    void ctx.storage.oauth.updateLastUsedAt(id, ctx.spaceId, 30_000);
     await ctx.storage.oauth.drain();
 
     const item = await ctx.storage.items.get(id);
@@ -58,7 +60,7 @@ describe("oauth last-used stamp drains at close", () => {
 
     // No await between the stamp and close — the exact window the bearer
     // middleware's post-response stamp hits when a context tears down.
-    void ctx.storage.oauth.updateLastUsedAt(id, null, 30_000);
+    void ctx.storage.oauth.updateLastUsedAt(id, ctx.spaceId, 30_000);
     await ctx.cleanup();
 
     // Absence has no condition to poll for: give a stray rejection two

@@ -21,7 +21,7 @@ let integrationId: string;
 beforeAll(async () => {
   ctx = await createTestContext();
   const reg = await request(ctx.app, "POST", "/integrations", {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: { manifest: VALID_MANIFEST },
   });
   if (reg.status !== 201) {
@@ -36,10 +36,6 @@ beforeAll(async () => {
 afterAll(async () => {
   await ctx.cleanup();
 });
-
-interface ItemResponse {
-  item: { id: string; type: string };
-}
 
 const VALID_MANIFEST = {
   name: "acme/integration",
@@ -67,7 +63,9 @@ const VALID_MANIFEST = {
 // credential can do this over the wire: the reserved namespace admits only a
 // platform credential, and that one holds no space to put the row in. A
 // connection is the install pipeline's to create, and it names the space.
-async function createConnection(): Promise<string> {
+async function createConnection(
+  integrationRef: string = integrationId,
+): Promise<string> {
   const item = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -75,7 +73,24 @@ async function createConnection(): Promise<string> {
         kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
-        integration_ref: integrationId,
+        integration_ref: integrationRef,
+      },
+    },
+    ctx.spaceId,
+  );
+  return item.id;
+}
+
+/** A connection naming no integration at all. The key is absent rather than
+ *  null, which is the shape the resolver meets when nothing was named. */
+async function createOrphanConnection(): Promise<string> {
+  const item = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
       },
     },
     ctx.spaceId,
@@ -92,7 +107,7 @@ async function issueLease(
   } = {},
 ): Promise<Response> {
   return request(ctx.app, "POST", `/connections/${connectionId}/lease-tokens`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       capability_id: overrides.capability_id ?? "drive.upload",
       ttl_seconds: overrides.ttl_seconds,
@@ -150,7 +165,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
       "POST",
       `/connections/${connectionId}/lease-tokens`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           capability_id: "drive.upload",
           ttl_seconds: 7200,
@@ -177,19 +192,8 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
   });
 
   it("rejects when the connection has no integration_ref", async () => {
-    const orphanRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-    });
-    const orphan = (await orphanRes.json()) as ItemResponse;
-    const res = await issueLease(orphan.item.id);
+    const orphan = await createOrphanConnection();
+    const res = await issueLease(orphan);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("missing_required_field");
@@ -198,34 +202,22 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
   it("gates capabilities via integration_ref-resolved manifest", async () => {
     // 1. Register the integration.
     const regRes = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: { ...VALID_MANIFEST, name: "acme/lease-via-ref" } },
     });
     expect(regRes.status).toBe(201);
     const reg = (await regRes.json()) as { id: string };
 
     // 2. Connection bound to the registered integration.
-    const conn = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-          integration_ref: reg.id,
-        },
-      },
-    });
-    const connBody = (await conn.json()) as ItemResponse;
+    const connectionId = await createConnection(reg.id);
 
     // 3. Issue lease with NO manifest in body — resolved server-side.
     const ok = await request(
       ctx.app,
       "POST",
-      `/connections/${connBody.item.id}/lease-tokens`,
+      `/connections/${connectionId}/lease-tokens`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { capability_id: "drive.upload" },
       },
     );
@@ -235,9 +227,9 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
     const denied = await request(
       ctx.app,
       "POST",
-      `/connections/${connBody.item.id}/lease-tokens`,
+      `/connections/${connectionId}/lease-tokens`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { capability_id: "not.declared" },
       },
     );
@@ -408,7 +400,7 @@ describe("GET /connections/:id/lease-tokens & revoke", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens/${a.id}/revoke`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(revoke.status).toBe(200);
 
@@ -416,7 +408,7 @@ describe("GET /connections/:id/lease-tokens & revoke", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/lease-tokens`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(list.status).toBe(200);
     const body = (await list.json()) as { leases: ConnectionLeasedToken[] };
@@ -431,7 +423,7 @@ describe("GET /connections/:id/lease-tokens & revoke", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens/does-not-exist/revoke`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });
@@ -478,7 +470,7 @@ describe("POST /lease-tokens/validate", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens/${created.id}/revoke`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const res = await request(ctx.app, "POST", "/lease-tokens/validate", {
       body: { lease_token: created.lease_token },
@@ -584,13 +576,29 @@ describe("POST /connections/:id/lease-tokens — space scoping", () => {
     expect(created.space_id).toBe(spaceId);
   });
 
-  it("an operator key's issue stamps the connection's space, not its own", async () => {
-    const { spaceId, connectionId } = await spaceScopedConnection();
+  it("refuses the one space-less caller, and the row lands in the connection's space", async () => {
+    const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
+
+    // The operator key is the only credential that carries no space, and
+    // this door refuses it for that: a lease row has to live in the
+    // connection's space or the fenced list and revoke lookups, and the
+    // uninstall sweep, never reach it. The door used to admit the operator
+    // key past the space guard and stamp the connection's space to cover
+    // the divergence; it holds no `space.connections`, so it was refused a
+    // few lines later anyway and the divergence never existed.
+    const asOperator = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/lease-tokens`,
+      { key: ctx.operatorKey, body: { capability_id: "drive.upload" } },
+    );
+    expect(asOperator.status).toBe(403);
+
     const res = await request(
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens`,
-      { key: ctx.adminKey, body: { capability_id: "drive.upload" } },
+      { key: spaceKey, body: { capability_id: "drive.upload" } },
     );
     expect(res.status).toBe(201);
     const created = (await res.json()) as CreatedConnectionLeasedToken;

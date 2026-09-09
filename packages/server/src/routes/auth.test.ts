@@ -34,7 +34,7 @@ describe("authentication", () => {
 
   it("returns 200 with a valid key", async () => {
     const res = await request(ctx.app, "GET", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
   });
@@ -116,7 +116,7 @@ describe("key management", () => {
     // that reported the wrong one would be indistinguishable from a response
     // that reported nothing.
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "test-narrow",
         source: "test-narrow-src",
@@ -131,7 +131,7 @@ describe("key management", () => {
     expect(created.space_permissions).toEqual(["space.webhooks"]);
 
     const listRes = await request(ctx.app, "GET", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(listRes.status).toBe(200);
     const body = (await listRes.json()) as {
@@ -148,7 +148,7 @@ describe("key management", () => {
 
   it("revokes a key", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { label: "to-revoke", source: "to-revoke-src" },
     });
     const created = (await createRes.json()) as Record<string, unknown>;
@@ -157,7 +157,7 @@ describe("key management", () => {
       ctx.app,
       "DELETE",
       `/keys/${created.id as string}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(revokeRes.status).toBe(200);
   });
@@ -166,7 +166,7 @@ describe("key management", () => {
 describe("extension_permissions wiring", () => {
   it("persists and surfaces extension_permissions on POST /keys and GET /keys", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "ext-write-key",
         source: "ext-write-key-src",
@@ -185,7 +185,7 @@ describe("extension_permissions wiring", () => {
     });
 
     const listRes = await request(ctx.app, "GET", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const list = (await listRes.json()) as {
       keys: { id: string; extension_permissions?: Record<string, string> }[];
@@ -199,7 +199,7 @@ describe("extension_permissions wiring", () => {
     // its label. Without the wiring this would fall through to the implicit
     // own-namespace rule and 403 on the non-matching namespace.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "myapp",
         source: "myapp-grant-src",
@@ -229,7 +229,7 @@ describe("extension_permissions wiring", () => {
     // Metadata-layer permissions ride a dedicated map, default-off for new
     // keys. Nothing reads past it: every credential is held to its maps.
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "metadata-types-key",
         source: "metadata-types-key-src",
@@ -246,7 +246,7 @@ describe("extension_permissions wiring", () => {
     expect(created.metadata_permissions).toEqual({ types: "write" });
 
     const listRes = await request(ctx.app, "GET", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const list = (await listRes.json()) as {
       keys: { id: string; metadata_permissions?: Record<string, string> }[];
@@ -259,7 +259,7 @@ describe("extension_permissions wiring", () => {
     // Regression guard: the wiring change must not break the
     // "key writes its own namespace" implicit rule for keys with no grants.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "selfns",
         source: "selfns-src",
@@ -288,7 +288,7 @@ describe("extension_permissions wiring", () => {
 describe("KeyStore.updateLastUsed — DB-side debounce", () => {
   it("collapses rapid updates in the same window to a single write", async () => {
     const createRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "last-used-debounce-key",
         source: "last-used-debounce-src",

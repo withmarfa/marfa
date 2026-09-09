@@ -94,11 +94,17 @@ let seq = 0;
 const uniq = (p: string): string =>
   `${p}-${String(++seq)}-${String(Date.now())}`;
 
+/** Seeded straight into the context's space, because every door below is
+ *  reached with a space-bound credential and a row with no space of its own
+ *  is outside what that credential can see. */
 async function makeNote(body: string): Promise<string> {
-  const item = await ctx.storage.items.create({
-    type: "core.note",
-    properties: { body },
-  });
+  const item = await ctx.storage.items.create(
+    {
+      type: "core.note",
+      properties: { body },
+    },
+    ctx.spaceId,
+  );
   return item.id;
 }
 
@@ -108,12 +114,15 @@ async function makeNote(body: string): Promise<string> {
  * body counts the mirror plus every copy of it that survived.
  */
 async function plantMirror(body: string): Promise<string> {
-  const mirror = await ctx.storage.items.create({
-    type: "core.note",
-    properties: { body },
-    source: "integration:promote-atomicity",
-    source_id: uniq("mirror"),
-  });
+  const mirror = await ctx.storage.items.create(
+    {
+      type: "core.note",
+      properties: { body },
+      source: "integration:promote-atomicity",
+      source_id: uniq("mirror"),
+    },
+    ctx.spaceId,
+  );
   return mirror.id;
 }
 
@@ -124,7 +133,7 @@ async function countNotesWithBody(body: string): Promise<number> {
 
 async function makeEdge(source: string, target: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { source_id: source, target_id: target, edge_type: "references" },
   });
   expect(res.status).toBe(201);
@@ -145,7 +154,7 @@ describe("POST /items/{id}/promote", () => {
     let status: number;
     try {
       const res = await request(ctx.app, "POST", `/items/${mirror}/promote`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       status = res.status;
     } finally {
@@ -166,7 +175,7 @@ describe("POST /items/{id}/promote", () => {
     const mirror = await plantMirror(body);
 
     const res = await request(ctx.app, "POST", `/items/${mirror}/promote`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(201);
     const promoted = (await res.json()) as { item: { id: string } };
@@ -188,14 +197,14 @@ describe("DELETE /items/{id}/purge", () => {
     const inbound = await makeEdge(other, target);
     const outbound = await makeEdge(target, other);
     await request(ctx.app, "DELETE", `/items/${target}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     const broken = breakWrite(ctx.storage.items, "purge");
     let status: number;
     try {
       const res = await request(ctx.app, "DELETE", `/items/${target}/purge`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       status = res.status;
     } finally {
@@ -219,11 +228,11 @@ describe("DELETE /items/{id}/purge", () => {
     const inbound = await makeEdge(other, target);
     const outbound = await makeEdge(target, other);
     await request(ctx.app, "DELETE", `/items/${target}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     const res = await request(ctx.app, "DELETE", `/items/${target}/purge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     expect(await ctx.storage.edges.get(inbound)).toBeNull();
@@ -241,14 +250,14 @@ describe("PATCH /items/{id}/metadata", () => {
     const item = await makeNote("bounded");
     const hundred = Array.from({ length: 100 }, (_, i) => `t${String(i)}`);
     const seeded = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tags: hundred },
     });
     expect(seeded.status).toBe(200);
     const before = await readUpdatedAt(item);
 
     const res = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tags: ["one-too-many"] },
     });
     expect(res.status).toBe(400);
@@ -269,7 +278,7 @@ describe("PATCH /items/{id}/metadata", () => {
   it("still applies a patch that stays inside the bound", async () => {
     const item = await makeNote("bounded");
     const res = await request(ctx.app, "PATCH", `/items/${item}/metadata`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tags: ["alpha", "beta"] },
     });
     expect(res.status).toBe(200);

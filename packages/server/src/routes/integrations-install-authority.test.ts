@@ -64,7 +64,7 @@ function manifest(name: string) {
 
 async function registerIntegration(name: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/integrations", {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: { manifest: manifest(name) },
   });
   expect(res.status).toBe(201);
@@ -78,7 +78,7 @@ async function mintKey(
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: {
       label: `install-authority-${name}-${suffix}`,
       source: `install-authority-${name}-${suffix}`,

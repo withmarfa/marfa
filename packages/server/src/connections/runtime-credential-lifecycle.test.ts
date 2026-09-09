@@ -27,6 +27,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { MarfaError } from "@withmarfa/shared";
 import type { IntegrationManifest } from "@withmarfa/shared";
 import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
+import { performInstall } from "./install-pipeline.js";
 import {
   createTestContext,
   request,
@@ -48,10 +49,6 @@ const INTEGRATION = "acme/lifecycle";
 
 type MintOutcome =
   { ok: true; api_key: string } | { ok: false; code: string; message: string };
-
-interface ErrorResponse {
-  error: { code: string; message: string };
-}
 
 function manifest(name: string): IntegrationManifest {
   return {
@@ -163,22 +160,38 @@ describe("a runtime credential is fenced by a space", () => {
   });
 
   it("refuses to install a space-less Connection", async () => {
-    // The third door. The operator key carries no space, so
-    // `POST /connections/install` stamps none on the Connection it
-    // creates, and any credential later minted for it would come out at
-    // the platform tier. Installing mints nothing, so the refusal is a
-    // precondition rather than a mint ceiling: it stops the Connection
-    // reaching an installable state at all, which is the earliest point
-    // the rule can be enforced.
+    // The third door. An install that names no space stamps none on the
+    // Connection it creates, and any credential later minted for it would
+    // come out space-less, which is the operator tier. Installing mints
+    // nothing, so the
+    // refusal is a precondition rather than a mint ceiling: it stops the
+    // Connection reaching an installable state at all, which is the
+    // earliest point the rule can be enforced.
+    //
+    // Driven against the pipeline rather than through
+    // `POST /connections/install`, the same way the mint door above is
+    // driven against the mint. The route asks for `space.connections`
+    // first, and the only credential that arrives with no space is the
+    // operator key, whose permission list is empty — so the route refuses
+    // a space-less caller before the pipeline sees it, and the pipeline's
+    // own precondition is reachable from the runtime and from tooling that
+    // calls it directly.
     const integrationId = await makeIntegration("acme/install-fence");
-    const res = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
-      body: { integration_id: integrationId },
-    });
+    const operator = (await ctx.storage.keys.list()).find((k) => k.is_operator);
+    if (!operator)
+      throw new Error("operator key missing from the test context");
 
-    expect(res.status).toBe(403);
-    const body = (await res.json()) as ErrorResponse;
-    expect(body.error.message).toMatch(/no space/i);
+    await expect(
+      performInstall(ctx.storage, {
+        apiKeyId: operator.id,
+        integrationItemId: integrationId,
+        manifest: manifest("acme/install-fence"),
+        clientIp: null,
+      }),
+    ).rejects.toMatchObject({
+      code: "forbidden",
+      message: expect.stringMatching(/no space/i) as unknown as string,
+    });
 
     // The compensating writes ran: nothing is left installed, and no
     // credential outlives the refusal.

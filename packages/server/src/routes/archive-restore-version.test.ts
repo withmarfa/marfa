@@ -62,7 +62,11 @@ describe("a restore does not rewind a row's version", () => {
   it("brings items and edges back at the version they were archived at", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-av-${Math.random().toString(36).slice(2, 10)}`;
+    // The source instance's own space: the export is taken by a credential
+    // bound to it, and a space-bound caller may only export the space it is
+    // bound to. The destination restores under the same id, which is what an
+    // archive carried between instances looks like.
+    const space = source.spaceId;
 
     const note = await source.storage.items.create(
       { type: "core.note", properties: { body: "v1" }, source: "av-seed" },
@@ -102,7 +106,7 @@ describe("a restore does not rewind a row's version", () => {
       source.app,
       "GET",
       `/export?format=archive&target_space_id=${space}`,
-      { key: source.adminKey },
+      { key: source.spaceKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -120,12 +124,14 @@ describe("a restore does not rewind a row's version", () => {
       .find((line) => line.item.id === note.id);
     expect(itemLine?.item.version).toBe(archivedItem?.version);
 
+    // `/admin/restore-archive` is an operator route, and the operator key is
+    // the only credential that reaches it.
     const restoreRes = await destination.app.request(
       `/admin/restore-archive?target_space_id=${space}`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${destination.adminKey}`,
+          Authorization: `Bearer ${destination.operatorKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,

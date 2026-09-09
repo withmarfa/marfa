@@ -24,7 +24,7 @@ import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
-let adminKey: string;
+let spaceKey: string;
 let testStorage: Storage;
 let testSpaceId: string;
 let cleanup: () => void;
@@ -151,7 +151,7 @@ beforeAll(async () => {
     },
   );
   const { key } = (await workerRes.json()) as { key: string };
-  adminKey = key;
+  spaceKey = key;
 
   client = new MarfaClient({
     url: "http://localhost",
@@ -607,7 +607,7 @@ describe("items.update expectedVersion", () => {
     const { fetch, calls } = instrumentFetch();
     const c = new MarfaClient({
       url: "http://localhost",
-      apiKey: adminKey,
+      apiKey: spaceKey,
       fetch,
     });
     return { client: c, calls };
@@ -1353,7 +1353,7 @@ describe("items.createWithAttachments", () => {
     };
     const c = new MarfaClient({
       url: "http://localhost",
-      apiKey: adminKey,
+      apiKey: spaceKey,
       fetch: wrapped,
     });
     return { client: c, counts };
@@ -1595,7 +1595,7 @@ describe("items.bulkAction", () => {
     let seen = 0;
     const made = new MarfaClient({
       url: "http://localhost",
-      apiKey: adminKey,
+      apiKey: spaceKey,
       fetch: (input, init) => {
         const url = String(
           typeof input === "string" || input instanceof URL ? input : input.url,
@@ -1626,7 +1626,7 @@ describe("items.bulkAction", () => {
     let seen = 0;
     const made = new MarfaClient({
       url: "http://localhost",
-      apiKey: adminKey,
+      apiKey: spaceKey,
       fetch: (input, init) => {
         const url = String(
           typeof input === "string" || input instanceof URL ? input : input.url,
@@ -1756,7 +1756,7 @@ describe("items.bulkAction", () => {
   function clientWithSlowStatusPolls(delayMs: number): MarfaClient {
     return new MarfaClient({
       url: "http://localhost",
-      apiKey: adminKey,
+      apiKey: spaceKey,
       fetch: async (input, init) => {
         const url = String(
           typeof input === "string" || input instanceof URL ? input : input.url,
@@ -2204,7 +2204,7 @@ describe("the paging helpers and the system opt-in", () => {
       urls,
       client: new MarfaClient({
         url: "http://localhost",
-        apiKey: adminKey,
+        apiKey: spaceKey,
         fetch: (input, init) => {
           urls.push(
             new URL(

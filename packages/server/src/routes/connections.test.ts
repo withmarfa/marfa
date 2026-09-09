@@ -356,7 +356,7 @@ describe("POST /connections/:id/uninstall — happy path", () => {
       ctx.app,
       "POST",
       `/connections/${installed.connectionId}/uninstall`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as UninstallResponse;
@@ -387,7 +387,7 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
       ctx.app,
       "POST",
       "/connections/00000000-0000-7000-8000-000000000000/uninstall",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as ErrorBody;
@@ -401,7 +401,7 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
       ctx.app,
       "POST",
       `/connections/${installed.connectionId}/uninstall`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(first.status).toBe(200);
 
@@ -409,7 +409,7 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
       ctx.app,
       "POST",
       `/connections/${installed.connectionId}/uninstall`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(second.status).toBe(400);
     const body = (await second.json()) as ErrorBody & {
@@ -429,15 +429,16 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
           granted_at: new Date().toISOString(),
         },
       },
-      // No space: an app grant is an OAuth projection, and keys mode has no
-      // user store to resolve one from.
-      undefined,
+      // The claim is about `kind`, so the row goes in the caller's space:
+      // uninstall resolves the connection fenced to it, and a space-less row
+      // answers 404 before the kind is ever read.
+      ctx.spaceId,
     );
     const res = await request(
       ctx.app,
       "POST",
       `/connections/${grant.id}/uninstall`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorBody & {

@@ -36,6 +36,14 @@ interface AuditPage {
   has_more: boolean;
 }
 
+/**
+ * An audit row in the context's space.
+ *
+ * Stamped rather than left space-less because `GET /audit` reads the caller's
+ * own space, and every credential that reaches the route is bound to one. A
+ * row with no space belongs to no reader and would be seeded into a corner of
+ * the table nothing in this file can see.
+ */
 async function seedAudit(
   action: string,
   resourceType: string,
@@ -45,6 +53,7 @@ async function seedAudit(
     action,
     resource_type: resourceType,
     resource_id: resourceId,
+    space_id: ctx.spaceId,
   });
 }
 
@@ -58,7 +67,7 @@ describe("GET /audit", () => {
     await seedAudit("test.shape", "test", "shape-1");
 
     const res = await request(ctx.app, "GET", "/audit", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -77,7 +86,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       "/audit?action=test.filter.action",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -94,7 +103,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       "/audit?resource_type=unique-resource-type-xyz",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -112,7 +121,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?resource_id=${uniqueId}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -131,7 +140,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=test.window&until=${encodeURIComponent(before)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -145,7 +154,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=test.window&since=${encodeURIComponent(before)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(sinceRes.status).toBe(200);
     const sinceBody = (await sinceRes.json()) as AuditPage;
@@ -154,14 +163,14 @@ describe("GET /audit", () => {
 
   it("rejects limit below 1 with 400", async () => {
     const res = await request(ctx.app, "GET", "/audit?limit=0", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
 
   it("rejects limit above 200 with 400", async () => {
     const res = await request(ctx.app, "GET", "/audit?limit=500", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
@@ -172,7 +181,7 @@ describe("GET /audit", () => {
     // trusted source. The audit row must carry that peer.
     const uniqueTitle = `t027-peer-${Math.random().toString(36).slice(2, 8)}`;
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       peer: "203.0.113.42",
       body: { type: "core.task", properties: { title: uniqueTitle } },
     });
@@ -189,7 +198,7 @@ describe("GET /audit", () => {
           ctx.app,
           "GET",
           `/audit?action=item.create&resource_id=${created.item.id}`,
-          { key: ctx.adminKey, peer: "203.0.113.42" },
+          { key: ctx.spaceKey, peer: "203.0.113.42" },
         );
         expect(listRes.status).toBe(200);
         return (await listRes.json()) as AuditPage;
@@ -214,7 +223,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=${action}&limit=2`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(page1Res.status).toBe(200);
     const page1 = (await page1Res.json()) as AuditPage;
@@ -229,7 +238,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=${action}&limit=2&cursor=${encodeURIComponent(String(cursor))}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(page2Res.status).toBe(200);
     const page2 = (await page2Res.json()) as AuditPage;
@@ -242,15 +251,12 @@ describe("GET /audit", () => {
     }
   });
 
-  it("space-scopes reads: bootstrap admin (no space_id) sees every row", async () => {
-    // Seed three rows directly into the audit store: one for space A, one
-    // for space B, one bootstrap-shape (space_id null). The bootstrap
-    // admin in the test context has no space_id, so `GET /audit` must
-    // return all three. Space-scoped reads are exercised at the storage
-    // layer below — keying full HTTP coverage off a freshly-minted
-    // space-scoped key requires plumbing the raw key + hash that the
-    // test fixture doesn't expose; the storage assertion is the
-    // load-bearing one.
+  it("space-scopes reads: a credential sees its own space's rows and no others", async () => {
+    // Four rows: one for space A, one for space B, one system-stamped with
+    // no space at all, and one in the context's own space. Every credential
+    // that reaches this route is bound to a space — the route asks for
+    // `space.audit_read` and the operator key holds no space permissions —
+    // so each reader below should see exactly its own row.
     const uniqueAction = `test.space.${Math.random().toString(36).slice(2, 8)}`;
     await ctx.storage.audit.log({
       action: uniqueAction,
@@ -267,25 +273,32 @@ describe("GET /audit", () => {
     await ctx.storage.audit.log({
       action: uniqueAction,
       resource_type: "test",
-      resource_id: "row-bootstrap",
+      resource_id: "row-system",
       space_id: null,
     });
+    await ctx.storage.audit.log({
+      action: uniqueAction,
+      resource_type: "test",
+      resource_id: "row-own",
+      space_id: ctx.spaceId,
+    });
 
-    // Bootstrap admin (no space_id) sees every row through the route.
-    const bootstrapRes = await request(
+    // The context's own credential sees its row and none of the others —
+    // the system-stamped row included, which is the one a filter written as
+    // "my space or unstamped" would leak.
+    const ownRes = await request(
       ctx.app,
       "GET",
       `/audit?action=${uniqueAction}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
-    expect(bootstrapRes.status).toBe(200);
-    const bootstrapBody = (await bootstrapRes.json()) as AuditPage;
-    const bootstrapResourceIds = new Set(
-      bootstrapBody.data.map((e) => e.resource_id),
-    );
-    expect(bootstrapResourceIds).toContain("row-a");
-    expect(bootstrapResourceIds).toContain("row-b");
-    expect(bootstrapResourceIds).toContain("row-bootstrap");
+    expect(ownRes.status).toBe(200);
+    const ownBody = (await ownRes.json()) as AuditPage;
+    const ownResourceIds = new Set(ownBody.data.map((e) => e.resource_id));
+    expect(ownResourceIds).toContain("row-own");
+    expect(ownResourceIds).not.toContain("row-a");
+    expect(ownResourceIds).not.toContain("row-b");
+    expect(ownResourceIds).not.toContain("row-system");
 
     // Storage-level: a space-scoped read returns only rows with the
     // matching space_id. System-stamped (null) rows do NOT leak to a
@@ -299,7 +312,7 @@ describe("GET /audit", () => {
     const spaceAResourceIds = new Set(spaceA.data.map((e) => e.resource_id));
     expect(spaceAResourceIds).toContain("row-a");
     expect(spaceAResourceIds).not.toContain("row-b");
-    expect(spaceAResourceIds).not.toContain("row-bootstrap");
+    expect(spaceAResourceIds).not.toContain("row-system");
 
     const spaceB = await ctx.storage.audit.list({
       action: uniqueAction,
@@ -308,7 +321,7 @@ describe("GET /audit", () => {
     const spaceBResourceIds = new Set(spaceB.data.map((e) => e.resource_id));
     expect(spaceBResourceIds).toContain("row-b");
     expect(spaceBResourceIds).not.toContain("row-a");
-    expect(spaceBResourceIds).not.toContain("row-bootstrap");
+    expect(spaceBResourceIds).not.toContain("row-system");
 
     // Route-layer end-to-end: mint a space-scoped key, hit
     // GET /audit, assert it sees only space-A rows. Verifies the
@@ -341,7 +354,8 @@ describe("GET /audit", () => {
     // Space A's admin sees its own rows only.
     expect(routeResourceIds).toContain("row-a");
     expect(routeResourceIds).not.toContain("row-b");
-    expect(routeResourceIds).not.toContain("row-bootstrap");
+    expect(routeResourceIds).not.toContain("row-system");
+    expect(routeResourceIds).not.toContain("row-own");
   });
 
   // NOTE: this test creates a SECOND TestContext with custom config.
@@ -361,7 +375,7 @@ describe("GET /audit", () => {
     try {
       const uniqueTitle = `t027-proxy-${Math.random().toString(36).slice(2, 8)}`;
       const res = await request(trustedCtx.app, "POST", "/items", {
-        key: trustedCtx.adminKey,
+        key: trustedCtx.spaceKey,
         peer: "10.0.0.5",
         headers: { "x-forwarded-for": "203.0.113.7" },
         body: { type: "core.task", properties: { title: uniqueTitle } },
@@ -377,7 +391,7 @@ describe("GET /audit", () => {
             "GET",
             `/audit?action=item.create&resource_id=${created.item.id}`,
             {
-              key: trustedCtx.adminKey,
+              key: trustedCtx.spaceKey,
               peer: "10.0.0.5",
               headers: { "x-forwarded-for": "203.0.113.7" },
             },

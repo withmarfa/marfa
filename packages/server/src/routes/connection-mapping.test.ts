@@ -9,7 +9,8 @@ let familiesOnlyConnectionId: string;
 /**
  * Register a minimal integration + connection pair directly through
  * storage, mirroring what the install pipeline persists: the manifest on a
- * `system.integration` item and an `integration_ref` on the connection.
+ * `system.integration` item and an `integration_ref` on the connection, both
+ * in the space the caller below is bound to.
  */
 async function seedConnection(
   name: string,
@@ -34,30 +35,36 @@ async function seedConnection(
     webhook_verification: { method: "hmac-sha256" },
     ...(supportsMappings ? { supports_user_mappings: true } : {}),
   };
-  const integration = await ctx.storage.items.create({
-    type: "system.integration",
-    properties: {
-      manifest,
-      manifest_name: name,
-      manifest_version: "0.1.0",
-      publisher: "demo",
-      summary: manifest.description,
-      direction: "read",
-      registered_at: new Date().toISOString(),
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest,
+        manifest_name: name,
+        manifest_version: "0.1.0",
+        publisher: "demo",
+        summary: manifest.description,
+        direction: "read",
+        registered_at: new Date().toISOString(),
+      },
     },
-  });
-  const connection = await ctx.storage.items.create({
-    type: "system.connection",
-    properties: {
-      kind: "integration",
-      status: "active",
-      granted_at: new Date().toISOString(),
-      integration_ref: integration.id,
-      configuration: {},
-      direction: "read",
-      triggers: [{ type: "manual" }],
+    ctx.spaceId,
+  );
+  const connection = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        integration_ref: integration.id,
+        configuration: {},
+        direction: "read",
+        triggers: [{ type: "manual" }],
+      },
     },
-  });
+    ctx.spaceId,
+  );
   return connection.id;
 }
 
@@ -68,7 +75,7 @@ beforeAll(async () => {
     fields: { title: { type: "string", required: true } },
   };
   const registered = await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { id: "user.reading_log", ...baseType },
   });
   expect(registered.status).toBe(201);
@@ -108,7 +115,7 @@ describe("connection mapping surface", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
     expect(put.status).toBe(200);
 
@@ -116,7 +123,7 @@ describe("connection mapping surface", () => {
       ctx.app,
       "GET",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const gotBody = (await got.json()) as { mapping: { rules: unknown[] } };
     expect(gotBody.mapping.rules).toHaveLength(1);
@@ -125,14 +132,14 @@ describe("connection mapping surface", () => {
       ctx.app,
       "DELETE",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(cleared.status).toBe(200);
     const after = await request(
       ctx.app,
       "GET",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(((await after.json()) as { mapping: unknown }).mapping).toBeNull();
   });
@@ -143,7 +150,7 @@ describe("connection mapping surface", () => {
       "PUT",
       `/connections/${mappedConnectionId}/mapping`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           version: 1,
           rules: [
@@ -171,7 +178,7 @@ describe("connection mapping surface", () => {
       ctx.app,
       "PUT",
       `/connections/${familiesOnlyConnectionId}/mapping`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -183,7 +190,7 @@ describe("bringing the items already there", () => {
   const readConnection = async (
     id: string,
   ): Promise<Record<string, unknown>> => {
-    const item = await ctx.storage.items.get(id);
+    const item = await ctx.storage.items.get(id, ctx.spaceId);
     return item?.properties ?? {};
   };
 
@@ -192,7 +199,7 @@ describe("bringing the items already there", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping?reapply=true`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { reapply_until: string | null };
@@ -220,14 +227,14 @@ describe("bringing the items already there", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping?reapply=true`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
 
     const res = await request(
       ctx.app,
       "GET",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { reapply_until: string | null };
@@ -239,14 +246,14 @@ describe("bringing the items already there", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping?reapply=false`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
 
     const res = await request(
       ctx.app,
       "GET",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const body = (await res.json()) as { reapply_until: string | null };
     expect(body.reapply_until).toBeNull();
@@ -257,7 +264,7 @@ describe("bringing the items already there", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
     expect(res.status).toBe(200);
     expect(
@@ -272,7 +279,7 @@ describe("bringing the items already there", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping?reapply=true`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
     expect(
       (await readConnection(mappedConnectionId)).mapping_reapply_until,
@@ -282,7 +289,7 @@ describe("bringing the items already there", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping?reapply=false`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
     // Asserted as absent rather than as null-or-absent. `null_clears` is
     // what removes the key; without it the merge stores an explicit null,
@@ -297,13 +304,13 @@ describe("bringing the items already there", () => {
       ctx.app,
       "PUT",
       `/connections/${mappedConnectionId}/mapping?reapply=true`,
-      { key: ctx.adminKey, body: VALID_MAPPING },
+      { key: ctx.spaceKey, body: VALID_MAPPING },
     );
     await request(
       ctx.app,
       "DELETE",
       `/connections/${mappedConnectionId}/mapping`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const props = await readConnection(mappedConnectionId);
     expect(props.mapping ?? null).toBeNull();

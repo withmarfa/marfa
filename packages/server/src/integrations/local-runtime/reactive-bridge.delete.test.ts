@@ -93,7 +93,7 @@ describe("the live bridge fans out deletes", () => {
       "POST",
       `/admin/spaces/${space.id}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "bridge-delete-probe",
           source: "bridge-delete-probe",

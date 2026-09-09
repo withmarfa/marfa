@@ -320,7 +320,7 @@ function uniq(prefix: string): string {
 
 async function makeNote(body = "seed"): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body }, source_id: uniq("seed") },
   });
   expect(res.status).toBe(201);
@@ -329,7 +329,7 @@ async function makeNote(body = "seed"): Promise<string> {
 
 async function makeEdge(source: string, target: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { source_id: source, target_id: target, edge_type: "references" },
   });
   expect(res.status).toBe(201);
@@ -387,7 +387,7 @@ const doors: Door[] = [
     setup: () => Promise.resolve({ item: generateId() }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           id: s.item,
           type: "core.note",
@@ -412,7 +412,7 @@ const doors: Door[] = [
     }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           id: s.item,
           type: "core.note",
@@ -438,7 +438,7 @@ const doors: Door[] = [
     setup: async () => {
       const sourceId = uniq("natural");
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: { body: "before" },
@@ -451,7 +451,7 @@ const doors: Door[] = [
     },
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: { body: "after" },
@@ -473,14 +473,14 @@ const doors: Door[] = [
       const other = await makeNote("new target");
       const stale = await makeNote("stale target");
       await request(ctx.app, "PATCH", `/items/${item}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { edges: { references: [stale] } },
       });
       return { item, other };
     },
     act: async (s) => {
       const res = await request(ctx.app, "PATCH", `/items/${s.item}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           properties: { body: "after" },
           edges: { references: [s.other] },
@@ -508,7 +508,7 @@ const doors: Door[] = [
       // Move it on, so the write below collides on `body` — a keep-both
       // field on `core.note`.
       const res = await request(ctx.app, "PATCH", `/items/${item}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { properties: { body: "winner body" }, version: 1 },
       });
       expect(res.status).toBe(200);
@@ -520,7 +520,7 @@ const doors: Door[] = [
         "PATCH",
         `/items/${s.item}?conflict=auto`,
         {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           headers: { "Idempotency-Key": conflictKeyFor(s.item) },
           body: { properties: { body: CONFLICTED_LOSER }, version: 1 },
         },
@@ -544,7 +544,7 @@ const doors: Door[] = [
     setup: async () => ({ item: await makeNote("doomed") }),
     act: async (s) => {
       const res = await request(ctx.app, "DELETE", `/items/${s.item}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       return res.status === 200;
     },
@@ -566,7 +566,7 @@ const doors: Door[] = [
         "POST",
         `/items/${s.item}/transition`,
         {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { state: "archived" },
         },
       );
@@ -585,12 +585,12 @@ const doors: Door[] = [
     breakage: () => breakWrite(ctx.storage.items, "restore"),
     setup: async () => {
       const item = await makeNote("to restore");
-      await request(ctx.app, "DELETE", `/items/${item}`, { key: ctx.adminKey });
+      await request(ctx.app, "DELETE", `/items/${item}`, { key: ctx.spaceKey });
       return { item };
     },
     act: async (s) => {
       const res = await request(ctx.app, "POST", `/items/${s.item}/restore`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       return res.status === 200;
     },
@@ -605,18 +605,23 @@ const doors: Door[] = [
     transactions: 1,
     setup: async () => {
       // Promotion is defined against a row an integration wrote, and no
-      // route stamps that source, so the mirror is planted through storage.
-      const mirror = await ctx.storage.items.create({
-        type: "core.note",
-        properties: { body: "upstream copy" },
-        source: "integration:promote-fixture",
-        source_id: uniq("mirror"),
-      });
+      // route stamps that source, so the mirror is planted through storage —
+      // into the space the caller below is bound to, or the door never
+      // resolves it.
+      const mirror = await ctx.storage.items.create(
+        {
+          type: "core.note",
+          properties: { body: "upstream copy" },
+          source: "integration:promote-fixture",
+          source_id: uniq("mirror"),
+        },
+        ctx.spaceId,
+      );
       return { item: mirror.id };
     },
     act: async (s) => {
       const res = await request(ctx.app, "POST", `/items/${s.item}/promote`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       return res.status === 201;
     },
@@ -648,12 +653,12 @@ const doors: Door[] = [
       const item = await makeNote("to purge");
       const other = await makeNote("pointing at it");
       const edge = await makeEdge(other, item);
-      await request(ctx.app, "DELETE", `/items/${item}`, { key: ctx.adminKey });
+      await request(ctx.app, "DELETE", `/items/${item}`, { key: ctx.spaceKey });
       return { item, other, edge };
     },
     act: async (s) => {
       const res = await request(ctx.app, "DELETE", `/items/${s.item}/purge`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       return res.status === 200;
     },
@@ -677,7 +682,7 @@ const doors: Door[] = [
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "PUT", `/items/${s.item}/metadata`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: ["replaced"] },
       });
       return res.status === 200;
@@ -695,7 +700,7 @@ const doors: Door[] = [
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "PATCH", `/items/${s.item}/metadata`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: ["merged"] },
       });
       return res.status === 200;
@@ -713,7 +718,7 @@ const doors: Door[] = [
     setup: async () => ({ item: await makeNote("tagged") }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", `/items/${s.item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: ["added"] },
       });
       return res.status === 200;
@@ -731,7 +736,7 @@ const doors: Door[] = [
     setup: async () => {
       const item = await makeNote("tagged");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: ["doomed"] },
       });
       return { item };
@@ -741,7 +746,7 @@ const doors: Door[] = [
         ctx.app,
         "DELETE",
         `/items/${s.item}/tags/doomed`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       return res.status === 200;
     },
@@ -761,7 +766,7 @@ const doors: Door[] = [
         ctx.app,
         "PUT",
         `/items/${s.item}/extensions/${NAMESPACE}`,
-        { key: ctx.adminKey, body: { note: "sidecar" } },
+        { key: ctx.spaceKey, body: { note: "sidecar" } },
       );
       return res.status === 200;
     },
@@ -779,7 +784,7 @@ const doors: Door[] = [
     setup: async () => {
       const item = await makeNote("with sidecar");
       await request(ctx.app, "PUT", `/items/${item}/extensions/${NAMESPACE}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { note: "sidecar" },
       });
       return { item };
@@ -789,7 +794,7 @@ const doors: Door[] = [
         ctx.app,
         "DELETE",
         `/items/${s.item}/extensions/${NAMESPACE}`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       return res.status === 200;
     },
@@ -811,7 +816,7 @@ const doors: Door[] = [
     }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/edges", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           source_id: s.item,
           target_id: s.other,
@@ -837,7 +842,7 @@ const doors: Door[] = [
     },
     act: async (s) => {
       const res = await request(ctx.app, "PATCH", `/edges/${s.edge}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { properties: { note: "edited" } },
       });
       return res.status === 200;
@@ -859,7 +864,7 @@ const doors: Door[] = [
     },
     act: async (s) => {
       const res = await request(ctx.app, "DELETE", `/edges/${s.edge}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       return res.status === 200;
     },
@@ -879,7 +884,7 @@ const doors: Door[] = [
     }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/items/bulk", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           atomic: true,
           items: [
@@ -913,7 +918,7 @@ const doors: Door[] = [
     }),
     act: async (s) => {
       const res = await request(ctx.app, "POST", "/edges/bulk", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           atomic: true,
           edges: [
@@ -940,7 +945,7 @@ const doors: Door[] = [
       const tag = uniq("action");
       const item = await makeNote("bulk transition");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: [tag] },
       });
       return { item, tag };
@@ -953,7 +958,7 @@ const doors: Door[] = [
           state: "archived",
           filter: { tags: [s.tag] },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       return result?.succeeded === 1;
     },
@@ -973,10 +978,10 @@ const doors: Door[] = [
       const other = await makeNote("pointing at it");
       const edge = await makeEdge(other, item);
       await request(ctx.app, "POST", `/items/${item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: [tag] },
       });
-      await request(ctx.app, "DELETE", `/items/${item}`, { key: ctx.adminKey });
+      await request(ctx.app, "DELETE", `/items/${item}`, { key: ctx.spaceKey });
       return { item, other, edge, tag };
     },
     act: async (s) => {
@@ -987,7 +992,7 @@ const doors: Door[] = [
           confirm: "PURGE",
           filter: { tags: [s.tag], state: "trashed" },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       return result?.succeeded === 1;
     },
@@ -1012,7 +1017,7 @@ const doors: Door[] = [
       const tag = uniq("action");
       const item = await makeNote("bulk retag");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: [tag] },
       });
       return { item, tag };
@@ -1021,7 +1026,7 @@ const doors: Door[] = [
       const { result } = await runBulkActionAsync(
         ctx,
         { action: "update_tags", add: ["retagged"], filter: { tags: [s.tag] } },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       return result?.succeeded === 1;
     },
@@ -1038,7 +1043,7 @@ const doors: Door[] = [
       const tag = uniq("action");
       const item = await makeNote("bulk retier");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: [tag] },
       });
       return { item, tag };
@@ -1047,7 +1052,7 @@ const doors: Door[] = [
       const { result } = await runBulkActionAsync(
         ctx,
         { action: "update_tier", tier: "feed", filter: { tags: [s.tag] } },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       return result?.succeeded === 1;
     },
@@ -1064,7 +1069,7 @@ const doors: Door[] = [
       const tag = uniq("action");
       const item = await makeNote("before");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: [tag] },
       });
       return { item, tag };
@@ -1077,7 +1082,7 @@ const doors: Door[] = [
           patch: { body: "after" },
           filter: { tags: [s.tag] },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       return result?.succeeded === 1;
     },
@@ -1093,7 +1098,7 @@ const doors: Door[] = [
       const tag = uniq("action");
       const item = await makeNote("bulk restamp");
       await request(ctx.app, "POST", `/items/${item}/tags`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { tags: [tag] },
       });
       return { item, tag };
@@ -1106,7 +1111,7 @@ const doors: Door[] = [
           timestamp: RESTAMPED_AT,
           filter: { tags: [s.tag] },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       return result?.succeeded === 1;
     },

@@ -38,7 +38,7 @@ beforeAll(async () => {
 
   const registerType = async (id: string, parent?: string): Promise<void> => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id,
         label: id,
@@ -62,7 +62,7 @@ beforeAll(async () => {
 
   for (const type of [PARENT, NAMED_CHILD, DECLARED_CHILD]) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type, properties: { body: `${NEEDLE} fixture for ${type}` } },
     });
     expect(res.status).toBe(201);
@@ -110,7 +110,7 @@ const SURFACES: Surface[] = [
           ctx.app,
           "GET",
           `/items?type=${encodeURIComponent(type)}&limit=100`,
-          { key: ctx.adminKey },
+          { key: ctx.spaceKey },
         ),
         (b: never) => (b as { data: { type: string }[] }).data,
       ),
@@ -123,7 +123,7 @@ const SURFACES: Surface[] = [
           ctx.app,
           "GET",
           `/search?q=${NEEDLE}&type=${encodeURIComponent(type)}&limit=100`,
-          { key: ctx.adminKey },
+          { key: ctx.spaceKey },
         ),
         (b: never) =>
           (b as { results: { item: { type: string } }[] }).results.map(
@@ -141,7 +141,7 @@ const SURFACES: Surface[] = [
         ctx.app,
         "GET",
         `/export?type=${encodeURIComponent(type)}`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       if (res.status !== 200) return { status: res.status, types: [] };
       // NDJSON: one `{ item, metadata }` envelope per line.

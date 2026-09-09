@@ -6,13 +6,19 @@
  * This coupling is intentional — the key label IS the namespace identity.
  * Additional access can be granted via extension_permissions on the key.
  *
- * Reserved namespaces (core, marfa, system) take the operator key. Two gates
- * stand in series and both have to pass: the namespace gate wants the
- * operator flag, and the extension permission map is then consulted like any
- * other caller's. The flag opens the namespace and grants no reach inside it,
- * so a credential minted through `POST /keys` — which takes no maps at
- * bootstrap — writes nothing here. Every real writer goes through the storage
- * layer instead.
+ * **Reserved namespaces (core, marfa, system) are closed to every
+ * credential.** They used to be fenced to the operator key, with the
+ * extension permission map consulted after the flag, so a writer had to hold
+ * both. Nothing can: the row constraint makes `is_operator` and space-less
+ * the same thing, and a space-less credential holds no permissions at all, so
+ * the map refused whatever the fence said. The fence went rather than staying
+ * as a gate that could not answer. What writes these namespaces is the
+ * platform's own machinery, through the storage layer, which is also what
+ * writes a `system.*` row.
+ *
+ * `connection.runtime` is a different thing and is not in that set: it is
+ * written by the connection's own runtime credential, under its own rule
+ * below.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -24,36 +30,15 @@ import {
   resolveExtensionPermission,
   filterExtensionsByPermission,
 } from "@withmarfa/shared";
-import type { ApiKey } from "@withmarfa/shared";
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
-
-/**
- * Reserved extension namespaces are the metadata-layer twin of the reserved
- * *type* namespaces, which `checkTypeAccess` gates the same way: the instance
- * tier and nothing else. A credential bound to a space is inside the
- * permission model whatever it holds, and these namespaces sit outside it.
- *
- * One term rather than two. `is_operator` beside `hasOperatorAuthority` reads
- * as a widening and is not one: the pair is only separable for a key carrying
- * the flag *and* a space binding, which the row constraint on `api_keys`
- * refuses outright.
- */
-function mayWriteReservedNamespace(apiKey: ApiKey | undefined): boolean {
-  if (!apiKey) return false;
-  return hasOperatorAuthority(apiKey);
-}
 
 import {
   RUNTIME_NAMESPACE,
   announcesMetadataChange,
 } from "../metadata-namespaces.js";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireAuth,
-  hasOperatorAuthority,
-  requireRowWritable,
-} from "../middleware/auth.js";
+import { requireAuth, requireRowWritable } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
@@ -418,10 +403,7 @@ export function extensionRoutes(storage: Storage) {
           `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot write the runtime namespace of connection ${id}`,
         );
       }
-    } else if (
-      RESERVED_NAMESPACES.has(namespace) &&
-      !mayWriteReservedNamespace(apiKey)
-    ) {
+    } else if (RESERVED_NAMESPACES.has(namespace)) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
@@ -515,10 +497,7 @@ export function extensionRoutes(storage: Storage) {
           `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot delete the runtime namespace of connection ${id}`,
         );
       }
-    } else if (
-      RESERVED_NAMESPACES.has(namespace) &&
-      !mayWriteReservedNamespace(apiKey)
-    ) {
+    } else if (RESERVED_NAMESPACES.has(namespace)) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,

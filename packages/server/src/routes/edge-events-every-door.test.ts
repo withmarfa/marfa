@@ -45,7 +45,7 @@ afterAll(async () => {
 
 async function note(body: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body } },
   });
   expect(res.status).toBe(201);
@@ -87,7 +87,7 @@ describe("edge events on every door", () => {
     );
 
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "inline-source" },
@@ -118,12 +118,12 @@ describe("edge events on every door", () => {
     const second = await note("patch-target-2");
 
     const seeded = await request(ctx.app, "PATCH", `/items/${source}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { edges: { references: [first] } },
     });
     expect(seeded.status).toBe(200);
     const before = await request(ctx.app, "GET", `/items/${source}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const oldEdgeId = ((await before.json()) as { data: { id: string }[] })
       .data[0]?.id;
@@ -131,7 +131,7 @@ describe("edge events on every door", () => {
 
     const heard = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "PATCH", `/items/${source}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { edges: { references: [second] } },
       });
       expect(res.status).toBe(200);
@@ -159,11 +159,11 @@ describe("edge events on every door", () => {
     // one is the case that cannot be inferred: it lives on `other`, which
     // is not being purged and gets no item event at all.
     const outboundRes = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: doomed, target_id: other, edge_type: "references" },
     });
     const inboundRes = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: other, target_id: doomed, edge_type: "references" },
     });
     const outbound = ((await outboundRes.json()) as { edge: { id: string } })
@@ -171,7 +171,7 @@ describe("edge events on every door", () => {
     const inbound = ((await inboundRes.json()) as { edge: { id: string } }).edge
       .id;
 
-    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.adminKey });
+    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.spaceKey });
     // Both awaited by id. A count of two passes on any two deletions,
     // including a pair from a sibling test sharing this emitter.
     const outboundHeard = nextEdgeEvent(
@@ -181,7 +181,7 @@ describe("edge events on every door", () => {
       (e) => e.type === "edge_deleted" && e.edge.id === inbound,
     );
     const res = await request(ctx.app, "DELETE", `/items/${doomed}/purge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     await outboundHeard;
@@ -204,7 +204,7 @@ describe("edge events on every door", () => {
     }> {
       const tag = `bulkpurge-${Math.random().toString(36).slice(2, 8)}`;
       const seed = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: { body: "bulk-purge-doomed" },
@@ -217,7 +217,7 @@ describe("edge events on every door", () => {
       // Inbound only: it lives on `other`, which is not being purged, so
       // nothing but the edge event tells that item's holder it changed.
       await request(ctx.app, "POST", "/edges", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { source_id: other, target_id: doomed, edge_type: "references" },
       });
 
@@ -235,7 +235,7 @@ describe("edge events on every door", () => {
           filter: { tags: [tag] },
           ...(enableFanout ? { enable_fanout: true } : {}),
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       expect(run.initialStatus).toBe(202);
       expect(run.result?.succeeded).toBe(1);
@@ -270,7 +270,7 @@ describe("edge events on every door", () => {
   it("a bulk transition announces the state it moved items to", async () => {
     const tag = `bulkmove-${Math.random().toString(36).slice(2, 8)}`;
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "bulk-transition" },
@@ -291,7 +291,7 @@ describe("edge events on every door", () => {
         filter: { tags: [tag] },
         enable_fanout: true,
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.initialStatus).toBe(202);
     await settle();
@@ -309,7 +309,7 @@ describe("edge events on every door", () => {
     // ever see: publishing is what appends the event log row.
     const tag = `bulkquiet-${Math.random().toString(36).slice(2, 8)}`;
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "bulk-transition-quiet" },
@@ -325,7 +325,7 @@ describe("edge events on every door", () => {
     const run = await runBulkActionAsync(
       ctx,
       { action: "transition", state: "archived", filter: { tags: [tag] } },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.initialStatus).toBe(202);
     expect(run.result?.succeeded).toBe(1);
@@ -342,7 +342,7 @@ describe("edge events on every door", () => {
     const target = await note("bulk-inline-target");
     const quiet = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "POST", "/items/bulk", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           items: [
             {
@@ -362,7 +362,7 @@ describe("edge events on every door", () => {
 
     const loud = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "POST", "/items/bulk", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           enable_fanout: true,
           items: [
@@ -393,7 +393,7 @@ describe("the remaining doors that write an edge", () => {
         source: "integration:acme.promotefixture",
         source_id: `mirror-${Math.random().toString(36).slice(2, 8)}`,
       },
-      undefined,
+      ctx.spaceId,
     );
 
     let promotedId = "";
@@ -402,7 +402,7 @@ describe("the remaining doors that write an edge", () => {
         ctx.app,
         "POST",
         `/items/${mirror.id}/promote`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(201);
       promotedId = ((await res.json()) as { item: { id: string } }).item.id;
@@ -412,7 +412,7 @@ describe("the remaining doors that write an edge", () => {
     expect(created).toHaveLength(1);
     // And it is the edge joining the two, not some other write.
     const listed = await request(ctx.app, "GET", `/items/${promotedId}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const rows = (await listed.json()) as {
       data: { id: string; edge_type: string; target_id: string }[];
@@ -431,7 +431,7 @@ describe("the remaining doors that write an edge", () => {
     const second = await note("resync-target-2");
 
     const seeded = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         source_id: sourceKey,
@@ -443,7 +443,7 @@ describe("the remaining doors that write an edge", () => {
     const sourceItem = ((await seeded.json()) as { item: { id: string } }).item
       .id;
     const before = await request(ctx.app, "GET", `/items/${sourceItem}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const oldId = ((await before.json()) as { data: { id: string }[] }).data[0]
       ?.id;
@@ -452,7 +452,7 @@ describe("the remaining doors that write an edge", () => {
       // Same natural key, so this resolves the existing row rather than
       // creating one — and its edges are replaced in place.
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           source_id: sourceKey,
@@ -479,7 +479,7 @@ describe("the two doors this suite would otherwise leave uncovered", () => {
     const source = await note("delete-door-source");
     const target = await note("delete-door-target");
     const created = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: source, target_id: target, edge_type: "references" },
     });
     expect(created.status).toBe(201);
@@ -489,7 +489,7 @@ describe("the two doors this suite would otherwise leave uncovered", () => {
       (e) => e.type === "edge_deleted" && e.edge.id === edgeId,
     );
     const res = await request(ctx.app, "DELETE", `/edges/${edgeId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
 
@@ -530,7 +530,7 @@ describe("an announcement never outlives the write it describes", () => {
     const target = await note("rollback-target");
     const heard = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "POST", "/items/bulk", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           enable_fanout: true,
           items: [
@@ -568,7 +568,7 @@ describe("an announcement never outlives the write it describes", () => {
     // And the edge really is absent, so the assertion above is about a
     // rollback rather than about an event that merely arrived late.
     const listed = await request(ctx.app, "GET", `/items/${target}/backrefs`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
   });
@@ -583,13 +583,13 @@ describe("the properties the announcement itself has to hold", () => {
     const first = await note("order-target-1");
     const second = await note("order-target-2");
     await request(ctx.app, "PATCH", `/items/${source}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { edges: { references: [first] } },
     });
 
     const heard = await edgeEventsDuring(async () => {
       const res = await request(ctx.app, "PATCH", `/items/${source}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { edges: { references: [second] } },
       });
       expect(res.status).toBe(200);
@@ -612,7 +612,7 @@ describe("the properties the announcement itself has to hold", () => {
     // deletions for rows a rollback put back.
     const tag = `errored-${Math.random().toString(36).slice(2, 8)}`;
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "doomed" }, tags: [tag] },
     });
     expect(seed.status).toBe(201);
@@ -623,7 +623,7 @@ describe("the properties the announcement itself has to hold", () => {
     // whether or not the guard exists — which is what it did until a
     // mutation showed the guard could be removed with the test green.
     const edgeRes = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: doomed, target_id: other, edge_type: "references" },
     });
     const edgeId = ((await edgeRes.json()) as { edge: { id: string } }).edge.id;
@@ -642,7 +642,7 @@ describe("the properties the announcement itself has to hold", () => {
           filter: { tags: [tag] },
           enable_fanout: true,
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
     });
     store.deleteByTargetBatch = realByTarget;

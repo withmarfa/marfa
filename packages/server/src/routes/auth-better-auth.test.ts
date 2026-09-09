@@ -722,22 +722,25 @@ describe("better-auth /auth/* surface", () => {
     // the projection row with a fake client_id string. The /grants
     // listing doesn't validate against the client table.
     const fakeClientId = `client_${Math.random().toString(36).slice(2, 8)}`;
-    const grant = await ctx.storage.items.create({
-      type: "system.connection",
-      state: "active",
-      tier: "library",
-      properties: {
-        kind: "app",
-        client_id: fakeClientId,
-        scopes: ["core.note:read"],
-        status: "active",
-        granted_at: new Date().toISOString(),
+    const grant = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        state: "active",
+        tier: "library",
+        properties: {
+          kind: "app",
+          client_id: fakeClientId,
+          scopes: ["core.note:read"],
+          status: "active",
+          granted_at: new Date().toISOString(),
+        },
+        source: "test/oauth",
       },
-      source: "test/oauth",
-    });
+      ctx.spaceId,
+    );
 
     const listRes = await request(ctx.app, "GET", "/auth/grants", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(listRes.status).toBe(200);
     const list = (await listRes.json()) as {
@@ -758,13 +761,13 @@ describe("better-auth /auth/* surface", () => {
       ctx.app,
       "DELETE",
       `/auth/grants/${grant.id}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(revokeRes.status).toBe(204);
 
     // Confirm it's gone from the active list
     const list2Res = await request(ctx.app, "GET", "/auth/grants", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const list2 = (await list2Res.json()) as { id: string }[];
     expect(list2.some((g) => g.id === grant.id)).toBe(false);

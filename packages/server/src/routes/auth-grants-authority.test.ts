@@ -76,7 +76,7 @@ async function seedSpaceWithGrant() {
       "POST",
       `/admin/spaces/${space.id}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: `grants-authority-${name}-${suffix}`,
           source: `grants-authority-${name}-${suffix}`,
@@ -148,7 +148,7 @@ describe("the bearer grants API refuses a key without `space.app_grants`", () =>
     await seedSpaceWithGrant();
 
     const res = await request(ctx.app, "GET", "/auth/grants", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
   });

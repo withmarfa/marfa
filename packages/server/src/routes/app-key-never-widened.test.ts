@@ -193,8 +193,12 @@ describe("editing a key an app made", () => {
 
   it("refuses the operator key too, because the rule is the key's", async () => {
     const id = await seedAppKey();
+    // The operator key is the credential with nothing above it: it reaches
+    // this door without holding `space.keys`, and its space-less binding
+    // skips the fence that stops every other caller addressing a key outside
+    // its own space. So it is the one that would lift the rule quietly.
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { type_permissions: { "*": "write" } },
     });
     expect(res.status).toBe(403);

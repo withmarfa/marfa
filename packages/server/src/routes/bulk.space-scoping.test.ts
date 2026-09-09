@@ -222,7 +222,7 @@ describe("POST /items/bulk — the operator key unaffected", () => {
   it("the operator key bulk-creates cross-space (no space scope)", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {

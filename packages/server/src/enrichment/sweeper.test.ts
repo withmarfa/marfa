@@ -57,11 +57,20 @@ function sweeper(
   });
 }
 
-/** Puts bytes in the backend and registers them, the way an upload would. */
+/** Puts bytes in the backend and registers them, the way an upload would.
+ *  Registered in the context's space, because blob metadata is keyed on
+ *  `(space_id, hash)` and the items below live in that space: a row filed
+ *  anywhere else is invisible to the sweeper reading the item's own space. */
 async function seedBlob(bytes: Buffer, mimeType: string): Promise<string> {
   const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   await ctx.blobBackend.put(ref, bytes, mimeType);
-  await ctx.storage.blobs.register(ref, mimeType, bytes.length, ref, "");
+  await ctx.storage.blobs.register(
+    ref,
+    mimeType,
+    bytes.length,
+    ref,
+    ctx.spaceId,
+  );
   return ref;
 }
 
@@ -72,7 +81,7 @@ async function createFileItem(
   extra: Record<string, unknown> = {},
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type,
       properties: { blob_ref: blobRef, mime_type: mimeType, ...extra },
@@ -88,7 +97,7 @@ async function createFileItem(
 
 async function readItem(id: string): Promise<Record<string, unknown>> {
   const res = await request(ctx.app, "GET", `/items/${id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   const data = (await res.json()) as {
@@ -127,7 +136,7 @@ describe("extraction", () => {
     // findable. FTS indexes every unmarked string property, so the write
     // above is the whole search wiring.
     const search = await request(ctx.app, "GET", "/search?q=quokkadocx", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(search.status).toBe(200);
     const found = (await search.json()) as {
@@ -154,7 +163,7 @@ describe("extraction", () => {
     expect(String(props.extracted_text)).toContain("page two marker");
 
     const search = await request(ctx.app, "GET", "/search?q=quokkapdf", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(search.status).toBe(200);
     const found = (await search.json()) as {
@@ -186,7 +195,7 @@ describe("extraction", () => {
     const ref = await seedBlob(bytes, "text/plain");
     const id = await createFileItem(ref, "text/plain");
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "a title the user set" } },
     });
 
@@ -230,7 +239,7 @@ describe("extraction", () => {
       "text/plain",
     );
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { blob_ref: replacement } },
     });
 
@@ -288,7 +297,7 @@ describe("extraction", () => {
     // "recognition" is still in flight.
     await expect.poll(() => ocr.calls).toBe(1);
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         properties: { blob_ref: replacement, mime_type: "text/plain" },
       },
@@ -402,7 +411,7 @@ describe("skips", () => {
       await seedBlob(Buffer.from("trashed quokkatrash"), "text/plain"),
       "text/plain",
     );
-    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.adminKey });
+    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey });
 
     const candidates = await ctx.storage.enrichment.listCandidates(
       EXTRACTOR_VERSION,
@@ -471,7 +480,7 @@ describe("failures", () => {
       "image/png",
     );
     await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { blob_ref: replacement } },
     });
 

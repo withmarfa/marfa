@@ -14,18 +14,18 @@ let scopedKey: string;
 // that is load-bearing rather than incidental. The reserved-namespace fence
 // admits any operator key, and a space-less key must be one — the api_keys
 // CHECK constraint ties the two together — so a space-less fixture would pass
-// the very door two tests here exist to see refused. Items are therefore
-// seeded straight into this space instead of being written through the
-// space-less admin key, which the scoped credential could not see.
-const SCOPED_SPACE = `ext-space-${Math.random().toString(36).slice(2, 10)}`;
-
+// the very door two tests here exist to see refused.
+//
+// It shares the context's own space, so the working key and the scoped key
+// address the same items and the difference between them is the permission
+// map alone, which is the only thing the filtering tests are about.
 async function createItem(): Promise<string> {
   const item = await ctx.storage.items.create(
     {
       type: "core.note",
       properties: { body: `ext-item-${String(Math.random())}` },
     },
-    SCOPED_SPACE,
+    ctx.spaceId,
   );
   return item.id;
 }
@@ -48,7 +48,7 @@ beforeAll(async () => {
       is_operator: false,
     },
     hashApiKey(scopedKey, "test-salt"),
-    SCOPED_SPACE,
+    ctx.spaceId,
   );
 });
 
@@ -92,7 +92,7 @@ describe("GET /items/:id/extensions", () => {
       ctx.app,
       "GET",
       `/items/${itemId}/extensions`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(adminRes.status).toBe(200);
     const adminBody = (await adminRes.json()) as {
@@ -122,7 +122,7 @@ describe("GET /items/:id/extensions", () => {
       ctx.app,
       "GET",
       "/items/not-a-valid-id/extensions",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -134,7 +134,7 @@ describe("GET /items/:id/extensions", () => {
       ctx.app,
       "GET",
       "/items/019537a0-7b80-7000-8000-000000000000/extensions",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -201,7 +201,7 @@ describe("GET /items/:id/extensions/:namespace", () => {
       ctx.app,
       "GET",
       "/items/019537a0-7b80-7000-8000-000000000001/extensions/friends",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });
@@ -316,7 +316,7 @@ describe("DELETE /items/:id/extensions/:namespace", () => {
       ctx.app,
       "DELETE",
       "/items/019537a0-7b80-7000-8000-000000000002/extensions/noter",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });

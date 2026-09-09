@@ -42,13 +42,20 @@ import type { Item } from "@withmarfa/shared";
  * it again. Anything that is not literally `"revoked"` counts as live, on
  * both kinds, so an unknown or missing status fails closed.
  *
- * Applied at every door: the item delete (the named row and every row its
- * cascade reaches), the purge, the lifecycle transition out of `active`,
- * and the bulk transition and purge, which narrow rather than fail. The two
- * transition doors are defence in depth: the lifecycle table admits only
- * `active` to `revoked` for a `system.*` type and neither door can name
- * `revoked`, so the store refuses them anyway; the refusal here decides
- * which answer the caller reads. The properties door is not covered:
+ * **Two call sites, and they are the two doors that reach a connection at
+ * all.** The delete cascade asks it of every row the walk reaches, the root
+ * included, which is the only way a credential addresses a connection: the
+ * type gate on `DELETE /items/{id}` refuses a `system.connection` write to
+ * everything the product mints, and it ran against the named row alone. The
+ * purge door asks it directly, because it reads the row before it asks the
+ * write question.
+ *
+ * The single transition door and the two bulk doors used to ask it too, and
+ * none of them could answer: the transition route sits behind the same type
+ * gate and behind a lifecycle table that admits only `revoked` for a
+ * `system.*` type, which its schema cannot name, and the bulk door's
+ * reserved-namespace narrowing keeps a connection out of the match set
+ * entirely. The properties door is not covered:
  * `status` is an ordinary property a space credential can patch, which is the
  * remaining way to make a live grant read as revoked, tracked separately.
  */

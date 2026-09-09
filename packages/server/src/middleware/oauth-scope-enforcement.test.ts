@@ -59,7 +59,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       });
 
       // First seed an item via the admin key so there's something to read.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const created = await request(ctx.app, "POST", "/items", {
         key: admin,
         body: {
@@ -87,7 +87,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
     it("excludes out-of-scope types from list reads (implicit denial via allowed_types)", async () => {
       // Seed items of two types as admin so both are present in the DB.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       await request(ctx.app, "POST", "/items", {
         key: admin,
         body: { type: "core.note", properties: { body: "in-scope" } },
@@ -126,7 +126,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       ];
       for (const typeId of schemas) {
         const registered = await request(ctx.app, "POST", "/types", {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: {
             id: typeId,
             version: 1,
@@ -135,7 +135,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         });
         expect(registered.status).toBe(201);
         const created = await request(ctx.app, "POST", "/items", {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { type: typeId, properties: { title: typeId } },
         });
         expect(created.status).toBe(201);
@@ -158,7 +158,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
     });
 
     it("rejects single-item GET on an out-of-scope type with 403", async () => {
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -207,7 +207,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:write"],
       });
       // Seed two notes via admin so there are referencable items.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -240,7 +240,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:write", "edge.parent-of:write"],
       });
       // Seed two notes via admin.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -268,7 +268,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["core.note:write", "edge.*:write"],
       });
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -340,7 +340,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
   describe("malformed scope grants are inert", () => {
     it("a token with only nonsense scopes returns empty data on list and 403 on direct access", async () => {
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -396,11 +396,16 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 // ---------------------------------------------------------------------------
 
 describe("wildcard scope reaches runtime user.* types (keystone)", () => {
+  // A runtime type is registered into the space that registered it, so a
+  // token has to be bound to that space to see the type at all. Bound
+  // elsewhere, the write is refused for a missing schema rather than for a
+  // scope, and the read is a fence miss rather than a projection.
+  //
   // The in-memory custom-type registry is a module singleton, so each test
   // registers a distinct `user.*` id to avoid a cross-test 409.
   async function registerUserType(typeId: string): Promise<void> {
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: typeId,
         version: 1,
@@ -412,7 +417,10 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
 
   it("global *:write lets an OAuth token write a runtime user.* item", async () => {
     await registerUserType("user.ks_write");
-    const { rawToken } = await mintOAuthToken({ scopes: ["*:write"] });
+    const { rawToken } = await mintOAuthToken({
+      scopes: ["*:write"],
+      spaceId: ctx.spaceId,
+    });
     const created = await request(ctx.app, "POST", "/items", {
       key: rawToken,
       body: { type: "user.ks_write", properties: { title: "via wildcard" } },
@@ -423,11 +431,14 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
   it("namespace wildcard user.*:read reads user.* items; writing still needs :write", async () => {
     await registerUserType("user.ks_read");
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "user.ks_read", properties: { title: "seed" } },
     });
 
-    const { rawToken } = await mintOAuthToken({ scopes: ["user.*:read"] });
+    const { rawToken } = await mintOAuthToken({
+      scopes: ["user.*:read"],
+      spaceId: ctx.spaceId,
+    });
     const list = await request(ctx.app, "GET", "/items?type=user.ks_read", {
       key: rawToken,
     });

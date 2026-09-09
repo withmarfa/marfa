@@ -117,10 +117,13 @@ export function auditRoutes(storage: Storage) {
     const { action, resource_type, resource_id, since, until, limit, cursor } =
       c.req.valid("query");
 
-    // A credential with no `space_id` reads every row — preserves the
-    // instance-wide operator view. A space-bound credential
-    // reads only its own space. Mirrors the `ItemStore.list`
-    // admit-all-when-space-less pattern.
+    // The caller's own space, always. `space.audit_read` is a space
+    // permission and the operator key, the only credential that can be
+    // space-less, holds none of the eleven, so the gate above has already
+    // refused anything without a space to read. The `?? null` is how the
+    // store spells "no space filter" and is not a path this door takes: a
+    // space-less caller reading every row is a shape the permission model
+    // no longer contains.
     const callerSpaceId = c.get("apiKey")?.space_id ?? null;
 
     const result = await storage.audit.list({

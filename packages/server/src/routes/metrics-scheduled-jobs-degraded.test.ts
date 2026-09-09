@@ -41,7 +41,7 @@ afterAll(async () => {
 describe("GET /metrics with a failing scheduled-job reporter", () => {
   it("still answers, with the rest of the payload intact", async () => {
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;

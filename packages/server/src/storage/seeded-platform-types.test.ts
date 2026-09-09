@@ -56,7 +56,7 @@ describe("the seeded platform set", () => {
   it("stays locked against modification and deletion", async () => {
     const { request } = await import("../test-utils.js");
     const res = await request(ctx.app, "DELETE", "/types/core.note", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(403);
   });

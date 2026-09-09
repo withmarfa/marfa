@@ -124,7 +124,7 @@ describe("cycle multi-hop A→B→A→… loop", () => {
         (e) => (e.item.properties as { title?: string }).title === title,
       );
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         headers: {
           "X-Marfa-Cycle-Origin": origin,
           "X-Marfa-Cycle-Hop": String(hop),
@@ -157,7 +157,7 @@ describe("cycle multi-hop A→B→A→… loop", () => {
       (e) => (e.item.properties as { title?: string }).title === overflowTitle,
     );
     const overflowRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: {
         "X-Marfa-Cycle-Origin": origin,
         "X-Marfa-Cycle-Hop": String(overflowHop),

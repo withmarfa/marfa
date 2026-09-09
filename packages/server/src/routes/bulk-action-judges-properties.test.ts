@@ -37,7 +37,7 @@ const REFUSED_BY_THE_TYPE = { body: 12345 };
 
 async function seed(marker: string, type = "core.note"): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type,
       properties:
@@ -56,7 +56,7 @@ async function seedOfType(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type, properties, tags: [marker] },
   });
   expect(res.status).toBe(201);
@@ -75,7 +75,7 @@ async function patchByTag(
   const { initialStatus, result } = await runBulkActionAsync(
     ctx,
     { action: "update_properties", patch, filter: { tags: [marker] } },
-    ctx.adminKey,
+    ctx.spaceKey,
   );
   // 202: this door queues a job and the helper waits for it. Only a dry run
   // answers synchronously.
@@ -89,7 +89,7 @@ async function patchByTag(
 
 async function bodyOf(id: string): Promise<unknown> {
   const res = await request(ctx.app, "GET", `/items/${id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   const { item } = (await res.json()) as {
@@ -129,13 +129,13 @@ describe("the bulk-action door judges a property patch", () => {
     const loose = "user.unjudged_in_a_mixed_chunk";
     registerTypeSchema(
       { id: loose, version: 1, fields: { body: { type: "string" } } },
-      undefined,
+      ctx.spaceId,
     );
     try {
       const marker = `bapmix-${Math.random().toString(36).slice(2, 8)}`;
       const note = await seed(marker);
       const other = await seedOfType(marker, loose, { body: "before" });
-      unregisterTypeSchema(loose, undefined);
+      unregisterTypeSchema(loose, ctx.spaceId);
 
       const outcome = await patchByTag(marker, REFUSED_BY_THE_TYPE);
 
@@ -151,7 +151,7 @@ describe("the bulk-action door judges a property patch", () => {
       expect(await bodyOf(note)).toBe(`bap-${marker}`);
       expect(await bodyOf(other)).toBe(12345);
     } finally {
-      unregisterTypeSchema(loose, undefined);
+      unregisterTypeSchema(loose, ctx.spaceId);
     }
   });
 
@@ -163,7 +163,7 @@ describe("the bulk-action door judges a property patch", () => {
     const orphan = "user.orphaned_by_the_bulk_action_test";
     registerTypeSchema(
       { id: orphan, version: 1, fields: { note: { type: "string" } } },
-      undefined,
+      ctx.spaceId,
     );
     // Unregistered in a `finally` as well, so a throwing seed does not leave
     // the type in the process-global registry for every later test.
@@ -173,7 +173,7 @@ describe("the bulk-action door judges a property patch", () => {
       id = await seed(marker, orphan);
     } finally {
       // The row outlives its type, which is the state the guard is for.
-      unregisterTypeSchema(orphan, undefined);
+      unregisterTypeSchema(orphan, ctx.spaceId);
     }
 
     const outcome = await patchByTag(marker, { note: "still fine" });
@@ -183,7 +183,7 @@ describe("the bulk-action door judges a property patch", () => {
     // Reporting success is not writing. A door that skipped the row and
     // counted it anyway would pass on the counts alone.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const { item } = (await after.json()) as {
       item: { properties: { note?: unknown } };

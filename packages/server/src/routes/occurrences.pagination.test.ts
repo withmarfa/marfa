@@ -49,7 +49,7 @@ interface OccurrenceRow {
 beforeAll(async () => {
   ctx = await createTestContext();
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       label: "occurrences-pagination",
       source: "occurrences-page-src",

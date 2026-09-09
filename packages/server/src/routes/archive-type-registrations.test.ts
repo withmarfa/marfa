@@ -98,17 +98,27 @@ function uniqueSuffix(): string {
   return `${String(counter)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Export one space as an archive, through that space's own working key.
+ *
+ * `target_space_id` has to name the caller's own space: naming any other is
+ * refused, and only the operator key may name a foreign one, which reads no
+ * content and would export an empty archive. So every source space here is
+ * the context's own.
+ */
 async function exportArchive(ctx: TestContext, space: string): Promise<Buffer> {
   const res = await request(
     ctx.app,
     "GET",
     `/export?format=archive&target_space_id=${space}`,
-    { key: ctx.adminKey },
+    { key: ctx.spaceKey },
   );
   expect(res.status).toBe(200);
   return Buffer.from(await res.arrayBuffer());
 }
 
+/** Restore an archive. `/admin/restore-archive` is an operator route, so it
+ *  takes the operator key and no space credential reaches it. */
 async function restore(
   ctx: TestContext,
   space: string,
@@ -119,7 +129,7 @@ async function restore(
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.operatorKey}`,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -131,7 +141,7 @@ describe("archives carry custom type registrations", () => {
   it("round-trips a space whose items use its own types", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const suffix = uniqueSuffix();
     const typeId = `user.recipe_${suffix}`;
     const edgeTypeId = `user.cooked-with-${suffix}`;
@@ -233,7 +243,7 @@ describe("archives carry custom type registrations", () => {
   it("restores a subtype whose parent is in the same archive", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-p-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const suffix = uniqueSuffix();
     const parentId = `user.doc_${suffix}`;
     const childId = `user.doc_${suffix}.signed`;
@@ -302,7 +312,7 @@ describe("archives carry custom type registrations", () => {
   it("re-restoring skips the registrations it already made", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-r-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const typeId = `user.repeat_${uniqueSuffix()}`;
 
     await source.storage.types.create(
@@ -344,7 +354,7 @@ describe("archives carry custom type registrations", () => {
   it("refuses an archive that redefines a type the space already holds", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-c-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const typeId = `user.clash_${uniqueSuffix()}`;
 
     const schema = {
@@ -399,7 +409,7 @@ describe("archives carry custom type registrations", () => {
   it("refuses an archive claiming a reserved namespace", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-e-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     await source.storage.items.create(
       {
         type: "core.note",
@@ -435,7 +445,7 @@ describe("archives carry custom type registrations", () => {
   it("refuses an archive carrying a malformed type", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-m-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     await source.storage.items.create(
       {
         type: "core.note",
@@ -485,7 +495,7 @@ describe("archives carry custom type registrations", () => {
     // own, and the cases for these two messages belong with either fix.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-d-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     await source.storage.items.create(
       {
         type: "core.note",
@@ -526,7 +536,7 @@ describe("archives carry custom type registrations", () => {
   it("refuses an archive redefining a core edge type", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-ce-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     await source.storage.items.create(
       {
         type: "core.note",
@@ -552,7 +562,7 @@ describe("archives carry custom type registrations", () => {
   it("restores an archive that predates the types member", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-at-o-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     await source.storage.items.create(
       {
         type: "core.note",
@@ -600,7 +610,7 @@ describe("an archive carries where a type came from", () => {
     // first-party operation described to them as a restore.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-prov-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const typeId = `acme.widget_${uniqueSuffix()}`;
 
     await source.storage.types.create({ id: typeId, ...baseType }, space, {
@@ -625,7 +635,7 @@ describe("an archive carries where a type came from", () => {
     // guessing, and guessing defaulted to the permissive side.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-prov-o-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const typeId = `salvage.record_${uniqueSuffix()}`;
 
     await source.storage.types.create({ id: typeId, ...baseType }, space, {
@@ -660,7 +670,7 @@ describe("an archive carries where a type came from", () => {
     // read-only treatment an archive with nothing recorded gets.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-prov-u-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const typeId = `salvage.future_${uniqueSuffix()}`;
 
     await source.storage.types.create({ id: typeId, ...baseType }, space, {
@@ -699,7 +709,7 @@ describe("an archive carries where a type came from", () => {
     // worth refusing rather than downgrading.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-prov-p-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
 
     await source.storage.types.create(
       { id: `acme.sneak_${uniqueSuffix()}`, ...baseType },
@@ -736,7 +746,7 @@ describe("an archive carries where a type came from", () => {
     // claiming to be part of the build.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-prov-f-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
 
     await source.storage.types.create(
       { id: `acme.family_${uniqueSuffix()}`, ...baseType },
@@ -774,7 +784,17 @@ describe("a claimed `user` origin is checked against the handle", () => {
     fields: { name: { type: "string", required: true } },
   } as const;
 
-  /** Builds a one-line archive claiming `provenance` for `typeId`. */
+  /**
+   * Builds a one-line archive claiming `provenance` for `typeId`, addressed
+   * to `space`.
+   *
+   * The vehicle is exported from the source's own space, because that is the
+   * only one its key may name, and the manifest is then restamped with the
+   * space the archive is going to be restored into — the restore door
+   * compares the two and refuses a mismatch. Where the destination needs a
+   * real space row of its own, as the hosted cases do for the users foreign
+   * key, that is the id the caller passes here.
+   */
   async function archiveClaiming(
     source: TestContext,
     space: string,
@@ -782,16 +802,27 @@ describe("a claimed `user` origin is checked against the handle", () => {
     typeId: string,
     provenance: Record<string, unknown>,
   ): Promise<Buffer> {
-    await source.storage.types.create({ id: seedTypeId, ...baseType }, space, {
-      origin: "user",
-    });
-    const entries = await extractArchive(await exportArchive(source, space));
+    await source.storage.types.create(
+      { id: seedTypeId, ...baseType },
+      source.spaceId,
+      { origin: "user" },
+    );
+    const entries = await extractArchive(
+      await exportArchive(source, source.spaceId),
+    );
+    const manifest = JSON.parse(
+      entries.get("manifest.json")!.toString(),
+    ) as Record<string, unknown>;
+    manifest.space_id = space;
     const line =
       JSON.stringify({
         custom_type: { id: typeId, ...baseType },
         provenance,
       }) + "\n";
-    return await repack(entries, { "types.ndjson": line });
+    return await repack(entries, {
+      "types.ndjson": line,
+      "manifest.json": JSON.stringify(manifest),
+    });
   }
 
   async function storedOriginOf(
@@ -870,7 +901,7 @@ describe("a claimed `user` origin is checked against the handle", () => {
     // the suite staying green.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-hnd-s-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const suffix = uniqueSuffix();
 
     const archive = await archiveClaiming(
@@ -892,7 +923,7 @@ describe("a claimed `user` origin is checked against the handle", () => {
     // a row an integration had claimed back to `unknown`.
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-hnd-r-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
     const suffix = uniqueSuffix();
     const typeId = `acme_${suffix}.widget`;
 

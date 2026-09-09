@@ -22,7 +22,7 @@ describe("GET /search auth gate", () => {
 describe("GET /search happy path", () => {
   it("returns matching results", async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Quokkas of the world. Adorable creatures." },
@@ -33,7 +33,7 @@ describe("GET /search happy path", () => {
       ctx.app,
       "GET",
       "/search?q=quokkas&type=core.note",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -54,7 +54,7 @@ describe("GET /search library filter", () => {
 
   beforeAll(async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `${sharedToken} library variant` },
@@ -62,7 +62,7 @@ describe("GET /search library filter", () => {
       },
     });
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `${sharedToken} feed variant` },
@@ -76,7 +76,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&limit=100`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -92,7 +92,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&tier=library&limit=100`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -109,7 +109,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&tier=feed&limit=100`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -126,7 +126,7 @@ describe("GET /search library filter", () => {
       ctx.app,
       "GET",
       `/search?q=${sharedToken}&type=core.note&tier=all&limit=100`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -145,7 +145,7 @@ describe("GET /search?tags=", () => {
     // Three notes with overlapping tags.
     const make = async (tags: string[]) => {
       const itemRes = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: { body: corpus },
@@ -164,7 +164,7 @@ describe("GET /search?tags=", () => {
       ctx.app,
       "GET",
       `/search?q=${corpus}&tags=red&limit=100`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -181,7 +181,7 @@ describe("GET /search?tags=", () => {
       ctx.app,
       "GET",
       `/search?q=${corpus}&tags=red,small&limit=100`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -200,7 +200,7 @@ describe("GET /search?tags=", () => {
       ctx.app,
       "GET",
       `/search?q=${corpus}&tags=nonexistent&limit=100`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { results: unknown[] };
@@ -229,28 +229,28 @@ describe("GET /search?include=system", () => {
     word: string,
   ): Promise<{ noteId: string; deviceId: string }> {
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `${word} note` },
       },
     });
-    const device = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
-        type: "system.device",
-        properties: { name: word, kind: "laptop" },
-      },
-    });
     expect(note.status).toBe(201);
-    expect(device.status).toBe(201);
     const { item: n } = (await note.json()) as { item: { id: string } };
-    const { item: d } = (await device.json()) as { item: { id: string } };
-    return { noteId: n.id, deviceId: d.id };
+    // The reserved namespace is closed to every credential, so the platform's
+    // own machinery writes a `system.*` row through the storage layer. The
+    // store indexes it for search on the way in, which is all this pair needs
+    // — the claim under test is what the read surface does with the row, not
+    // how it got there.
+    const device = await ctx.storage.items.create(
+      { type: "system.device", properties: { name: word, kind: "laptop" } },
+      ctx.spaceId,
+    );
+    return { noteId: n.id, deviceId: device.id };
   }
 
   async function foundIds(query: string): Promise<string[]> {
-    const res = await request(ctx.app, "GET", query, { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", query, { key: ctx.spaceKey });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { results: { item: { id: string } }[] };
     return body.results.map((r) => r.item.id);

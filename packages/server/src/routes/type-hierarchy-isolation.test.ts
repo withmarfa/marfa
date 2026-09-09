@@ -1,8 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
-  createTestContext,
-  request,
   TEST_API_KEY_SALT,
+  createTestContext,
+  mintSpaceKey,
+  request,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
 import type { TestContext } from "../test-utils.js";
@@ -166,7 +167,7 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     ctx = await createTestContext();
     const child = childSchema();
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: child,
     });
     expect(
@@ -175,12 +176,12 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     ).toBe(201);
 
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "granted" } },
     });
     expect(note.status).toBe(201);
     const denied = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: child.id, properties: { body: "denied" } },
     });
     expect(denied.status).toBe(201);
@@ -191,20 +192,16 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     // registered type is named under `user` and declares `core.note` as its
     // parent, so it is reachable by one pattern and refused by the other.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const scoped = `marfa_k1_test_deny_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `deny-${suffix}`,
-        source: `test-deny-${suffix}`,
-        type_permissions: { "user.*": "none", "core.note.*": "read" },
-        default_tier: "library",
-        // A space-less key is an operator key, which the row constraint
-        // enforces. The permission map is what this case is about, and an
-        // operator reads past none of it.
-        is_operator: true,
-      },
-      hashApiKey(scoped, TEST_API_KEY_SALT),
-    );
+    const scoped = await mintSpaceKey(ctx, ctx.spaceId, {
+      label: `deny-${suffix}`,
+      source: `test-deny-${suffix}`,
+      type_permissions: { "user.*": "none", "core.note.*": "read" },
+      edge_permissions: {},
+      metadata_permissions: {},
+      extension_permissions: {},
+      profile_permissions: {},
+      space_permissions: [],
+    });
 
     // Expanding grants through declared parentage put these two in
     // disagreement: the listing returned the denied row while fetching it by id

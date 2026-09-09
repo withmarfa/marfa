@@ -257,8 +257,8 @@ export function deriveHandleFromEmail(email: string): string {
  * the five-tier namespace grammar. Authorization is enforced separately at
  * registration time: `core.*` / `system.*` / `marfa.*` are refused for
  * every credential, and publisher-tier registration requires the caller's
- * user to hold the publisher handle (hosted mode; platform credentials
- * exempt).
+ * user to hold the publisher handle, in hosted mode and for every credential
+ * alike.
  */
 export function isValidTypeIdentifier(value: string): boolean {
   if (value.length > 128) return false;

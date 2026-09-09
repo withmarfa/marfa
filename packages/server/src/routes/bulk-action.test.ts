@@ -27,7 +27,7 @@ async function seed(
   const suffix = Math.random().toString(36).slice(2, 8);
   for (let i = 0; i < count; i++) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type,
         properties: {
@@ -58,7 +58,7 @@ describe("POST /items/bulk-actions (async)", () => {
         filter: { type: "core.note", tags: [tag] },
         dry_run: true,
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(200);
     expect(result?.dry_run).toBe(true);
@@ -68,7 +68,7 @@ describe("POST /items/bulk-actions (async)", () => {
 
     // Confirm no state change happened
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await getRes.json()) as { item: { state: string } };
     expect(item.item.state).toBe("active");
@@ -85,7 +85,7 @@ describe("POST /items/bulk-actions (async)", () => {
         state: "archived",
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(202);
     expect(job?.status).toBe("completed");
@@ -93,7 +93,7 @@ describe("POST /items/bulk-actions (async)", () => {
     expect(result?.errored).toBe(0);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await getRes.json()) as { item: { state: string } };
     expect(item.item.state).toBe("archived");
@@ -109,7 +109,7 @@ describe("POST /items/bulk-actions (async)", () => {
         action: "purge",
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(400);
     expect(errorResponse?.error.code).toBe("bulk_confirmation_required");
@@ -126,14 +126,14 @@ describe("POST /items/bulk-actions (async)", () => {
         confirm: "PURGE",
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(3);
     expect(result?.blob_hashes_referenced).toBeDefined();
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(getRes.status).toBe(404);
   });
@@ -179,13 +179,13 @@ describe("POST /items/bulk-actions (async)", () => {
         remove: [tag],
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(2);
 
     const mdRes = await request(ctx.app, "GET", `/items/${ids[0]!}/metadata`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const mdBody = (await mdRes.json()) as {
       metadata: { tags: string[] };
@@ -201,7 +201,7 @@ describe("POST /items/bulk-actions (async)", () => {
         action: "update_tags",
         filter: { type: "core.note" },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(400);
   });
@@ -217,13 +217,13 @@ describe("POST /items/bulk-actions (async)", () => {
         tier: "library",
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(2);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await getRes.json()) as {
       item: { tier: "library" | "feed" };
@@ -242,13 +242,13 @@ describe("POST /items/bulk-actions (async)", () => {
         patch: { extra_field: "patched" },
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(2);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await getRes.json()) as {
       item: { properties: Record<string, unknown> };
@@ -270,12 +270,12 @@ describe("POST /items/bulk-actions (async)", () => {
         timestamp: newTs,
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(202);
 
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await getRes.json()) as { item: { timestamp: string } };
     expect(item.item.timestamp).toBe(newTs);
@@ -289,7 +289,7 @@ describe("POST /items/bulk-actions (async)", () => {
         timestamp: "not a date",
         filter: { type: "core.note" },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(400);
   });
@@ -306,7 +306,7 @@ describe("POST /items/bulk-actions (async)", () => {
         filter: { tags: [tag] },
         max_items: 2,
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(400);
     expect(errorResponse?.error.code).toBe("bulk_cap_exceeded");
@@ -331,14 +331,14 @@ describe("POST /items/bulk-actions (async)", () => {
           filter: 'properties.body eq "dsl-body"',
         },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(initialStatus).toBe(202);
     expect(result?.succeeded).toBe(3);
 
     // Verify
     const getRes = await request(ctx.app, "GET", `/items/${ids[0]!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await getRes.json()) as { item: { state: string } };
     expect(item.item.state).toBe("archived");
@@ -355,7 +355,7 @@ describe("POST /items/bulk-actions (async)", () => {
         state: "archived",
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
 
     // Audit insert is fire-and-forget — poll until our row lands.
@@ -372,7 +372,7 @@ describe("POST /items/bulk-actions (async)", () => {
           ctx.app,
           "GET",
           "/audit?action=items.bulk_action&limit=50",
-          { key: ctx.adminKey },
+          { key: ctx.spaceKey },
         );
         return (await auditRes.json()) as AuditDataShape;
       },
@@ -411,7 +411,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
         state: "archived",
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
 
     expect(job).toBeDefined();
@@ -428,7 +428,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
       ctx.app,
       "GET",
       "/items/bulk-actions/jobs/does-not-exist",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -441,7 +441,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
 
     // POST without running the worker — the job sits in `queued`.
     const postRes = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         action: "transition",
         state: "archived",
@@ -456,7 +456,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
       ctx.app,
       "DELETE",
       `/items/bulk-actions/jobs/${queued.id}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(delRes.status).toBe(200);
     const cancelled = (await delRes.json()) as { status: string };
@@ -468,7 +468,7 @@ describe("GET + DELETE /items/bulk-actions/jobs/:id", () => {
       ctx.app,
       "DELETE",
       "/items/bulk-actions/jobs/does-not-exist",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });

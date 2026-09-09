@@ -124,7 +124,7 @@ describe("admin runtime dead-letter routes", () => {
 
   it("lists dead-lettered dispatches for the operator key", async () => {
     const res = await request(ctx.app, "GET", "/admin/runtime/dead-letters", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { jobs: DeadLetterJob[] };
@@ -140,7 +140,7 @@ describe("admin runtime dead-letter routes", () => {
       ctx.app,
       "GET",
       "/admin/runtime/dead-letters?limit=7",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
     expect(ops.limits).toContain(7);
@@ -150,7 +150,7 @@ describe("admin runtime dead-letter routes", () => {
       ctx.app,
       "GET",
       "/admin/runtime/dead-letters?limit=0",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(invalid.status).toBe(400);
     expect(ops.limits).not.toContain(0);
@@ -161,7 +161,7 @@ describe("admin runtime dead-letter routes", () => {
       ctx.app,
       "POST",
       `/admin/runtime/dead-letters/${JOB_ID}/replay`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ replayed: true, id: JOB_ID });
@@ -171,7 +171,7 @@ describe("admin runtime dead-letter routes", () => {
       ctx.app,
       "POST",
       `/admin/runtime/dead-letters/${JOB_ID}/replay`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(second.status).toBe(409);
     const body = (await second.json()) as { error: { code: string } };
@@ -185,7 +185,7 @@ describe("admin runtime dead-letter routes", () => {
       ctx.app,
       "POST",
       `/admin/runtime/dead-letters/${OTHER_ID}/replay`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(404);
   });
@@ -195,7 +195,7 @@ describe("admin runtime dead-letter routes", () => {
       ctx.app,
       "POST",
       "/admin/runtime/dead-letters/not-a-uuid/replay",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(400);
   });
@@ -217,7 +217,7 @@ describe("without the local substrate", () => {
       ctx.app,
       "GET",
       "/admin/runtime/dead-letters",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(listRes.status).toBe(503);
     const body = (await listRes.json()) as { error: { code: string } };
@@ -227,7 +227,7 @@ describe("without the local substrate", () => {
       ctx.app,
       "POST",
       `/admin/runtime/dead-letters/${JOB_ID}/replay`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(replayRes.status).toBe(503);
   });

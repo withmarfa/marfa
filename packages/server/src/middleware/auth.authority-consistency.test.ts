@@ -330,7 +330,9 @@ describe("/keys — the space fence keys on the binding, not on the permission",
       label: "control-visible",
     });
 
-    const res = await request(ctx.app, "GET", "/keys", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/keys", {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { keys: { label: string }[] };
     expect(body.keys.some((k) => k.label === "control-visible")).toBe(true);
@@ -380,10 +382,10 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Extensions — the reserved-namespace gate reads the operator flag
+// Extensions — the reserved namespaces are closed to every credential
 // ---------------------------------------------------------------------------
 
-describe("extensions — the reserved namespaces are the operator's", () => {
+describe("extensions — the reserved namespaces are nobody's", () => {
   it("refuses a space-bound credential writing a reserved namespace", async () => {
     const space = await spaceStore().create("authority-ext-reserved");
     const boundCaller = await mintKey({
@@ -403,22 +405,50 @@ describe("extensions — the reserved namespaces are the operator's", () => {
       `/items/${item.id}/extensions/system`,
       { key: boundCaller, body: { injected: true } },
     );
-    // Reserved namespaces are the metadata-layer twin of the reserved
-    // type namespaces, which are gated on `is_operator`.
+    // Reserved namespaces are the metadata-layer twin of the reserved type
+    // namespaces: closed whatever the credential holds, and asserted on the
+    // message so a refusal that happened to arrive from the permission map
+    // instead could not stand in for this one.
     expect(res.status).toBe(403);
+    expect(
+      ((await res.json()) as { error: { message: string } }).error.message,
+    ).toContain('Namespace "system" is reserved');
   });
 
-  it("still admits an unbound operator key on a reserved namespace", async () => {
+  it("refuses an operator key on a reserved namespace too", async () => {
     const item = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "reserved-control" } },
       undefined,
     );
+    // The gate used to admit the operator tier and then ask the namespace
+    // map, which needed a credential holding both. There is none: the row
+    // constraint makes `is_operator` and space-less the same thing, and a
+    // space-less credential can hold no permissions at all, so the mint that
+    // used to build this control is itself refused now. The namespace is
+    // closed to every credential, and the platform writes it through the
+    // storage layer as it writes a `system.*` row.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const minted = await request(ctx.app, "POST", "/keys", {
+      key: ctx.operatorKey,
+      body: {
+        label: `reserved-ext-${suffix}`,
+        source: `reserved-ext-${suffix}`,
+        extension_permissions: { "*": "write" },
+      },
+    });
+    expect(minted.status).toBe(403);
+
     const res = await request(
       ctx.app,
       "PUT",
       `/items/${item.id}/extensions/system`,
-      { key: ctx.adminKey, body: { ok: true } },
+      { key: ctx.operatorKey, body: { ok: true } },
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
+    // The namespace refusal rather than the permission map's, which would
+    // also be a 403 and would leave this green if the fence came back.
+    expect(
+      ((await res.json()) as { error: { message: string } }).error.message,
+    ).toContain('Namespace "system" is reserved');
   });
 });

@@ -1371,7 +1371,7 @@ describe("destroying a sibling's row (D64)", () => {
       "POST",
       `/admin/spaces/${spaceId}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: `edger-${String(seq)}`,
           source: `edger-${String(seq++)}`,
@@ -1466,7 +1466,7 @@ describe("destroying a sibling's row (D64)", () => {
       "POST",
       `/admin/spaces/${spaceId}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: `person-${String(seq++)}`,
           source: `person-${String(seq)}`,

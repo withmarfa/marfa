@@ -21,7 +21,7 @@ beforeAll(async () => {
   // integration_ref → system.integration item. Register one up front so
   // every test connection points at a real id.
   const reg = await request(ctx.app, "POST", "/integrations", {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: { manifest: VALID_MANIFEST },
   });
   if (reg.status !== 201) {
@@ -59,10 +59,6 @@ const VALID_MANIFEST = {
   manifest_schema_version: "2.0.0",
 };
 
-interface ItemResponse {
-  item: { id: string; type: string };
-}
-
 // Written through storage rather than `POST /items`, because neither
 // credential can do this over the wire: the reserved namespace admits only a
 // platform credential, and that one holds no space to put the row in. A
@@ -92,7 +88,7 @@ async function createSubscription(
     "POST",
     `/connections/${connectionId}/inbound-webhooks`,
     {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { events },
     },
   );
@@ -157,7 +153,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     delete bare.triggers;
     bare.runs_on = "client";
     const regRes = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: bare },
     });
     expect(regRes.status).toBe(201);
@@ -168,7 +164,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/inbound-webhooks`,
-      { key: ctx.adminKey, body: { events: ["thing.created"] } },
+      { key: ctx.spaceKey, body: { events: ["thing.created"] } },
     );
 
     expect(res.status).toBe(400);
@@ -182,9 +178,9 @@ describe("POST /connections/:id/inbound-webhooks", () => {
   it("rejects when the connection has no integration_ref", async () => {
     // Create a connection with NO integration_ref — the route refuses
     // with MISSING_REQUIRED_FIELD; there is no inline manifest fallback.
-    const orphanRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
+    // Through storage, for the reason `createConnection` states.
+    const orphan = await ctx.storage.items.create(
+      {
         type: "system.connection",
         properties: {
           kind: "integration",
@@ -192,14 +188,14 @@ describe("POST /connections/:id/inbound-webhooks", () => {
           granted_at: new Date().toISOString(),
         },
       },
-    });
-    const orphan = (await orphanRes.json()) as ItemResponse;
+      ctx.spaceId,
+    );
     const res = await request(
       ctx.app,
       "POST",
-      `/connections/${orphan.item.id}/inbound-webhooks`,
+      `/connections/${orphan.id}/inbound-webhooks`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { events: ["thing.created"] },
       },
     );
@@ -216,7 +212,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       "POST",
       `/connections/${connectionId}/inbound-webhooks`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { events: ["thing.created"] },
       },
     );
@@ -229,7 +225,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       "POST",
       `/connections/0192abc1-2345-7000-8000-000000000000/inbound-webhooks`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { events: ["x"] },
       },
     );
@@ -252,7 +248,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     // rejection happens at /integrations registration. Verify that
     // path here so the regression watch stays in this file's scope.
     const res = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: {
         manifest: {
           ...VALID_MANIFEST,
@@ -270,27 +266,14 @@ describe("POST /connections/:id/inbound-webhooks", () => {
   it("creates a subscription via integration_ref without inline manifest", async () => {
     // 1. Register an Integration via the registry.
     const regRes = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: { ...VALID_MANIFEST, name: "acme/via-ref" } },
     });
     expect(regRes.status).toBe(201);
     const reg = (await regRes.json()) as { id: string };
 
     // 2. Create a connection bound to the registered integration.
-    const conn = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-          integration_ref: reg.id,
-        },
-      },
-    });
-    const connBody = (await conn.json()) as ItemResponse;
-    const connectionId = connBody.item.id;
+    const connectionId = await createConnection(reg.id);
 
     // 3. Create the subscription with NO manifest in the body — the
     // route should resolve it via integration_ref.
@@ -299,7 +282,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
       "POST",
       `/connections/${connectionId}/inbound-webhooks`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { events: ["thing.created"] },
       },
     );
@@ -312,12 +295,16 @@ describe("POST /connections/:id/inbound-webhooks", () => {
 describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
   // The two halves of one invariant: a space-bound key holding
   // `space.connections` must be able to subscribe against a
-  // platform-scoped (space_id IS NULL) integration item, and whoever
-  // creates the subscription, the row must land in the
-  // CONNECTION's space — the local substrate's receipt route looks
-  // subscriptions up fenced on the connection's space, so a row stamped
-  // with the caller's (absent) space is a subscription that never
-  // delivers.
+  // platform-scoped (space_id IS NULL) integration item, and the row must
+  // land in the CONNECTION's space — the local substrate's receipt route
+  // looks subscriptions up fenced on the connection's space, so a row
+  // stamped with anything else is a subscription that never delivers.
+  //
+  // The caller's space and the connection's are necessarily the same: the
+  // connection lookup is fenced on the caller's space, and the only
+  // credential that could arrive without one is the operator key, which
+  // this door refuses. The second case below pins the refusal and the
+  // stamp that follows from it.
   async function spaceScopedConnection(): Promise<{
     spaceId: string;
     spaceKey: string;
@@ -374,13 +361,28 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
     expect(created.space_id).toBe(spaceId);
   });
 
-  it("an operator key's create stamps the connection's space, not its own", async () => {
-    const { spaceId, connectionId } = await spaceScopedConnection();
+  it("refuses the one space-less caller, and the row lands in the connection's space", async () => {
+    const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
+
+    // The operator key is the only credential that carries no space, and
+    // the space guard refuses it for exactly that. It used to be admitted
+    // past that guard on the operator flag, which is what the stamping of
+    // the connection's space rather than the caller's existed to cover; it
+    // holds no `space.connections` either, so it was refused a few lines
+    // later anyway and the two spaces could never diverge.
+    const asOperator = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      { key: ctx.operatorKey, body: { events: ["thing.created"] } },
+    );
+    expect(asOperator.status).toBe(403);
+
     const res = await request(
       ctx.app,
       "POST",
       `/connections/${connectionId}/inbound-webhooks`,
-      { key: ctx.adminKey, body: { events: ["thing.created"] } },
+      { key: spaceKey, body: { events: ["thing.created"] } },
     );
     expect(res.status).toBe(201);
     const created = (await res.json()) as CreatedInboundWebhook;
@@ -425,7 +427,7 @@ describe("GET /connections/:id/inbound-webhooks", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/inbound-webhooks`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { inbound_webhooks: InboundWebhook[] };
@@ -473,7 +475,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/inbound-webhooks/${sub.id}/deliveries`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(list.status).toBe(200);
     const dlist = (await list.json()) as {
@@ -501,7 +503,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/inbound-webhooks/${sub.id}/deliveries`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const dlist = (await list.json()) as {
       deliveries: {
@@ -556,7 +558,7 @@ describe("POST /webhooks/inbound/:id (public)", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/inbound-webhooks/${sub.id}/deliveries`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const dlist = (await list.json()) as {
       deliveries: {
@@ -599,7 +601,7 @@ describe("POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_i
       ctx.app,
       "GET",
       `/connections/${connectionId}/inbound-webhooks/${sub.id}/deliveries`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const dlist = (await list.json()) as {
       deliveries: { id: string; external_delivery_id: string }[];
@@ -614,7 +616,7 @@ describe("POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_i
       ctx.app,
       "POST",
       `/connections/${connectionId}/inbound-webhooks/${sub.id}/deliveries/${eventRow.id}/retry`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(retryRes.status).toBe(200);
 
@@ -631,7 +633,7 @@ describe("POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_i
       ctx.app,
       "POST",
       `/connections/${connectionId}/inbound-webhooks/${sub.id}/deliveries/0192abc1-2345-7000-8000-000000000000/retry`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });

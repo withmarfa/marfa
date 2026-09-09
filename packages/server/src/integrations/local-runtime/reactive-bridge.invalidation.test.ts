@@ -89,7 +89,7 @@ describe("the live bridge honors pause and resume", () => {
       "POST",
       `/admin/spaces/${space.id}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "bridge-probe",
           source: "bridge-probe",

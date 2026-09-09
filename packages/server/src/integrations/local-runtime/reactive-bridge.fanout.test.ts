@@ -95,7 +95,7 @@ describe("a replicated event carries the writer's fan-out decision", () => {
       "POST",
       `/admin/spaces/${space.id}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "bridge-fanout-probe",
           source: "bridge-fanout-probe",

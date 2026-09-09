@@ -101,7 +101,7 @@ describe("cycle metadata attribution", () => {
     );
 
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: {
         "X-Marfa-Cycle-Origin": "conn-upstream",
         "X-Marfa-Cycle-Hop": "2",
@@ -136,7 +136,7 @@ describe("cycle metadata attribution", () => {
     );
 
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.task",
         properties: { title: uniqueTitle },

@@ -32,7 +32,7 @@ beforeAll(async () => {
   // the ordinary case, and it exercises the type filter rather than bypassing
   // it.
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       label: "occurrences-member",
       source: "occurrences-src",

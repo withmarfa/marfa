@@ -38,7 +38,7 @@ afterAll(async () => {
 /** One note, returned by id. */
 async function seedItem(label: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body: label } },
   });
   expect(res.status).toBe(201);
@@ -58,7 +58,7 @@ describe("a client-supplied edge id", () => {
     );
 
     const res = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: clientId,
         source_id: source,
@@ -75,7 +75,7 @@ describe("a client-supplied edge id", () => {
     // echo the request while the row carries a generated id, which is
     // exactly the split this closes.
     const listed = await request(ctx.app, "GET", `/items/${source}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(listed.status).toBe(200);
     const rows = (await listed.json()) as { data: { id: string }[] };
@@ -92,7 +92,7 @@ describe("a client-supplied edge id", () => {
     const firstTarget = await seedItem("first-target");
     const clientId = generateId();
     const created = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: clientId,
         source_id: first,
@@ -119,7 +119,7 @@ describe("a client-supplied edge id", () => {
     const { events, done } = collectEdgeEvents(controller.signal);
 
     const res = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: clientId,
         source_id: second,
@@ -140,7 +140,7 @@ describe("a client-supplied edge id", () => {
     // A refusal that had already written the row would still answer 409,
     // so the status alone does not say the write was stopped.
     const listed = await request(ctx.app, "GET", `/items/${second}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
     expect(events.filter((e) => e.edge.id === clientId)).toHaveLength(0);
@@ -150,7 +150,7 @@ describe("a client-supplied edge id", () => {
     const source = await seedItem("bad-id-source");
     const target = await seedItem("bad-id-target");
     const res = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "not-an-identifier",
         source_id: source,
@@ -164,7 +164,7 @@ describe("a client-supplied edge id", () => {
     );
     // Refused at the door means refused before the write, not after it.
     const listed = await request(ctx.app, "GET", `/items/${source}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(0);
   });

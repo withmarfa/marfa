@@ -122,9 +122,9 @@ describe("quota wiring — POST /blobs", () => {
     // weren't in place, space-less keys would hit it.
     await ctx.storage.spaceQuotas.set("", { blobs_limit: 0 });
 
-    // ctx.adminKey has no space_id (the bootstrap credential) — bypass kicks
-    // in.
-    const r = await uploadBlob(ctx, ctx.adminKey, "any-content");
+    // The operator key is the one credential with no space_id, so it is the
+    // only caller the bypass can be shown on.
+    const r = await uploadBlob(ctx, ctx.operatorKey, "any-content");
     expect(r.status).toBe(201);
   });
 });
@@ -173,11 +173,13 @@ describe("quota wiring — per-space rate ceiling", () => {
       rateLimitWindowMs: 60_000,
       defaultQuotaRatePerMinute: 2,
     });
-    // ctx.adminKey has no space_id — should bypass the per-space
-    // ceiling and only be subject to the per-credential cap (1000).
+    // The operator key has no space_id, so it bypasses the per-space
+    // ceiling and is only subject to the per-credential cap (1000). It holds
+    // no type permissions, so the listing comes back empty — the status is
+    // the whole of what this asserts.
     for (let i = 0; i < 5; i++) {
       const r = await request(ctx.app, "GET", "/items", {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
       });
       expect(r.status).toBe(200);
     }

@@ -18,12 +18,13 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
+  TEST_API_KEY_SALT,
   createTestContext,
-  request,
+  mintSpaceKey,
   readSse,
+  request,
   seedOauthBearer,
   settle,
-  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
@@ -42,23 +43,18 @@ beforeAll(async () => {
   // does not install one.
   initEventLog(ctx.storage.eventLog);
   const suffix = Math.random().toString(36).slice(2, 10);
-  scopedKey = `marfa_k1_extperm_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `extperm-${suffix}`,
-      source: `extperm-${suffix}`,
-      type_permissions: { "*": "write" },
-      // `mine` is readable; `theirs` is not named at all, so the caller
-      // holds nothing on it.
-      extension_permissions: { mine: "read" },
-      default_tier: "library",
-      // Keys mode leaves this key space-less, and a space-less key must be an
-      // operator key. Nothing here turns on that: the stream narrows on the
-      // extension map, which no credential bypasses.
-      is_operator: true,
-    },
-    hashApiKey(scopedKey, TEST_API_KEY_SALT),
-  );
+  scopedKey = await mintSpaceKey(ctx, ctx.spaceId, {
+    label: `extperm-${suffix}`,
+    source: `extperm-${suffix}`,
+    type_permissions: { "*": "write" },
+    // `mine` is readable; `theirs` is not named at all, so the caller
+    // holds nothing on it.
+    extension_permissions: { mine: "read" },
+    edge_permissions: {},
+    metadata_permissions: {},
+    profile_permissions: {},
+    space_permissions: [],
+  });
 });
 
 afterAll(async () => {
@@ -68,7 +64,7 @@ afterAll(async () => {
 /** An item carrying two namespaces, one the scoped key may read. */
 async function itemWithTwoNamespaces(): Promise<string> {
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body: "two-namespaces" } },
   });
   expect(created.status).toBe(201);
@@ -81,7 +77,7 @@ async function itemWithTwoNamespaces(): Promise<string> {
       ctx.app,
       "PUT",
       `/items/${id}/extensions/${namespace}`,
-      { key: ctx.adminKey, body: value },
+      { key: ctx.spaceKey, body: value },
     );
     expect(res.status).toBe(200);
   }
@@ -106,7 +102,7 @@ describe("metadata.changed on the live stream", () => {
       "PUT",
       `/items/${id}/extensions/mine`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { visible: "updated" },
       },
     );
@@ -135,7 +131,7 @@ describe("metadata.changed on the live stream", () => {
     });
     await settle();
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "touched" } },
     });
     expect(patched.status).toBe(200);
@@ -153,14 +149,14 @@ describe("metadata.changed on the live stream", () => {
     // pass.
     const id = await itemWithTwoNamespaces();
     const stream = await request(ctx.app, "GET", "/events", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const reading = readSse(stream, {
       until: (text) => text.includes("metadata.changed"),
     });
     await settle();
     await request(ctx.app, "PUT", `/items/${id}/extensions/mine`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { visible: "updated" },
     });
     const { text } = await reading;
@@ -282,7 +278,7 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
       ctx.app,
       "PUT",
       `/items/${id}/extensions/mine`,
-      { key: ctx.adminKey, body: { visible: "replayed" } },
+      { key: ctx.spaceKey, body: { visible: "replayed" } },
     );
     expect(write.status).toBe(200);
     // The write really did append, so the replay below has something to
@@ -317,7 +313,7 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
       ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b))
       : 0n;
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "touched for replay" } },
     });
     expect(patched.status).toBe(200);
@@ -358,6 +354,7 @@ describe("the replay's shape guard", () => {
     return ctx.storage.eventLog.append({
       event_type: eventType,
       item_id: itemId,
+      space_id: ctx.spaceId,
       payload,
     });
   }

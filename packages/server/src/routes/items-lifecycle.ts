@@ -11,7 +11,6 @@ import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
-import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import {
   createOwnershipGuard,
   resolveOrphanScopeForOwnWrite,
@@ -250,13 +249,20 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     requireRowWritable(c.get("apiKey"), item);
     await lifecycleGuard()(c.get("apiKey"), item);
-    // A live connection does not leave `active` through this door: the
-    // lifecycle table admits only `revoked` for a `system.*` type and this
-    // route cannot name it, so the store would refuse in any case. The
-    // refusal here answers first, so the caller reads why a grant is not
-    // retired this way rather than a lifecycle complaint, and the door
-    // stays closed if the table ever widens.
-    if (state !== "active") refuseUnlessUninstalled(item);
+    // **No live-connection refusal here, and two rules make it unreachable.**
+    // The nearer one is in this file: a `system.*` type's lifecycle admits
+    // only `active` to `revoked`, and this route's body schema cannot name
+    // `revoked`, so the store refuses every transition of a connection
+    // whatever the caller holds. The further one is the gate above:
+    // `requireTypeAccess` refuses a `system.connection` write to every
+    // credential the product can mint, since the reserved namespace admits
+    // only `is_operator`, an operator key holds no permissions at all, and a
+    // runtime credential's carve-out names `system.activity` alone.
+    //
+    // A refusal behind both could never answer, and unreachable enforcement
+    // is worse than none because it reads as a protection somebody is relying
+    // on. `item-state-doors.test.ts` pins the lifecycle rule and
+    // `auth-grant-visibility.test.ts` pins what a caller actually meets.
     const updated = await storage.items.transition(id, state, spaceId);
     const metadata = await storage.metadata.get(id);
     await publish({

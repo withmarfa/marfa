@@ -58,10 +58,13 @@ async function installFresh(): Promise<{
   connectionId: string;
   credentialId: string;
 }> {
-  const adminKey = await ctx.storage.keys
+  const installer = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.is_operator));
-  if (!adminKey) throw new Error("admin key not found in test ctx");
+    .then((keys) => keys.find((k) => !k.is_operator));
+  if (!installer)
+    throw new Error(
+      "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+    );
 
   const integration = await ctx.storage.items.create(
     {
@@ -79,7 +82,7 @@ async function installFresh(): Promise<{
   );
 
   const result = await performInstall(ctx.storage, {
-    apiKeyId: adminKey.id,
+    apiKeyId: installer.id,
     spaceId: ctx.spaceId,
     integrationItemId: integration.id,
     manifest: {
@@ -89,7 +92,7 @@ async function installFresh(): Promise<{
   });
 
   return {
-    apiKeyId: adminKey.id,
+    apiKeyId: installer.id,
     connectionId: result.connection_id,
     // Installing mints nothing, so the credential uninstall revokes is
     // the one a dispatch would have left behind. Minted through the
@@ -350,10 +353,13 @@ async function installWithCredential(credentialRef: string): Promise<{
   apiKeyId: string;
   connectionId: string;
 }> {
-  const adminKey = await ctx.storage.keys
+  const installer = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.is_operator));
-  if (!adminKey) throw new Error("admin key not found in test ctx");
+    .then((keys) => keys.find((k) => !k.is_operator));
+  if (!installer)
+    throw new Error(
+      "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+    );
 
   const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
   const integration = await ctx.storage.items.create(
@@ -372,14 +378,14 @@ async function installWithCredential(credentialRef: string): Promise<{
   );
 
   const result = await performInstall(ctx.storage, {
-    apiKeyId: adminKey.id,
+    apiKeyId: installer.id,
     spaceId: ctx.spaceId,
     integrationItemId: integration.id,
     manifest: { ...manifest(), name: `acme.upstream-${stamp}` },
     credentialRef,
   });
 
-  return { apiKeyId: adminKey.id, connectionId: result.connection_id };
+  return { apiKeyId: installer.id, connectionId: result.connection_id };
 }
 
 describe("performUninstall — the upstream credential", () => {
@@ -544,10 +550,13 @@ describe("performUninstall — a connection inside a space", () => {
     connectionId: string;
     credentialId: string;
   }> {
-    const adminKey = await hosted.storage.keys
+    const installer = await hosted.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const space = await hosted.storage.spaces!.create(
       `uninstall-${Math.random().toString(36).slice(2, 8)}`,
@@ -573,14 +582,14 @@ describe("performUninstall — a connection inside a space", () => {
     );
 
     const result = await performInstall(hosted.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: space.id,
       integrationItemId: integration.id,
       manifest: { ...manifest(), name: `acme.hosted-${stamp}` },
     });
 
     return {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: space.id,
       connectionId: result.connection_id,
       credentialId: await mintRuntimeCredentialIdIn(

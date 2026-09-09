@@ -26,7 +26,7 @@ describe("global request-body size cap", () => {
     const res = await ctx.app.request("/items", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -44,7 +44,7 @@ describe("global request-body size cap", () => {
     const res = await ctx.app.request("/items", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -61,7 +61,7 @@ describe("global request-body size cap", () => {
     const res = await ctx.app.request("/items", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/json",
         "Content-Length": String(REQUEST_CAP + 5000),
       },
@@ -82,7 +82,7 @@ describe("global request-body size cap", () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -95,7 +95,7 @@ describe("global request-body size cap", () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -118,7 +118,7 @@ describe("global request-body size cap", () => {
     const res = await ctx.app.request("/items/bulk", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/json",
       },
       body,

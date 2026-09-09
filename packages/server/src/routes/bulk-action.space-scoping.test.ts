@@ -170,12 +170,12 @@ describe("bulk-action jobs — null-space jobs", () => {
   // The slice row-level security cannot fence. Every purge job lands here,
   // because purge is platform-gated and so always runs unbound.
   it("cloaks a null-space job from a space-bound credential", async () => {
-    const jobNull = await queueJob(ctx.adminKey, "scope-nullspace");
+    const jobNull = await queueJob(ctx.spaceKey, "scope-nullspace");
     expect(await readJob(boundA, jobNull)).toBe(404);
   });
 
   it("still lets an operator key reach a null-space job it did not create", async () => {
-    const jobNull = await queueJob(ctx.adminKey, "scope-nullspace-owner");
+    const jobNull = await queueJob(ctx.spaceKey, "scope-nullspace-owner");
     expect(await readJob(operatorKey, jobNull)).toBe(200);
   });
 });

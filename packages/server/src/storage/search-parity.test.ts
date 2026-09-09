@@ -36,7 +36,7 @@ async function search(query: string): Promise<SearchHit[]> {
     ctx.app,
     "GET",
     `/search?q=${encodeURIComponent(query)}`,
-    { key: ctx.adminKey },
+    { key: ctx.spaceKey },
   );
   expect(res.status).toBe(200);
   const body = (await res.json()) as { results: SearchHit[] };
@@ -47,7 +47,7 @@ describe("FTS dialect parity", () => {
   it("indexes the four core fields end-to-end", async () => {
     const { item: a } = (await (
       await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: {
@@ -59,7 +59,7 @@ describe("FTS dialect parity", () => {
     ).json()) as { item: { id: string } };
     const { item: b } = (await (
       await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: {
@@ -88,7 +88,7 @@ describe("FTS dialect parity", () => {
     // explicitly-non-searchable string field. The non-searchable
     // content must NOT surface in search results.
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "demo.t015_optout",
         version: 1,
@@ -106,7 +106,7 @@ describe("FTS dialect parity", () => {
 
     const { item: secretItem } = (await (
       await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "demo.t015_optout",
           properties: {
@@ -135,7 +135,7 @@ describe("FTS dialect parity", () => {
     // because they're core, but the indexer consults
     // `isFieldSearchableExcluded` for the same opt-out shape.
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "demo.t015_title_optout",
         version: 1,
@@ -149,7 +149,7 @@ describe("FTS dialect parity", () => {
 
     const { item: created } = (await (
       await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "demo.t015_title_optout",
           properties: {
@@ -172,7 +172,7 @@ describe("FTS dialect parity", () => {
   it("re-indexes on update — the search_vector / FTS row reflects the latest state", async () => {
     const { item } = (await (
       await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: { title: "Initial", body: "first" },
@@ -185,7 +185,7 @@ describe("FTS dialect parity", () => {
 
     // Update the title — the new title should hit, the old shouldn't.
     const upd = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         properties: { title: "Updated", body: "second" },
       },
@@ -201,7 +201,7 @@ describe("FTS dialect parity", () => {
   it("removes from index on hard delete", async () => {
     const { item } = (await (
       await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: { title: "Ephemeral", body: "doomed" },
@@ -215,11 +215,11 @@ describe("FTS dialect parity", () => {
 
     // Trash → purge (hard delete). Search must no longer match.
     const trash = await request(ctx.app, "DELETE", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(trash.status).toBe(200);
     const purge = await request(ctx.app, "DELETE", `/items/${item.id}/purge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(purge.status).toBe(200);
 

@@ -51,7 +51,7 @@ const uniq = () => Math.random().toString(36).slice(2, 10);
 
 async function note(body: string, tags?: string[]): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "core.note",
       properties: { body },
@@ -69,7 +69,7 @@ describe("POST /items/bulk reaches the event log", () => {
     const cursor = await logCursor();
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -113,7 +113,7 @@ describe("POST /items/bulk reaches the event log", () => {
   it("logs an update when a bulk upsert lands on an existing row", async () => {
     const suffix = uniq();
     const first = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -128,7 +128,7 @@ describe("POST /items/bulk reaches the event log", () => {
 
     const cursor = await logCursor();
     const second = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -155,7 +155,7 @@ describe("POST /items/bulk reaches the event log", () => {
     const cursor = await logCursor();
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -181,7 +181,7 @@ describe("POST /edges/bulk reaches the event log", () => {
 
     const createCursor = await logCursor();
     const created = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         edges: [{ source_id: a, target_id: b, edge_type: "references" }],
       },
@@ -196,7 +196,7 @@ describe("POST /edges/bulk reaches the event log", () => {
     // cannot tell it from one made through PATCH /edges/{id}.
     const updateCursor = await logCursor();
     const updated = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         edges: [
           {
@@ -225,7 +225,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     const run = await runBulkActionAsync(
       ctx,
       { action: "transition", state: "archived", filter: { tags: [tag] } },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
 
@@ -245,7 +245,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     const doomed = await note("doomed", [tag]);
     const other = await note("survivor");
     const edge = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: doomed, target_id: other, edge_type: "references" },
     });
     expect(edge.status).toBe(201);
@@ -253,7 +253,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     await runBulkActionAsync(
       ctx,
       { action: "transition", state: "trashed", filter: { tags: [tag] } },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
 
     const cursor = await logCursor();
@@ -264,7 +264,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
         confirm: "PURGE",
         filter: { tags: [tag], state: "trashed" },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
 
@@ -284,7 +284,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
         add: ["added-by-bulk"],
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
 
@@ -310,7 +310,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
 
     // A soft delete is the transition to trashed.
     const trashed = await request(ctx.app, "DELETE", `/items/${doomed}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(trashed.status).toBeLessThan(300);
 
@@ -322,7 +322,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
         add: ["added-while-trashed"],
         filter: { tags: [tag], state: "trashed" },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
 
@@ -345,7 +345,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     const run = await runBulkActionAsync(
       ctx,
       { action: "update_tier", tier: "feed", filter: { tags: [tag] } },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
 
@@ -372,7 +372,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
         patch: { body: "patched by bulk" },
         filter: { tags: [tag] },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
 
@@ -396,7 +396,7 @@ describe("POST /items/bulk-actions reaches the event log", () => {
     const run = await runBulkActionAsync(
       ctx,
       { action: "update_timestamp", timestamp: when, filter: { tags: [tag] } },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(run.result?.succeeded).toBe(1);
 
@@ -422,7 +422,7 @@ describe("the response carries the wire shape and nothing more", () => {
    */
   it("does not return the written item on a bulk entry", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -465,7 +465,7 @@ describe("the flag governs fan-out, not the log", () => {
     const countFor = async (enable: boolean): Promise<number> => {
       const cursor = await logCursor();
       const res = await request(ctx.app, "POST", "/items/bulk", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           enable_fanout: enable,
           items: [

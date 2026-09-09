@@ -106,10 +106,13 @@ function lockRecorder(calls: string[]): {
 
 describe("performInstall — happy path", () => {
   it("creates connection + activity and returns their ids", async () => {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const integration = await ctx.storage.items.create(
       {
@@ -127,7 +130,7 @@ describe("performInstall — happy path", () => {
     );
 
     const result = await performInstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: ctx.spaceId,
       integrationItemId: integration.id,
       manifest: manifest(),
@@ -144,10 +147,13 @@ describe("performInstall — happy path", () => {
   // later. The supervisor mints per dispatch and revokes what it finds,
   // so nothing downstream ever needed it.
   it("mints no credential", async () => {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const integration = await ctx.storage.items.create(
       {
@@ -165,7 +171,7 @@ describe("performInstall — happy path", () => {
     );
     const before = await ctx.storage.keys.list();
     const result = await performInstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: ctx.spaceId,
       integrationItemId: integration.id,
       manifest: manifest(),
@@ -212,7 +218,9 @@ describe("performInstall — the manifest's declared defaults are written in", (
     configuration?: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
     const withDefaults = manifestWithDefaults();
-    const adminKey = (await ctx.storage.keys.list())[0]!;
+    const installer = (await ctx.storage.keys.list()).find(
+      (k) => !k.is_operator,
+    )!;
     const integration = await ctx.storage.items.create({
       type: "system.integration",
       properties: {
@@ -226,7 +234,7 @@ describe("performInstall — the manifest's declared defaults are written in", (
     });
 
     const result = await performInstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: ctx.spaceId,
       integrationItemId: integration.id,
       manifest: withDefaults,
@@ -533,10 +541,13 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     // Its own credential rather than `setupOauthCredential()`: that helper
     // hardcodes the `shared-client` id the reuse case below counts, so
     // borrowing it would make this test change that one's arithmetic.
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
     const integrationId = await setupIntegrationItem();
     const credential = await ctx.storage.items.create(
       {
@@ -561,7 +572,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     await expect(
       performInstall(ctx.storage, {
-        apiKeyId: adminKey.id,
+        apiKeyId: installer.id,
         spaceId: ctx.spaceId,
         integrationItemId: integrationId,
         manifest: noOauth,
@@ -571,10 +582,13 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   });
 
   it("stamps credential_ref onto the connection when supplied", async () => {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const integrationId = await setupIntegrationItem();
     const credentialId = await setupOauthCredential();
@@ -598,7 +612,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     expect(await countSharedProviderCredentials()).toBe(1);
 
     const result = await performInstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: ctx.spaceId,
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -619,16 +633,19 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   });
 
   it("rejects when credential_ref does not resolve", async () => {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const integrationId = await setupIntegrationItem();
 
     await expect(
       performInstall(ctx.storage, {
-        apiKeyId: adminKey.id,
+        apiKeyId: installer.id,
         spaceId: ctx.spaceId,
         integrationItemId: integrationId,
         manifest: manifest(),
@@ -638,10 +655,13 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   });
 
   it("rejects when credential_ref points to a kind the install pipeline doesn't accept (api_key)", async () => {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const integrationId = await setupIntegrationItem();
     const wrongKindCredential = await ctx.storage.items.create(
@@ -654,7 +674,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     await expect(
       performInstall(ctx.storage, {
-        apiKeyId: adminKey.id,
+        apiKeyId: installer.id,
         spaceId: ctx.spaceId,
         integrationItemId: integrationId,
         manifest: manifest(),
@@ -664,10 +684,13 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   });
 
   it("accepts credential_ref pointing at a system.credential of kind 'api_token'", async () => {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const integrationId = await setupIntegrationItem();
     const apiTokenCredential = await ctx.storage.items.create(
@@ -685,7 +708,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     );
 
     const result = await performInstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: ctx.spaceId,
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -699,15 +722,18 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
   });
 
   it("connection has no credential_ref when credentialRef is omitted", async () => {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const integrationId = await setupIntegrationItem();
 
     const result = await performInstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: ctx.spaceId,
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -751,10 +777,13 @@ describe("performInstall — the state a rolled-back install leaves", () => {
     // own, so the mode this runs under is incidental. Step 1 has committed
     // by then, so the compensation is what decides what a person in the
     // space sees.
-    const adminKey = await hosted.storage.keys
+    const installer = await hosted.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
     const integration = await hosted.storage.items.create(
@@ -779,7 +808,7 @@ describe("performInstall — the state a rolled-back install leaves", () => {
 
     await expect(
       performInstall(hosted.storage, {
-        apiKeyId: adminKey.id,
+        apiKeyId: installer.id,
         spaceId: undefined,
         integrationItemId: integration.id,
         manifest: { ...manifest(), name: `acme.rollback-${stamp}` },
@@ -817,10 +846,13 @@ describe("performInstall — an unaudited install does not stand", () => {
     // propagating one: under the fire-and-forget writer the same failure is
     // caught, warned about and dropped, and the install below would return
     // an id for a connection nothing recorded.
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
 
     const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
     const integration = await ctx.storage.items.create(
@@ -858,7 +890,7 @@ describe("performInstall — an unaudited install does not stand", () => {
 
     await expect(
       performInstall(storage, {
-        apiKeyId: adminKey.id,
+        apiKeyId: installer.id,
         spaceId: ctx.spaceId,
         integrationItemId: integration.id,
         manifest: { ...manifest(), name: `acme.audit-${stamp}` },

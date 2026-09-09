@@ -121,14 +121,14 @@ describe("blobs — space scoping", () => {
   });
 
   it("an operator-key upload (no space_id) goes to instance-wide sentinel; space probes still 404", async () => {
-    // The default test key has no space_id — its upload goes to the
+    // The operator key has no space_id — its upload goes to the
     // empty-string sentinel row.
     ctx = await createTestContext();
     const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const adminA = await mintSpaceAdmin(ctx, "blob-admin-iso", spaceA);
 
     const upload = await request(ctx.app, "POST", "/blobs", {
-      key: ctx.adminKey, // the operator key (no space)
+      key: ctx.operatorKey,
       headers: { "Content-Type": "application/octet-stream" },
       body: "platform-admin-content",
     });
@@ -137,7 +137,7 @@ describe("blobs — space scoping", () => {
 
     // The operator key can fetch
     const getPlatform = await request(ctx.app, "GET", `/blobs/${hash}`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(getPlatform.status).toBe(200);
 
@@ -166,12 +166,12 @@ describe("blobs — space scoping", () => {
     // blob is absent is both wrong and the dangerous direction: absence is
     // what a repair or a purge acts on.
     const headPlatform = await request(ctx.app, "HEAD", `/blobs/${hash}`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(headPlatform.status).toBe(200);
 
     const getPlatform = await request(ctx.app, "GET", `/blobs/${hash}`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(getPlatform.status).toBe(200);
 

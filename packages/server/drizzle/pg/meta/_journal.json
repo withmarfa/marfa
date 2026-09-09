@@ -743,6 +743,13 @@
       "when": 1788908793645,
       "tag": "0105_keys_mode_gets_a_space",
       "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1788953826744,
+      "tag": "0106_a_spaceless_credential_holds_nothing",
+      "breakpoints": true
     }
   ]
 }

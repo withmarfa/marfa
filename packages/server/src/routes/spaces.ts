@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import type { SpaceConfig } from "@withmarfa/shared";
+import type { ApiKey, SpaceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireOperatorKey,
@@ -324,6 +324,27 @@ const putQuotasRoute = createRoute({
   },
 });
 
+/**
+ * The space a `/spaces/me/config` door acts on.
+ *
+ * **A space permission implies a space.** The eleven are held on a
+ * credential's row or on its grant; the operator key is the only shape that
+ * can carry no space, and it holds none of them and cannot be given one, so
+ * `requireSpacePermission(c, "space.settings")` has already turned away every
+ * space-less caller before this is reached.
+ *
+ * It exists so neither door carries a refusal no caller can reach, which
+ * would read as a protection somebody is relying on. Reaching the throw would
+ * mean the gate above had stopped working, which is this file's mistake and
+ * not a caller's, so it stops rather than answering as a bad request.
+ */
+function spaceOfSettingsCaller(key: ApiKey): string {
+  if (key.space_id === undefined) {
+    throw new Error("space.settings admitted a credential with no space");
+  }
+  return key.space_id;
+}
+
 export function spaceRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -335,10 +356,15 @@ export function spaceRoutes(storage: Storage) {
   router.openapi(getConfigRoute, async (c) => {
     const key = requireAuth(c);
     requireSpacePermission(c, "space.settings");
-    if (!key.space_id || !storage.spaces) {
+    // The space-less half of this guard went with its twin below: a
+    // credential with no space holds none of the eleven, so the gate above
+    // has already refused it. What is left is a deployment with no space
+    // store, which reads as an unset config rather than as an error.
+    if (!storage.spaces) {
       return c.json({}, 200);
     }
-    const config = await storage.spaces.getConfig(key.space_id);
+    const spaceId = spaceOfSettingsCaller(key);
+    const config = await storage.spaces.getConfig(spaceId);
     return c.json(config ?? {}, 200);
   });
 
@@ -351,21 +377,23 @@ export function spaceRoutes(storage: Storage) {
     // not set.
     const body: SpaceConfig = c.req.valid("json");
 
-    if (!key.space_id || !storage.spaces) {
+    if (!storage.spaces) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Space config requires a space-scoped credential",
+        "This deployment holds no space configuration",
       );
     }
 
-    await storage.spaces.updateConfig(key.space_id, body);
+    const spaceId = spaceOfSettingsCaller(key);
+
+    await storage.spaces.updateConfig(spaceId, body);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
+      space_id: spaceId,
       key_id: key.id,
       action: "space.config.update",
       resource_type: "space",
-      resource_id: key.space_id,
+      resource_id: spaceId,
     });
 
     return c.json(body, 200);

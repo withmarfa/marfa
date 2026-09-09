@@ -78,7 +78,7 @@ async function bringUp(eventLog: boolean): Promise<void> {
   seam = createOfflineSeam(fixture.fetch);
   client = new MarfaClient({
     url: "http://localhost",
-    apiKey: fixture.adminKey,
+    apiKey: fixture.spaceKey,
     fetch: seam.fetch,
   });
 }

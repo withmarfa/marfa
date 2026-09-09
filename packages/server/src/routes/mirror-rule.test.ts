@@ -85,7 +85,7 @@ describe("the mirror rule", () => {
   it("refuses the operator key too — one rule, not two", async () => {
     const id = await createMirror(`m-${String(Math.random()).slice(2)}`);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "admin edit" } },
     });
     expect(res.status).toBe(403);
@@ -108,7 +108,7 @@ describe("the mirror rule", () => {
     expect(resync.status).toBe(200);
 
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const afterBody = (await after.json()) as {
       item: { properties: Record<string, unknown> };
@@ -139,7 +139,7 @@ describe("the mirror rule", () => {
       "GET",
       `/items/${promotedBody.item.id}/edges`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     const edgesBody = (await edges.json()) as {
@@ -174,7 +174,7 @@ describe("the mirror rule", () => {
       ctx.app,
       "GET",
       `/items/${promotedBody.item.id}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const promotedAfterBody = (await promotedAfter.json()) as {
       item: { properties: Record<string, unknown> };

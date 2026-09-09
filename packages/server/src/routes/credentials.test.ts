@@ -42,7 +42,7 @@ function uniqueSuffix(): string {
 async function mintUnprivilegedKey(): Promise<string> {
   const suffix = uniqueSuffix();
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       label: `no-permission-test-${suffix}`,
       source: `no-permission-test-${suffix}`,
@@ -55,11 +55,10 @@ async function mintUnprivilegedKey(): Promise<string> {
   return body.key;
 }
 
-// Built through the storage layer rather than `POST /keys`, because the
-// minting caller here carries no space and so mints only space-less keys.
-// What these cases need is the opposite shape — a credential bound to a
-// space and holding `space.credentials` — so the fixture stamps the space
-// directly instead of routing around the rule.
+// Built through the storage layer rather than `POST /keys`, because these
+// cases need a credential in a space of its own rather than in the context's,
+// so that the row it creates cannot be reached by any other case here. The
+// fixture stamps that space directly.
 async function mintSpaceCredentialsKey(): Promise<string> {
   const suffix = uniqueSuffix();
   const raw = `marfa_k1_space_credentials_${suffix}`;
@@ -109,7 +108,7 @@ describe("POST /credentials/oauth-provider — auth gate", () => {
 describe("POST /credentials/oauth-provider — happy path", () => {
   it("creates a system.credential of kind oauth_token with the right shape", async () => {
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: VALID_BODY,
     });
     expect(res.status).toBe(201);
@@ -162,7 +161,7 @@ describe("POST /credentials/oauth-provider — happy path", () => {
     const { oauth_default_scope: _, ...withoutScope } = VALID_BODY;
     void _;
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: withoutScope,
     });
     expect(res.status).toBe(201);
@@ -178,7 +177,7 @@ describe("POST /credentials/oauth-provider — happy path", () => {
 
   it("writes a credential.oauth_provider.create audit row", async () => {
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_BODY, label: "Audit test" },
     });
     expect(res.status).toBe(201);
@@ -204,7 +203,7 @@ describe("POST /credentials/oauth-provider — happy path", () => {
 describe("POST /credentials/oauth-provider — validation", () => {
   it("rejects malformed oauth_authorize_url with 400", async () => {
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_BODY, oauth_authorize_url: "not-a-url" },
     });
     expect(res.status).toBe(400);
@@ -214,7 +213,7 @@ describe("POST /credentials/oauth-provider — validation", () => {
     const { oauth_client_id: _, ...incomplete } = VALID_BODY;
     void _;
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: incomplete,
     });
     expect(res.status).toBe(400);
@@ -222,7 +221,7 @@ describe("POST /credentials/oauth-provider — validation", () => {
 
   it("rejects empty oauth_client_secret with 400", async () => {
     const res = await request(ctx.app, "POST", "/credentials/oauth-provider", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_BODY, oauth_client_secret: "" },
     });
     expect(res.status).toBe(400);
@@ -260,7 +259,7 @@ describe("POST /credentials/api-token — auth gate", () => {
 describe("POST /credentials/api-token — happy path", () => {
   it("creates a system.credential of kind api_token with the right shape", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: VALID_API_TOKEN_BODY,
     });
     expect(res.status).toBe(201);
@@ -307,7 +306,7 @@ describe("POST /credentials/api-token — happy path", () => {
 
   it("persists auth_scheme on api_token_config when supplied", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         ...VALID_API_TOKEN_BODY,
         label: "Readwise (auth_scheme Token)",
@@ -329,7 +328,7 @@ describe("POST /credentials/api-token — happy path", () => {
 
   it("omits auth_scheme on api_token_config when not supplied — proxy falls back to Bearer", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_API_TOKEN_BODY, label: "Default scheme" },
     });
     expect(res.status).toBe(201);
@@ -344,7 +343,7 @@ describe("POST /credentials/api-token — happy path", () => {
 
   it("rejects unknown auth_scheme values with 400", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_API_TOKEN_BODY, auth_scheme: "Negotiate" },
     });
     expect(res.status).toBe(400);
@@ -352,7 +351,7 @@ describe("POST /credentials/api-token — happy path", () => {
 
   it("writes a credential.api_token.create audit row without leaking the token", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_API_TOKEN_BODY, label: "Audit test (api)" },
     });
     expect(res.status).toBe(201);
@@ -380,7 +379,7 @@ describe("POST /credentials/api-token — happy path", () => {
 describe("POST /credentials/api-token — validation", () => {
   it("rejects malformed upstream_base_url with 400", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_API_TOKEN_BODY, upstream_base_url: "not-a-url" },
     });
     expect(res.status).toBe(400);
@@ -388,7 +387,7 @@ describe("POST /credentials/api-token — validation", () => {
 
   it("rejects empty api_token with 400", async () => {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_API_TOKEN_BODY, api_token: "" },
     });
     expect(res.status).toBe(400);
@@ -398,7 +397,7 @@ describe("POST /credentials/api-token — validation", () => {
     const { label: _, ...incomplete } = VALID_API_TOKEN_BODY;
     void _;
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: incomplete,
     });
     expect(res.status).toBe(400);
@@ -408,7 +407,7 @@ describe("POST /credentials/api-token — validation", () => {
 describe("DELETE /credentials/{id}", () => {
   async function makeCredential(label: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/credentials/api-token", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...VALID_API_TOKEN_BODY, label },
     });
     expect(res.status).toBe(201);
@@ -429,7 +428,7 @@ describe("DELETE /credentials/{id}", () => {
     expect(await ctx.storage.items.get(id)).not.toBeNull();
 
     const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, credential_id: id });
@@ -461,18 +460,23 @@ describe("DELETE /credentials/{id}", () => {
 
   it("refuses while a connection that is not revoked references it", async () => {
     const id = await makeCredential("delete-in-use");
-    const connection = await ctx.storage.items.create({
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        credential_ref: id,
+    // The door looks for referencing connections inside the caller's space,
+    // so a connection seeded anywhere else is one it cannot see.
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          credential_ref: id,
+        },
       },
-    });
+      ctx.spaceId,
+    );
 
     const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
@@ -487,19 +491,24 @@ describe("DELETE /credentials/{id}", () => {
 
   it("allows removal once the referencing connection is revoked", async () => {
     const id = await makeCredential("delete-after-revoke");
-    const connection = await ctx.storage.items.create({
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        credential_ref: id,
+    // In the caller's space, so the door genuinely finds this connection and
+    // the revoked lifecycle is what lets the delete through.
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          credential_ref: id,
+        },
       },
-    });
-    await ctx.storage.items.transition(connection.id, "revoked");
+      ctx.spaceId,
+    );
+    await ctx.storage.items.transition(connection.id, "revoked", ctx.spaceId);
 
     const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     expect(await ctx.storage.items.get(id)).toBeNull();
@@ -510,19 +519,21 @@ describe("DELETE /credentials/{id}", () => {
       ctx.app,
       "DELETE",
       "/credentials/01a00000-0000-7000-8000-000000000000",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(missing.status).toBe(404);
 
-    const note = await ctx.storage.items.create({
-      type: "core.note",
-      properties: { body: "not a credential" },
-    });
+    // In the caller's space, so the 404 comes from the type check rather than
+    // from the row being out of reach — which is the claim.
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "not a credential" } },
+      ctx.spaceId,
+    );
     const wrongType = await request(
       ctx.app,
       "DELETE",
       `/credentials/${note.id}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(wrongType.status).toBe(404);
   });
@@ -530,7 +541,7 @@ describe("DELETE /credentials/{id}", () => {
   it("writes an audit row", async () => {
     const id = await makeCredential("delete-audit");
     const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const audits = await waitForAudit(

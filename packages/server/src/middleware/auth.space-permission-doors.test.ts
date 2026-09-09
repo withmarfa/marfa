@@ -23,6 +23,7 @@ import { checkTypeAccess, computeTypeFilter, hashApiKey } from "./auth.js";
 import {
   createTestContext,
   request,
+  seedOauthBearer,
   TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
@@ -166,10 +167,15 @@ describe("GET /spaces/me/quotas — space.usage", () => {
   });
 
   it("rejects a space-less caller with 400", async () => {
-    // ctx.adminKey is the operator key, and an operator key has no space —
-    // so there is no "me" for this route to answer about.
+    // A keys-mode deployment binds its OAuth tokens to no space by design, so
+    // a token holds the permission and still has no "me" for this route to
+    // answer about. It is the only credential that reaches the branch: a
+    // space-less key is the operator tier, and no mint may give a key a space
+    // permission its creator does not hold, so an operator key's list is
+    // empty and the door above refuses it first.
+    const { token } = await seedOauthBearer(ctx.storage, ["space.usage"]);
     const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
-      key: ctx.adminKey,
+      key: token,
     });
     expect(res.status).toBe(400);
   });

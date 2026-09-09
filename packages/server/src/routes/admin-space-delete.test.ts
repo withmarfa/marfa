@@ -33,7 +33,7 @@ afterEach(async () => {
 /** A space with no account behind it — the shape conformance creates. */
 async function seedAccountlessSpace(c: TestContext): Promise<string> {
   const res = await request(c.app, "POST", "/admin/spaces", {
-    key: c.adminKey,
+    key: c.operatorKey,
     body: { name: "conformance-shared-deadbeef" },
   });
   expect(res.status).toBe(201);
@@ -58,7 +58,7 @@ describe("POST /admin/spaces/:id/delete", () => {
         ctx.app,
         "POST",
         `/admin/spaces/${spaceId}/delete`,
-        { key: ctx.adminKey, body: { confirm } },
+        { key: ctx.operatorKey, body: { confirm } },
       );
       expect(res.status, `confirm=${JSON.stringify(confirm)}`).toBe(400);
     }
@@ -73,7 +73,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       ctx.app,
       "POST",
       "/admin/spaces/no-such-space/delete",
-      { key: ctx.adminKey, body: { confirm: "no-such-space" } },
+      { key: ctx.operatorKey, body: { confirm: "no-such-space" } },
     );
     expect(res.status).toBe(404);
   });
@@ -94,7 +94,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       "POST",
       `/admin/spaces/${spaceId}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "types",
           source: "types",
@@ -134,7 +134,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       ctx.app,
       "POST",
       `/admin/spaces/${spaceId}/delete`,
-      { key: ctx.adminKey, body: { confirm: spaceId } },
+      { key: ctx.operatorKey, body: { confirm: spaceId } },
     );
     expect(res.status).toBe(200);
 
@@ -155,7 +155,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       "POST",
       `/admin/spaces/${spaceId}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "events",
           source: "events",
@@ -189,7 +189,7 @@ describe("POST /admin/spaces/:id/delete", () => {
         ctx.app,
         "POST",
         `/admin/spaces/${spaceId}/delete`,
-        { key: ctx.adminKey, body: { confirm: spaceId } },
+        { key: ctx.operatorKey, body: { confirm: spaceId } },
       );
       expect(res.status).toBe(200);
 
@@ -209,7 +209,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       "POST",
       `/admin/spaces/${spaceId}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "content",
           source: "content",
@@ -230,7 +230,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       ctx.app,
       "POST",
       `/admin/spaces/${spaceId}/delete`,
-      { key: ctx.adminKey, body: { confirm: spaceId } },
+      { key: ctx.operatorKey, body: { confirm: spaceId } },
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ deleted: true });
@@ -242,7 +242,7 @@ describe("POST /admin/spaces/:id/delete", () => {
 
     // And it is gone from the operator's own listing.
     const list = await request(ctx.app, "GET", "/admin/spaces", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     // `data`, not `spaces`. The route has always returned `data`, so the
     // previous shape made this assertion pass against an undefined array
@@ -281,7 +281,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       ctx.app,
       "POST",
       `/admin/spaces/${user.space_id}/delete`,
-      { key: ctx.adminKey, body: { confirm: user.space_id } },
+      { key: ctx.operatorKey, body: { confirm: user.space_id } },
     );
     expect(res.status).toBe(409);
     // The refusal has to name the id the other route needs, not a
@@ -332,7 +332,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       ctx.app,
       "GET",
       `/admin/spaces/${user.space_id}`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(detail.status).toBe(200);
     const shown = (await detail.json()) as {
@@ -343,7 +343,7 @@ describe("POST /admin/spaces/:id/delete", () => {
     expect(shown.space?.owner_email).toBe("owner-id@example.com");
 
     const list = await request(ctx.app, "GET", "/admin/spaces", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     const listed = (await list.json()) as {
       data?: { id: string; owner_auth_user_id?: string | null }[];
@@ -364,7 +364,7 @@ describe("POST /admin/spaces/:id/delete", () => {
     ctx = await createTestContext({ authMode: "hosted" });
     const spaceId = await seedAccountlessSpace(ctx);
     const detail = await request(ctx.app, "GET", `/admin/spaces/${spaceId}`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     const shown = (await detail.json()) as {
       space?: {
@@ -410,7 +410,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       ctx.app,
       "GET",
       `/admin/spaces/${user.space_id}`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     const shown = (await detail.json()) as {
       space?: {
@@ -427,7 +427,7 @@ describe("POST /admin/spaces/:id/delete", () => {
       ctx.app,
       "POST",
       `/admin/accounts/${String(id)}/delete`,
-      { key: ctx.adminKey, body: { confirm: String(email) } },
+      { key: ctx.operatorKey, body: { confirm: String(email) } },
     );
     expect(deleted.status).toBe(200);
 
@@ -480,7 +480,7 @@ describe("POST /admin/spaces/:id/delete", () => {
         ctx.app,
         "POST",
         `/admin/spaces/${user.space_id}/delete`,
-        { key: ctx.adminKey, body: { confirm: user.space_id } },
+        { key: ctx.operatorKey, body: { confirm: user.space_id } },
       );
       // A refusal, not a server error.
       expect(res.status).toBe(409);

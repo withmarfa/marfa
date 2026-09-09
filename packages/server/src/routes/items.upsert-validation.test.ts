@@ -87,7 +87,7 @@ describe("a re-sync that would clear a required field", () => {
 
     // And nothing was written: the item still has the title it had.
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await read.json()) as {
       item: { properties: { title?: unknown } };
@@ -110,7 +110,7 @@ describe("a re-sync that would clear a required field", () => {
     expect(res.status).toBe(400);
 
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await read.json()) as {
       item: { properties: { title?: unknown; place?: unknown } };
@@ -143,7 +143,7 @@ describe("an ordinary re-sync", () => {
     expect(res.status, await res.clone().text()).toBe(200);
 
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await read.json()) as {
       item: { properties: Record<string, unknown> };
@@ -157,7 +157,7 @@ describe("an ordinary re-sync", () => {
     const res = await resync("upstream-plain", { title: "After" });
     expect(res.status).toBe(200);
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await read.json()) as {
       item: { properties: { title?: unknown } };
@@ -191,7 +191,7 @@ describe("the type a write declares", () => {
     expect(res.status, await res.clone().text()).toBe(200);
 
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await read.json()) as {
       item: { type: string; properties: { title?: unknown } };
@@ -211,7 +211,7 @@ describe("the type a write declares", () => {
     expect(err.error.code).toBe("type_mismatch");
 
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await read.json()) as {
       item: { type: string; properties: { title?: unknown } };
@@ -249,7 +249,7 @@ describe("the type a write declares", () => {
     expect(err.error.code).toBe("type_mismatch");
 
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const item = (await read.json()) as {
       item: { type: string; properties: { title?: unknown } };

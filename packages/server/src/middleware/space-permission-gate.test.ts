@@ -290,7 +290,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
 
   it("sets no grant for an API-key caller", async () => {
     const res = await probeApp().request("/probe", {
-      headers: { Authorization: `Bearer ${ctx.adminKey}` },
+      headers: { Authorization: `Bearer ${ctx.spaceKey}` },
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {

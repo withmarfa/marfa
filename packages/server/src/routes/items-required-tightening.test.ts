@@ -13,8 +13,13 @@
  * land in an earlier deploy than the tightening.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -29,7 +34,7 @@ afterAll(async () => {
 /** Register `demo.tightened` with `body` optional, then create one item without it. */
 async function seedLooseItem(id: string): Promise<string> {
   const registered = await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       id,
       version: 1,
@@ -42,7 +47,7 @@ async function seedLooseItem(id: string): Promise<string> {
   expect(registered.status).toBe(201);
 
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: id, properties: { title: "no body here" } },
   });
   expect(created.status).toBe(201);
@@ -52,7 +57,7 @@ async function seedLooseItem(id: string): Promise<string> {
 
 async function tightenBodyToRequired(id: string): Promise<void> {
   const updated = await request(ctx.app, "PUT", `/types/${id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       id,
       version: 2,
@@ -72,7 +77,7 @@ describe("tightening required on a type with existing items", () => {
 
     // Editable before the tightening.
     const before = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "still fine" } },
     });
     expect(before.status).toBe(200);
@@ -82,7 +87,7 @@ describe("tightening required on a type with existing items", () => {
     // The same patch, touching only `title`, is now rejected — the merged set
     // is what gets validated, and it has no `body`.
     const after = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "no longer allowed" } },
     });
     expect(after.status).toBe(400);
@@ -101,13 +106,13 @@ describe("tightening required on a type with existing items", () => {
     await tightenBodyToRequired(typeId);
 
     const repaired = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "" } },
     });
     expect(repaired.status).toBe(200);
 
     const afterwards = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "editable again" } },
     });
     expect(afterwards.status).toBe(200);
@@ -116,12 +121,32 @@ describe("tightening required on a type with existing items", () => {
 
 describe("marfa.captured_email keeps bodyless captures editable", () => {
   it("accepts a capture with no body and lets it be patched afterwards", async () => {
+    // `marfa.*` is a reserved namespace: the only credential that reaches it
+    // is a runtime credential whose manifest declared that exact type, which
+    // is what the capture handler holds. Both writes go through it — the row
+    // carries the credential's integration provenance, so its own re-sync is
+    // the only thing allowed to edit it afterwards.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const captureKey = `marfa_k1_capture_${suffix}`;
+    await ctx.storage.keys.createRuntimeCredential(
+      {
+        label: `capture-${suffix}`,
+        source: `capture-${suffix}`,
+        type_permissions: { "marfa.captured_email": "write" },
+        connection_id: `conn_capture_${suffix}`,
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+        item_source: `integration:acme.capture.${suffix}`,
+      },
+      hashApiKey(captureKey, TEST_API_KEY_SALT),
+      ctx.spaceId,
+    );
+
     // The type is shaped for `core.note` and mirrors `text_body` into `body`,
     // but does not require `body` and does not claim the compatibility, both
     // of which would strand captures written before the handler populated it
     // unconditionally.
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: captureKey,
       body: {
         type: "marfa.captured_email",
         properties: {
@@ -135,7 +160,7 @@ describe("marfa.captured_email keeps bodyless captures editable", () => {
     const { item } = (await created.json()) as { item: { id: string } };
 
     const patched = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: captureKey,
       body: { properties: { subject: "Retitled" } },
     });
     expect(patched.status).toBe(200);

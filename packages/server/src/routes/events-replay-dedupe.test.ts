@@ -127,7 +127,7 @@ async function latestEventId(): Promise<bigint> {
 
 async function createNote(marker: string): Promise<Item> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body: marker } },
   });
   expect(res.status).toBe(201);
@@ -178,7 +178,7 @@ describe.skipIf(!isPg)("GET /events replay dedupe", () => {
 
     try {
       const stream = await request(ctx.app, "GET", "/events", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         headers: { "Last-Event-ID": String(cursor) },
       });
       expect(stream.status).toBe(200);
@@ -279,7 +279,7 @@ describe.skipIf(!isPg)("GET /events replay dedupe", () => {
       // with an unfiltered platform key cannot tell recording-on-send
       // from recording-on-walk.
       const stream = await request(ctx.app, "GET", "/events?type=core.note", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         headers: { "Last-Event-ID": String(cursor) },
       });
       expect(stream.status).toBe(200);

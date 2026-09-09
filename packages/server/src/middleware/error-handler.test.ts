@@ -16,7 +16,7 @@ describe("error handler — malformed and empty bodies", () => {
     return ctx.app.request("/items", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/json",
       },
       body,

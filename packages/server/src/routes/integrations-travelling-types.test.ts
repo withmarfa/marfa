@@ -67,23 +67,32 @@ function chain(prefix: string, count: number): Record<string, unknown>[] {
   return out;
 }
 
-/** Whether a catalog row exists for a `(name, version)` pair. */
+/**
+ * Whether a catalog row exists for a `(name, version)` pair.
+ *
+ * Read through the catalog's own route rather than through `/items`. A
+ * manifest registered by the operator key carries no space, and `/items`
+ * narrows by both the caller's space and its type permissions — so a listing
+ * there comes back empty whether or not the row was written, which is a probe
+ * that cannot fail. `/integrations` widens to the platform-scoped rows on
+ * purpose.
+ */
 async function isRegistered(name: string, version: string): Promise<boolean> {
   const res = await request(
     ctx.app,
     "GET",
-    `/items?type=system.integration&filter=${encodeURIComponent(
-      `properties.manifest_name eq "${name}" AND properties.manifest_version eq "${version}"`,
-    )}`,
-    { key: ctx.adminKey },
+    `/integrations?manifest_name=${encodeURIComponent(name)}&limit=100`,
+    { key: ctx.operatorKey },
   );
-  const body = (await res.json()) as { data?: unknown[] };
-  return (body.data ?? []).length > 0;
+  const body = (await res.json()) as {
+    data?: { manifest_version: string }[];
+  };
+  return (body.data ?? []).some((row) => row.manifest_version === version);
 }
 
 async function register(body: Record<string, unknown>): Promise<Response> {
   return request(ctx.app, "POST", "/integrations", {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: { manifest: body },
   });
 }
@@ -101,12 +110,15 @@ describe("a manifest declaring its own type schemas", () => {
     expect(res.status).toBe(201);
 
     // The type is registered and resolvable, not merely recorded on the row.
+    // Read back as the tier that registered it: a manifest the operator key
+    // registers carries no space, so its declared types land in the
+    // platform-scoped bucket that a space-bound lookup never sees.
     const typeRes = await request(
       ctx.app,
       "GET",
       "/types/acme.travelling_note",
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
       },
     );
     expect(typeRes.status).toBe(200);
@@ -209,7 +221,7 @@ describe("a manifest declaring a parent chain", () => {
 
     // Registered and resolvable, not merely recorded on the catalog row.
     const typeRes = await request(ctx.app, "GET", "/types/acme.ordered_leaf", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(typeRes.status).toBe(200);
     const body = (await typeRes.json()) as { parent?: string };
@@ -347,7 +359,7 @@ describe("a manifest declaring a parent chain", () => {
     expect(second.status).toBe(201);
 
     const typeRes = await request(ctx.app, "GET", "/types/acme.settled_type", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     const body = (await typeRes.json()) as { description?: string };
     expect(body.description).toBe("Declared by the manifest that needs it.");

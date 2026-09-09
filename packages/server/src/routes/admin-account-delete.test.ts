@@ -66,7 +66,7 @@ describe("POST /admin/accounts/:id/delete", () => {
         ctx.app,
         "POST",
         `/admin/accounts/${authUserId}/delete`,
-        { key: ctx.adminKey, body: { confirm } },
+        { key: ctx.operatorKey, body: { confirm } },
       );
       expect(res.status, `confirm=${JSON.stringify(confirm)}`).toBe(400);
     }
@@ -77,7 +77,7 @@ describe("POST /admin/accounts/:id/delete", () => {
       ctx.app,
       "POST",
       `/admin/accounts/${other.authUserId}/delete`,
-      { key: ctx.adminKey, body: { confirm: "delete-me@example.com" } },
+      { key: ctx.operatorKey, body: { confirm: "delete-me@example.com" } },
     );
     expect(crossed.status).toBe(400);
     // Nothing was deleted by any of the refusals.
@@ -102,7 +102,7 @@ describe("POST /admin/accounts/:id/delete", () => {
       "POST",
       `/admin/spaces/${spaceId}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "content",
           source: "content",
@@ -124,7 +124,7 @@ describe("POST /admin/accounts/:id/delete", () => {
       "POST",
       `/admin/accounts/${authUserId}/delete`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { confirm: "operator-target@example.com" },
       },
     );
@@ -172,7 +172,7 @@ describe("POST /admin/accounts/:id/delete", () => {
       "POST",
       `/admin/accounts/${authUserId}/delete`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { confirm: "operator-target@example.com" },
       },
     );
@@ -185,7 +185,7 @@ describe("POST /admin/accounts/:id/delete", () => {
     // mismatch refusal the fat-finger gate gives.
     ctx = await createTestContext();
     const res = await request(ctx.app, "POST", "/admin/accounts/x/delete", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { confirm: "a@test.marfa.so" },
     });
     expect(res.status).toBe(400);

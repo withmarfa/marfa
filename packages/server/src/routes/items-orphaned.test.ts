@@ -47,7 +47,11 @@ import { performInstall } from "../connections/install-pipeline.js";
 import { performUninstall } from "../connections/uninstall-pipeline.js";
 import { performPause } from "../connections/pause-pipeline.js";
 import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
-import { resolveOrphanScopeForOwnWrite, withOrphanState } from "./_orphaned.js";
+import {
+  resolveOrphanScope,
+  resolveOrphanScopeForOwnWrite,
+  withOrphanState,
+} from "./_orphaned.js";
 import { initEventLog } from "../pubsub.js";
 import type { ApiKey, IntegrationManifest, Item } from "@withmarfa/shared";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
@@ -408,19 +412,29 @@ describe("GET /items", () => {
     expect(there.orphaned).toBe(false);
   });
 
-  it("keeps the spaces apart in one unfenced operator-key read", async () => {
-    // The case a space-bound reader cannot reach. The operator key carries no
-    // `space_id`, and an absent space means *no fence* here, so this one
-    // response holds both spaces' rows and any scope resolved from the
-    // caller would have walked every space's connections at once — finding
-    // `elsewhere`'s live `acme/orphan-gone` and reporting the home space's
-    // orphaned rows as healthy.
-    const items = await listItems(ctx.adminKey);
+  it("keeps the spaces apart in one unfenced batch", async () => {
+    // Asserted against the resolver rather than through a route, for the
+    // same reason the own-write cases below are: no credential can produce
+    // this batch any more. An unfenced read needs a space-less caller, the
+    // operator key is the only space-less credential there is, and its
+    // permission maps are empty — so it lists nothing and the batch never
+    // forms at a door. The rule still has to hold, because the resolver is
+    // what every listing calls: a scope resolved from the caller rather
+    // than from each row would find `elsewhere`'s live `acme/orphan-gone`
+    // and report the home space's orphaned rows as healthy.
+    const rows = await ctx.storage.items.getMany([goneItemId, elsewhereItemId]);
+    const scope = await resolveOrphanScope(ctx.storage, [...rows.values()]);
 
-    const here = need(items, goneItemId, "the home space's orphaned item");
-    const there = need(items, elsewhereItemId, "the other space's item");
+    const here = withOrphanState(
+      need(rows, goneItemId, "the home space's orphaned item"),
+      scope,
+    );
+    const there = withOrphanState(
+      need(rows, elsewhereItemId, "the other space's item"),
+      scope,
+    );
 
-    // Both really are in the one response, and they really are in different
+    // Both really are in the one batch, and they really are in different
     // spaces — otherwise this asserts nothing about cross-space keying.
     expect(here.space_id).toBe(homeSpace);
     expect(there.space_id).toBe(elsewhereSpace);
@@ -437,7 +451,8 @@ describe("GET /items", () => {
     // line load-bearing rather than decorative. Written straight to storage
     // because no ordinary path produces a space-less integration row on a
     // hosted instance; the invariant is what is under test, not the route
-    // that would create one.
+    // that would create one. Resolved directly for the same reason as the
+    // case above: nothing can list this row through a door.
     const stray = await ctx.storage.items.create(
       {
         type: "core.note",
@@ -449,8 +464,8 @@ describe("GET /items", () => {
     );
     expect(stray.space_id).toBeNull();
 
-    const items = await listItems(ctx.adminKey);
-    const found = need(items, stray.id, "the space-less row");
+    const scope = await resolveOrphanScope(ctx.storage, [stray]);
+    const found = withOrphanState(stray, scope);
 
     // `acme/orphan-gone` is live in `elsewhere` and revoked in `home`.
     // Neither is this row's space, so neither may answer for it, and the

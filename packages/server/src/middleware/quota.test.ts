@@ -1,35 +1,36 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   createTestContext,
+  mintSpaceKey,
   request,
-  TEST_API_KEY_SALT,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "./auth.js";
 import type { SpacePermission } from "@withmarfa/shared";
 
-async function mintSpaceKey(
+/**
+ * A real space, and a working key inside it.
+ *
+ * A quota is a property of a space, and the count it is compared against is
+ * a query over that space's rows, so both halves have to name a space that
+ * exists. This file used to mint into an id it made up, which no `spaces`
+ * row backed: the counts happened to work because they read the items table
+ * rather than the space, and the fixture was one join away from asserting
+ * nothing. `mintSpaceKey` is the shared helper, shaped the way `POST
+ * /admin/spaces/{id}/keys` shapes a key.
+ */
+async function spaceWithKey(
   ctx: TestContext,
-  spaceId: string,
   label: string,
-  spacePermissions: SpacePermission[] = [],
-): Promise<string> {
-  const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `marfa_k1_quota_test_${suffix}`;
-  // Grant `*: write` explicitly so the test can exercise items.create.
-  await ctx.storage.keys.create(
-    {
-      label,
-      source: `${label}-${suffix}`,
+  spacePermissions?: SpacePermission[],
+): Promise<{ spaceId: string; key: string }> {
+  const space = await ctx.storage.spaces!.create();
+  const key = await mintSpaceKey(ctx, space.id, {
+    label,
+    ...(spacePermissions !== undefined && {
       space_permissions: spacePermissions,
-      default_tier: "library",
-      type_permissions: { "*": "write" },
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-    spaceId,
-  );
-  return raw;
+    }),
+  });
+  return { spaceId: space.id, key };
 }
 
 describe("per-space quota enforcement", () => {
@@ -40,18 +41,19 @@ describe("per-space quota enforcement", () => {
 
   it("webhook quota = 2 → third POST returns 429 with quota_exceeded shape", async () => {
     ctx = await createTestContext();
-    const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintSpaceKey(ctx, spaceId, "wh-quota-admin", [
-      "space.webhooks",
-    ]);
+    const { spaceId, key: spaceKey } = await spaceWithKey(
+      ctx,
+      "quota-webhooks",
+      ["space.webhooks"],
+    );
 
-    // Set the cap via the storage layer directly (admin route is also
-    // exercised below).
+    // Set the cap through the storage layer; the instance route that sets
+    // one is exercised at the end of this file.
     await ctx.storage.spaceQuotas.set(spaceId, { webhooks_limit: 2 });
 
     for (let i = 0; i < 2; i++) {
       const ok = await request(ctx.app, "POST", "/webhooks", {
-        key: adminKey,
+        key: spaceKey,
         body: {
           url: `https://example.com/hook-${String(i)}`,
           events: ["item.created"],
@@ -61,7 +63,7 @@ describe("per-space quota enforcement", () => {
     }
 
     const overshoot = await request(ctx.app, "POST", "/webhooks", {
-      key: adminKey,
+      key: spaceKey,
       body: {
         url: "https://example.com/hook-overshoot",
         events: ["item.created"],
@@ -79,14 +81,13 @@ describe("per-space quota enforcement", () => {
 
   it("items quota = 3 → fourth POST returns 429", async () => {
     ctx = await createTestContext();
-    const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintSpaceKey(ctx, spaceId, "items-quota-admin");
+    const { spaceId, key: spaceKey } = await spaceWithKey(ctx, "quota-items");
 
     await ctx.storage.spaceQuotas.set(spaceId, { items_limit: 3 });
 
     for (let i = 0; i < 3; i++) {
       const ok = await request(ctx.app, "POST", "/items", {
-        key: adminKey,
+        key: spaceKey,
         body: {
           type: "core.note",
           properties: { body: `n${String(i)}` },
@@ -96,7 +97,7 @@ describe("per-space quota enforcement", () => {
     }
 
     const overshoot = await request(ctx.app, "POST", "/items", {
-      key: adminKey,
+      key: spaceKey,
       body: { type: "core.note", properties: { body: "overshoot" } },
     });
     expect(overshoot.status).toBe(429);
@@ -108,24 +109,32 @@ describe("per-space quota enforcement", () => {
     expect(body.error.details.limit).toBe(3);
   });
 
-  it("the space-less operator key bypasses quota enforcement entirely", async () => {
+  /**
+   * The reservation is a no-op for a caller with no space, and this file
+   * used to assert that through `POST /webhooks` with the space-less
+   * credential. There is no such caller at that door any more: the only
+   * space-less credential is the operator key, it holds none of the eleven
+   * space permissions, and `POST /webhooks` asks for `space.webhooks`. So
+   * the door answers before the reservation is ever consulted, and that
+   * refusal is what the case asserts now. The space-less branch inside
+   * `reserveQuotaForSpace` is still live and still needed, but its callers
+   * are the routes that write into a space on somebody else's behalf, not a
+   * credential arriving without one.
+   */
+  it("the operator key is refused at the webhook door before quota is consulted", async () => {
     ctx = await createTestContext();
-    // Set a quota for an arbitrary space — irrelevant here because the
-    // bootstrap credential (ctx.adminKey) has no space_id.
-    await ctx.storage.spaceQuotas.set("phantom-space", { webhooks_limit: 0 });
+    await ctx.storage.spaceQuotas.set(ctx.spaceId, { webhooks_limit: 0 });
 
-    // The operator key can create webhooks freely; it does not have a
-    // space_id, so enforceQuota is a no-op.
-    for (let i = 0; i < 3; i++) {
-      const res = await request(ctx.app, "POST", "/webhooks", {
-        key: ctx.adminKey,
-        body: {
-          url: `https://example.com/admin-hook-${String(i)}`,
-          events: ["item.created"],
-        },
-      });
-      expect(res.status).toBe(201);
-    }
+    const res = await request(ctx.app, "POST", "/webhooks", {
+      key: ctx.operatorKey,
+      body: {
+        url: "https://example.com/operator-hook",
+        events: ["item.created"],
+      },
+    });
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
   });
 
   /**
@@ -143,8 +152,10 @@ describe("per-space quota enforcement", () => {
    */
   it("storage_bytes quota arithmetic — second small upload under cap succeeds (PG bigint regression)", async () => {
     ctx = await createTestContext();
-    const spaceId = `space-${Math.random().toString(36).slice(2, 10)}`;
-    const adminKey = await mintSpaceKey(ctx, spaceId, "storage-bytes-admin");
+    const { spaceId, key: spaceKey } = await spaceWithKey(
+      ctx,
+      "quota-storage-bytes",
+    );
 
     // Cap = 100_000 bytes (100 KB). First upload ~50 KB; second upload
     // ~1 KB. Sum is ~51 KB, well under the cap. Pre-fix the second
@@ -158,7 +169,7 @@ describe("per-space quota enforcement", () => {
     const firstRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${adminKey}`,
+        Authorization: `Bearer ${spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: first,
@@ -170,7 +181,7 @@ describe("per-space quota enforcement", () => {
     const secondRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${adminKey}`,
+        Authorization: `Bearer ${spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: second,
@@ -184,7 +195,7 @@ describe("per-space quota enforcement", () => {
     const overshootRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${adminKey}`,
+        Authorization: `Bearer ${spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: overshoot,
@@ -198,7 +209,7 @@ describe("per-space quota enforcement", () => {
     expect(typeof body.error.details.current).toBe("number");
   });
 
-  it("GET / PUT /spaces/:id/quotas — admin round-trip", async () => {
+  it("GET / PUT /spaces/:id/quotas — the instance route round-trip", async () => {
     ctx = await createTestContext();
     const space = await ctx.storage.spaces!.create();
 
@@ -208,7 +219,7 @@ describe("per-space quota enforcement", () => {
       "GET",
       `/spaces/${space.id}/quotas`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
       },
     );
     expect(initial.status).toBe(200);
@@ -219,7 +230,7 @@ describe("per-space quota enforcement", () => {
 
     // PUT a quota
     const put = await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { items_limit: 100, webhooks_limit: 5 },
     });
     expect(put.status).toBe(200);
@@ -232,7 +243,7 @@ describe("per-space quota enforcement", () => {
 
     // GET reflects
     const after = await request(ctx.app, "GET", `/spaces/${space.id}/quotas`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(after.status).toBe(200);
     const afterBody = (await after.json()) as { items_limit: number };

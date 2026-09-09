@@ -52,7 +52,7 @@ const GRANTED_NS = "acme.probe";
 beforeAll(async () => {
   ctx = await createTestContext();
   const registered = await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { id: SYNCED, version: 1, fields: { title: { type: "string" } } },
   });
   expect(registered.status).toBe(201);
@@ -71,10 +71,11 @@ interface SyncKey {
 /**
  * A credential whose stamped `source` fixes its natural-key space.
  *
- * `is_operator` is the schema's requirement of a space-less key in keys
- * mode. It reaches the reserved namespaces and nothing else: both maps below
- * still decide every type and every `acme.*` namespace this credential
- * touches, which is what each case here asserts.
+ * Bound to the context's space, because that is where the type it writes is
+ * registered and a space-less credential is the operator tier, which reaches
+ * no content at all. Both maps below still decide every type and every
+ * `acme.*` namespace this credential touches, which is what each case here
+ * asserts.
  */
 async function syncCredential(options: {
   types: Record<string, "read" | "write">;
@@ -90,9 +91,10 @@ async function syncCredential(options: {
       type_permissions: options.types,
       extension_permissions: options.extensions,
       default_tier: "library",
-      is_operator: true,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
+    ctx.spaceId,
   );
   return { id: created.id, key: raw, source };
 }
@@ -126,7 +128,7 @@ async function trashedRow(cred: SyncKey, sourceId: string): Promise<string> {
     ctx.app,
     "PUT",
     `/items/${id}/extensions/${PRIVATE_NS}`,
-    { key: ctx.adminKey, body: { secret: "not the caller's to read" } },
+    { key: ctx.spaceKey, body: { secret: "not the caller's to read" } },
   );
   expect(admin.status).toBe(200);
 

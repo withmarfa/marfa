@@ -31,30 +31,39 @@ async function seedMappedConnection(name: string): Promise<string> {
     webhook_verification: { method: "hmac-sha256" },
     supports_user_mappings: true,
   };
-  const integration = await ctx.storage.items.create({
-    type: "system.integration",
-    properties: {
-      manifest,
-      manifest_name: name,
-      manifest_version: "0.1.0",
-      publisher: "demo",
-      summary: manifest.description,
-      direction: "read",
-      registered_at: new Date().toISOString(),
+  // Both rows land in the context's space: the mapping routes resolve a
+  // connection fenced to the caller's space, so a space-less row is one no
+  // credential can address.
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest,
+        manifest_name: name,
+        manifest_version: "0.1.0",
+        publisher: "demo",
+        summary: manifest.description,
+        direction: "read",
+        registered_at: new Date().toISOString(),
+      },
     },
-  });
-  const connection = await ctx.storage.items.create({
-    type: "system.connection",
-    properties: {
-      kind: "integration",
-      status: "active",
-      granted_at: new Date().toISOString(),
-      integration_ref: integration.id,
-      configuration: {},
-      direction: "read",
-      triggers: [{ type: "manual" }],
+    ctx.spaceId,
+  );
+  const connection = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        integration_ref: integration.id,
+        configuration: {},
+        direction: "read",
+        triggers: [{ type: "manual" }],
+      },
     },
-  });
+    ctx.spaceId,
+  );
   return connection.id;
 }
 
@@ -64,7 +73,7 @@ async function registerType(
   version = 1,
 ): Promise<void> {
   const res = await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { id, version, fields },
   });
   expect(res.status).toBe(201);
@@ -80,7 +89,7 @@ async function storeMapping(
     "PUT",
     `/connections/${connectionId}/mapping`,
     {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         version: 1,
         rules: [
@@ -139,7 +148,7 @@ describe("a type change revalidates the mappings that name it", () => {
     });
 
     const deleted = await request(ctx.app, "DELETE", "/types/user.doomed_log", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(deleted.status).toBe(200);
     const body = (await deleted.json()) as {
@@ -175,7 +184,7 @@ describe("a type change revalidates the mappings that name it", () => {
     // An additive change: the mapping still parses and still names a type
     // that exists, and its coverage no longer holds.
     const updated = await request(ctx.app, "PUT", "/types/user.widening_log", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         version: 2,
         fields: {
@@ -212,7 +221,7 @@ describe("a type change revalidates the mappings that name it", () => {
     });
 
     const deleted = await request(ctx.app, "DELETE", "/types/user.other_log", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(deleted.status).toBe(200);
     expect(
@@ -236,7 +245,7 @@ describe("a type change revalidates the mappings that name it", () => {
     });
 
     await request(ctx.app, "PUT", "/types/user.repair_log", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         version: 2,
         fields: {
@@ -276,7 +285,7 @@ describe("a type change revalidates the mappings that name it", () => {
       title: { path: "title" },
     });
     await request(ctx.app, "DELETE", "/types/user.cleared_log", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(
       (await activityFor(connectionId)).filter(
@@ -288,7 +297,7 @@ describe("a type change revalidates the mappings that name it", () => {
       ctx.app,
       "DELETE",
       `/connections/${connectionId}/mapping`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(cleared.status).toBe(200);
     expect(

@@ -41,12 +41,12 @@ beforeAll(async () => {
     LOOKALIKE_CHILD,
   ]) {
     const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id, version: 1, fields: { title: { type: "string" } } },
     });
     expect(registered.status).toBe(201);
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: id, properties: { title: id } },
     });
     expect(created.status).toBe(201);
@@ -91,13 +91,13 @@ async function mintScopedKey(
 describe("GET /items?type= — underscores are literal identifier bytes", () => {
   it("does not admit a lookalike sibling for a bare identifier", async () => {
     expect(
-      await listTypes(`/items?type=${UNDERSCORE_PARENT}`, ctx.adminKey),
+      await listTypes(`/items?type=${UNDERSCORE_PARENT}`, ctx.spaceKey),
     ).toEqual([UNDERSCORE_PARENT, UNDERSCORE_CHILD].sort());
   });
 
   it("does not admit a lookalike sibling for a subtree wildcard", async () => {
     expect(
-      await listTypes(`/items?type=${UNDERSCORE_PARENT}.*`, ctx.adminKey),
+      await listTypes(`/items?type=${UNDERSCORE_PARENT}.*`, ctx.spaceKey),
     ).toEqual([UNDERSCORE_PARENT, UNDERSCORE_CHILD].sort());
   });
 });
@@ -105,7 +105,7 @@ describe("GET /items?type= — underscores are literal identifier bytes", () => 
 describe("GET /items?type= — pattern grammar", () => {
   it("rejects a LIKE metacharacter smuggled in as a subtree wildcard", async () => {
     const res = await request(ctx.app, "GET", "/items?type=%25.*", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -114,21 +114,21 @@ describe("GET /items?type= — pattern grammar", () => {
 
   it("rejects an underscore-only wildcard root", async () => {
     const res = await request(ctx.app, "GET", "/items?type=_.*", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
 
   it("rejects a malformed subtree wildcard", async () => {
     const res = await request(ctx.app, "GET", "/items?type=demo..thing.*", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
 
   it("still rejects a bare invalid identifier", async () => {
     const res = await request(ctx.app, "GET", "/items?type=NotAType", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
@@ -159,7 +159,7 @@ describe("allowed_types — underscore handling across read surfaces", () => {
       [LOOKALIKE_CHILD, "tag-lookalike"],
     ] as const) {
       const created = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { type: id, properties: { title: id }, tags: [tag] },
       });
       expect(created.status).toBe(201);
@@ -204,7 +204,7 @@ describe("GET /items?filter= — LIKE operands declare their escape character", 
     // this query returns nothing.
     const types = await listTypes(
       `/items?filter=${encodeURIComponent('type contains "web_gallery"')}`,
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(types).toContain(UNDERSCORE_PARENT);
     expect(types).not.toContain(LOOKALIKE);
@@ -247,19 +247,19 @@ describe("DELETE /types/:id — in-use check", () => {
     // a delete that should succeed.
     for (const id of ["demo.solo_type", "demo.soloxtype.child"]) {
       const registered = await request(ctx.app, "POST", "/types", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { id, version: 1, fields: { title: { type: "string" } } },
       });
       expect(registered.status).toBe(201);
     }
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "demo.soloxtype.child", properties: { title: "decoy" } },
     });
     expect(created.status).toBe(201);
 
     const res = await request(ctx.app, "DELETE", "/types/demo.solo_type", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
   });

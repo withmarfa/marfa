@@ -14,7 +14,6 @@ import {
   requireAuth,
   actsAsConnection,
   requireSpacePermission,
-  hasOperatorAuthority,
 } from "../middleware/auth.js";
 import type {
   Storage,
@@ -75,13 +74,10 @@ async function requireConnectionAccess(
   storage: Storage,
   connectionId: string,
 ): Promise<{
+  /** The caller's space, which is also the lease row's. The connection
+   *  lookup below is fenced on it and no admitted caller is space-less,
+   *  so the connection cannot be in a different one. */
   spaceId: string | undefined;
-  /** The connection's own space, distinct from the caller's: the operator
-   *  key carries no space, but a lease row must live in the
-   *  connection's space or the space-fenced list and revoke lookups —
-   *  and the uninstall pipeline's revocation sweep — can never reach
-   *  it. */
-  connectionSpaceId: string | undefined;
 }> {
   const key = requireAuth(c);
   // Space-bounded authority, matching the sibling connection routes:
@@ -92,20 +88,16 @@ async function requireConnectionAccess(
   // caller is the Connection itself, either as an OAuth grant or as a
   // runtime credential stamped with this `connection_id`.
   const isIntegration = actsAsConnection(key, connectionId);
-  // Defense-in-depth: any credential that would resolve to an undefined
-  // spaceId below must be entitled to cross-space reach, because the storage
-  // call sites treat `undefined` as "any space". The test is the operator
-  // flag and not a space permission, which says nothing about whether the
-  // credential is confined.
+  // Any credential resolving to an undefined spaceId below reads "any
+  // space" at the storage call sites, which is what stands between a
+  // mis-shaped row and every space's upstream tokens.
   //
-  // The row constraint makes space-less and operator the same set, so the
-  // flag check reads as redundant with `!key.space_id`. It is kept because
-  // this is the check standing between a mis-shaped row and every space's
-  // upstream tokens, and a defense-in-depth test that trusts a constraint to
-  // hold is not one. Runtime credentials and OAuth bearers issued for this
-  // connection are exempt: their `connection_id` or source-prefix binding is
-  // its own scope.
-  if (!key.space_id && !isIntegration && !hasOperatorAuthority(key)) {
+  // **A connection-bound credential is the only space-less shape that gets
+  // past this**, and it is bound by its `connection_id` rather than by a
+  // space. The operator key used to be admitted here too, which was dead:
+  // it holds no permissions at all, so it fails the `space.connections`
+  // check below whatever this line says.
+  if (!key.space_id && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Space scope required for this credential",
@@ -131,7 +123,7 @@ async function requireConnectionAccess(
   // once admission is settled above, so a caller that is not the connection is
   // holding `space.connections` or is not here.
   if (!isIntegration) requireSpacePermission(c, "space.connections");
-  return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
+  return { spaceId };
 }
 
 // ---------------------------------------------------------------------------
@@ -392,11 +384,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
 
   r.openapi(issueLeaseRoute, async (c) => {
     const { id: connectionId } = c.req.valid("param");
-    const { spaceId, connectionSpaceId } = await requireConnectionAccess(
-      c,
-      storage,
-      connectionId,
-    );
+    const { spaceId } = await requireConnectionAccess(c, storage, connectionId);
     const body = c.req.valid("json");
 
     const { manifest } = await resolveConnectionManifest(
@@ -429,11 +417,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     const row = await storage.connectionLeasedTokens.create({
       id,
       connection_id: connectionId,
-      // The connection's space, not the caller's: the operator key has
-      // no space, and a space-less lease row is invisible to the fenced
-      // list and revoke lookups and to the uninstall pipeline's sweep,
-      // while validate keeps answering active until the TTL runs out.
-      space_id: connectionSpaceId,
+      space_id: spaceId,
       capability_id: body.capability_id,
       lease_token_hash: hashLease(rawLease),
       scopes: body.scopes ?? [],

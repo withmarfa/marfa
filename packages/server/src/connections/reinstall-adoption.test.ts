@@ -46,10 +46,13 @@ const MANIFEST: IntegrationManifest = {
 };
 
 async function install(): Promise<string> {
-  const adminKey = await ctx.storage.keys
+  const installer = await ctx.storage.keys
     .list()
-    .then((keys) => keys.find((k) => k.is_operator));
-  if (!adminKey) throw new Error("admin key not found in test ctx");
+    .then((keys) => keys.find((k) => !k.is_operator));
+  if (!installer)
+    throw new Error(
+      "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+    );
   const integration = await ctx.storage.items.create(
     {
       type: "system.integration",
@@ -67,7 +70,7 @@ async function install(): Promise<string> {
     undefined,
   );
   const result = await performInstall(ctx.storage, {
-    apiKeyId: adminKey.id,
+    apiKeyId: installer.id,
     spaceId: ctx.spaceId,
     integrationItemId: integration.id,
     manifest: MANIFEST,
@@ -101,10 +104,13 @@ describe("install refuses configuration outside the declared contract", () => {
     manifest: IntegrationManifest,
     configuration: Record<string, unknown>,
   ): Promise<unknown> {
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
     const integration = await ctx.storage.items.create(
       {
         type: "system.integration",
@@ -122,7 +128,7 @@ describe("install refuses configuration outside the declared contract", () => {
       undefined,
     );
     return performInstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       spaceId: ctx.spaceId,
       integrationItemId: integration.id,
       manifest,
@@ -199,12 +205,15 @@ describe("reinstall adopts what the integration already synced", () => {
       ),
     ).toBe(firstConnection);
 
-    const adminKey = await ctx.storage.keys
+    const installer = await ctx.storage.keys
       .list()
-      .then((keys) => keys.find((k) => k.is_operator));
-    if (!adminKey) throw new Error("admin key not found in test ctx");
+      .then((keys) => keys.find((k) => !k.is_operator));
+    if (!installer)
+      throw new Error(
+        "no space-bound key in the test context: an install is done by a working credential, not by the operator key",
+      );
     await performUninstall(ctx.storage, {
-      apiKeyId: adminKey.id,
+      apiKeyId: installer.id,
       connectionId: firstConnection,
       spaceId: undefined,
       clientIp: null,

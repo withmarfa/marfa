@@ -53,7 +53,7 @@ function first<T>(rows: T[] | undefined): T {
   return row;
 }
 
-async function note(body: string, key = ctx.adminKey): Promise<string> {
+async function note(body: string, key = ctx.spaceKey): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
     key,
     body: { type: "core.note", properties: { body } },
@@ -64,7 +64,7 @@ async function note(body: string, key = ctx.adminKey): Promise<string> {
 
 async function edge(
   properties: Record<string, unknown> = {},
-  key = ctx.adminKey,
+  key = ctx.spaceKey,
 ): Promise<WireEdge> {
   const source = await note(`src-${Math.random().toString(36).slice(2)}`, key);
   const target = await note(`tgt-${Math.random().toString(36).slice(2)}`, key);
@@ -90,14 +90,14 @@ describe("an edge carries a version", () => {
     expect(created.version).toBe(1);
 
     const second = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { note: "second" } },
     });
     expect(second.status).toBe(200);
     expect(((await second.json()) as { edge: WireEdge }).edge.version).toBe(2);
 
     const third = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { note: "third" } },
     });
     expect(third.status).toBe(200);
@@ -113,13 +113,13 @@ describe("an edge carries a version", () => {
     expect(created.version).toBe(1);
 
     const winner = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { version: 1, properties: { note: "winner" } },
     });
     expect(winner.status).toBe(200);
 
     const loser = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { version: 1, properties: { note: "loser" } },
     });
     expect(loser.status).toBe(409);
@@ -140,7 +140,7 @@ describe("an edge carries a version", () => {
       ctx.app,
       "GET",
       `/items/${created.source_id}/edges`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const stored = first(((await after.json()) as { data: WireEdge[] }).data);
     expect(stored.properties).toEqual({ note: "winner" });
@@ -156,7 +156,7 @@ describe("an edge carries a version", () => {
       (e) => e.type === "edge_updated" && e.edge.id === created.id,
     );
     const res = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { note: "edited" } },
     });
     expect(res.status).toBe(200);
@@ -181,7 +181,7 @@ describe("an edge carries a version", () => {
       ctx.app,
       "GET",
       `/items/${created.source_id}/edges`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(
       first(((await outbound.json()) as { data: WireEdge[] }).data).version,
@@ -191,7 +191,7 @@ describe("an edge carries a version", () => {
       ctx.app,
       "GET",
       `/items/${created.target_id}/backrefs`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(
       first(((await inbound.json()) as { data: WireEdge[] }).data).version,
@@ -202,7 +202,7 @@ describe("an edge carries a version", () => {
       "GET",
       "/edges?edge_type=references",
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     const match = ((await listed.json()) as { data: WireEdge[] }).data.find(
@@ -224,7 +224,7 @@ describe("an edge carries a version", () => {
       ctx.app,
       "GET",
       `/items/${created.source_id}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const blocks = (
       (await hydrated.json()) as {
@@ -244,7 +244,7 @@ describe("the bulk door reaches the same statement", () => {
     const created = await edge({ note: "before bulk" });
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         edges: [
           {
@@ -267,7 +267,7 @@ describe("the bulk door reaches the same statement", () => {
       ctx.app,
       "GET",
       `/items/${created.source_id}/edges`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const stored = first(((await after.json()) as { data: WireEdge[] }).data);
     expect(stored.properties).toEqual({ note: "after bulk" });

@@ -129,7 +129,7 @@ describe("POST /admin/accounts", () => {
     const res = await createAccount(
       ctx,
       { email: "nobody@test.marfa.so", password: PASSWORD },
-      ctx.adminKey,
+      ctx.operatorKey,
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error?: { code?: string } };
@@ -150,7 +150,7 @@ describe("POST /admin/accounts", () => {
     const res = await createAccount(
       ctx,
       { email, password: PASSWORD, name: "Smoke" },
-      ctx.adminKey,
+      ctx.operatorKey,
     );
     expect(res.status).toBe(201);
     const body = (await res.json()) as Record<string, unknown>;
@@ -220,7 +220,7 @@ describe("POST /admin/accounts", () => {
       const res = await createAccount(
         ctx,
         { email, password: PASSWORD },
-        ctx.adminKey,
+        ctx.operatorKey,
       );
       expect(res.status).not.toBe(409);
       expect(res.status).toBe(500);
@@ -235,7 +235,7 @@ describe("POST /admin/accounts", () => {
     const first = await createAccount(
       ctx,
       { email, password: PASSWORD },
-      ctx.adminKey,
+      ctx.operatorKey,
     );
     expect(first.status).toBe(201);
 
@@ -243,7 +243,7 @@ describe("POST /admin/accounts", () => {
       const again = await createAccount(
         ctx,
         { email: spelling, password: PASSWORD },
-        ctx.adminKey,
+        ctx.operatorKey,
       );
       expect(again.status, spelling).toBe(409);
     }
@@ -256,7 +256,7 @@ describe("POST /admin/accounts", () => {
     const short = await createAccount(
       ctx,
       { email: "short@test.marfa.so", password: "abc" },
-      ctx.adminKey,
+      ctx.operatorKey,
     );
     expect(short.status).toBe(400);
     expect(
@@ -268,7 +268,7 @@ describe("POST /admin/accounts", () => {
     const malformed = await createAccount(
       ctx,
       { email: "not-an-address", password: PASSWORD },
-      ctx.adminKey,
+      ctx.operatorKey,
     );
     expect(malformed.status).toBe(400);
   });

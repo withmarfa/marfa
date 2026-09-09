@@ -37,7 +37,7 @@ async function createNotes(count: number): Promise<string[]> {
   const ids: string[] = [];
   for (let i = 0; i < count; i++) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `bulk-get note ${String(i)}` },
@@ -61,7 +61,7 @@ describe("POST /items/bulk-get", () => {
   it("returns the requested items in one response", async () => {
     const ids = await createNotes(3);
     const res = await request(ctx.app, "POST", "/items/bulk-get", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ids },
     });
     expect(res.status).toBe(200);
@@ -74,7 +74,7 @@ describe("POST /items/bulk-get", () => {
   it("omits a missing / nonexistent id rather than 404ing the request", async () => {
     const ids = await createNotes(2);
     const res = await request(ctx.app, "POST", "/items/bulk-get", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ids: [...ids, generateId()] },
     });
     expect(res.status).toBe(200);
@@ -86,14 +86,14 @@ describe("POST /items/bulk-get", () => {
   it("hydrates metadata, edges, and extensions when requested via include", async () => {
     // Host + target so there's an edge to hydrate.
     const targetRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "edge target" } },
     });
     const targetId = ((await targetRes.json()) as { item: { id: string } }).item
       .id;
 
     const hostRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "edge host" },
@@ -109,14 +109,14 @@ describe("POST /items/bulk-get", () => {
       "PUT",
       `/items/${hostId}/extensions/custom.ns`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { data: { flag: true } },
       },
     );
     expect([200, 201]).toContain(extRes.status);
 
     const res = await request(ctx.app, "POST", "/items/bulk-get", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         ids: [hostId],
         include: ["edges", "metadata", "extensions"],
@@ -139,7 +139,7 @@ describe("POST /items/bulk-get", () => {
   it("rejects an over-cap request with a 400", async () => {
     const ids = Array.from({ length: 101 }, () => generateId());
     const res = await request(ctx.app, "POST", "/items/bulk-get", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ids },
     });
     expect(res.status).toBe(400);
@@ -215,13 +215,13 @@ describe("POST /items/bulk-get", () => {
     );
 
     const noteRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "readable" } },
     });
     const noteId = ((await noteRes.json()) as { item: { id: string } }).item.id;
 
     const bookmarkRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.bookmark",
         properties: { url: "https://example.com" },
@@ -259,26 +259,29 @@ describe("POST /items/bulk-get and the system token", () => {
     marker: string,
   ): Promise<{ noteId: string; deviceId: string }> {
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: `bulk-sys-${marker}` } },
     });
-    const device = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
+    expect(note.status).toBe(201);
+    const { item: n } = (await note.json()) as { item: { id: string } };
+    // The system row goes in through storage: a reserved namespace is fenced
+    // to the operator key, whose own type permissions are empty, so no
+    // credential writes one. What this door does with the row afterwards is
+    // the same either way.
+    const device = await ctx.storage.items.create(
+      {
         type: "system.device",
         properties: { name: `bulk-sys-${marker}`, kind: "laptop" },
+        source: `bulk-get-system-${marker}`,
       },
-    });
-    expect(note.status).toBe(201);
-    expect(device.status).toBe(201);
-    const { item: n } = (await note.json()) as { item: { id: string } };
-    const { item: d } = (await device.json()) as { item: { id: string } };
-    return { noteId: n.id, deviceId: d.id };
+      ctx.spaceId,
+    );
+    return { noteId: n.id, deviceId: device.id };
   }
 
   async function fetched(ids: string[], include?: string[]): Promise<string[]> {
     const res = await request(ctx.app, "POST", "/items/bulk-get", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ids, ...(include === undefined ? {} : { include }) },
     });
     expect(res.status).toBe(200);
@@ -305,7 +308,7 @@ describe("POST /items/bulk-get and the system token", () => {
     // Unlike the listing routes, this door's `include` is a closed enum, so a
     // misspelling is a 400 here and silently ignored there.
     const res = await request(ctx.app, "POST", "/items/bulk-get", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ids: [], include: ["sytem"] },
     });
     expect(res.status).toBe(400);

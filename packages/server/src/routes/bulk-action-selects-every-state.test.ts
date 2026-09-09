@@ -12,34 +12,78 @@
  * for a `system.*` type because that type's graph contains it, and the
  * canonical graph still refuses it for `core.note`. This file asserts the
  * match set, which is what a filter is for.
+ *
+ * **The credential is a runtime credential and it has to be.** `system.*` is
+ * the only namespace with `revoked` in its lifecycle, and the one reserved
+ * type any door will write is `system.activity`, through the carve-out an
+ * integration reports its own progress with. The same rule decides the match
+ * set: `POST /items/bulk-actions` narrows the reserved namespace out unless
+ * the caller may write the type it named, so a credential that cannot write
+ * these rows cannot select them either.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import type { ItemState } from "@withmarfa/shared";
 import {
   createTestContext,
   request,
   runBulkActionAsync,
+  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 
 let ctx: TestContext;
+/** The connection the runtime credential below speaks for. */
+let connectionId: string;
+/** A dispatch's own credential: the one caller that writes a reserved type. */
+let runtimeKey: string;
+
+const SYSTEM_TYPE = "system.activity";
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  // Written through storage, because the row a runtime credential is minted
+  // against is the install pipeline's to create and no credential writes a
+  // `system.*` row over the wire.
+  const connection = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+    },
+    ctx.spaceId,
+  );
+  connectionId = connection.id;
+  const credential = await mintLocalRuntimeCredential(
+    ctx.storage,
+    TEST_API_KEY_SALT,
+    connectionId,
+  );
+  runtimeKey = credential.api_key;
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
-const SYSTEM_TYPE = "system.device";
-
-async function seedDevice(state: string, name: string): Promise<string> {
+/**
+ * Through the door, deliberately: the create is half of what this file
+ * claims, so a row put in place behind it would leave the claim about
+ * `POST /items` admitting `revoked` untested.
+ */
+async function seedActivity(
+  state: ItemState,
+  summary: string,
+): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: runtimeKey,
     body: {
       type: SYSTEM_TYPE,
       state,
-      properties: { name, kind: "laptop" },
+      properties: { connection_id: connectionId, severity: "info", summary },
     },
   });
   expect(res.status).toBe(201);
@@ -52,12 +96,12 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
   it("selects revoked rows and only revoked rows", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const revoked = [
-      await seedDevice("revoked", `revoked-a-${suffix}`),
-      await seedDevice("revoked", `revoked-b-${suffix}`),
+      await seedActivity("revoked", `revoked-a-${suffix}`),
+      await seedActivity("revoked", `revoked-b-${suffix}`),
     ];
     // A live row of the same type, so the assertion is that the filter
     // narrowed rather than that it matched everything it could see.
-    const active = await seedDevice("active", `active-${suffix}`);
+    const active = await seedActivity("active", `active-${suffix}`);
 
     const { initialStatus, result, errorResponse } = await runBulkActionAsync(
       ctx,
@@ -69,7 +113,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
         dry_run: true,
         filter: { type: SYSTEM_TYPE, state: "revoked" },
       },
-      ctx.adminKey,
+      runtimeKey,
     );
 
     expect(errorResponse).toBeUndefined();
@@ -86,7 +130,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
     const ids: Record<string, string> = {};
     for (const state of ["active", "archived", "trashed"]) {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           state,
@@ -112,7 +156,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
             filter: `properties.body eq "note-${state}-${suffix}"`,
           },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       expect(errorResponse).toBeUndefined();
       expect(initialStatus).toBe(200);
@@ -132,13 +176,17 @@ describe("POST /items/bulk — the create door names the same states as its sibl
   it("creates a system item in revoked, as POST /items already does", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: runtimeKey,
       body: {
         items: [
           {
             type: SYSTEM_TYPE,
             state: "revoked",
-            properties: { name: `bulk-revoked-${suffix}`, kind: "laptop" },
+            properties: {
+              connection_id: connectionId,
+              severity: "info",
+              summary: `bulk-revoked-${suffix}`,
+            },
             source_id: `bulk-revoked-${suffix}`,
           },
         ],
@@ -162,7 +210,7 @@ describe("POST /items/bulk — the create door names the same states as its sibl
   it("still refuses revoked for a type whose lifecycle does not contain it", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {

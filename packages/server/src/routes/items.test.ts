@@ -22,7 +22,7 @@ afterAll(async () => {
 describe("POST /items", () => {
   it("creates an item with valid properties", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Hello world", title: "Test" },
@@ -42,7 +42,7 @@ describe("POST /items", () => {
 
   it("rejects missing required field", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { title: "No body" } },
     });
     expect(res.status).toBe(400);
@@ -50,7 +50,7 @@ describe("POST /items", () => {
 
   it("rejects an unregistered type with unknown_type", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "zzz.totally.unregistered", properties: { foo: "bar" } },
     });
     expect(res.status).toBe(400);
@@ -62,7 +62,7 @@ describe("POST /items", () => {
     // An empty `{}` must run the same required-field validation as a
     // partially-filled body — a core.note with no `body` is invalid either way.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: {} },
     });
     expect(res.status).toBe(400);
@@ -74,7 +74,7 @@ describe("POST /items", () => {
     // A U+0000 null byte cannot be stored in a Postgres TEXT column; without
     // the validation-layer guard it reaches the driver and surfaces as a 500.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "a\u0000b" } },
     });
     expect(res.status).toBe(400);
@@ -87,13 +87,13 @@ describe("POST /items", () => {
     // Unicode codepoint must survive the write unchanged.
     const body = "emoji 😀 rtl ‮ accent é em—dash\ttab\nnewline";
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body } },
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as { item: { id: string } };
     const fetched = await request(ctx.app, "GET", `/items/${data.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const fetchedData = (await fetched.json()) as {
       item: { properties: { body: string } };
@@ -110,12 +110,12 @@ describe("POST /items", () => {
 
   it("stores tags in metadata (entity references live on edges)", async () => {
     const target = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "target" } },
     });
     const targetData = (await target.json()) as { item: { id: string } };
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Tagged" },
@@ -139,7 +139,7 @@ describe("POST /items", () => {
 
   it("natural-key upsert: re-POST with same (source, source_id) updates in place", async () => {
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "First" },
@@ -152,7 +152,7 @@ describe("POST /items", () => {
     };
 
     const second = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Second" },
@@ -175,7 +175,7 @@ describe("POST /items", () => {
     // inbound integration handlers (rss-watcher / Calendar) rely on to recover
     // from createItem-success / cursor-write-fail without producing duplicates.
     const third = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Third" },
@@ -189,7 +189,7 @@ describe("POST /items", () => {
     // Audit row records the realized effect (`item.update`) and flags the
     // idempotent provenance so operators can spot natural-key re-syncs.
     const auditRes = await request(ctx.app, "GET", "/audit?limit=20", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const auditData = (await auditRes.json()) as {
       data: {
@@ -208,11 +208,11 @@ describe("POST /items", () => {
   it("natural-key upsert: source_id absent → create path unchanged", async () => {
     // Two POSTs with no source_id → two distinct rows, both 201.
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "no-key A" } },
     });
     const second = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "no-key B" } },
     });
     expect(first.status).toBe(201);
@@ -228,7 +228,7 @@ describe("POST /items", () => {
     // different `id` along with the same source_id should not silently win
     // with the existing row's id — that would surprise the caller.
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "First" },
@@ -238,7 +238,7 @@ describe("POST /items", () => {
     expect(first.status).toBe(201);
 
     const conflicting = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Conflicting id" },
@@ -259,7 +259,7 @@ describe("POST /items", () => {
     // distinct rows. The test admin's source is `test-admin-<suffix>`; we
     // mint a second key with a different `source` to exercise the boundary.
     const altKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "alt-source",
         source: "alt-source",
@@ -272,7 +272,7 @@ describe("POST /items", () => {
     const altKey = (await altKeyRes.json()) as { key: string };
 
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Admin source" },
@@ -303,7 +303,7 @@ describe("natural-key upsert: inline edges are validated", () => {
 
   async function createNote(body: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body } },
     });
     expect(res.status).toBe(201);
@@ -318,7 +318,7 @@ describe("natural-key upsert: inline edges are validated", () => {
 
     // Establish the row via natural key first.
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "card-source" },
@@ -331,7 +331,7 @@ describe("natural-key upsert: inline edges are validated", () => {
     // breach the source-side cap. The create path rejects this; the upsert
     // path must too.
     const second = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "card-source updated" },
@@ -349,7 +349,7 @@ describe("natural-key upsert: inline edges are validated", () => {
       ctx.app,
       "GET",
       `/items/${firstData.item.id}/edges?edge_type=supersedes`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const edgesBody = (await edgesRes.json()) as { data: unknown[] };
     expect(edgesBody.data).toHaveLength(0);
@@ -360,7 +360,7 @@ describe("natural-key upsert: inline edges are validated", () => {
 
     // Two natural-key rows, A and B.
     const aRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "cycle A" },
@@ -371,7 +371,7 @@ describe("natural-key upsert: inline edges are validated", () => {
     const a = (await aRes.json()) as { item: { id: string } };
 
     const bRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "cycle B" },
@@ -383,7 +383,7 @@ describe("natural-key upsert: inline edges are validated", () => {
 
     // Upsert A with parent-of B (A is parent of B).
     const aParentB = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "cycle A is parent" },
@@ -395,7 +395,7 @@ describe("natural-key upsert: inline edges are validated", () => {
 
     // Now upsert B with parent-of A — closes the cycle A -> B -> A.
     const bParentA = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "cycle B is parent" },
@@ -412,7 +412,7 @@ describe("natural-key upsert: inline edges are validated", () => {
       ctx.app,
       "GET",
       `/items/${b.item.id}/edges?edge_type=parent-of`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const edgesBody = (await edgesRes.json()) as { data: unknown[] };
     expect(edgesBody.data).toHaveLength(0);
@@ -424,7 +424,7 @@ describe("natural-key upsert: inline edges are validated", () => {
     const targetB = await createNote(`valid target B ${suffix}`);
 
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "valid-source" },
@@ -437,7 +437,7 @@ describe("natural-key upsert: inline edges are validated", () => {
 
     // Re-sync with a different valid target set — replace-by-edge-type.
     const second = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "valid-source updated" },
@@ -451,7 +451,7 @@ describe("natural-key upsert: inline edges are validated", () => {
       ctx.app,
       "GET",
       `/items/${firstData.item.id}/edges?edge_type=about`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const edgesBody = (await edgesRes.json()) as {
       data: { target_id: string }[];
@@ -470,7 +470,7 @@ describe("null on an optional property is treated as unset", () => {
 
   it("create: optional fields sent as null → 201 with those fields absent", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.bookmark",
         properties: {
@@ -491,7 +491,7 @@ describe("null on an optional property is treated as unset", () => {
 
   it("create: a required field sent as null still rejects with 400", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: null } },
     });
     expect(res.status).toBe(400);
@@ -499,7 +499,7 @@ describe("null on an optional property is treated as unset", () => {
 
   it("PATCH: optional field sent as null does not overwrite the stored value", async () => {
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.bookmark",
         properties: { url: "https://example.com", title: "Original" },
@@ -508,7 +508,7 @@ describe("null on an optional property is treated as unset", () => {
     const { item } = (await created.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: null } },
     });
     expect(res.status).toBe(200);
@@ -522,7 +522,7 @@ describe("null on an optional property is treated as unset", () => {
   it("bulk upsert: optional fields sent as null → created with those fields absent", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -547,7 +547,7 @@ describe("null on an optional property is treated as unset", () => {
     const id = data.results[0]?.id;
     expect(id).toBeDefined();
     const fetched = await request(ctx.app, "GET", `/items/${id!}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const fetchedData = (await fetched.json()) as {
       item: { properties: Record<string, unknown> };
@@ -597,11 +597,19 @@ describe("POST /items — the operator gate", () => {
     expect(body.error.message).toMatch(/system/);
   });
 
-  it("admits the bootstrap credential (is_operator: true) writing system.*", async () => {
-    // Sanity check the legitimate path stays open. Bootstrap admin is
-    // the test fixture admin which is platform-shaped.
+  it("stops the operator key at its own map rather than at the fence", async () => {
+    // The positive arm of the gate, and it reaches no row. `is_operator` is
+    // exactly what the fence asks for, so the operator key clears it — and is
+    // then refused by its own type map, which the one unauthenticated mint
+    // forces empty. Nothing writes a reserved row through a credential now,
+    // which is why the platform's own machinery writes these rows through the
+    // storage layer instead.
+    //
+    // The two refusals are told apart by what they name: the fence names the
+    // namespace and this one names the type. Asserting the status alone would
+    // pass against a gate that had started refusing the operator tier too.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: {
         type: "system.connection",
         properties: {
@@ -613,7 +621,12 @@ describe("POST /items — the operator gate", () => {
         },
       },
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.message).not.toMatch(/operator key/i);
+    expect(body.error.message).toContain("system.connection");
   });
 
   it("admits runtime credentials writing system.activity (carve-out for integration status reporting)", async () => {
@@ -824,13 +837,13 @@ describe("POST /items — the operator gate", () => {
 describe("GET /items/:id", () => {
   it("returns item with metadata", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "Get test" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "GET", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
@@ -844,7 +857,7 @@ describe("GET /items/:id", () => {
       "GET",
       "/items/019537a0-7b80-7000-8000-000000000000",
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(res.status).toBe(404);
@@ -852,17 +865,17 @@ describe("GET /items/:id", () => {
 
   it("returns 404 for trashed item", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "Will trash" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
     await request(ctx.app, "DELETE", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     const res = await request(ctx.app, "GET", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(404);
   });
@@ -871,7 +884,7 @@ describe("GET /items/:id", () => {
 describe("GET /items", () => {
   it("lists items with pagination", async () => {
     const res = await request(ctx.app, "GET", "/items?limit=2", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
@@ -882,7 +895,7 @@ describe("GET /items", () => {
 
   it("filters by type", async () => {
     const res = await request(ctx.app, "GET", "/items?type=core.note", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: { type: string }[] };
@@ -893,7 +906,7 @@ describe("GET /items", () => {
 
   it("filters by tags", async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Tag test" },
@@ -902,7 +915,7 @@ describe("GET /items", () => {
     });
 
     const res = await request(ctx.app, "GET", "/items?tags=filter-test", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: unknown[] };
@@ -921,7 +934,7 @@ describe("PATCH /items/:id — retype", () => {
    */
   async function entity(ctx: TestContext): Promise<string> {
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.entity",
         properties: { name: "Ada", kind: "person" },
@@ -934,7 +947,7 @@ describe("PATCH /items/:id — retype", () => {
   it("moves the item to the type asked for", async () => {
     const id = await entity(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         retype: true,
         type: "core.bookmark",
@@ -948,7 +961,7 @@ describe("PATCH /items/:id — retype", () => {
 
     // And it reads back as the new type rather than only reporting it.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const read = (await after.json()) as {
       item: { type: string; properties: Record<string, unknown> };
@@ -963,12 +976,12 @@ describe("PATCH /items/:id — retype", () => {
     // the two disagreed would move a corpus on an ordinary sync bug.
     const id = await entity(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.bookmark", properties: { title: "Ada" } },
     });
     expect(res.status).toBe(409);
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const read = (await after.json()) as { item: { type: string } };
     expect(read.item.type).toBe("core.entity");
@@ -977,7 +990,7 @@ describe("PATCH /items/:id — retype", () => {
   it("refuses a re-type that names no destination", async () => {
     const id = await entity(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { retype: true, properties: { name: "Ada" } },
     });
     // The code as well as the status. Five sites in this handler answer
@@ -997,12 +1010,12 @@ describe("PATCH /items/:id — retype", () => {
     // write entities and not bookmarks must not be able to turn one into
     // the other, or the type map stops bounding what it can produce.
     //
-    // The narrow key is the point: `ctx.adminKey` holds `"*": "write"`, so
+    // The narrow key is the point: `ctx.spaceKey` holds `"*": "write"`, so
     // every other case in this block is silent about the permission the
     // route checks.
     const id = await entity(ctx);
     const scopedRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "entities-only",
         source: "entities-only",
@@ -1027,7 +1040,7 @@ describe("PATCH /items/:id — retype", () => {
     expect(body.error.code).toBe("type_not_permitted");
 
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const read = (await after.json()) as { item: { type: string } };
     expect(read.item.type).toBe("core.entity");
@@ -1041,7 +1054,7 @@ describe("PATCH /items/:id — retype", () => {
     // over-broad guard is asserting what must still be allowed.
     const id = await entity(ctx);
     const scopedRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "both-types",
         source: "both-types",
@@ -1073,7 +1086,7 @@ describe("PATCH /items/:id — retype", () => {
     // requires fields `core.entity` knows nothing about.
     const id = await entity(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         retype: true,
         type: "core.file",
@@ -1088,7 +1101,7 @@ describe("PATCH /items/:id — retype", () => {
     expect(body.error.code).toBe("invalid_properties");
 
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const read = (await after.json()) as { item: { type: string } };
     // Refused rather than half-applied: the type did not move either.
@@ -1109,7 +1122,7 @@ describe("PATCH /items/:id — properties_mode", () => {
    */
   async function bookmark(ctx: TestContext): Promise<string> {
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.bookmark",
         properties: {
@@ -1126,7 +1139,7 @@ describe("PATCH /items/:id — properties_mode", () => {
   it("replaces the property set, so an unnamed field is gone", async () => {
     const id = await bookmark(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         properties_mode: "replace",
         properties: { url: "https://example.com", title: "Mapped" },
@@ -1145,7 +1158,7 @@ describe("PATCH /items/:id — properties_mode", () => {
     // pass the case above and take every existing caller with it.
     const id = await bookmark(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "Merged" } },
     });
     expect(res.status).toBe(200);
@@ -1159,7 +1172,7 @@ describe("PATCH /items/:id — properties_mode", () => {
   it("merges when asked to merge, which is the same thing said aloud", async () => {
     const id = await bookmark(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties_mode: "merge", properties: { title: "Merged" } },
     });
     expect(res.status).toBe(200);
@@ -1175,7 +1188,7 @@ describe("PATCH /items/:id — properties_mode", () => {
     // type says is invalid. `core.entity` requires `name`, and this replace
     // does not name it.
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.entity",
         properties: { name: "Ada", kind: "person" },
@@ -1184,7 +1197,7 @@ describe("PATCH /items/:id — properties_mode", () => {
     const { item } = (await created.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties_mode: "replace", properties: { kind: "person" } },
     });
     // The type refusing the resulting shape, rather than any of the other
@@ -1194,7 +1207,7 @@ describe("PATCH /items/:id — properties_mode", () => {
     expect(body.error.code).toBe("invalid_properties");
 
     const after = await request(ctx.app, "GET", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const data = (await after.json()) as {
       item: { properties: Record<string, unknown> };
@@ -1206,7 +1219,7 @@ describe("PATCH /items/:id — properties_mode", () => {
   it("keeps the version check, so a replace cannot skip a conflict", async () => {
     const id = await bookmark(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         properties_mode: "replace",
         version: 0,
@@ -1220,7 +1233,7 @@ describe("PATCH /items/:id — properties_mode", () => {
 describe("PATCH /items/:id", () => {
   it("updates properties and returns wrapped { item, metadata }", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Original", title: "Test" },
@@ -1229,7 +1242,7 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "Updated" }, version: 1 },
     });
     expect(res.status).toBe(200);
@@ -1245,7 +1258,7 @@ describe("PATCH /items/:id", () => {
 
   it("returns 409 on conflicting field update", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Base", title: "Base title" },
@@ -1254,12 +1267,12 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as { item: { id: string } };
 
     await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "Server update" }, version: 1 },
     });
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "Client update" }, version: 1 },
     });
     expect(res.status).toBe(409);
@@ -1279,7 +1292,7 @@ describe("PATCH /items/:id", () => {
 
   it("auto-merges non-conflicting field updates", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Base body", title: "Base title" },
@@ -1288,12 +1301,12 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as { item: { id: string } };
 
     await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "Server title" }, version: 1 },
     });
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "Client body" }, version: 1 },
     });
     expect(res.status).toBe(200);
@@ -1306,13 +1319,13 @@ describe("PATCH /items/:id", () => {
 
   it("returns 409 for version 0 (not 400)", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "test" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "updated" }, version: 0 },
     });
     expect(res.status).toBe(409);
@@ -1320,7 +1333,7 @@ describe("PATCH /items/:id", () => {
 
   it("flips tier: feed → library on PATCH", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "feed" },
@@ -1333,7 +1346,7 @@ describe("PATCH /items/:id", () => {
     expect(created.item.tier).toBe("feed");
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tier: "library" },
     });
     expect(res.status).toBe(200);
@@ -1343,7 +1356,7 @@ describe("PATCH /items/:id", () => {
 
   it("flips tier: library → feed on PATCH", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "library" },
@@ -1352,7 +1365,7 @@ describe("PATCH /items/:id", () => {
     });
     const created = (await createRes.json()) as { item: { id: string } };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tier: "feed" },
     });
     expect(res.status).toBe(200);
@@ -1362,14 +1375,14 @@ describe("PATCH /items/:id", () => {
 
   it("tier-only PATCH (no properties) succeeds and bumps version", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "x" }, tier: "feed" },
     });
     const created = (await createRes.json()) as {
       item: { id: string; version: number };
     };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tier: "library" },
     });
     expect(res.status).toBe(200);
@@ -1382,7 +1395,7 @@ describe("PATCH /items/:id", () => {
 
   it("PATCH with tier + properties applies both", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "before" },
@@ -1391,7 +1404,7 @@ describe("PATCH /items/:id", () => {
     });
     const created = (await createRes.json()) as { item: { id: string } };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "after" }, tier: "library" },
     });
     expect(res.status).toBe(200);
@@ -1404,12 +1417,12 @@ describe("PATCH /items/:id", () => {
 
   it("PATCH with no body fields returns 400", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "x" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {},
     });
     expect(res.status).toBe(400);
@@ -1419,7 +1432,7 @@ describe("PATCH /items/:id", () => {
 describe("PATCH /items/:id — source_id mutation", () => {
   it("happy path: PATCH source_id updates the natural key + findBySourceId returns it", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "rename me" },
@@ -1429,7 +1442,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     const created = (await createRes.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: "path/to/new-name.md" },
     });
     expect(res.status).toBe(200);
@@ -1439,7 +1452,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     // findBySourceId now returns this item under the new key. The lookup is
     // space + source scoped — read it back via the GET-by-source path.
     const reread = await request(ctx.app, "GET", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const rereadData = (await reread.json()) as {
       item: { id: string; source_id?: string };
@@ -1450,7 +1463,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
   it("collision: PATCH source_id to a value already used by another item under the same source → 409 source_id_conflict", async () => {
     // Two items under the same credential (same stamped source).
     const occupant = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "occupant" },
@@ -1458,7 +1471,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
       },
     });
     const mover = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "mover" },
@@ -1470,7 +1483,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     const moverData = (await mover.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: "occupied-key" },
     });
     expect(res.status).toBe(409);
@@ -1483,7 +1496,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
 
   it("idempotent no-op: PATCH source_id to the value already held → 200, value unchanged", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "idempotent" },
@@ -1495,7 +1508,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     };
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: "stable-key" },
     });
     expect(res.status).toBe(200);
@@ -1517,7 +1530,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     // the row had stopped being; `timestamp` had the same gap, and it is
     // the field a caller is most likely to read straight back.
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "restamp me" } },
     });
     expect(createRes.status).toBe(201);
@@ -1525,7 +1538,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
 
     const when = "2021-03-04T05:06:07.000Z";
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { timestamp: when },
     });
     expect(res.status).toBe(200);
@@ -1535,7 +1548,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
 
     // And the stored row agrees, so the answer is not merely self-consistent.
     const read = await request(ctx.app, "GET", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(
       ((await read.json()) as { item: { timestamp: string } }).item.timestamp,
@@ -1550,7 +1563,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     // mode the caller sees, not version_conflict, even when the body
     // carries a stale version.
     const occupant = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "occupant v2" },
@@ -1558,7 +1571,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
       },
     });
     const mover = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "mover v2" },
@@ -1574,7 +1587,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     // Bump the mover so its current version is 2; the PATCH below will
     // carry stale version 1, which would normally enter the conflict path.
     await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "mover v2 bump" }, version: 1 },
     });
 
@@ -1582,7 +1595,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     // The natural-key check runs first; the request fails with 409
     // source_id_conflict, NOT version_conflict.
     const res = await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         properties: { body: "client try" },
         version: 1,
@@ -1598,7 +1611,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     // Mint a key with a distinct stamped `source` (same pattern as the
     // existing natural-key-upsert cross-source test above).
     const altKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "alt-source-rename",
         source: "alt-source-rename",
@@ -1609,7 +1622,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
 
     // Item A under admin's source, with the target natural-key occupied.
     const occupant = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "admin occupies cross-source-key" },
@@ -1646,13 +1659,13 @@ describe("PATCH /items/:id — source_id mutation", () => {
 describe("DELETE /items/:id", () => {
   it("soft-deletes item and returns { ok: true }", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "To delete" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
     const res = await request(ctx.app, "DELETE", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as Record<string, unknown>;
@@ -1663,13 +1676,13 @@ describe("DELETE /items/:id", () => {
 describe("POST /items/:id/restore", () => {
   it("restores trashed item and returns { item, metadata }", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "To restore" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
     await request(ctx.app, "DELETE", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     const res = await request(
@@ -1677,7 +1690,7 @@ describe("POST /items/:id/restore", () => {
       "POST",
       `/items/${created.item.id}/restore`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(res.status).toBe(200);
@@ -1693,7 +1706,7 @@ describe("POST /items/:id/restore", () => {
 describe("POST /items/:id/transition", () => {
   it("transitions item state and returns { item, metadata }", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "State test" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
@@ -1703,7 +1716,7 @@ describe("POST /items/:id/transition", () => {
       "POST",
       `/items/${created.item.id}/transition`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { state: "archived" },
       },
     );
@@ -1718,7 +1731,7 @@ describe("POST /items/:id/transition", () => {
 
   it("rejects invalid transition", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Transition test" },
@@ -1732,7 +1745,7 @@ describe("POST /items/:id/transition", () => {
       "POST",
       `/items/${created.item.id}/transition`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { state: "new" as unknown as "active" },
       },
     );
@@ -1743,13 +1756,13 @@ describe("POST /items/:id/transition", () => {
 describe("GET /items/:id/versions", () => {
   it("returns wrapped version history after update", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "V1" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
 
     await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "V2" }, version: 1 },
     });
 
@@ -1758,7 +1771,7 @@ describe("GET /items/:id/versions", () => {
       "GET",
       `/items/${created.item.id}/versions`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(res.status).toBe(200);
@@ -1776,7 +1789,7 @@ describe("GET /items?filter=...", () => {
   it("filters by system field", async () => {
     // Create items with different states
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Active note" },
@@ -1784,7 +1797,7 @@ describe("GET /items?filter=...", () => {
       },
     });
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "New note" } },
     });
 
@@ -1793,7 +1806,7 @@ describe("GET /items?filter=...", () => {
       "GET",
       `/items?filter=${encodeURIComponent('state eq "active"')}`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(res.status).toBe(200);
@@ -1805,14 +1818,14 @@ describe("GET /items?filter=...", () => {
 
   it("filters by property value", async () => {
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.media.book",
         properties: { title: "1984", author: "Orwell", body: "" },
       },
     });
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.media.book",
         properties: { title: "Fahrenheit 451", author: "Bradbury", body: "" },
@@ -1823,7 +1836,7 @@ describe("GET /items?filter=...", () => {
       ctx.app,
       "GET",
       `/items?filter=${encodeURIComponent('properties.author eq "Orwell"')}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1840,7 +1853,7 @@ describe("GET /items?filter=...", () => {
       ctx.app,
       "GET",
       `/items?filter=${encodeURIComponent('state eq "active" AND type eq "core.media.book"')}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1857,7 +1870,7 @@ describe("GET /items?filter=...", () => {
       ctx.app,
       "GET",
       `/items?filter=${encodeURIComponent('properties.author eq "Orwell" OR properties.author eq "Bradbury"')}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1873,7 +1886,7 @@ describe("GET /items?filter=...", () => {
       ctx.app,
       "GET",
       `/items?type=core.media.book&filter=${encodeURIComponent('properties.author eq "Orwell"')}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1890,7 +1903,7 @@ describe("GET /items?filter=...", () => {
       ctx.app,
       "GET",
       `/items?filter=${encodeURIComponent("invalid_field eq test")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
   });
@@ -1898,7 +1911,7 @@ describe("GET /items?filter=...", () => {
   it("filters by tags contains", async () => {
     // Create an item with tags
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Tagged note" },
@@ -1910,7 +1923,7 @@ describe("GET /items?filter=...", () => {
       ctx.app,
       "GET",
       `/items?filter=${encodeURIComponent('tags contains "fiction"')}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { data: unknown[] };
@@ -1922,7 +1935,7 @@ describe("GET /items?filter=...", () => {
       ctx.app,
       "GET",
       `/items?filter=${encodeURIComponent("properties.author exists")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1939,7 +1952,7 @@ describe("GET /items?sort=properties.<field>", () => {
   // rows. Each helper filters the list response down to the ids it created.
   async function createBook(props: Record<string, unknown>): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.media.book", properties: { body: "", ...props } },
     });
     expect(res.status).toBe(201);
@@ -1949,7 +1962,7 @@ describe("GET /items?sort=properties.<field>", () => {
 
   async function createTask(props: Record<string, unknown>): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.task", properties: props },
     });
     expect(res.status).toBe(201);
@@ -1978,7 +1991,7 @@ describe("GET /items?sort=properties.<field>", () => {
       });
       if (cursor) qs.set("cursor", cursor);
       const res = await request(ctx.app, "GET", `/items?${qs.toString()}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -2043,7 +2056,7 @@ describe("GET /items?sort=properties.<field>", () => {
       ctx.app,
       "GET",
       `/items?sort=${encodeURIComponent("properties.Due At")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
   });
@@ -2053,7 +2066,7 @@ describe("GET /items?sort=properties.<field>", () => {
       ctx.app,
       "GET",
       "/items?sort=created_at&direction=asc&limit=3",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { created_at: string }[] };
@@ -2067,7 +2080,7 @@ describe("DELETE /items/:id/purge", () => {
   it("permanently deletes a trashed item", async () => {
     // Create and trash an item
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Purge me", title: "Temporary" },
@@ -2078,7 +2091,7 @@ describe("DELETE /items/:id/purge", () => {
     };
 
     await request(ctx.app, "DELETE", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     // Purge the trashed item
@@ -2086,20 +2099,20 @@ describe("DELETE /items/:id/purge", () => {
       ctx.app,
       "DELETE",
       `/items/${item.id}/purge`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(purgeRes.status).toBe(200);
 
     // Verify the item is gone
     const getRes = await request(ctx.app, "GET", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(getRes.status).toBe(404);
   });
 
   it("rejects purge on non-trashed item", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Active item", title: "Active" },
@@ -2113,7 +2126,7 @@ describe("DELETE /items/:id/purge", () => {
       ctx.app,
       "DELETE",
       `/items/${item.id}/purge`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(purgeRes.status).toBe(400);
   });
@@ -2122,7 +2135,7 @@ describe("DELETE /items/:id/purge", () => {
 describe("schema_version stamping", () => {
   it("stamps schema_version: 1 on a newly-created core.note", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "Schema-version test" } },
     });
     expect(res.status).toBe(201);
@@ -2134,7 +2147,7 @@ describe("schema_version stamping", () => {
 
   it("preserves schema_version through update", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "Update test" } },
     });
     const created = (await createRes.json()) as {
@@ -2147,7 +2160,7 @@ describe("schema_version stamping", () => {
       "PATCH",
       `/items/${created.item.id}`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { properties: { body: "Updated" } },
       },
     );
@@ -2162,7 +2175,7 @@ describe("schema_version stamping", () => {
 describe("state lifecycle enum at the route boundary", () => {
   it("rejects POST /items/:id/transition with an unknown state", async () => {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "Lifecycle test" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
@@ -2171,7 +2184,7 @@ describe("state lifecycle enum at the route boundary", () => {
       ctx.app,
       "POST",
       `/items/${created.item.id}/transition`,
-      { key: ctx.adminKey, body: { state: "draft" } },
+      { key: ctx.spaceKey, body: { state: "draft" } },
     );
     expect(res.status).toBe(400);
   });
@@ -2181,7 +2194,7 @@ describe("query language: tier system field", () => {
   it('filters items by `tier eq "library"` via the filter query parameter', async () => {
     // Two items with explicit tier values
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "library item" },
@@ -2189,7 +2202,7 @@ describe("query language: tier system field", () => {
       },
     });
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "feed item" },
@@ -2201,7 +2214,7 @@ describe("query language: tier system field", () => {
       ctx.app,
       "GET",
       `/items?type=core.note&filter=${encodeURIComponent('tier eq "library"')}&limit=200`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2220,7 +2233,7 @@ describe("tier default and tri-value filter on GET /items", () => {
 
   beforeAll(async () => {
     const libRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "library marker for default test" },
@@ -2231,7 +2244,7 @@ describe("tier default and tri-value filter on GET /items", () => {
     libraryId = libBody.item.id;
 
     const feedRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "feed marker for default test" },
@@ -2247,7 +2260,7 @@ describe("tier default and tri-value filter on GET /items", () => {
       ctx.app,
       "GET",
       "/items?type=core.note&limit=200",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2263,7 +2276,7 @@ describe("tier default and tri-value filter on GET /items", () => {
       ctx.app,
       "GET",
       "/items?type=core.note&tier=library&limit=200",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2282,7 +2295,7 @@ describe("tier default and tri-value filter on GET /items", () => {
       ctx.app,
       "GET",
       "/items?type=core.note&tier=feed&limit=200",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2301,7 +2314,7 @@ describe("tier default and tri-value filter on GET /items", () => {
       ctx.app,
       "GET",
       "/items?type=core.note&tier=all&limit=200",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2318,7 +2331,7 @@ describe("metadata.changed pubsub event", () => {
     const { subscribe } = await import("../pubsub.js");
 
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "Tag-event target" },
@@ -2335,7 +2348,7 @@ describe("metadata.changed pubsub event", () => {
       .then((r) => r.value as { type: string; item: { id: string } });
 
     const tagRes = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tags: ["interesting"] },
     });
     expect(tagRes.status).toBe(200);
@@ -2360,7 +2373,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
     label: string,
   ): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label,
         source: `${label}-src`,
@@ -2374,7 +2387,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
 
   async function seedItemWithExtensions(): Promise<string> {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "ext-leak-fixture" },
@@ -2390,7 +2403,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
       "other-app.prefs",
     ]) {
       await request(ctx.app, "PUT", `/items/${item.id}/extensions/${ns}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { flag: ns },
       });
     }
@@ -2488,7 +2501,7 @@ describe("metadata.extensions are permission-filtered on every read path", () =>
   it("admin keys still see every extension namespace", async () => {
     const id = await seedItemWithExtensions();
     const res = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const body = (await res.json()) as {
       metadata: { extensions: Record<string, unknown> };
@@ -2523,7 +2536,7 @@ describe("GET /items?include=extensions", () => {
     label: string,
   ): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label,
         source: `${label}-src`,
@@ -2537,7 +2550,7 @@ describe("GET /items?include=extensions", () => {
 
   async function seedItem(marker: string): Promise<string> {
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `include-ext-${marker}` },
@@ -2547,7 +2560,7 @@ describe("GET /items?include=extensions", () => {
     const { item } = (await createRes.json()) as { item: { id: string } };
     for (const ns of ["visible.prefs", "hidden.prefs", "other.prefs"]) {
       await request(ctx.app, "PUT", `/items/${item.id}/extensions/${ns}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { flag: ns },
       });
     }
@@ -2560,7 +2573,7 @@ describe("GET /items?include=extensions", () => {
       ctx.app,
       "GET",
       `/items?type=core.note&tags=include-ext-lean`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2577,7 +2590,7 @@ describe("GET /items?include=extensions", () => {
       ctx.app,
       "GET",
       `/items?type=core.note&tags=include-ext-admin&include=extensions`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2617,14 +2630,14 @@ describe("GET /items?include=extensions", () => {
 
   it("composes with include=edges in a single request", async () => {
     const targetRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "combo target" } },
     });
     const { item: target } = (await targetRes.json()) as {
       item: { id: string };
     };
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "combo source" },
@@ -2634,7 +2647,7 @@ describe("GET /items?include=extensions", () => {
     });
     const { item } = (await createRes.json()) as { item: { id: string } };
     await request(ctx.app, "PUT", `/items/${item.id}/extensions/app.data`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ok: true },
     });
 
@@ -2642,7 +2655,7 @@ describe("GET /items?include=extensions", () => {
       ctx.app,
       "GET",
       `/items?type=core.note&tags=include-ext-combo&include=edges,extensions`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -2664,7 +2677,7 @@ describe("permission-gate ordering (priority cluster)", () => {
   ): Promise<string> {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: `gate-member-${suffix}`,
         source: `gate-member-${suffix}`,
@@ -2682,7 +2695,7 @@ describe("permission-gate ordering (priority cluster)", () => {
   it("DELETE /items/:id returns 403 when the credential lacks write on the type", async () => {
     // Admin creates an item.
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "to-preserve" } },
     });
     const { item } = (await create.json()) as { item: { id: string } };
@@ -2697,7 +2710,7 @@ describe("permission-gate ordering (priority cluster)", () => {
 
     // The item must still be readable with admin (i.e. not trashed).
     const after = await request(ctx.app, "GET", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(after.status).toBe(200);
   });
@@ -2705,12 +2718,12 @@ describe("permission-gate ordering (priority cluster)", () => {
   it("POST /items/:id/restore returns 403 without touching state when credential lacks write", async () => {
     // Admin creates and trashes an item.
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "soft-delete-me" } },
     });
     const { item } = (await create.json()) as { item: { id: string } };
     const del = await request(ctx.app, "DELETE", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(del.status).toBe(200);
 
@@ -2726,14 +2739,14 @@ describe("permission-gate ordering (priority cluster)", () => {
 
     // Item must remain trashed — gate must fire before the write.
     const getAfter = await request(ctx.app, "GET", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(getAfter.status).toBe(404);
   });
 
   it("POST /items/:id/tags rejects over-100 and does not write partial tags", async () => {
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "tag-cap" } },
     });
     const { item } = (await create.json()) as { item: { id: string } };
@@ -2741,7 +2754,7 @@ describe("permission-gate ordering (priority cluster)", () => {
     // Seed 95 tags — under the cap.
     const seed = Array.from({ length: 95 }, (_, i) => `t${String(i)}`);
     const seedRes = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tags: seed },
     });
     expect(seedRes.status).toBe(200);
@@ -2752,14 +2765,14 @@ describe("permission-gate ordering (priority cluster)", () => {
       ctx.app,
       "POST",
       `/items/${item.id}/tags`,
-      { key: ctx.adminKey, body: { tags: overflow } },
+      { key: ctx.spaceKey, body: { tags: overflow } },
     );
     expect(overflowRes.status).toBe(400);
 
     // None of the 10 overflow tags should have persisted. Reading metadata
     // back, only the original 95 remain.
     const metaRes = await request(ctx.app, "GET", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const metaBody = (await metaRes.json()) as {
       metadata: { tags: string[] };
@@ -2781,7 +2794,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
     const targetIds: string[] = [];
     for (let i = 0; i < 51; i++) {
       const t = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           properties: { body: `target-${String(i)}` },
@@ -2791,7 +2804,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
     }
 
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "many-edges" },
@@ -2821,7 +2834,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
       "GET",
       `/items/${created.item.id}`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     const readItem = (await readBack.json()) as {
@@ -2841,7 +2854,7 @@ describe("POST /items — inline-edge hydration parity past the cap", () => {
       ctx.app,
       "GET",
       `/items/${created.item.id}/edges?edge_type=references&cursor=${encodeURIComponent(block.next_cursor ?? "")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const restBody = (await rest.json()) as { data: { id: string }[] };
     const firstPageIds = new Set(block.edges.map((e) => e.id));
@@ -2870,28 +2883,27 @@ describe("GET /items?include=system", () => {
     marker: string,
   ): Promise<{ noteId: string; deviceId: string }> {
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `include-system-${marker}` },
         tags: [`include-system-${marker}`],
       },
     });
-    const device = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
-      body: {
+    expect(note.status).toBe(201);
+    const { item: noteItem } = (await note.json()) as { item: { id: string } };
+    // The system row goes in through the storage layer, because the reserved
+    // namespace refuses a write to every credential. What this block is about
+    // is who reads one back; the seed is not the claim.
+    const device = await ctx.storage.items.create(
+      {
         type: "system.device",
         properties: { name: `include-system-${marker}`, kind: "laptop" },
-        tags: [`include-system-${marker}`],
       },
-    });
-    expect(note.status).toBe(201);
-    expect(device.status).toBe(201);
-    const { item: noteItem } = (await note.json()) as { item: { id: string } };
-    const { item: deviceItem } = (await device.json()) as {
-      item: { id: string };
-    };
-    return { noteId: noteItem.id, deviceId: deviceItem.id };
+      ctx.spaceId,
+    );
+    await ctx.storage.metadata.set(device.id, [`include-system-${marker}`]);
+    return { noteId: noteItem.id, deviceId: device.id };
   }
 
   async function listedIdsAs(key: string, query: string): Promise<string[]> {
@@ -2902,7 +2914,7 @@ describe("GET /items?include=system", () => {
   }
 
   async function listedIds(query: string): Promise<string[]> {
-    return listedIdsAs(ctx.adminKey, query);
+    return listedIdsAs(ctx.spaceKey, query);
   }
 
   it("omits system.* rows when the token is absent", async () => {
@@ -2929,7 +2941,7 @@ describe("GET /items?include=system", () => {
     expect(ids).toContain(deviceId);
   });
 
-  // Every other case in this file and its sibling runs as `ctx.adminKey`,
+  // Every other case in this file and its sibling runs as `ctx.spaceKey`,
   // which holds `"*": "write"` — so `allowed_types` admits everything and
   // says nothing in any of them. `exclude_system_types` and `allowed_types`
   // are independent arguments to the same storage call, and nothing asserted
@@ -2949,7 +2961,7 @@ describe("GET /items?include=system", () => {
     perms: Record<string, "read" | "write">,
   ): Promise<string> {
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label,
         source: `${label}-src`,
@@ -3007,7 +3019,7 @@ describe("GET /items?include=system", () => {
       ctx.app,
       "GET",
       "/items?tags=include-system-compose&include=metadata,system&limit=200",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     // `metadata` changes the envelope: each row becomes `{ item, metadata }`

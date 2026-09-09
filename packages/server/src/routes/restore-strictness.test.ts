@@ -112,6 +112,11 @@ const A = "01912345-0000-7000-8000-0000000000a1";
 const B = "01912345-0000-7000-8000-0000000000b2";
 const C = "01912345-0000-7000-8000-0000000000c3";
 
+/**
+ * Restore into the context's own space. The route is operator-gated and the
+ * operator key carries no space of its own, so the space is named on the
+ * query string.
+ */
 async function restoreInto(
   ctx: TestContext,
   space: string,
@@ -120,7 +125,7 @@ async function restoreInto(
   return ctx.app.request(`/admin/restore-archive?target_space_id=${space}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.adminKey}`,
+      Authorization: `Bearer ${ctx.operatorKey}`,
       "Content-Type": "application/gzip",
     },
     body: archive,
@@ -133,7 +138,7 @@ async function restoreEdges(
   itemTypes: Record<string, string> = {},
 ): Promise<{ result: RestoreResult; edgeCount: number }> {
   const ctx = await newContext();
-  const space = `t475-${Math.random().toString(36).slice(2, 10)}`;
+  const space = ctx.spaceId;
   const archive = await buildArchive({
     spaceId: space,
     itemLines: [
@@ -258,7 +263,7 @@ describe("restore validates the edges it writes", () => {
 describe("a refused restore leaves no blobs behind", () => {
   it("writes nothing when the manifest names a different space", async () => {
     const ctx = await newContext();
-    const space = `t475-blob-${Math.random().toString(36).slice(2, 10)}`;
+    const space = ctx.spaceId;
     const blob = blobOf(`refused blob ${space}`);
     const archive = await buildArchive({
       // A space the restore is not targeting: the 403 fires before the
@@ -281,7 +286,7 @@ describe("a refused restore leaves no blobs behind", () => {
 
   it("still restores blobs when the archive is accepted", async () => {
     const ctx = await newContext();
-    const space = `t475-blob-ok-${Math.random().toString(36).slice(2, 10)}`;
+    const space = ctx.spaceId;
     const blob = blobOf(`accepted blob ${space}`);
     const archive = await buildArchive({
       spaceId: space,
