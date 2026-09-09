@@ -103,12 +103,10 @@ describe("GET /items/stats?by=type", () => {
         source: `stats-${suffix}`,
         type_permissions: { [SEEN]: "read" },
         default_tier: "library",
-        // Keys mode carries no space, and the schema requires a space-less
-        // key to be an operator key. The narrow type map is still what
-        // decides the breakdown.
-        is_operator: true,
+        is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
+      ctx.spaceId,
     );
 
     const byType = await stats(raw, "?by=type");

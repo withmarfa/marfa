@@ -258,6 +258,73 @@ describe("PATCH /keys/{id}", () => {
   });
 });
 
+describe("PATCH /keys/{id} — a space-less target", () => {
+  /** A spare credential at the instance tier: no space, and nothing held. */
+  async function mintSpacelessKey(suffix: string): Promise<string> {
+    const res = await request(ctx.app, "POST", "/keys", {
+      key: ctx.operatorKey,
+      body: {
+        label: `spaceless-patch-${suffix}`,
+        source: `spaceless-patch-${suffix}`,
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await ctx.storage.keys.get(minted.id);
+    expect(stored?.space_id ?? null).toBeNull();
+    return minted.id;
+  }
+
+  // The control, so the case below cannot pass by the guard having been
+  // removed rather than by the write having been forced empty.
+  it("refuses a request naming reach", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const id = await mintSpacelessKey(suffix);
+
+    const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
+      key: ctx.operatorKey,
+      body: { type_permissions: { "core.note": "read" } },
+    });
+    expect(res.status).toBe(403);
+    const err = (await res.json()) as { error: { message: string } };
+    expect(err.error.message).toMatch(/POST \/admin\/spaces\/\{id\}\/keys/);
+  });
+
+  // **A body of denials is a non-empty map that names nothing.** The guard
+  // skips a `none` entry, exactly as the creator ceiling does, so such a body
+  // reached the store and the store wrote `{"core.note":"none"}` onto a row
+  // the constraint says holds `{}`. The caller read a database refusal where
+  // a route answer belongs. The mint forces the same families empty for the
+  // same reason and this is that door a moment later, so it forces too.
+  //
+  // `type_permissions` is the one family the body schema lets a `none` into,
+  // so it is the one that reaches the store. The forcing is written across
+  // all five because the guard is: a schema that admitted `none` on a second
+  // family would otherwise reopen this on that family alone.
+  it("writes a denial-only map empty rather than sending it at the row constraint", async () => {
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const id = await mintSpacelessKey(suffix);
+
+    const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
+      key: ctx.operatorKey,
+      body: {
+        label: `renamed-${suffix}`,
+        type_permissions: { "core.note": "none" },
+      },
+    });
+    expect(res.status).toBe(200);
+
+    const stored = await ctx.storage.keys.get(id);
+    expect(stored?.type_permissions).toEqual({});
+    // The rest of the edit still lands: forcing the family empty is not a
+    // refusal of the request, and a caller renaming a key gets the rename.
+    expect(stored?.label).toBe(`renamed-${suffix}`);
+    // Families the body never named are left alone rather than rewritten.
+    expect(stored?.edge_permissions).toEqual({});
+    expect(stored?.space_permissions).toEqual([]);
+  });
+});
+
 describe("bootstrap sentinel", () => {
   // Builds a fresh app with NO existing key and NO sentinel set —
   // mirrors a brand-new installation. Dialect-aware: under
@@ -1616,39 +1683,85 @@ describe("POST /keys — space binding", () => {
     expect(row?.details).toMatchObject({ operator_tier: true });
   });
 
-  it("hands down nothing from an operator key that already holds something", async () => {
-    // The guard measures the request body and this asserts what the row is
-    // built from: a mint naming no reach at all takes the creator's whole
-    // set, so a body carrying only a label would have copied whatever the
-    // caller held. An instance that ran the build where an operator key
-    // could be widened may hold exactly such a caller, and the migration
-    // that clears those rows does not reach a self-hoster who has not
-    // upgraded yet.
+  it("mints one from a body that names only denials, forcing the map empty", async () => {
+    // **The one non-empty body this door still admits from an operator
+    // caller.** A `none` entry is a denial rather than a request, so it names
+    // nothing and the refusal above skips it, exactly as the creator ceiling
+    // skips it. Nothing between that guard and the insert would then have
+    // emptied the map: the route's own forcing is what turns
+    // `{"core.note": "none"}` into `{}`, and without it a non-empty map would
+    // arrive at a row the constraint says holds nothing and the mint would
+    // fail as a database error rather than succeed as a mint.
     //
-    // Seeded through the store, because no door writes this shape any more.
-    // The row constraint ties `space_id` to `is_operator` and says nothing
-    // about the maps, which is the gap the forcing closes.
+    // The sibling above covers the empty body, where the forcing has nothing
+    // to do; this is the case where it does the work.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.operatorKey,
+      body: {
+        label: `null-space-denials-${suffix}`,
+        source: `null-space-denials-${suffix}`,
+        type_permissions: { "core.note": "none" },
+      },
+    });
+    expect(res.status).toBe(201);
+    const minted = (await res.json()) as { id: string };
+    const stored = await hostedCtx.storage.keys.get(minted.id);
+    expect(stored?.space_id ?? null).toBeNull();
+    expect(stored?.is_operator).toBe(true);
+    // Empty, not the denial that was sent. `{"core.note": "none"}` grants
+    // nothing either, so the difference is not what a door would read off it:
+    // the constraint compares bytes, and those are not the bytes `{}` takes.
+    expect(stored?.type_permissions).toEqual({});
+    expect(stored?.space_permissions).toEqual([]);
+  });
+
+  it("cannot even be handed a widened operator key to mint from", async () => {
+    // This used to seed a space-less operator key carrying every map and then
+    // assert that a mint from it inherited nothing, because the row
+    // constraint tied `space_id` to `is_operator` and said nothing about the
+    // maps. The database says both halves now, so the caller this case needed
+    // is a row nothing can write and the route's forcing is unreachable from
+    // below rather than merely unused.
+    //
+    // Kept, and pointed at the refusal instead: the reason the forcing above
+    // can no longer be exercised is worth a failing test of its own, so a
+    // constraint dropped in some later rebuild is noticed here rather than
+    // leaving a silently dead assertion behind.
     const suffix = Math.random().toString(36).slice(2, 10);
     const rawWide = `marfa_k1_wide_operator_${suffix}`;
-    await hostedCtx.storage.keys.create(
-      {
-        label: `wide-operator-${suffix}`,
-        source: `wide-operator-${suffix}`,
-        default_tier: "library",
-        is_operator: true,
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        metadata_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
-        profile_permissions: { "*": "write" },
-        space_permissions: ["space.keys"],
-      },
-      hashApiKey(rawWide, TEST_API_KEY_SALT),
-      undefined,
-    );
+    await expect(
+      hostedCtx.storage.keys.create(
+        {
+          label: `wide-operator-${suffix}`,
+          source: `wide-operator-${suffix}`,
+          default_tier: "library",
+          is_operator: true,
+          type_permissions: { "*": "write" },
+          edge_permissions: { "*": "write" },
+          metadata_permissions: { "*": "write" },
+          extension_permissions: { "*": "write" },
+          profile_permissions: { "*": "write" },
+          space_permissions: ["space.keys"],
+        },
+        hashApiKey(rawWide, TEST_API_KEY_SALT),
+        undefined,
+      ),
+    ).rejects.toThrow();
+    // Asserted on the row rather than on the message: the driver wraps a
+    // check violation differently on each dialect, and what matters is that
+    // nothing landed. `api_keys_space_less_holds_nothing` is the constraint,
+    // and the migration suite pins its name and its two directions.
+    expect(
+      (await hostedCtx.storage.keys.list()).some(
+        (k) => k.label === `wide-operator-${suffix}`,
+      ),
+    ).toBe(false);
 
+    // And the operator key the instance really holds mints a credential that
+    // inherits nothing, which is what the forcing is for.
     const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: rawWide,
+      key: hostedCtx.operatorKey,
       body: {
         label: `inherits-nothing-${suffix}`,
         source: `inherits-nothing-${suffix}`,

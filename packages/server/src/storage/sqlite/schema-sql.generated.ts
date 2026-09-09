@@ -41,32 +41,6 @@ CREATE TABLE IF NOT EXISTS "enrichment_state" (
   "updated_at" TEXT NOT NULL
 , "config_signature" TEXT);
 
-CREATE TABLE IF NOT EXISTS "api_keys" (
-	\`id\` text PRIMARY KEY NOT NULL,
-	\`space_id\` text,
-	\`key_hash\` text NOT NULL,
-	\`label\` text NOT NULL,
-	\`source\` text NOT NULL DEFAULT '',
-	\`default_tier\` text NOT NULL DEFAULT 'library',
-	\`is_operator\` integer NOT NULL DEFAULT 0,
-	\`is_runtime_credential\` integer NOT NULL DEFAULT 0,
-	\`connection_id\` text,
-	\`item_source\` text,
-	\`space_permissions\` text NOT NULL DEFAULT '[]',
-	\`type_permissions\` text NOT NULL DEFAULT '{"*":"write"}',
-	\`extension_permissions\` text NOT NULL DEFAULT '{}',
-	\`edge_permissions\` text NOT NULL DEFAULT '{}',
-	\`metadata_permissions\` text NOT NULL DEFAULT '{}',
-	\`profile_permissions\` text NOT NULL DEFAULT '{}',
-	\`oauth_client_id\` text,
-	\`created_at\` text NOT NULL,
-	\`expires_at\` text,
-	\`revoked_at\` text,
-	\`last_used_at\` text,
-	CONSTRAINT \`api_keys_operator_iff_space_less\`
-	  CHECK ((\`space_id\` IS NULL) = (\`is_operator\` = 1))
-);
-
 CREATE TABLE IF NOT EXISTS \`metadata\` (
 	\`item_id\` text PRIMARY KEY NOT NULL,
 	\`tags\` text DEFAULT '[]' NOT NULL,
@@ -460,6 +434,40 @@ CREATE TABLE IF NOT EXISTS "idempotency_records" (
   "response_body" text,
   "created_at" text NOT NULL,
   "completed_at" text
+);
+
+CREATE TABLE IF NOT EXISTS "api_keys" (
+	\`id\` text PRIMARY KEY NOT NULL,
+	\`space_id\` text,
+	\`key_hash\` text NOT NULL,
+	\`label\` text NOT NULL,
+	\`source\` text NOT NULL DEFAULT '',
+	\`default_tier\` text NOT NULL DEFAULT 'library',
+	\`is_operator\` integer NOT NULL DEFAULT 0,
+	\`is_runtime_credential\` integer NOT NULL DEFAULT 0,
+	\`connection_id\` text,
+	\`item_source\` text,
+	\`space_permissions\` text NOT NULL DEFAULT '[]',
+	\`type_permissions\` text NOT NULL DEFAULT '{"*":"write"}',
+	\`extension_permissions\` text NOT NULL DEFAULT '{}',
+	\`edge_permissions\` text NOT NULL DEFAULT '{}',
+	\`metadata_permissions\` text NOT NULL DEFAULT '{}',
+	\`profile_permissions\` text NOT NULL DEFAULT '{}',
+	\`oauth_client_id\` text,
+	\`created_at\` text NOT NULL,
+	\`expires_at\` text,
+	\`revoked_at\` text,
+	\`last_used_at\` text,
+	CONSTRAINT \`api_keys_operator_iff_space_less\`
+	  CHECK ((\`space_id\` IS NULL) = (\`is_operator\` = 1)),
+	CONSTRAINT \`api_keys_space_less_holds_nothing\`
+	  CHECK (\`space_id\` IS NOT NULL OR (
+	    \`type_permissions\`      = '{}'  AND
+	    \`edge_permissions\`      = '{}'  AND
+	    \`metadata_permissions\`  = '{}'  AND
+	    \`extension_permissions\` = '{}'  AND
+	    \`profile_permissions\`   = '{}'  AND
+	    \`space_permissions\`     = '[]'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS \`api_keys_key_hash_unique\` ON \`api_keys\` (\`key_hash\`);

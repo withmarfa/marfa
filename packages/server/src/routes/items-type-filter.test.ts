@@ -67,8 +67,8 @@ async function listTypes(query: string, key: string): Promise<string[]> {
 /**
  * Mint a key whose only readable types are `patterns`.
  *
- * `is_operator` is the schema's requirement of a space-less key in keys mode,
- * not a widening: the type map is still the whole of what this key can read.
+ * Bound to the context's space, which is what an ordinary working credential
+ * is: the type map is the whole of what this key can read.
  */
 async function mintScopedKey(
   patterns: Record<string, "read" | "write">,
@@ -81,9 +81,10 @@ async function mintScopedKey(
       source: `scoped-${suffix}`,
       type_permissions: patterns,
       default_tier: "library",
-      is_operator: true,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
+    ctx.spaceId,
   );
   return raw;
 }

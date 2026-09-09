@@ -73,11 +73,11 @@ afterAll(async () => {
 /**
  * A key whose reach is exactly its permission map — nothing reads past it.
  *
- * `is_operator` is set because this context is keys mode, where no key
- * carries a space and the schema requires a space-less key to be an operator
- * key. It buys nothing here: the operator flag fences off the instance tier
- * and the reserved namespaces, and `checkTypeAccess` still consults the map
- * for everything else, which is the whole subject of this file.
+ * Bound to the context's space, which is what an ordinary working credential
+ * is. It used to be minted space-less with the operator flag, on the reading
+ * that keys mode carried no space; keys mode has a real space now, and a
+ * space-less credential is the operator tier and may hold no permission at
+ * all, so that fixture was a shape the product cannot produce.
  */
 async function mintKey(type_permissions: Perms): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
@@ -88,9 +88,10 @@ async function mintKey(type_permissions: Perms): Promise<string> {
       source: `excl-${suffix}`,
       type_permissions,
       default_tier: "library",
-      is_operator: true,
+      is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
+    ctx.spaceId,
   );
   return raw;
 }

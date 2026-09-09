@@ -8,10 +8,15 @@
  *
  * Postgres row-level security fences spaceed rows independently, so on
  * that dialect the route check is the second of two fences. It is the
- * only fence for two cases: SQLite, and **null-space jobs**, which RLS
- * admits by design. That slice is not an edge case — purge is
- * platform-gated, so every purge job is null-space, and its result
- * envelope can carry item ids from across the instance.
+ * only fence for two cases: SQLite, and **null-space jobs**, where the row
+ * carries no space for a policy to compare its GUC against and `getById` is
+ * unscoped, so the route check is the whole of it.
+ *
+ * A null-space job is one the instance tier queued, and that is the slice, not
+ * every purge job. This file said the second thing until purge moved from a
+ * rank gate to `space.item_purge`: a space permission is held only by a
+ * space-bound credential, so a purge job carries that credential's space like
+ * any other row.
  *
  * The tests below are written so that each one can only pass through the
  * branch it is aiming at. In particular the operator cases read jobs a
@@ -34,6 +39,7 @@ import {
   type TestContext,
 } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { generateId } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -43,33 +49,37 @@ let boundA: string;
 let boundB: string;
 let siblingB: string;
 let operatorKey: string;
+let otherOperatorId: string;
 
 /**
- * A credential in a named space, or an operator key when no space is given.
+ * A credential in a named space, or the operator key when no space is given.
  *
- * The two go together rather than being independent axes: the schema holds a
- * space-less key to `is_operator` and a space-bound key to the opposite, so
- * "unbound" and "operator" are one fact stated once.
+ * The three facts go together rather than being independent axes: the schema
+ * holds a space-less key to `is_operator`, a space-bound key to the opposite,
+ * and a space-less key to no permission on any axis. So "unbound", "operator"
+ * and "holds nothing" are one fact stated once, and the operator arm below
+ * reaches what it reaches on operator authority alone.
  */
 async function mintKey(opts: {
   label: string;
   spaceId?: string;
-}): Promise<string> {
+}): Promise<{ raw: string; id: string }> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_job_scope_${suffix}`;
-  await ctx.storage.keys.create(
+  const isOperator = opts.spaceId === undefined;
+  const created = await ctx.storage.keys.create(
     {
       label: opts.label,
       source: `${opts.label}-${suffix}`,
       default_tier: "library",
-      type_permissions: { "*": "write" },
-      edge_permissions: { "*": "write" },
-      is_operator: opts.spaceId === undefined,
+      type_permissions: isOperator ? {} : { "*": "write" },
+      edge_permissions: isOperator ? {} : { "*": "write" },
+      is_operator: isOperator,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
     opts.spaceId,
   );
-  return raw;
+  return { raw, id: created.id };
 }
 
 /** Queue a job without running the worker, so it stays cancellable. */
@@ -91,12 +101,16 @@ async function readJob(key: string, id: string): Promise<number> {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  boundA = await mintKey({ label: "bound-a", spaceId: spaceA });
-  boundB = await mintKey({ label: "bound-b", spaceId: spaceB });
-  siblingB = await mintKey({ label: "sibling-b", spaceId: spaceB });
+  boundA = (await mintKey({ label: "bound-a", spaceId: spaceA })).raw;
+  boundB = (await mintKey({ label: "bound-b", spaceId: spaceB })).raw;
+  siblingB = (await mintKey({ label: "sibling-b", spaceId: spaceB })).raw;
   // An operator key that created none of the jobs below, so whatever it
   // reaches it reaches on operator authority rather than on the creator arm.
-  operatorKey = await mintKey({ label: "operator" });
+  operatorKey = (await mintKey({ label: "operator" })).raw;
+  // A second credential at the same tier, named as the creator of the
+  // null-space jobs below. Only its id is wanted: it exists so those rows
+  // belong to somebody other than the credential reading them.
+  otherOperatorId = (await mintKey({ label: "other-operator" })).id;
 });
 
 afterAll(async () => {
@@ -166,16 +180,52 @@ describe("bulk-action jobs — cross-space access", () => {
   });
 });
 
+/**
+ * A job carrying no space at all, written through the store.
+ *
+ * `POST /items/bulk-actions` stamps the caller's space on the row, so every
+ * job a space-bound credential queues there carries one and this block was
+ * testing the cross-space arm again under a heading promising the other. The
+ * slice belongs to the instance tier, which has no space to stamp, and the
+ * store is the direct way to build one.
+ *
+ * `api_key_id` names a credential neither test reads as, so neither can pass
+ * through the creator arm and call it the operator one.
+ */
+async function queueNullSpaceJob(tag: string): Promise<string> {
+  const job = await ctx.storage.bulkActionJobs.create({
+    id: generateId(),
+    space_id: null,
+    api_key_id: otherOperatorId,
+    action: "transition",
+    input: JSON.stringify({
+      action: "transition",
+      state: "archived",
+      filter: { tags: [tag] },
+    }),
+    matched_ids: JSON.stringify([]),
+    matched_count: 0,
+    idempotency_key: null,
+    created_at: new Date().toISOString(),
+  });
+  // The premise, asserted rather than assumed. A block named for the
+  // null-space slice that quietly stopped producing null-space rows is the
+  // exact failure this replaced.
+  expect(job.space_id).toBeNull();
+  return job.id;
+}
+
 describe("bulk-action jobs — null-space jobs", () => {
-  // The slice row-level security cannot fence. Every purge job lands here,
-  // because purge is platform-gated and so always runs unbound.
+  // The slice row-level security cannot fence: no space on the row means no
+  // space for a policy to compare against, so the route check stands alone
+  // on both dialects.
   it("cloaks a null-space job from a space-bound credential", async () => {
-    const jobNull = await queueJob(ctx.spaceKey, "scope-nullspace");
+    const jobNull = await queueNullSpaceJob("scope-nullspace");
     expect(await readJob(boundA, jobNull)).toBe(404);
   });
 
   it("still lets an operator key reach a null-space job it did not create", async () => {
-    const jobNull = await queueJob(ctx.spaceKey, "scope-nullspace-owner");
+    const jobNull = await queueNullSpaceJob("scope-nullspace-owner");
     expect(await readJob(operatorKey, jobNull)).toBe(200);
   });
 });
