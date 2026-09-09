@@ -886,11 +886,17 @@ describe("POST /types — publisher-tier handle ownership", () => {
     });
     expect(minted.status).toBe(403);
 
+    // Through the door with a credential that does hold `metadata.types`,
+    // which is what pins the removal: the publisher rule now answers for it
+    // rather than being skipped. The operator key would 403 at the metadata
+    // map instead, and would go on doing so if the exemption came back.
     const res = await request(hosted.app, "POST", "/types", {
-      key: hosted.operatorKey,
+      key: handlelessKey,
       body: { id: "somevendor.platform-seeded", ...baseType },
     });
     expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain('claiming the handle "somevendor"');
   });
 
   it("keeps the reserved-root refusal ahead of the ownership rule", async () => {

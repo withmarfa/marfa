@@ -385,7 +385,7 @@ describe("POST /keys — integration source prefixes are not mintable", () => {
 // Extensions — the reserved-namespace gate reads the operator flag
 // ---------------------------------------------------------------------------
 
-describe("extensions — the reserved namespaces are the operator's", () => {
+describe("extensions — the reserved namespaces are nobody's", () => {
   it("refuses a space-bound credential writing a reserved namespace", async () => {
     const space = await spaceStore().create("authority-ext-reserved");
     const boundCaller = await mintKey({
@@ -405,9 +405,14 @@ describe("extensions — the reserved namespaces are the operator's", () => {
       `/items/${item.id}/extensions/system`,
       { key: boundCaller, body: { injected: true } },
     );
-    // Reserved namespaces are the metadata-layer twin of the reserved
-    // type namespaces, which are gated on `is_operator`.
+    // Reserved namespaces are the metadata-layer twin of the reserved type
+    // namespaces: closed whatever the credential holds, and asserted on the
+    // message so a refusal that happened to arrive from the permission map
+    // instead could not stand in for this one.
     expect(res.status).toBe(403);
+    expect(
+      ((await res.json()) as { error: { message: string } }).error.message,
+    ).toContain('Namespace "system" is reserved');
   });
 
   it("refuses an operator key on a reserved namespace too", async () => {
@@ -440,5 +445,10 @@ describe("extensions — the reserved namespaces are the operator's", () => {
       { key: ctx.operatorKey, body: { ok: true } },
     );
     expect(res.status).toBe(403);
+    // The namespace refusal rather than the permission map's, which would
+    // also be a 403 and would leave this green if the fence came back.
+    expect(
+      ((await res.json()) as { error: { message: string } }).error.message,
+    ).toContain('Namespace "system" is reserved');
   });
 });

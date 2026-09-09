@@ -6,13 +6,19 @@
  * This coupling is intentional — the key label IS the namespace identity.
  * Additional access can be granted via extension_permissions on the key.
  *
- * Reserved namespaces (core, marfa, system) take the operator key. Two gates
- * stand in series and both have to pass: the namespace gate wants the
- * operator flag, and the extension permission map is then consulted like any
- * other caller's. The flag opens the namespace and grants no reach inside it,
- * so a credential minted through `POST /keys` — which takes no maps at
- * bootstrap — writes nothing here. Every real writer goes through the storage
- * layer instead.
+ * **Reserved namespaces (core, marfa, system) are closed to every
+ * credential.** They used to be fenced to the operator key, with the
+ * extension permission map consulted after the flag, so a writer had to hold
+ * both. Nothing can: the row constraint makes `is_operator` and space-less
+ * the same thing, and a space-less credential holds no permissions at all, so
+ * the map refused whatever the fence said. The fence went rather than staying
+ * as a gate that could not answer. What writes these namespaces is the
+ * platform's own machinery, through the storage layer, which is also what
+ * writes a `system.*` row.
+ *
+ * `connection.runtime` is a different thing and is not in that set: it is
+ * written by the connection's own runtime credential, under its own rule
+ * below.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -26,23 +32,6 @@ import {
 } from "@withmarfa/shared";
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
-
-/**
- * Reserved extension namespaces are the metadata-layer twin of the reserved
- * *type* namespaces, and `checkTypeAccess` now reads the same way: the write
- * is closed to every credential rather than fenced to the instance tier.
- *
- * The fence used to admit the operator key and then ask the namespace map
- * after it, which needed a credential holding both. There is none: the row
- * constraint makes `is_operator` and space-less the same thing, and a
- * space-less credential holds no permissions at all, so the map refused
- * whatever the fence said. What writes these namespaces is the platform's own
- * machinery, through the storage layer, which is also what writes a
- * `system.*` row.
- *
- * `connection.runtime` is a different thing and is not in this set: it is
- * written by the connection's own runtime credential, through its own rule.
- */
 
 import {
   RUNTIME_NAMESPACE,

@@ -2997,10 +2997,7 @@ export function itemRoutes(storage: Storage) {
     // below already covers it.** `planCascadeDelete` walks post-order and
     // pushes the root itself, so `toDelete` always contains the row named in
     // the URL and the loop inside the transaction asks the refusal of it like
-    // any other. A second call here was a duplicate rather than a defence,
-    // and it answered ahead of `guardDestroy`, so a runtime credential
-    // deleting a live connection it did not write read the uninstall refusal
-    // rather than the provenance one that actually applies to it.
+    // any other. A second call here was a duplicate rather than a defence.
     //
     // The check itself stays where the cascade is, and has to: the type gate
     // above ran against the named row alone, and a `parent-of` edge can carry
