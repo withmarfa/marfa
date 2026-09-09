@@ -95,7 +95,7 @@ describe("bootstrap mode", () => {
     const bootstrapSecret = await ensureBootstrapSecret(storage);
     const res = await request(app, "POST", "/keys", {
       key: bootstrapSecret,
-      body: { label: "bootstrap-admin", source: "bootstrap-admin" },
+      body: { label: "operator-key", source: "operator-key" },
     });
     expect(res.status).toBe(201);
     const data = (await res.json()) as Record<string, unknown>;
