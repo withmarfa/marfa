@@ -248,3 +248,15 @@ jobs:
           done
           echo "worker never reported healthy (last state: ${STATE:-unknown})" >&2
           exit 1
+
+      # The box keeps every image it ever pulled unless something removes
+      # them, and one server image per merge batch filled staging's disk in
+      # weeks, so a pull failed with "no space left on device" and read as a
+      # build fault. Prune only after both gates pass: a failed roll keeps
+      # the previous image on the box for the next attempt.
+      - name: Prune images the box no longer serves
+        env:
+          TARGET: ${{ steps.target.outputs.ssh }}
+        run: |
+          ssh -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new "$TARGET" \
+            "docker image prune -af >/dev/null && df -h / | tail -1"
