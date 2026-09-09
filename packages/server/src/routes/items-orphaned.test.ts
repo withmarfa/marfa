@@ -63,7 +63,7 @@ let elsewhereSpace: string;
  *  ordinary caller's is. */
 let homeKey: string;
 let elsewhereKey: string;
-let adminKeyId: string;
+let operatorKeyId: string;
 
 /** Item ids, so an assertion names the row it means rather than a position
  *  in a list. */
@@ -144,7 +144,7 @@ async function install(
   spaceId: string,
 ): Promise<string> {
   const result = await performInstall(ctx.storage, {
-    apiKeyId: adminKeyId,
+    apiKeyId: operatorKeyId,
     spaceId,
     integrationItemId,
     manifest: m,
@@ -241,9 +241,9 @@ beforeAll(async () => {
   // The default bootstrap leaves the event log unwired, and the replay half
   // of the stream contract needs `publish()` to append something to replay.
   initEventLog(ctx.storage.eventLog);
-  const admin = (await ctx.storage.keys.list()).find((k) => k.is_operator);
-  if (!admin) throw new Error("admin key not found in test ctx");
-  adminKeyId = admin.id;
+  const operator = (await ctx.storage.keys.list()).find((k) => k.is_operator);
+  if (!operator) throw new Error("operator key not found in test ctx");
+  operatorKeyId = operator.id;
 
   homeSpace = (await ctx.storage.spaces!.create("orphan-home")).id;
   elsewhereSpace = (await ctx.storage.spaces!.create("orphan-elsewhere")).id;
@@ -347,13 +347,13 @@ beforeAll(async () => {
   );
 
   await performUninstall(ctx.storage, {
-    apiKeyId: adminKeyId,
+    apiKeyId: operatorKeyId,
     spaceId: homeSpace,
     connectionId: goneConnection,
     clientIp: null,
   });
   await performPause(ctx.storage, {
-    apiKeyId: adminKeyId,
+    apiKeyId: operatorKeyId,
     spaceId: homeSpace,
     connectionId: pausedConnection,
     clientIp: null,
@@ -507,7 +507,7 @@ describe("the connection's lifecycle state is what moves the answer", () => {
     expect(before.orphaned).toBe(false);
 
     await performUninstall(ctx.storage, {
-      apiKeyId: adminKeyId,
+      apiKeyId: operatorKeyId,
       spaceId,
       connectionId,
       clientIp: null,
@@ -577,7 +577,7 @@ describe("two connections of one integration (D63)", () => {
     expect(rows.get(firstItem)?.source).toBe(rows.get(secondItem)?.source);
 
     await performUninstall(ctx.storage, {
-      apiKeyId: adminKeyId,
+      apiKeyId: operatorKeyId,
       spaceId,
       connectionId: first,
       clientIp: null,
@@ -636,7 +636,7 @@ describe("two connections of one integration (D63)", () => {
     expect(writers.get(goneRow.id)).toBeNull();
 
     await performUninstall(ctx.storage, {
-      apiKeyId: adminKeyId,
+      apiKeyId: operatorKeyId,
       spaceId,
       connectionId: goneConnection,
       clientIp: null,
@@ -1189,10 +1189,10 @@ describe("the space-less bucket", () => {
   });
 
   it("answers for space-less rows against space-less connections", async () => {
-    const admin = (await selfHost.storage.keys.list()).find(
+    const operator = (await selfHost.storage.keys.list()).find(
       (k) => k.is_operator,
     );
-    if (!admin) throw new Error("admin key not found");
+    if (!operator) throw new Error("operator key not found");
 
     const mk = async (m: IntegrationManifest): Promise<string> => {
       const suffix = Math.random().toString(36).slice(2, 12);
@@ -1213,7 +1213,7 @@ describe("the space-less bucket", () => {
         undefined,
       );
       const result = await performInstall(selfHost.storage, {
-        apiKeyId: admin.id,
+        apiKeyId: operator.id,
         spaceId: selfHost.spaceId,
         integrationItemId: row.id,
         manifest: m,
@@ -1274,7 +1274,7 @@ describe("the space-less bucket", () => {
     const handId = await write(selfHost.spaceKey, "self-host hand-written");
 
     await performUninstall(selfHost.storage, {
-      apiKeyId: admin.id,
+      apiKeyId: operator.id,
       spaceId: undefined,
       connectionId: goneConnection,
       clientIp: null,

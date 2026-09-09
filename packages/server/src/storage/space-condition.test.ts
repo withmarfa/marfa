@@ -50,7 +50,7 @@ function compiled(condition: SQL): { sql: string; params: unknown[] } {
 describe("spaceCondition", () => {
   it("produces no predicate at all for an absent space", () => {
     // The whole decision in one assertion. A caller with no space is the
-    // platform tier, so it sees every space rather than only the rows that
+    // operator tier, so it sees every space rather than only the rows that
     // belong to none.
     expect(whereClause(spaceCondition(items.space_id, undefined))).toBeNull();
   });

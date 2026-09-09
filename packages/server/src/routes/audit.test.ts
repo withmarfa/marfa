@@ -361,7 +361,7 @@ describe("GET /audit", () => {
   // NOTE: this test creates a SECOND TestContext with custom config.
   // Under PG, `createTestContext` truncates the shared database, so
   // any test running AFTER this one against the original `ctx` would
-  // see its admin key wiped. Keep this test LAST in the describe
+  // see its key wiped. Keep this test LAST in the describe
   // block — fresh-context tests must not run before any test that
   // relies on the file-level fixture.
   it("honors TRUSTED_PROXY_CIDRS when stamping the audit IP", async () => {

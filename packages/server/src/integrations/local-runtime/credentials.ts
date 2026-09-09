@@ -193,7 +193,7 @@ export async function mintLocalRuntimeCredential(
         );
       }
 
-      // A space-less credential is the platform tier, not a narrow one. The
+      // A space-less credential is the operator tier, not a narrow one. The
       // rule is the substrate's, not the transport's, so it applies to the
       // in-process mint exactly as it does to the HTTP one.
       //

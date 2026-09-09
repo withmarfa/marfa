@@ -70,8 +70,8 @@ interface Seed {
 }
 
 const SEEDS: Seed[] = [
-  // The classic case: a space admin with nothing on its row, reaching
-  // everything through the bypass.
+  // The classic case: a key carrying the retired `space_admin` role with
+  // nothing on its row, reaching everything through the bypass.
   {
     id: "empty-maps",
     space: "s1",

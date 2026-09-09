@@ -31,10 +31,13 @@ let ctx: TestContext;
 
 const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
 const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
-let adminA: string;
-let adminB: string;
+let keyA: string;
+let keyB: string;
 
-async function mintSpaceAdmin(label: string, spaceId: string): Promise<string> {
+async function mintFullSpaceKey(
+  label: string,
+  spaceId: string,
+): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_ebulk_scope_${suffix}`;
   await ctx.storage.keys.create(
@@ -108,8 +111,8 @@ async function listEdges(
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  adminA = await mintSpaceAdmin("ebulk-admin-a", spaceA);
-  adminB = await mintSpaceAdmin("ebulk-admin-b", spaceB);
+  keyA = await mintFullSpaceKey("ebulk-key-a", spaceA);
+  keyB = await mintFullSpaceKey("ebulk-key-b", spaceB);
 });
 
 afterAll(async () => {
@@ -118,10 +121,10 @@ afterAll(async () => {
 
 describe("POST /edges/bulk — a space-bound credential within its own space", () => {
   it("bulk-creates and upserts edges in its own space", async () => {
-    const { sourceId, targetId } = await makePair(adminA);
+    const { sourceId, targetId } = await makePair(keyA);
 
     const create = await request(ctx.app, "POST", "/edges/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         edges: [
           {
@@ -140,7 +143,7 @@ describe("POST /edges/bulk — a space-bound credential within its own space", (
 
     // Upsert the same triple — updates in place within A.
     const upsert = await request(ctx.app, "POST", "/edges/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         edges: [
           {
@@ -156,7 +159,7 @@ describe("POST /edges/bulk — a space-bound credential within its own space", (
     expect(upsertBody.counts.updated).toBe(1);
     expect(upsertBody.results[0]!.id).toBe(edgeId);
 
-    const edges = await listEdges(adminA, sourceId);
+    const edges = await listEdges(keyA, sourceId);
     expect(edges.find((e) => e.id === edgeId)?.properties.weight).toBe(42);
   });
 });
@@ -166,10 +169,10 @@ describe("POST /edges/bulk — cross-space isolation", () => {
     // B owns a pair. A bulk-creates an edge referencing B's ids. The create
     // path resolves source/target within A's space, so both are 'not
     // found' and the edge errors out — no cross-space graph edge lands.
-    const bPair = await makePair(adminB);
+    const bPair = await makePair(keyB);
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         edges: [
           {
@@ -188,7 +191,7 @@ describe("POST /edges/bulk — cross-space isolation", () => {
     expect(body.results[0]!.error?.code).toBe("item_not_found");
 
     // B's source still has no 'about' edge.
-    const bEdges = await listEdges(adminB, bPair.sourceId);
+    const bEdges = await listEdges(keyB, bPair.sourceId);
     expect(bEdges).toHaveLength(0);
   });
 
@@ -198,9 +201,9 @@ describe("POST /edges/bulk — cross-space isolation", () => {
     // target, type) triple as B cannot see B's edge. Since A's own items by
     // those ids don't exist in A, A's create errors — B's edge is untouched
     // and its weight unchanged.
-    const bPair = await makePair(adminB);
+    const bPair = await makePair(keyB);
     const seed = await request(ctx.app, "POST", "/edges/bulk", {
-      key: adminB,
+      key: keyB,
       body: {
         edges: [
           {
@@ -217,7 +220,7 @@ describe("POST /edges/bulk — cross-space isolation", () => {
 
     // A attempts to upsert the identical triple with a different weight.
     const attempt = await request(ctx.app, "POST", "/edges/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         edges: [
           {
@@ -237,7 +240,7 @@ describe("POST /edges/bulk — cross-space isolation", () => {
     expect(attemptBody.counts.errored).toBe(1);
 
     // B's edge is intact with its original weight.
-    const bEdges = await listEdges(adminB, bPair.sourceId);
+    const bEdges = await listEdges(keyB, bPair.sourceId);
     expect(bEdges.find((e) => e.id === bEdgeId)?.properties.weight).toBe(7);
   });
 });

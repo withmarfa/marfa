@@ -246,14 +246,14 @@ async function authUserIdFor(c: TestContext, email: string): Promise<string> {
  * makes a space-less credential an operator credential — which would be the
  * very thing this fixture has to not be.
  */
-async function spaceAdminKey(c: TestContext): Promise<string> {
+async function spaceBoundKey(c: TestContext): Promise<string> {
   const suffix = randomBytes(5).toString("hex");
-  const raw = `marfa_k1_spaceadmin_${suffix}`;
-  const space = await c.storage.spaces!.create(`oauth-client-admin-${suffix}`);
+  const raw = `marfa_k1_spacebound_${suffix}`;
+  const space = await c.storage.spaces!.create(`oauth-client-bound-${suffix}`);
   await c.storage.keys.create(
     {
-      label: `space-admin-${suffix}`,
-      source: `space-admin-${suffix}`,
+      label: `space-bound-${suffix}`,
+      source: `space-bound-${suffix}`,
       space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: { "*": "write" },
       default_tier: "library",
@@ -300,13 +300,13 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     // The whole space-permission set is what the first person in a space
     // holds, and what a gate widened to `requireAuth` would admit; this
     // route walks every space, so it has to be refused too.
-    const asSpaceAdmin = await deleteClient(
+    const asSpaceBound = await deleteClient(
       ctx,
       clientId,
       clientId,
-      await spaceAdminKey(ctx),
+      await spaceBoundKey(ctx),
     );
-    expect(asSpaceAdmin.status).toBe(403);
+    expect(asSpaceBound.status).toBe(403);
 
     const mismatch = await deleteClient(
       ctx,

@@ -6,7 +6,7 @@
  *
  *   1. A credential is fenced by a space. A Connection installed
  *      without one produced a credential with no `space_id`, which is
- *      not a narrow credential but the platform tier: the RLS wrapper
+ *      not a narrow credential but the operator tier: the RLS wrapper
  *      skips it and the storage layer drops its space predicate, so
  *      reading `core.note` returned other customers' rows.
  *   2. A credential's item provenance survives its own rotation. The

@@ -486,12 +486,12 @@ async function resolveGrantItemId(
 
 function mintDetails(
   c: Context<AppEnv>,
-  platformTierMint: boolean,
+  operatorTierMint: boolean,
   grantItemId: string | null,
 ): Record<string, unknown> | undefined {
-  const base = platformTierMint ? { platform_tier: true } : {};
+  const base = operatorTierMint ? { operator_tier: true } : {};
   const grant = c.get("oauthGrant");
-  if (!grant) return platformTierMint ? base : undefined;
+  if (!grant) return operatorTierMint ? base : undefined;
   return {
     ...base,
     client_id: grant.clientId,
@@ -1172,7 +1172,7 @@ export function keyRoutes(
       // every such credential can be enumerated later. Derived from the stored
       // space alone rather than from how the instance is configured, so the
       // trail stays accurate whatever the deployment shape.
-      const platformTierMint = !newKeySpaceId;
+      const operatorTierMint = !newKeySpaceId;
 
       void storage.audit.log({
         client_ip: c.get("clientIp") ?? null,
@@ -1181,7 +1181,7 @@ export function keyRoutes(
         action: isBootstrap ? "key.bootstrap" : "key.create",
         resource_type: "key",
         resource_id: stored.id,
-        details: mintDetails(c, platformTierMint, grantItemId),
+        details: mintDetails(c, operatorTierMint, grantItemId),
       });
 
       // **A keys-mode instance gets its space here, not by hand.** The operator

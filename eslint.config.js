@@ -83,7 +83,7 @@ export default [
     // Written inline it was written differently in each store, and the
     // stores then disagreed about what an absent space means: most read
     // it as "every space", one key-store method read it as "the rows
-    // with no space". A platform admin uninstalling a space's connection
+    // with no space". An operator uninstalling a space's connection
     // resolved the connection under the first reading and looked for its
     // credentials under the second, so the revocation list came back
     // empty every time while the pipeline reported success. Nothing about

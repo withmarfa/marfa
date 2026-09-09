@@ -44,13 +44,13 @@ afterEach(async () => {
  * no credential at all cannot tell the two apart: it would pass against
  * `requireAuth` just as happily.
  */
-async function mintSpaceBoundAdmin(ctx: TestContext): Promise<string> {
+async function mintSpaceBoundKey(ctx: TestContext): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
   const raw = `marfa_k1_platform_types_${suffix}`;
   await ctx.storage.keys.create(
     {
-      label: `space-admin-${suffix}`,
-      source: `space-admin-${suffix}`,
+      label: `space-bound-${suffix}`,
+      source: `space-bound-${suffix}`,
       space_permissions: [...SPACE_PERMISSIONS],
       default_tier: "library",
       type_permissions: {},
@@ -88,7 +88,7 @@ describe("GET /admin/platform-types/drift", () => {
   it("refuses an admin bound to a space", async () => {
     const ctx = await newContext();
     const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
-      key: await mintSpaceBoundAdmin(ctx),
+      key: await mintSpaceBoundKey(ctx),
     });
     expect(res.status).toBe(403);
   });
@@ -152,7 +152,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       ctx.app,
       "POST",
       "/admin/platform-types/core.anything/remove",
-      { key: await mintSpaceBoundAdmin(ctx) },
+      { key: await mintSpaceBoundKey(ctx) },
     );
     expect(res.status).toBe(403);
   });

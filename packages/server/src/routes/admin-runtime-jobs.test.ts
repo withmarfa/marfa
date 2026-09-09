@@ -84,8 +84,8 @@ describe("admin runtime dead-letter routes", () => {
     spaceKey = `marfa_k1_test_space_bound_${suffix}`;
     await ctx.storage.keys.create(
       {
-        label: `test-space-admin-${suffix}`,
-        source: `test-space-admin-${suffix}`,
+        label: `test-space-bound-${suffix}`,
+        source: `test-space-bound-${suffix}`,
         space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "*": "write" },
         default_tier: "library",

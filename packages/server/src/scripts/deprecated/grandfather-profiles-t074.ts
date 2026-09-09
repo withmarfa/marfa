@@ -318,7 +318,7 @@ async function main(): Promise<void> {
   const apiKeySalt = process.env.API_KEY_SALT;
   if (!apiKeySalt) {
     throw new Error(
-      "API_KEY_SALT is required so minted admin keys hash to the value the running server expects",
+      "API_KEY_SALT is required so minted keys hash to the value the running server expects",
     );
   }
   let storage: Storage;

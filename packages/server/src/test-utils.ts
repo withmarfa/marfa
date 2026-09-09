@@ -87,7 +87,7 @@ export interface TestContext {
    * A credential bound to `spaceId`, holding every space permission and
    * writing every content family — an ordinary working key, and what a
    * self-hoster is handed alongside the operator key. This is the suite's
-   * working credential: content, space administration, everything but the
+   * working credential: content, the space permissions, everything but the
    * instance routes.
    */
   spaceKey: string;
@@ -1261,8 +1261,8 @@ export async function settle(ms = 50): Promise<void> {
 export function collectItemEvents(
   signal: AbortSignal,
   /** The same fence `GET /events` applies for a scoped viewer, so a frame
-   *  published without a space — or with the wrong one — is invisible here
-   *  too. Omit it to watch everything, which is what a platform key sees. */
+   *  published without a space, or with the wrong one, is invisible here
+   *  too. Omit it to watch everything, which is what the operator key sees. */
   spaceId?: string,
 ): {
   events: ItemEventWithId[];

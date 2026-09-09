@@ -28,8 +28,8 @@ const SALT = "test-salt";
 interface HostedContext {
   app: Hono<AppEnv>;
   storage: Storage;
-  platformAdminKey: string;
-  spaceAdminKey: string;
+  operatorKey: string;
+  spaceKey: string;
   spaceId: string;
   cleanup: () => Promise<void>;
 }
@@ -94,8 +94,8 @@ async function createHostedContext(): Promise<HostedContext> {
   });
 
   const suffix = Math.random().toString(36).slice(2, 10);
-  const platformAdminKey = `marfa_k1_platform_quotas_${suffix}`;
-  const spaceAdminKey = `marfa_k1_space_cfg_${suffix}`;
+  const operatorKey = `marfa_k1_operator_quotas_${suffix}`;
+  const spaceKey = `marfa_k1_space_cfg_${suffix}`;
 
   // Create the space row first (required for FK under hosted-mode pg).
   const space = await storage.spaces!.create();
@@ -103,24 +103,24 @@ async function createHostedContext(): Promise<HostedContext> {
 
   await storage.keys.create(
     {
-      label: "platform-quotas-admin",
-      source: `platform-quotas-${suffix}`,
+      label: "operator-quotas",
+      source: `operator-quotas-${suffix}`,
       is_operator: true,
       type_permissions: {},
       default_tier: "feed",
     },
-    hashApiKey(platformAdminKey, SALT),
+    hashApiKey(operatorKey, SALT),
   );
 
   await storage.keys.create(
     {
-      label: "space-cfg-admin",
+      label: "space-cfg",
       source: `space-cfg-${suffix}`,
       space_permissions: [...SPACE_PERMISSIONS],
       type_permissions: {},
       default_tier: "feed",
     },
-    hashApiKey(spaceAdminKey, SALT),
+    hashApiKey(spaceKey, SALT),
     spaceId,
   );
   await storage.settings.set("bootstrapped", "true");
@@ -128,8 +128,8 @@ async function createHostedContext(): Promise<HostedContext> {
   return {
     app,
     storage,
-    platformAdminKey,
-    spaceAdminKey,
+    operatorKey,
+    spaceKey,
     spaceId,
     cleanup: async () => {
       if (pgCleanup) {
@@ -156,7 +156,7 @@ afterAll(async () => {
 });
 
 describe("GET /spaces/me/config — keys-mode fallback", () => {
-  it("requires admin — 401 without credentials", async () => {
+  it("401 without credentials", async () => {
     const res = await request(ctx.app, "GET", "/spaces/me/config");
     expect(res.status).toBe(401);
   });
@@ -174,7 +174,7 @@ describe("GET /spaces/me/config — keys-mode fallback", () => {
 });
 
 describe("PUT /spaces/me/config — keys-mode fallback", () => {
-  it("requires admin — 401 without credentials", async () => {
+  it("401 without credentials", async () => {
     const res = await request(ctx.app, "PUT", "/spaces/me/config", {
       body: {},
     });
@@ -212,14 +212,14 @@ describe("Space config — hosted mode", () => {
     await hosted.cleanup();
   });
 
-  it("GET returns stored config for a space-scoped admin", async () => {
+  it("GET returns stored config for a space-scoped caller", async () => {
     expect(hosted.storage.spaces).toBeDefined();
     await hosted.storage.spaces!.updateConfig(hosted.spaceId, {
       enforcement: { strict_mode: { types: ["core.note"] } },
     });
 
     const res = await request(hosted.app, "GET", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -230,7 +230,7 @@ describe("Space config — hosted mode", () => {
 
   it("PUT rejects a negative cleanup-job override with 400", async () => {
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: {
         audit_retention_days: -1,
       },
@@ -245,13 +245,13 @@ describe("Space config — hosted mode", () => {
     // route accepts and drops is worse than one it refuses: PUT is a full
     // replacement, so following the documentation un-sets the neighbours.
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },
     });
     expect(res.status).toBe(200);
 
     const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as {
@@ -264,7 +264,7 @@ describe("Space config — hosted mode", () => {
 
   it("PUT rejects a negative activity retention override with 400", async () => {
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { activity_retention_days: -1 },
     });
     expect(res.status).toBe(400);
@@ -278,13 +278,13 @@ describe("Space config — hosted mode", () => {
   // a well-formed body and would pass either way.
   it("PUT refuses a mistyped key instead of dropping it", async () => {
     const good = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { activity_retention_days: 30, trash_retention_days: 7 },
     });
     expect(good.status).toBe(200);
 
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { activity_retention_day: 30 },
     });
     expect(res.status).toBe(400);
@@ -294,7 +294,7 @@ describe("Space config — hosted mode", () => {
     // And the refusal left the space's config alone, which is the whole
     // point: the old behavior returned 200 with this now empty.
     const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
     });
     const getBody = (await getRes.json()) as {
       activity_retention_days?: number;
@@ -304,21 +304,21 @@ describe("Space config — hosted mode", () => {
     expect(getBody.trash_retention_days).toBe(7);
   });
 
-  // Documented in the shared type as admin-writable through this route, read
+  // Documented in the shared type as writable through this route, read
   // by the publish path, and absent from the route's schema until now, so the
   // one way it was documented to be set was the one way it could not be.
   // The outer object refusing an unknown key while the nested one accepts it
   // is the same defect one level down, and `.strict()` does not recurse.
   it("PUT refuses a mistyped key inside enforcement too", async () => {
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { enforcement: { strict_modes: { types: ["core.note"] } } },
     });
     expect(res.status).toBe(400);
 
     // And one level deeper again, inside a block that does exist.
     const deeper = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { enforcement: { strict_mode: { types: [], typo: 1 } } },
     });
     expect(deeper.status).toBe(400);
@@ -326,14 +326,14 @@ describe("Space config — hosted mode", () => {
 
   it("PUT refuses a hop budget past the ceiling", async () => {
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { max_event_hop_budget: 101 },
     });
     expect(res.status).toBe(400);
 
     // At the ceiling is fine. A bound nobody can reach is not a bound.
     const ok = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { max_event_hop_budget: 100 },
     });
     expect(ok.status).toBe(200);
@@ -341,7 +341,7 @@ describe("Space config — hosted mode", () => {
 
   it("PUT accepts the hop budget the event pipeline reads", async () => {
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { max_event_hop_budget: 9 },
     });
     expect(res.status).toBe(200);
@@ -350,7 +350,7 @@ describe("Space config — hosted mode", () => {
     });
 
     const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
     });
     expect(
       ((await getRes.json()) as { max_event_hop_budget?: number })
@@ -360,7 +360,7 @@ describe("Space config — hosted mode", () => {
 
   it("PUT rejects a negative hop budget with 400", async () => {
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: { max_event_hop_budget: -1 },
     });
     expect(res.status).toBe(400);
@@ -372,7 +372,7 @@ describe("Space config — hosted mode", () => {
       audit_retention_days: 45,
     };
     const res = await request(hosted.app, "PUT", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
       body: config,
     });
     expect(res.status).toBe(200);
@@ -382,7 +382,7 @@ describe("Space config — hosted mode", () => {
 
     // Round-trip: GET must return the persisted value.
     const getRes = await request(hosted.app, "GET", "/spaces/me/config", {
-      key: hosted.spaceAdminKey,
+      key: hosted.spaceKey,
     });
     expect(getRes.status).toBe(200);
     const getBody = (await getRes.json()) as typeof config;
@@ -409,7 +409,7 @@ describe("Space config — hosted mode", () => {
       hosted.app,
       "GET",
       `/spaces/${unknownSpaceId}/quotas`,
-      { key: hosted.platformAdminKey },
+      { key: hosted.operatorKey },
     );
 
     expect(res.status).toBe(404);
@@ -424,7 +424,7 @@ describe("Space config — hosted mode", () => {
       "PUT",
       `/spaces/${unknownSpaceId}/quotas`,
       {
-        key: hosted.platformAdminKey,
+        key: hosted.operatorKey,
         body: { items_limit: 10 },
       },
     );
@@ -441,7 +441,7 @@ describe("Space config — hosted mode", () => {
       "PUT",
       `/spaces/${hosted.spaceId}/quotas`,
       {
-        key: hosted.platformAdminKey,
+        key: hosted.operatorKey,
         body: { items_limit: 25 },
       },
     );
@@ -451,7 +451,7 @@ describe("Space config — hosted mode", () => {
       hosted.app,
       "GET",
       `/spaces/${hosted.spaceId}/quotas`,
-      { key: hosted.platformAdminKey },
+      { key: hosted.operatorKey },
     );
     expect(getRes.status).toBe(200);
     const body = (await getRes.json()) as { items_limit: number | null };

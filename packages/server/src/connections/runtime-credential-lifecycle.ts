@@ -46,7 +46,7 @@ export async function resolveRuntimeCredentialManifest(
  * by a space.
  *
  * A credential with no `space_id` is not a narrow credential — it is
- * the platform tier. The per-request RLS wrapper skips a space-less
+ * the operator tier. The per-request RLS wrapper skips a space-less
  * caller entirely, and the storage layer's space predicate widens from
  * an equality to no predicate at all, so the credential reads and
  * writes every space's rows. A Connection installed by the operator key

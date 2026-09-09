@@ -28,10 +28,13 @@ let ctx: TestContext;
 
 const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
 const spaceB = `space-b-${Math.random().toString(36).slice(2, 10)}`;
-let adminA: string;
-let adminB: string;
+let keyA: string;
+let keyB: string;
 
-async function mintSpaceAdmin(label: string, spaceId: string): Promise<string> {
+async function mintFullSpaceKey(
+  label: string,
+  spaceId: string,
+): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const raw = `marfa_k1_bulk_scope_${suffix}`;
   await ctx.storage.keys.create(
@@ -62,8 +65,8 @@ interface BulkResponse {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  adminA = await mintSpaceAdmin("bulk-admin-a", spaceA);
-  adminB = await mintSpaceAdmin("bulk-admin-b", spaceB);
+  keyA = await mintFullSpaceKey("bulk-key-a", spaceA);
+  keyB = await mintFullSpaceKey("bulk-key-b", spaceB);
 });
 
 afterAll(async () => {
@@ -74,7 +77,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
   it("bulk-creates items in its own space", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         items: [
           {
@@ -97,11 +100,11 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
     // Both rows are visible to A and invisible to B.
     for (const r of body.results) {
       const getA = await request(ctx.app, "GET", `/items/${r.id}`, {
-        key: adminA,
+        key: keyA,
       });
       expect(getA.status).toBe(200);
       const getB = await request(ctx.app, "GET", `/items/${r.id}`, {
-        key: adminB,
+        key: keyB,
       });
       expect(getB.status).toBe(404);
     }
@@ -115,7 +118,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
     // `source` is stamped per-credential and the lookup is space-fenced,
     // these are two distinct rows in two spaces.
     const createA = await request(ctx.app, "POST", "/items/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         items: [
           {
@@ -127,7 +130,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
       },
     });
     const createB = await request(ctx.app, "POST", "/items/bulk", {
-      key: adminB,
+      key: keyB,
       body: {
         items: [
           {
@@ -144,7 +147,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
 
     // A upserts the shared source_id again. It must update A's row only.
     const upsertA = await request(ctx.app, "POST", "/items/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         items: [
           {
@@ -162,7 +165,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
 
     // B's row is untouched.
     const getB = await request(ctx.app, "GET", `/items/${idB}`, {
-      key: adminB,
+      key: keyB,
     });
     const itemB = (await getB.json()) as {
       item: { properties: { body: string } };
@@ -178,7 +181,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
     // errored outcome), NOT a cross-space update and NOT an opaque 500.
     const suffix = Math.random().toString(36).slice(2, 8);
     const createB = await request(ctx.app, "POST", "/items/bulk", {
-      key: adminB,
+      key: keyB,
       body: {
         items: [{ type: "core.note", properties: { body: "B-private" } }],
       },
@@ -186,7 +189,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
     const idB = ((await createB.json()) as BulkResponse).results[0]!.id;
 
     const upsertA = await request(ctx.app, "POST", "/items/bulk", {
-      key: adminA,
+      key: keyA,
       body: {
         items: [
           {
@@ -209,7 +212,7 @@ describe("POST /items/bulk — a space-bound credential within its own space", (
 
     // B's original row is unchanged — A never touched it.
     const getB = await request(ctx.app, "GET", `/items/${idB}`, {
-      key: adminB,
+      key: keyB,
     });
     const itemB = (await getB.json()) as {
       item: { properties: { body: string } };

@@ -170,7 +170,7 @@ export async function withRlsSpaceTransaction<T>(
  * **Identity is not a weaker fence, it is the absence of one, and both
  * cases that produce it are already unfenced today.** With
  * `rlsEnforce` off or on SQLite there are no policies to enforce, and a
- * request with no space on its key is the platform tier, which reads
+ * request with no space on its key is the operator tier, which reads
  * across spaces by design.
  *
  * A phase is as much work as can be done without waiting on anything

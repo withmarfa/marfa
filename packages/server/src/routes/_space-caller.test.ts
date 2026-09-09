@@ -91,7 +91,7 @@ describe("resolveSpaceCaller — the session branch", () => {
   it("refuses when no space resolves, rather than returning an unscoped caller", async () => {
     // The dangerous shape. `spaceId: undefined` reads downstream as "do
     // not filter by space", so returning it for a session whose space
-    // could not be resolved hands a browser caller the platform tier.
+    // could not be resolved hands a browser caller the operator tier.
     await expect(resolve(null)).rejects.toMatchObject({
       code: ErrorCode.FORBIDDEN,
     });

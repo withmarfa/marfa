@@ -28,7 +28,7 @@
  * reverses them in reverse order. The compensations are idempotent.
  *
  * Step 2 survives the mint it used to guard, and deliberately. Whether a
- * Connection may produce a platform-tier credential is a property of the
+ * Connection may produce an operator-tier credential is a property of the
  * Connection rather than of any one mint, and this is the third of three
  * doors enforcing it: a space-less Connection on a hosted deployment
  * must not exist in an installable state at all. Checking it here means
