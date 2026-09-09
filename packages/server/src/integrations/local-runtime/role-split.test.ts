@@ -260,12 +260,12 @@ describe.skipIf(!isPg)("cross-role dispatch hand-off (real pg-boss)", () => {
       // Both supervisors resolve dispatches against a real Connection so the
       // mint path works; the integration + connection rows are shared.
       //
-      // **The connection needs a space and the catalogue row must not have
+      // **The connection needs a space and the catalog row must not have
       // one.** A runtime credential is space-bound or it does not exist, since
       // a space-less credential is the operator key and nothing else — so a
       // connection with no space cannot mint one and the dispatch below would
       // hang rather than fail loudly. The `system.integration` row stays
-      // space-less deliberately: that is the registered-manifest catalogue,
+      // space-less deliberately: that is the registered-manifest catalog,
       // written with no space so one registration is visible everywhere.
       const space = await storage.spaces?.create("role-split");
       if (!space) throw new Error("role-split: storage has no space store");

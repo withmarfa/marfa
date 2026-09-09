@@ -130,7 +130,7 @@ describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
   it("provisions for an instance whose only data is its own registered types", async () => {
     // The case two signals missed. This instance never held an ordinary key
     // — the bootstrap key admitted itself past every map under the old model
-    // — and its only space-less items are the manifest catalogue, which the
+    // — and its only space-less items are the manifest catalog, which the
     // move deliberately leaves alone. Its registered types are real data and
     // stop resolving the moment a caller holds a space id.
     const client = await seeded("registered-types-only", async (c) => {
@@ -142,7 +142,7 @@ describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
       });
       await c.execute({
         sql: `INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
-              VALUES ('catalogue', NULL, 'system.integration', 'active', '{}', ?, ?, ?)`,
+              VALUES ('catalog', NULL, 'system.integration', 'active', '{}', ?, ?, ?)`,
         args: [NOW, NOW, NOW],
       });
       await c.execute({
@@ -160,12 +160,12 @@ describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
     );
     expect(types.rows[0]!.space_id).toBe(PROVISIONED);
 
-    // The catalogue row is the discriminator, and it stays where it is: one
+    // The catalog row is the discriminator, and it stays where it is: one
     // registration is meant to be visible from every space.
-    const catalogue = await client.execute(
-      "SELECT space_id FROM items WHERE id = 'catalogue'",
+    const catalog = await client.execute(
+      "SELECT space_id FROM items WHERE id = 'catalog'",
     );
-    expect(catalogue.rows[0]!.space_id).toBeNull();
+    expect(catalog.rows[0]!.space_id).toBeNull();
   });
 
   it("does not provision for an instance holding only an OAuth grant projection", async () => {
@@ -495,7 +495,7 @@ describe.skipIf(!isPg || !adminUrl)(
       `;
         await sql`
         INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
-        VALUES ('catalogue', NULL, 'system.integration', 'active', '{}'::jsonb, ${NOW}, ${NOW}, ${NOW})
+        VALUES ('catalog', NULL, 'system.integration', 'active', '{}'::jsonb, ${NOW}, ${NOW}, ${NOW})
       `;
         await sql`
         INSERT INTO custom_types (space_id, id, schema, origin, created_at, updated_at)
@@ -510,10 +510,10 @@ describe.skipIf(!isPg || !adminUrl)(
         SELECT space_id FROM custom_types WHERE id = 'my.recipe'
       `;
         expect(types[0]!.space_id).toBe(PROVISIONED);
-        const catalogue = await sql<{ space_id: string | null }[]>`
-        SELECT space_id FROM items WHERE id = 'catalogue'
+        const catalog = await sql<{ space_id: string | null }[]>`
+        SELECT space_id FROM items WHERE id = 'catalog'
       `;
-        expect(catalogue[0]!.space_id).toBeNull();
+        expect(catalog[0]!.space_id).toBeNull();
       } finally {
         await sql.end({ timeout: 5 });
       }

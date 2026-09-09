@@ -133,7 +133,7 @@ export class SqliteAuditStore implements AuditStore {
     }
     // Space scope: when the caller is space-scoped (filter explicitly
     // set), restrict to rows with matching `space_id`. When omitted,
-    // no space filter is applied — bootstrap-admin reads on self-hosted,
+    // no space filter is applied — operator-key reads on self-hosted,
     // plus the cleanup job which is currently global.
     if (filters.space_id !== undefined && filters.space_id !== null) {
       conditions.push(eq(auditLog.space_id, filters.space_id));

@@ -7,7 +7,7 @@
 // platform JWKS without needing a shared secret.
 //
 // The private JWK lives in the `settings` table (key
-// `oidc.signing.keypair`) — same KV the bootstrap-admin sentinel uses.
+// `oidc.signing.keypair`) — same KV the bootstrapped sentinel uses.
 // Persisting in DB rather than env keeps single-host self-hosts working
 // out of the box, and lets multi-instance deployments rotate keys by
 // updating one row.
