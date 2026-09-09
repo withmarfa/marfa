@@ -1155,9 +1155,20 @@ async function cascadeClientRevoke(
       // records have to follow.
     }
 
-    const spaceId = row.referenceId ?? undefined;
+    // **The token names the bucket, unless it names none.** A refresh token
+    // minted before a grant's space resolved carries a NULL reference, and
+    // the migration that moves a stranded projection into the space the
+    // resolver now answers does not rewrite the token rows behind it. A
+    // lookup keyed on the token alone would then miss the row that moved,
+    // and this cascade would report an ended grant over a live one on the
+    // security page — the silent revoke this whole change exists to close,
+    // arriving through the one surface that reads the space off a token
+    // rather than off the account. Asking the resolver for that case is what
+    // every other caller of the question does.
+    const spaceId =
+      row.referenceId ?? (await resolveSpaceIdForAuthUser(storage, row.userId));
     grantItemId = await provider.findGrantItemId({
-      spaceId: row.referenceId,
+      spaceId: spaceId ?? null,
       clientId: row.clientId,
       authUserId: row.userId,
     });
@@ -1218,9 +1229,17 @@ async function cascadeClientRevoke(
  *     until TTL. We pre-emptively delete them for (clientId, userId) so a
  *     parallel request can't slip through with one. Best-effort.
  *
- * Active tokens fall through to the plugin's rotation. Any failure of the
- * lookup itself fails open (logs, returns) so a transient DB blip never
- * turns a legitimate refresh into a hard error.
+ *  3. **Active token with no space → `invalid_grant` (400).** The plugin
+ *     copies the presented token's `reference_id` onto the rotated one
+ *     rather than resolving it again, so an unbound token rotates into
+ *     another unbound token and the bearer middleware turns every request
+ *     through it away. Refusing here is what puts a reason in front of a
+ *     client, and this is the only grant that reaches a mint without a code,
+ *     so no other guard covers it.
+ *
+ * Every other active token falls through to the plugin's rotation. Any
+ * failure of the lookup itself fails open (logs, returns) so a transient DB
+ * blip never turns a legitimate refresh into a hard error.
  */
 function stripTrailingSlash(s: string): string {
   return s.replace(/\/+$/, "");
@@ -1906,7 +1925,30 @@ async function guardRefreshTokenGrant(
       error_description: "The refresh token is invalid, expired, or revoked.",
     });
   }
-  if (!row.revoked) return; // active — let the plugin rotate
+  if (!row.revoked) {
+    // **An active refresh token with no space rotates into another one with
+    // no space.** The plugin carries the presented token's `reference_id`
+    // forward verbatim rather than re-resolving it, so a token minted before
+    // a grant's space resolved mints its replacement exactly as unbound, and
+    // the bearer middleware refuses that on every request with nothing naming
+    // the cause. Refused here instead, in the field a client reads. This is
+    // the one grant type that reaches a mint without passing through a code,
+    // so the authorization-code guard below never sees it.
+    //
+    // Only the NULL case. A token carrying a real space keeps it even if the
+    // account has since moved: the token's own binding is the grant, and
+    // re-resolving here would refuse a credential that works.
+    if (row.referenceId === null) {
+      log("info", "oauth refresh refused: the grant carries no space", {
+        client_id: row.clientId,
+      });
+      throw new APIError("BAD_REQUEST", {
+        error: "invalid_grant",
+        error_description: NO_GRANT_SPACE_MESSAGE,
+      });
+    }
+    return; // active — let the plugin rotate
+  }
 
   // Confirmed replay. Zap access tokens for this grant chain so they can't
   // outlive the now-poisoned refresh chain. Best-effort + idempotent.
@@ -1953,9 +1995,16 @@ async function guardRefreshTokenGrant(
  * rotates indefinitely. A short race converts into a permanent grant, and
  * the user's own security page reports the app as revoked the whole time.
  *
- * Fails open on a lookup error and on an unrecognised code: the plugin owns
+ * Fails open on a lookup error and on an unrecognized code: the plugin owns
  * the real validation, and a transient database blip must not turn a
  * legitimate exchange into a hard failure.
+ *
+ * **The space check below is the one exception, and it is deliberate.** The
+ * plugin resolves a grant's space at authorize time and stores it on the
+ * code, so nothing downstream asks the question again: failing open here
+ * mints the unbound token this check exists to prevent, which is the one
+ * outcome worse than a refusal. It answers 503 rather than the plugin's bare
+ * 500, so a client reads a retryable reason instead of an empty body.
  */
 async function guardAuthorizationCodeGrant(
   ctx: HookCtxLite,
@@ -2006,7 +2055,26 @@ async function guardAuthorizationCodeGrant(
   // point, so this does not spare the redirect; what it spares is a
   // credential that mints and then reaches nothing, and it names the cause
   // where a client is listening.
-  if ((await resolveSpaceIdForAuthUser(storage, row.userId)) === undefined) {
+  //
+  // Bracketed because this one check does not share the function's fail-open
+  // rule and the difference has to be visible: an unreadable answer is not
+  // permission to mint, so a blip refuses with a retryable code rather than
+  // falling through to a token nothing will accept.
+  let codeGrantSpaceId: string | undefined;
+  try {
+    codeGrantSpaceId = await resolveSpaceIdForAuthUser(storage, row.userId);
+  } catch (err) {
+    log("warn", "oauth authorization-code space lookup failed", {
+      client_id: row.clientId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw new APIError("SERVICE_UNAVAILABLE", {
+      error: "temporarily_unavailable",
+      error_description:
+        "The space this grant belongs to could not be read. Try again.",
+    });
+  }
+  if (codeGrantSpaceId === undefined) {
     log("info", "oauth authorization-code refused: no space for the account", {
       client_id: row.clientId,
     });
