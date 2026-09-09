@@ -2993,12 +2993,18 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
     requireTypeAccess(c, targetItem.type, "write");
-    // **No live-connection refusal on the named row.** `requireTypeAccess`
-    // above refuses a `system.connection` write to every credential the
-    // product can mint, so a refusal here could never answer. The cascade
-    // below is a different matter and keeps its check: the type gate ran
-    // against the row named in the URL, and a `parent-of` edge can carry a
-    // connection out through a delete of something else entirely.
+    // **No live-connection refusal on the named row, because the cascade
+    // below already covers it.** `planCascadeDelete` walks post-order and
+    // pushes the root itself, so `toDelete` always contains the row named in
+    // the URL and the loop inside the transaction asks the refusal of it like
+    // any other. A second call here was a duplicate rather than a defence,
+    // and it answered ahead of `guardDestroy`, so a runtime credential
+    // deleting a live connection it did not write read the uninstall refusal
+    // rather than the provenance one that actually applies to it.
+    //
+    // The check itself stays where the cascade is, and has to: the type gate
+    // above ran against the named row alone, and a `parent-of` edge can carry
+    // a connection out through a delete of something else entirely.
     // D64: an integration may only destroy what it wrote. Trashing a sibling
     // connection's corpus was the destructive half D63 left open — the
     // property write was refused and the delete was not, which is the
@@ -3051,7 +3057,11 @@ export function itemRoutes(storage: Storage) {
       if (snapshot) {
         await publish({
           type: "deleted",
-          item: { ...snapshot, state: "trashed" },
+          // The state the store actually wrote, derived per type rather
+          // than stated: a type with a bounded lifecycle soft-deletes to
+          // `revoked`, so announcing `trashed` told a subscriber about a
+          // state the row never entered and no transition can leave.
+          item: { ...snapshot, state: softDeleteState(snapshot.type) },
           spaceId: tid,
         });
       }
@@ -3298,15 +3308,16 @@ export function itemRoutes(storage: Storage) {
       checkTypeAccess(c.get("apiKey"), purgeTarget.type, "write");
     }
 
-    // **No D64 provenance guard here**, and that is a finding rather than an
-    // omission: this door is `requireAuth` and a runtime credential is
-    // a member, so an integration is refused `forbidden` above and never
-    // reaches the point where provenance would be consulted. A guard here
-    // would be unreachable code no test could pin, which is worse than none
-    // because it reads as a protection somebody is relying on.
-    // `item-write-doors.test.ts` asserts the role gate instead, so the day
-    // this door widens, the case saying an integration cannot purge is the
-    // one that reddens.
+    // **No provenance guard here**, and that is a finding rather than an
+    // omission: `space.item_purge` is asked above, and a runtime credential's
+    // permissions are projected from its manifest and carry no space
+    // permission at all, so an integration is refused before it reaches the
+    // point where provenance would be consulted. A guard here would be
+    // unreachable code no test could pin, which is worse than none because it
+    // reads as a protection somebody is relying on.
+    // `item-write-doors.test.ts` asserts the permission gate instead, so the
+    // day this door widens, the case saying an integration cannot purge is
+    // the one that reddens.
     // Edges have no FK to items — explicit cleanup required before purge.
     // Fence the edge cleanup to the caller's space so a space-scoped purge
     // never drops another space's edges.

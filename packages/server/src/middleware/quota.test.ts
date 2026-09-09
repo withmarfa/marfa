@@ -41,19 +41,19 @@ describe("per-space quota enforcement", () => {
 
   it("webhook quota = 2 → third POST returns 429 with quota_exceeded shape", async () => {
     ctx = await createTestContext();
-    const { spaceId, key: adminKey } = await spaceWithKey(
+    const { spaceId, key: spaceKey } = await spaceWithKey(
       ctx,
-      "wh-quota-admin",
+      "quota-webhooks",
       ["space.webhooks"],
     );
 
-    // Set the cap via the storage layer directly (admin route is also
-    // exercised below).
+    // Set the cap through the storage layer; the instance route that sets
+    // one is exercised at the end of this file.
     await ctx.storage.spaceQuotas.set(spaceId, { webhooks_limit: 2 });
 
     for (let i = 0; i < 2; i++) {
       const ok = await request(ctx.app, "POST", "/webhooks", {
-        key: adminKey,
+        key: spaceKey,
         body: {
           url: `https://example.com/hook-${String(i)}`,
           events: ["item.created"],
@@ -63,7 +63,7 @@ describe("per-space quota enforcement", () => {
     }
 
     const overshoot = await request(ctx.app, "POST", "/webhooks", {
-      key: adminKey,
+      key: spaceKey,
       body: {
         url: "https://example.com/hook-overshoot",
         events: ["item.created"],
@@ -81,16 +81,13 @@ describe("per-space quota enforcement", () => {
 
   it("items quota = 3 → fourth POST returns 429", async () => {
     ctx = await createTestContext();
-    const { spaceId, key: adminKey } = await spaceWithKey(
-      ctx,
-      "items-quota-admin",
-    );
+    const { spaceId, key: spaceKey } = await spaceWithKey(ctx, "quota-items");
 
     await ctx.storage.spaceQuotas.set(spaceId, { items_limit: 3 });
 
     for (let i = 0; i < 3; i++) {
       const ok = await request(ctx.app, "POST", "/items", {
-        key: adminKey,
+        key: spaceKey,
         body: {
           type: "core.note",
           properties: { body: `n${String(i)}` },
@@ -100,7 +97,7 @@ describe("per-space quota enforcement", () => {
     }
 
     const overshoot = await request(ctx.app, "POST", "/items", {
-      key: adminKey,
+      key: spaceKey,
       body: { type: "core.note", properties: { body: "overshoot" } },
     });
     expect(overshoot.status).toBe(429);
@@ -155,9 +152,9 @@ describe("per-space quota enforcement", () => {
    */
   it("storage_bytes quota arithmetic — second small upload under cap succeeds (PG bigint regression)", async () => {
     ctx = await createTestContext();
-    const { spaceId, key: adminKey } = await spaceWithKey(
+    const { spaceId, key: spaceKey } = await spaceWithKey(
       ctx,
-      "storage-bytes-admin",
+      "quota-storage-bytes",
     );
 
     // Cap = 100_000 bytes (100 KB). First upload ~50 KB; second upload
@@ -172,7 +169,7 @@ describe("per-space quota enforcement", () => {
     const firstRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${adminKey}`,
+        Authorization: `Bearer ${spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: first,
@@ -184,7 +181,7 @@ describe("per-space quota enforcement", () => {
     const secondRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${adminKey}`,
+        Authorization: `Bearer ${spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: second,
@@ -198,7 +195,7 @@ describe("per-space quota enforcement", () => {
     const overshootRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${adminKey}`,
+        Authorization: `Bearer ${spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: overshoot,
@@ -212,7 +209,7 @@ describe("per-space quota enforcement", () => {
     expect(typeof body.error.details.current).toBe("number");
   });
 
-  it("GET / PUT /spaces/:id/quotas — admin round-trip", async () => {
+  it("GET / PUT /spaces/:id/quotas — the instance route round-trip", async () => {
     ctx = await createTestContext();
     const space = await ctx.storage.spaces!.create();
 

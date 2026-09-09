@@ -374,7 +374,7 @@ const updateKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Update an API key",
   description:
-    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds, the operator key excepted, since running the instance sits outside the permission model. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
+    "Updates a key's label, default tier, or permission maps in place. `source` is immutable and rejected with `400 validation_error` if present in the body — revoke and recreate to change it. Requires `space.keys`. A permission map may not be widened past what the calling credential itself holds. The operator key is excepted, since running the instance sits outside the permission model, but a key with no space is the operator tier and may hold nothing at all, so no map on one may be widened by any caller. A key created by an app is never widened at all, by any caller including the operator key: it holds what that app held, and may only be narrowed.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -528,6 +528,71 @@ function refuseSessionReachAboveGrant(
 }
 
 /**
+ * The first thing a request names that a credential with no space may not
+ * hold, or `null` if it names nothing at all.
+ *
+ * A `none` entry is a denial rather than a request, so it names nothing and
+ * is skipped, exactly as the creator ceiling skips it.
+ */
+function firstReachOnASpacelessKey(
+  requested: RequestedReach,
+  spacePermissions: SpacePermission[] | undefined,
+): string | null {
+  const maps = [
+    ["type", requested.type_permissions],
+    ["edge", requested.edge_permissions],
+    ["metadata", requested.metadata_permissions],
+    ["extension", requested.extension_permissions],
+    ["profile", requested.profile_permissions],
+  ] as const;
+  for (const [axis, map] of maps) {
+    for (const [name, level] of Object.entries(map ?? {})) {
+      if (level === "none") continue;
+      return `${axis} ${name}: ${level}`;
+    }
+  }
+  return spacePermissions?.[0] ?? null;
+}
+
+/**
+ * Refuse a credential that would carry no space and still hold something.
+ *
+ * **The database says space-less and operator are the same set; nothing said
+ * the operator tier holds nothing.** That second half is the model's own
+ * sentence — running the instance is not a permission, so the tier that runs
+ * it carries none — and it was a property of how the operator key happened to
+ * be minted rather than a rule any door asked about. The storage layer applies
+ * no space predicate to a space-less caller, so a single map entry on such a
+ * row is read or write over every space at once, reached without a space ever
+ * being named.
+ *
+ * **Two doors could write it and both are here.** The creator ceiling exempts
+ * the operator key, because measuring it against its own empty maps would
+ * refuse every mint it makes, and that exemption is right for the key it
+ * mints INTO a space: rule six of the design calls that mint a seed. It is
+ * wrong for a credential that will have no space, which is what `POST /keys`
+ * produces for an operator caller, since the new key takes the caller's space
+ * and the caller has none. `PATCH /keys/{id}` is the same door a moment later:
+ * a space-bound caller is fenced to its own space and cannot address a
+ * space-less row, so only an operator caller reaches one, and it was exempt
+ * from both the map ceiling and the space-permission clamp.
+ *
+ * Bootstrap does not need this. It forces every family empty already, having
+ * no creator to derive from and no caller to refuse.
+ */
+function refuseReachOnASpacelessKey(
+  requested: RequestedReach,
+  spacePermissions: SpacePermission[] | undefined,
+): void {
+  const named = firstReachOnASpacelessKey(requested, spacePermissions);
+  if (named === null) return;
+  throw new MarfaError(
+    ErrorCode.FORBIDDEN,
+    `A credential with no space is the operator tier, which holds no permissions, so it cannot be given ${named}. Mint a key into a space with POST /admin/spaces/{id}/keys and grant it there.`,
+  );
+}
+
+/**
  * Refuse a key-minted key that reaches past the key that minted it.
  *
  * The sibling of `refuseSessionReachAboveGrant`, asking one question of a
@@ -538,8 +603,10 @@ function refuseSessionReachAboveGrant(
  * **The operator key is exempt because it has nothing to be measured against.**
  * Running the instance is fenced outside the permission model, so its maps are
  * empty by construction; measuring against them would refuse every mint it
- * makes. What it may mint is bounded instead by the rule one gate up — through
- * this route it mints another operator key and nothing else.
+ * makes. What it may mint is bounded instead by where the minted key lands:
+ * into a space it seeds a working key, which rule six of the design calls a
+ * seed rather than a ceiling, and with no space it may hold nothing at all,
+ * which `refuseReachOnASpacelessKey` above is what says so.
  *
  * Extensions are compared directly rather than refused. A session cannot be
  * asked about a namespace because no scope names one; a key holds a map of the
@@ -980,6 +1047,13 @@ export function keyRoutes(
       } else if (!isBootstrap && callerKey) {
         refuseKeyReachAboveCreator(callerKey, requested);
       }
+      // The new key takes the caller's space, so an operator caller mints a
+      // space-less one and the creator ceiling above has just waved it
+      // through. A body naming nothing is fine and is how a spare operator
+      // key is made: it derives the caller's empty set below.
+      if (!isBootstrap && callerIsOperator) {
+        refuseReachOnASpacelessKey(requested, requestedSpacePermissions);
+      }
 
       // **A body naming no reach at all takes the creator's whole set; a body
       // naming any family gets only what it named.** One rule, and the second
@@ -1254,6 +1328,15 @@ export function keyRoutes(
       );
     } else {
       refuseKeyReachAboveCreator(key, requestedReach);
+    }
+
+    // A space-bound caller is fenced to its own space above and cannot
+    // address a row with no space, so the target here is space-less only when
+    // an operator caller named one — its own row included, which is the
+    // shortest path there is from the instance tier to reach over every
+    // space.
+    if (!existing.space_id) {
+      refuseReachOnASpacelessKey(requestedReach, requestedSpacePermissions);
     }
 
     // **The space permissions are clamped here too, and were not.** They are

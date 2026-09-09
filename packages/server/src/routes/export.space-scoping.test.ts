@@ -25,35 +25,11 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
   createTestContext,
+  mintSpaceKey,
   request,
-  TEST_API_KEY_SALT,
   waitForAudit,
   type TestContext,
 } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
-
-async function mintSpaceAdmin(
-  ctx: TestContext,
-  spaceId: string,
-  label: string,
-): Promise<string> {
-  const suffix = Math.random().toString(36).slice(2, 14);
-  const raw = `marfa_k1_export_test_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label,
-      source: `${label}-${suffix}`,
-      space_permissions: [...SPACE_PERMISSIONS],
-      default_tier: "library",
-      type_permissions: { "*": "write" },
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-    spaceId,
-  );
-  return raw;
-}
-
 async function readNdjsonItems(res: Response): Promise<string[]> {
   const text = await res.text();
   if (!text.trim()) return [];
@@ -75,8 +51,8 @@ describe("space-scoped export — a space-bound credential's self-export", () =>
     ctx = await createTestContext();
     const spaceA = `t-export-a-${Math.random().toString(36).slice(2, 10)}`;
     const spaceB = `t-export-b-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdminA = await mintSpaceAdmin(ctx, spaceA, "ws-export-a");
-    await mintSpaceAdmin(ctx, spaceB, "ws-export-b");
+    const spaceKeyA = await mintSpaceKey(ctx, spaceA, { label: "export-a" });
+    await mintSpaceKey(ctx, spaceB, { label: "export-b" });
 
     // Items in both spaces.
     const itemA = await ctx.storage.items.create(
@@ -89,7 +65,7 @@ describe("space-scoped export — a space-bound credential's self-export", () =>
     );
 
     // Space A's admin exports — should see ONLY itemA.
-    const res = await request(ctx.app, "GET", "/export", { key: wsAdminA });
+    const res = await request(ctx.app, "GET", "/export", { key: spaceKeyA });
     expect(res.status).toBe(200);
     const ids = await readNdjsonItems(res);
     expect(ids).toContain(itemA.id);
@@ -99,7 +75,9 @@ describe("space-scoped export — a space-bound credential's self-export", () =>
   it("accepts target_space_id matching own", async () => {
     ctx = await createTestContext();
     const spaceA = `t-target-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdmin = await mintSpaceAdmin(ctx, spaceA, "ws-target");
+    const spaceKey = await mintSpaceKey(ctx, spaceA, {
+      label: "export-target",
+    });
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "scoped" } },
       spaceA,
@@ -109,7 +87,7 @@ describe("space-scoped export — a space-bound credential's self-export", () =>
       ctx.app,
       "GET",
       `/export?target_space_id=${spaceA}`,
-      { key: wsAdmin },
+      { key: spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -118,13 +96,15 @@ describe("space-scoped export — a space-bound credential's self-export", () =>
     ctx = await createTestContext();
     const spaceA = `t-mismatch-a-${Math.random().toString(36).slice(2, 10)}`;
     const spaceB = `t-mismatch-b-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdminA = await mintSpaceAdmin(ctx, spaceA, "ws-mismatch");
+    const spaceKeyA = await mintSpaceKey(ctx, spaceA, {
+      label: "export-mismatch",
+    });
 
     const res = await request(
       ctx.app,
       "GET",
       `/export?target_space_id=${spaceB}`,
-      { key: wsAdminA },
+      { key: spaceKeyA },
     );
     expect(res.status).toBe(403);
   });
@@ -182,7 +162,7 @@ describe("space-scoped export — the operator key", () => {
     // that was actually read.
     ctx = await createTestContext();
     const spaceA = `t-audit-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdmin = await mintSpaceAdmin(ctx, spaceA, "ws-audit");
+    const spaceKey = await mintSpaceKey(ctx, spaceA, { label: "export-audit" });
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "A" } },
       spaceA,
@@ -192,7 +172,7 @@ describe("space-scoped export — the operator key", () => {
       ctx.app,
       "GET",
       `/export?target_space_id=${spaceA}`,
-      { key: wsAdmin },
+      { key: spaceKey },
     );
     expect(res.status).toBe(200);
     expect(await readNdjsonItems(res)).toHaveLength(1);
@@ -221,14 +201,16 @@ describe("archive — manifest space_id round-trip", () => {
   it("stamps space_id on the manifest at export time", async () => {
     ctx = await createTestContext();
     const spaceA = `t-archive-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdmin = await mintSpaceAdmin(ctx, spaceA, "ws-archive");
+    const spaceKey = await mintSpaceKey(ctx, spaceA, {
+      label: "export-archive",
+    });
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "archive me" } },
       spaceA,
     );
 
     const res = await request(ctx.app, "GET", "/export?format=archive", {
-      key: wsAdmin,
+      key: spaceKey,
     });
     expect(res.status).toBe(200);
     const arrayBuf = await res.arrayBuffer();
@@ -240,14 +222,16 @@ describe("archive — manifest space_id round-trip", () => {
     ctx = await createTestContext();
     const spaceA = `t-restore-a-${Math.random().toString(36).slice(2, 10)}`;
     const spaceB = `t-restore-b-${Math.random().toString(36).slice(2, 10)}`;
-    const wsAdminA = await mintSpaceAdmin(ctx, spaceA, "ws-restore-a");
+    const spaceKeyA = await mintSpaceKey(ctx, spaceA, {
+      label: "export-restore-a",
+    });
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "from A" } },
       spaceA,
     );
 
     const exportRes = await request(ctx.app, "GET", "/export?format=archive", {
-      key: wsAdminA,
+      key: spaceKeyA,
     });
     expect(exportRes.status).toBe(200);
     const archive = await exportRes.arrayBuffer();

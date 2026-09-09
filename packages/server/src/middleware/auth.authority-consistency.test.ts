@@ -410,15 +410,18 @@ describe("extensions — the reserved namespaces are the operator's", () => {
     expect(res.status).toBe(403);
   });
 
-  it("still admits an unbound operator key on a reserved namespace", async () => {
+  it("refuses an operator key on a reserved namespace too", async () => {
     const item = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "reserved-control" } },
       undefined,
     );
-    // The gate is the operator tier, and the namespace map is asked after it,
-    // so the control needs a credential holding both. An operator caller mints
-    // one: the creator ceiling does not bind it, so the map it names is
-    // honored, and what it mints is space-less and operator like itself.
+    // The gate used to admit the operator tier and then ask the namespace
+    // map, which needed a credential holding both. There is none: the row
+    // constraint makes `is_operator` and space-less the same thing, and a
+    // space-less credential can hold no permissions at all, so the mint that
+    // used to build this control is itself refused now. The namespace is
+    // closed to every credential, and the platform writes it through the
+    // storage layer as it writes a `system.*` row.
     const suffix = Math.random().toString(36).slice(2, 10);
     const minted = await request(ctx.app, "POST", "/keys", {
       key: ctx.operatorKey,
@@ -428,15 +431,14 @@ describe("extensions — the reserved namespaces are the operator's", () => {
         extension_permissions: { "*": "write" },
       },
     });
-    expect(minted.status).toBe(201);
-    const { key } = (await minted.json()) as { key: string };
+    expect(minted.status).toBe(403);
 
     const res = await request(
       ctx.app,
       "PUT",
       `/items/${item.id}/extensions/system`,
-      { key, body: { ok: true } },
+      { key: ctx.operatorKey, body: { ok: true } },
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(403);
   });
 });

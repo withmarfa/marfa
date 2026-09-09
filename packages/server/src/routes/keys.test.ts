@@ -814,15 +814,16 @@ describe("bootstrap sentinel", () => {
 
       // Second POST authenticated as the bootstrap credential — this is the
       // non-bootstrap branch (sentinel is now stamped).
+      // Naming no reach, because the caller is the operator key: a
+      // space-less credential holds nothing and may give nothing, so the
+      // body that used to name a type map is refused now. What this case is
+      // about is which audit action the non-bootstrap branch writes.
       const followUpRes = await request(app, "POST", "/keys", {
         key: bootstrap.key,
         body: {
-          label: "routine-admin-mint",
-          source: "routine-admin-mint",
+          label: "routine-operator-mint",
+          source: "routine-operator-mint",
           default_tier: "feed",
-          type_permissions: { "core.note": "read" },
-          extension_permissions: {},
-          edge_permissions: {},
         },
       });
       expect(followUpRes.status).toBe(201);
@@ -1565,10 +1566,13 @@ describe("POST /keys — space binding", () => {
     expect(err.error.message).toMatch(/POST \/admin\/spaces\/\{id\}\/keys/);
   });
 
-  it("narrows the operator key it mints by the maps the request names", async () => {
-    // The narrowing axis a space-less credential still has. Its tier is fixed
-    // by having no space, so what the request can ask for is a smaller reach
-    // over content rather than a lower rank.
+  it("refuses to give the operator key it mints any reach at all", async () => {
+    // A space-less credential is the instance tier, and running the instance
+    // is not a permission: the storage layer applies no space predicate to
+    // one, so a single map entry on it is read or write over every space at
+    // once, reached without a space ever being named. The creator ceiling
+    // does not catch this, because the operator key is exempt from it by
+    // having nothing to be measured against.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: hostedCtx.operatorKey,
@@ -1578,12 +1582,31 @@ describe("POST /keys — space binding", () => {
         type_permissions: { "core.note": "read" },
       },
     });
+    expect(res.status).toBe(403);
+    const err = (await res.json()) as { error: { message: string } };
+    // The refusal names the route that mints a working key, so the caller's
+    // recourse is not a guess.
+    expect(err.error.message).toMatch(/POST \/admin\/spaces\/\{id\}\/keys/);
+  });
+
+  it("mints a spare operator key when the body names nothing", async () => {
+    // The one thing this door still does for an operator caller: a second
+    // key at the same tier, carrying the same nothing.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const res = await request(hostedCtx.app, "POST", "/keys", {
+      key: hostedCtx.operatorKey,
+      body: {
+        label: `null-space-spare-${suffix}`,
+        source: `null-space-spare-${suffix}`,
+      },
+    });
     expect(res.status).toBe(201);
     const minted = (await res.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(minted.id);
-    expect(stored?.type_permissions).toEqual({ "core.note": "read" });
     expect(stored?.space_id ?? null).toBeNull();
     expect(stored?.is_operator).toBe(true);
+    expect(stored?.type_permissions).toEqual({});
+    expect(stored?.space_permissions).toEqual([]);
 
     const audits = await waitForAudit(
       () => hostedCtx.storage.audit.list({ action: "key.create" }),
@@ -1594,20 +1617,29 @@ describe("POST /keys — space binding", () => {
   });
 
   it("mints the two-hop credential chain a black-box client relies on", async () => {
-    // The conformance suite authenticates as the operator key, mints a
-    // per-file credential from it, then mints scoped ones from that. Every hop
-    // lands space-less. Pinned here because the suite runs against a deployed
-    // server, so a regression would only surface after release.
+    // The conformance suite provisions with the operator key and then runs as
+    // a space-bound credential minted into the run's own space, which mints
+    // narrower ones from itself. Pinned here because that suite runs against a
+    // deployed server, so a regression would only surface after release.
+    //
+    // It used to run every hop space-less, minting a wide key straight from
+    // the operator key through this route. That shape is refused now, and the
+    // suite inverted to this one first: a space-less credential is the
+    // instance tier and reads no row at all.
     const suffix = Math.random().toString(36).slice(2, 10);
-    const firstHop = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.operatorKey,
-      body: {
-        label: `harness-${suffix}`,
-        source: `harness-${suffix}`,
-        is_operator: true,
-        type_permissions: { "*": "write" },
+    const firstHop = await request(
+      hostedCtx.app,
+      "POST",
+      `/admin/spaces/${spaceId}/keys`,
+      {
+        key: hostedCtx.operatorKey,
+        body: {
+          label: `harness-${suffix}`,
+          source: `harness-${suffix}`,
+          type_permissions: { "*": "write" },
+        },
       },
-    });
+    );
     expect(firstHop.status).toBe(201);
     const harness = (await firstHop.json()) as { key: string };
 
@@ -1622,7 +1654,8 @@ describe("POST /keys — space binding", () => {
     expect(secondHop.status).toBe(201);
     const scoped = (await secondHop.json()) as { id: string };
     const stored = await hostedCtx.storage.keys.get(scoped.id);
-    expect(stored?.space_id ?? null).toBeNull();
+    expect(stored?.space_id).toBe(spaceId);
+    expect(stored?.is_operator).toBe(false);
     expect(stored?.type_permissions).toEqual({ "core.note": "read" });
   });
 

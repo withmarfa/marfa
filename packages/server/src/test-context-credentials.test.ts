@@ -55,6 +55,9 @@ async function rowFor(
 async function mintedByTheProduct(): Promise<{
   operator: ApiKey;
   space: ApiKey;
+  /** The operator key itself, for driving the doors that mint from it. */
+  operatorRaw: string;
+  app: Awaited<ReturnType<typeof createUnbootstrappedTestApp>>;
   cleanup: () => Promise<void>;
 }> {
   const fresh = await createUnbootstrappedTestApp();
@@ -87,6 +90,8 @@ async function mintedByTheProduct(): Promise<{
     return {
       operator: await rowFor(fresh.storage, body.key),
       space: await rowFor(fresh.storage, body.space_key.key),
+      operatorRaw: body.key,
+      app: fresh,
       cleanup: fresh.cleanup,
     };
   } catch (error) {
@@ -108,6 +113,77 @@ describe("the credentials createTestContext authenticates as", () => {
       );
     } finally {
       await ctx.cleanup();
+      await minted.cleanup();
+    }
+  });
+
+  it("cannot be widened into that shape afterwards either", async () => {
+    // The first mint is only half the claim. A fixture the product cannot
+    // seed is worth nothing if a door two steps later writes the same row,
+    // and two of them could: the creator ceiling exempts the operator key,
+    // which is right for the key it mints into a space and wrong for one
+    // that will have no space, and `PATCH /keys/{id}` is the only door that
+    // addresses a space-less row at all.
+    const minted = await mintedByTheProduct();
+    try {
+      const wide = {
+        type_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+        metadata_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        profile_permissions: { "*": "write" },
+      };
+
+      // Minting a second operator key: the new key takes the caller's space,
+      // and the caller has none.
+      const minting = await request(minted.app.app, "POST", "/keys", {
+        key: minted.operatorRaw,
+        body: {
+          label: "second",
+          source: "second",
+          default_tier: "library",
+          ...wide,
+        },
+      });
+      expect(minting.status).toBe(403);
+
+      // And widening the operator key in place, which is the shorter path.
+      const patching = await request(
+        minted.app.app,
+        "PATCH",
+        `/keys/${minted.operator.id}`,
+        { key: minted.operatorRaw, body: wide },
+      );
+      expect(patching.status).toBe(403);
+
+      const patchingPermissions = await request(
+        minted.app.app,
+        "PATCH",
+        `/keys/${minted.operator.id}`,
+        {
+          key: minted.operatorRaw,
+          body: { space_permissions: ["space.keys"] },
+        },
+      );
+      expect(patchingPermissions.status).toBe(403);
+
+      // Nothing moved on the row either way.
+      expect(
+        authorityOf(await rowFor(minted.app.storage, minted.operatorRaw)),
+      ).toEqual(authorityOf(minted.operator));
+
+      // A spare operator key is still mintable: it names nothing, so it
+      // derives the caller's empty set and is refused by none of this.
+      const spare = await request(minted.app.app, "POST", "/keys", {
+        key: minted.operatorRaw,
+        body: { label: "spare", source: "spare", default_tier: "library" },
+      });
+      expect(spare.status).toBe(201);
+      const spareKey = ((await spare.json()) as { key: string }).key;
+      expect(authorityOf(await rowFor(minted.app.storage, spareKey))).toEqual(
+        authorityOf(minted.operator),
+      );
+    } finally {
       await minted.cleanup();
     }
   });

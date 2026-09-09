@@ -1,6 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import type { SpaceConfig } from "@withmarfa/shared";
+import type { ApiKey, SpaceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireOperatorKey,
@@ -324,6 +324,27 @@ const putQuotasRoute = createRoute({
   },
 });
 
+/**
+ * The space a `/spaces/me/config` door acts on.
+ *
+ * **A space permission implies a space.** The eleven are held on a
+ * credential's row or on its grant; the operator key is the only shape that
+ * can carry no space, and it holds none of them and cannot be given one, so
+ * `requireSpacePermission(c, "space.settings")` has already turned away every
+ * space-less caller before this is reached.
+ *
+ * It exists so neither door carries a refusal no caller can reach, which
+ * would read as a protection somebody is relying on. Reaching the throw would
+ * mean the gate above had stopped working, which is this file's mistake and
+ * not a caller's, so it stops rather than answering as a bad request.
+ */
+function spaceOfSettingsCaller(key: ApiKey): string {
+  if (key.space_id === undefined) {
+    throw new Error("space.settings admitted a credential with no space");
+  }
+  return key.space_id;
+}
+
 export function spaceRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
@@ -335,10 +356,15 @@ export function spaceRoutes(storage: Storage) {
   router.openapi(getConfigRoute, async (c) => {
     const key = requireAuth(c);
     requireSpacePermission(c, "space.settings");
-    if (!key.space_id || !storage.spaces) {
+    // The space-less half of this guard went with its twin below: a
+    // credential with no space holds none of the eleven, so the gate above
+    // has already refused it. What is left is a deployment with no space
+    // store, which reads as an unset config rather than as an error.
+    if (!storage.spaces) {
       return c.json({}, 200);
     }
-    const config = await storage.spaces.getConfig(key.space_id);
+    const spaceId = spaceOfSettingsCaller(key);
+    const config = await storage.spaces.getConfig(spaceId);
     return c.json(config ?? {}, 200);
   });
 
@@ -358,21 +384,7 @@ export function spaceRoutes(storage: Storage) {
       );
     }
 
-    // **The space-less refusal that used to sit beside that one is gone.**
-    // `space.settings` is a space permission, and the operator key is both
-    // the only credential that can be space-less and the one that holds none
-    // of the eleven, so the gate above turns away every space-less caller
-    // before this line. A refusal here could never answer, and a refusal
-    // nobody can reach reads as a protection somebody is relying on.
-    // `spaces.test.ts` asserts the gate that does the work instead.
-    //
-    // What is left is an assertion rather than a door: if the invariant ever
-    // breaks it is this file's mistake, not the caller's, and it should stop
-    // rather than be reported as a bad request.
-    const spaceId = key.space_id;
-    if (spaceId === undefined) {
-      throw new Error("space.settings admitted a credential with no space");
-    }
+    const spaceId = spaceOfSettingsCaller(key);
 
     await storage.spaces.updateConfig(spaceId, body);
     void storage.audit.log({

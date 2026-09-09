@@ -868,12 +868,13 @@ describe("POST /types — publisher-tier handle ownership", () => {
     expect(res.status).toBe(201);
   });
 
-  it("exempts the operator key", async () => {
-    // The exemption reads `is_operator` and nothing exempts anyone from the
-    // metadata map, so the credential that reaches this arm is an operator key
-    // holding `metadata.types:write`. An operator caller mints one: the
-    // creator ceiling does not apply to it, so the maps it names are honored,
-    // and the key it mints is space-less and operator like itself.
+  it("binds the operator key too, which used to be exempt", async () => {
+    // The exemption was asked after the metadata map, so it needed a
+    // credential holding `metadata.types:write` and `is_operator` at once.
+    // The row constraint makes `is_operator` and space-less the same thing
+    // and a space-less credential holds nothing, so that pair cannot exist
+    // and the mint that used to build it is refused. Platform-shipped types
+    // come from the type package rather than from a registration.
     const suffix = Math.random().toString(36).slice(2, 10);
     const minted = await request(hosted.app, "POST", "/keys", {
       key: hosted.operatorKey,
@@ -883,14 +884,13 @@ describe("POST /types — publisher-tier handle ownership", () => {
         metadata_permissions: { types: "write" },
       },
     });
-    expect(minted.status).toBe(201);
-    const { key: seederKey } = (await minted.json()) as { key: string };
+    expect(minted.status).toBe(403);
 
     const res = await request(hosted.app, "POST", "/types", {
-      key: seederKey,
+      key: hosted.operatorKey,
       body: { id: "somevendor.platform-seeded", ...baseType },
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(403);
   });
 
   it("keeps the reserved-root refusal ahead of the ownership rule", async () => {

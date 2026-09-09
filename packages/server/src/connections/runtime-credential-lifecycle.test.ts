@@ -162,7 +162,8 @@ describe("a runtime credential is fenced by a space", () => {
   it("refuses to install a space-less Connection", async () => {
     // The third door. An install that names no space stamps none on the
     // Connection it creates, and any credential later minted for it would
-    // come out at the platform tier. Installing mints nothing, so the
+    // come out space-less, which is the operator tier. Installing mints
+    // nothing, so the
     // refusal is a precondition rather than a mint ceiling: it stops the
     // Connection reaching an installable state at all, which is the
     // earliest point the rule can be enforced.

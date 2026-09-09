@@ -486,13 +486,16 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
       // handle. The rule binds only in hosted mode — keys mode has no
       // user accounts, so there is no handle system to check against and
       // the only party a refusal could stop is the deployment's own
-      // operator. The operator key is exempt so seeding and operator
-      // tooling keep working across spaces.
-      if (
-        tier === "publisher" &&
-        authMode === "hosted" &&
-        c.get("apiKey")?.is_operator !== true
-      ) {
+      // operator.
+      //
+      // **The operator key used to be exempt and no longer is, because
+      // nothing could reach the exemption.** It is asked after the metadata
+      // map, and a credential carrying `is_operator` is space-less by the
+      // row constraint and holds no permissions at all, so it fails the map
+      // before this line and the exemption could never answer. Seeding
+      // happens through the type package and the storage layer, which is
+      // where a platform-shipped type comes from in the first place.
+      if (tier === "publisher" && authMode === "hosted") {
         const publisher = body.id.split(".")[0] ?? "";
         const user =
           spaceId && storage.users

@@ -40,9 +40,9 @@ async function acquireRlsOrRefuse(
     pgClient: PgClient | null;
     streamReserveTimeoutMs?: number;
   },
-  spaceId: string | undefined,
+  spaceId: string,
 ): Promise<StreamRlsContext | null> {
-  if (!options.rlsEnforce || options.pgClient === null || !spaceId) {
+  if (!options.rlsEnforce || options.pgClient === null) {
     return null;
   }
   try {
@@ -556,10 +556,13 @@ async function handleArchiveExport(
         customEdgeTypeCount += 1;
       }
 
-      // The same blob resolution the read routes use, which falls back to
-      // the instance-wide bucket only after the space's own. Asking the
-      // `""` bucket directly, where none of these hashes live, recorded
-      // `blob_count: 0` while reporting success.
+      // The space's own bucket and nothing else: `resolveBlobForSpace`
+      // widens only for a reader with no space, and this one always has one.
+      // A hash registered into the instance-wide `""` bucket is therefore
+      // not carried, which is the right answer for a space export and the
+      // opposite of what this used to do — it asked `""` directly, where a
+      // space's hashes do not live, and recorded `blob_count: 0` while
+      // reporting success.
       for (const hash of blobHashes) {
         const record = await resolveBlobForSpace(storage, spaceId, hash);
         if (record) {
