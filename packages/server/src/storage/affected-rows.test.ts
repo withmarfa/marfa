@@ -1,6 +1,8 @@
 /**
  * The three lifecycle mutations the connection pipelines report on answer
- * with what they changed.
+ * with what they changed. `keys.revoke` answers with which of its three
+ * outcomes happened rather than with a boolean, because two of them are
+ * misses and a caller refusing on one of them owes the person a reason.
  *
  * Each of them used to return `void`, so the only thing a caller could
  * report was the read it took beforehand — a claim about the moment before
@@ -48,14 +50,18 @@ describe("keys.revoke", () => {
       undefined,
     );
 
-    expect(await ctx.storage.keys.revoke(key.id)).toBe(true);
+    expect(await ctx.storage.keys.revoke(key.id)).toBe("revoked");
     // A second revoke changes nothing, and saying otherwise is what let an
     // uninstall list a credential it had not retired.
-    expect(await ctx.storage.keys.revoke(key.id)).toBe(false);
+    expect(await ctx.storage.keys.revoke(key.id)).toBe("already_revoked");
   });
 
-  it("answers false for a key that does not exist", async () => {
-    expect(await ctx.storage.keys.revoke(randomUUID())).toBe(false);
+  // **The two misses are told apart here and nowhere above.** `keys.get`
+  // drops revoked rows, so a route asking after the fact cannot separate a
+  // key already retired from an id nobody ever held, and the one caller that
+  // skips the space fence was told success for both.
+  it("names a key that does not exist rather than lumping it in", async () => {
+    expect(await ctx.storage.keys.revoke(randomUUID())).toBe("not_found");
   });
 });
 

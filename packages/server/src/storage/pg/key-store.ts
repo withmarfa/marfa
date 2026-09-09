@@ -25,7 +25,7 @@ import type {
   TypePermission,
   SpacePermission,
 } from "@withmarfa/shared";
-import type { KeyStore } from "../interface.js";
+import type { KeyRevokeOutcome, KeyStore } from "../interface.js";
 import { apiKeys } from "./schema.js";
 import type { PgDb } from "./connection.js";
 
@@ -349,13 +349,21 @@ export class PgKeyStore implements KeyStore {
     };
   }
 
-  async revoke(id: string): Promise<boolean> {
+  async revoke(id: string): Promise<KeyRevokeOutcome> {
     const result = await this.db
       .update(apiKeys)
       .set({ revoked_at: new Date().toISOString() })
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)))
       .returning({ id: apiKeys.id });
-    return result.length > 0;
+    if (result.length > 0) return "revoked";
+    // Only on the miss, and only to separate the two shapes of miss: the
+    // conditional update above has already decided the outcome, so this
+    // reads a row it cannot have changed.
+    const [row] = await this.db
+      .select({ id: apiKeys.id })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, id));
+    return row ? "already_revoked" : "not_found";
   }
 
   /**

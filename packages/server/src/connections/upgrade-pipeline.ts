@@ -471,7 +471,8 @@ async function applyUpgrade(
   // the count rides onto the activity row an operator reads.
   const revokedCredentialIds: string[] = [];
   for (const cred of credentials) {
-    if (await storage.keys.revoke(cred.id)) revokedCredentialIds.push(cred.id);
+    if ((await storage.keys.revoke(cred.id)) === "revoked")
+      revokedCredentialIds.push(cred.id);
   }
 
   const activity = await storage.items.create(

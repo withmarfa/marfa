@@ -19,7 +19,7 @@ import { hashApiKey } from "../middleware/auth.js";
 import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { KeyResponseSchema } from "./_schemas.js";
 import { extensionLabelOf } from "../auth/extension-label.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import { generateId, SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
@@ -322,6 +322,96 @@ describe("PATCH /keys/{id} — a space-less target", () => {
     // Families the body never named are left alone rather than rewritten.
     expect(stored?.edge_permissions).toEqual({});
     expect(stored?.space_permissions).toEqual([]);
+  });
+});
+
+describe("DELETE /keys/{id} — the answer is what happened", () => {
+  /** How many `key.revoke` rows the audit log holds for one key id. */
+  async function revokeAudits(id: string): Promise<number> {
+    const page = await ctx.storage.audit.list({
+      action: "key.revoke",
+      resource_type: "key",
+      resource_id: id,
+    });
+    return page.data.length;
+  }
+
+  // **The operator key skips the space fence, so nothing stood between it and
+  // a revoke that did nothing.** A space-bound caller is refused earlier by
+  // the cross-space 404: `keys.get` drops revoked rows, so a revoked key and
+  // an unknown one both read as a miss there. The operator carries no space
+  // and takes neither branch, so it reached the store with any id at all.
+  // The route handler carries what that cost.
+  it("refuses an unknown id rather than answering ok", async () => {
+    const unknown = generateId();
+
+    const res = await request(ctx.app, "DELETE", `/keys/${unknown}`, {
+      key: ctx.operatorKey,
+    });
+    expect(
+      res.status,
+      "a revoke that changed no row answered success, so somebody believing it walks away with a live credential they think is dead",
+    ).toBe(404);
+    const err = (await res.json()) as { error: { code: string } };
+    expect(err.error.code).toBe("api_key_not_found");
+
+    // A barrier rather than a deadline: the absence below is read once the
+    // audit writer has settled, so a loaded machine cannot turn it red.
+    await ctx.storage.audit.drain();
+    expect(
+      await revokeAudits(unknown),
+      "an audit row records a revocation that never happened",
+    ).toBe(0);
+  });
+
+  it("tells the operator a key was already revoked rather than answering ok", async () => {
+    const { id } = await createKey();
+
+    const first = await request(ctx.app, "DELETE", `/keys/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(first.status).toBe(200);
+    await ctx.storage.audit.drain();
+    expect(await revokeAudits(id)).toBe(1);
+
+    const second = await request(ctx.app, "DELETE", `/keys/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(
+      second.status,
+      "a second revoke of the same key answered success, which reads exactly like a revoke that worked",
+    ).toBe(404);
+    const err = (await second.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(err.error.code).toBe("api_key_not_found");
+    // One status and one code for both misses, because a caller must not be
+    // able to tell an id nobody holds from one in another space. The message
+    // is what separates them for the caller who does hold the key, and an
+    // operator reaches every space, so it costs nothing there.
+    expect(err.error.message).toMatch(/already revoked/i);
+
+    await ctx.storage.audit.drain();
+    expect(
+      await revokeAudits(id),
+      "the second revoke wrote an audit row for a revocation that changed nothing",
+    ).toBe(1);
+  });
+
+  // The control on both cases above, so neither can pass by the route having
+  // stopped revoking anything at all.
+  it("still answers ok, and audits, when a row changes", async () => {
+    const { id } = await createKey();
+
+    const res = await request(ctx.app, "DELETE", `/keys/${id}`, {
+      key: ctx.operatorKey,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+
+    await ctx.storage.audit.drain();
+    expect(await revokeAudits(id)).toBe(1);
+    expect(await ctx.storage.keys.get(id)).toBeNull();
   });
 });
 

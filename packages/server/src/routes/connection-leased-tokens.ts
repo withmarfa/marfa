@@ -466,18 +466,28 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     if (lease?.connection_id !== connectionId) {
       throw new MarfaError(ErrorCode.LEASE_TOKEN_NOT_FOUND, "Lease not found");
     }
-    await storage.connectionLeasedTokens.revoke(
+    // **The 200 on an already-revoked lease is the declared contract here,
+    // and the audit row is not.** Unlike the key door, an id matching nothing
+    // is already refused above: this store's `get` returns revoked rows, so
+    // the only thing that reaches the revoke and changes nothing is a lease
+    // this caller can see and has already retired. Answering ok to that is
+    // what the route promises a retrying client. Writing a `lease.revoke`
+    // row for it is a different claim, and a false one — the log would say
+    // this request retired a lease that was already dead.
+    const revoked = await storage.connectionLeasedTokens.revoke(
       lease_id,
       new Date().toISOString(),
     );
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: "lease.revoke",
-      resource_type: "connection_leased_token",
-      resource_id: lease_id,
-    });
+    if (revoked) {
+      void storage.audit.log({
+        client_ip: c.get("clientIp") ?? null,
+        space_id: c.get("apiKey")?.space_id ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: "lease.revoke",
+        resource_type: "connection_leased_token",
+        resource_id: lease_id,
+      });
+    }
     return c.json({ ok: true as const }, 200);
   });
 

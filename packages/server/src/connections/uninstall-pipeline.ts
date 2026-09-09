@@ -163,7 +163,8 @@ async function performUninstallLocked(
   // uninstall claims to have revoked is what it revoked.
   const revokedCredentialIds: string[] = [];
   for (const cred of credentials) {
-    if (await storage.keys.revoke(cred.id)) revokedCredentialIds.push(cred.id);
+    if ((await storage.keys.revoke(cred.id)) === "revoked")
+      revokedCredentialIds.push(cred.id);
   }
 
   // -------------------------------------------------------------------
