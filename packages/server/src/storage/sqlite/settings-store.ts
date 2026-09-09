@@ -35,4 +35,8 @@ export class SqliteSettingsStore implements SettingsStore {
       .all();
     return rows.length > 0;
   }
+
+  async release(key: string): Promise<void> {
+    await this.db.delete(settings).where(eq(settings.key, key));
+  }
 }

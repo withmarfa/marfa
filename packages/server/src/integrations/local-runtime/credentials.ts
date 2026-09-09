@@ -153,7 +153,6 @@ export async function mintLocalRuntimeCredential(
   storage: Storage,
   salt: string,
   connectionId: string,
-  authMode: "hosted" | "keys",
   ttlMs = DEFAULT_TTL_MS,
 ): Promise<RuntimeCredential> {
   // Same per-Connection lock the uninstall pipeline takes, for the same
@@ -203,7 +202,7 @@ export async function mintLocalRuntimeCredential(
       // exists because an integration Worker is a separate principal that
       // states which integration it is; this mint is called by the
       // supervisor in the same process, from a dispatch it routed itself.
-      assertMintableSpaceScope(connection, authMode);
+      assertMintableSpaceScope(connection);
 
       // Resolve the manifest so the credential carries exactly the reach the
       // Integration declared at registration. No manifest means no reach beyond

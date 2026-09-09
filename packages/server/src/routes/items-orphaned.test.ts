@@ -142,7 +142,6 @@ async function install(
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKeyId,
     spaceId,
-    authMode: "hosted",
     integrationItemId,
     manifest: m,
     clientIp: null,
@@ -1154,11 +1153,16 @@ describe("the own-write shortcut's space equality", () => {
 
 describe("the single-space self-host shape", () => {
   /**
-   * Every context above is hosted, where each row carries a real
-   * `space_id`. On a self-host nothing does: items and connections alike sit
-   * in the space-less bucket, which is the branch `ItemFilters` cannot fence
-   * in SQL and where the application-side re-fence is the only thing
-   * narrowing the walk. It had no coverage at all.
+   * Every context above is hosted, with several spaces to tell apart. A
+   * self-host has exactly one, and that is the difference worth covering:
+   * the fence has nothing to exclude, so a scope resolver that quietly
+   * matched everything would look identical to one that worked.
+   *
+   * This used to say a self-host carried no `space_id` at all and walked the
+   * space-less bucket. Keys mode provisions a space at bootstrap and works
+   * through a credential bound to it, so an ordinary row carries a real one
+   * here as much as it does on a hosted deployment. What is left space-less
+   * is the operator key, which holds no permissions and writes nothing.
    */
   let selfHost: TestContext;
 
@@ -1196,8 +1200,7 @@ describe("the single-space self-host shape", () => {
       );
       const result = await performInstall(selfHost.storage, {
         apiKeyId: admin.id,
-        spaceId: undefined,
-        authMode: "keys",
+        spaceId: selfHost.spaceId,
         integrationItemId: row.id,
         manifest: m,
         clientIp: null,
@@ -1222,7 +1225,7 @@ describe("the single-space self-host shape", () => {
           item_source: runtimeCredentialItemSource(m),
         },
         hashApiKey(raw, TEST_API_KEY_SALT),
-        undefined,
+        selfHost.spaceId,
       );
       return raw;
     };
@@ -1239,8 +1242,10 @@ describe("the single-space self-host shape", () => {
       });
       expect(res.status).toBe(201);
       const created = ((await res.json()) as { item: Item }).item;
-      // The premise of the whole describe: nothing here has a space.
-      expect(created.space_id).toBeNull();
+      // The premise of the whole describe: one space, and everything is in
+      // it. A row that landed outside would make the assertions below
+      // meaningless rather than merely wrong.
+      expect(created.space_id).toBe(selfHost.spaceId);
       return created.id;
     };
 
@@ -1252,7 +1257,7 @@ describe("the single-space self-host shape", () => {
       await runtimeKey(liveManifest, liveConnection),
       "self-host mirror that keeps it",
     );
-    const handId = await write(selfHost.adminKey, "self-host hand-written");
+    const handId = await write(selfHost.spaceKey, "self-host hand-written");
 
     await performUninstall(selfHost.storage, {
       apiKeyId: admin.id,
@@ -1262,7 +1267,7 @@ describe("the single-space self-host shape", () => {
     });
 
     const res = await request(selfHost.app, "GET", "/items?limit=200", {
-      key: selfHost.adminKey,
+      key: selfHost.spaceKey,
     });
     expect(res.status).toBe(200);
     const byId = new Map(

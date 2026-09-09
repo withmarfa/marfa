@@ -134,7 +134,6 @@ async function credentialFor(
     ctx.storage,
     TEST_API_KEY_SALT,
     connection.id,
-    "hosted",
   );
   return {
     key: cred.api_key,

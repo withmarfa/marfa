@@ -46,9 +46,11 @@ async function createCredential(
     oauth_client_secret: "test-secret",
     ...override,
   };
-  const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
-    body: {
+  // Through storage, and in the connection's space: the proxy resolves
+  // `credential_ref` fenced to the caller's space, and the reserved namespace
+  // over the wire admits only the space-less platform credential.
+  const item = await ctx.storage.items.create(
+    {
       type: "system.credential",
       properties: {
         label: "test-cred",
@@ -64,13 +66,9 @@ async function createCredential(
         ),
       },
     },
-  });
-  if (res.status !== 201) {
-    const txt = await res.text();
-    throw new Error(`createCredential failed: ${String(res.status)} ${txt}`);
-  }
-  const body = (await res.json()) as ItemResponse;
-  return body.item.id;
+    ctx.spaceId,
+  );
+  return item.id;
 }
 
 /**
@@ -102,19 +100,15 @@ async function createConnection(opts?: {
     properties.credential_ref =
       opts?.credentialId ?? (await createCredential(opts?.credentialOverride));
   }
-  const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
-    body: {
-      type: "system.connection",
-      properties,
-    },
-  });
-  if (res.status !== 201) {
-    const txt = await res.text();
-    throw new Error(`createConnection failed: ${String(res.status)} ${txt}`);
-  }
-  const body = (await res.json()) as ItemResponse;
-  return body.item.id;
+  // Written through storage rather than `POST /items`, because neither
+  // credential can do this over the wire: the reserved namespace admits only
+  // a platform credential, and that one holds no space to put the row in. A
+  // connection is the install pipeline's to create, and it names the space.
+  const item = await ctx.storage.items.create(
+    { type: "system.connection", properties },
+    ctx.spaceId,
+  );
+  return item.id;
 }
 
 async function seedToken(
@@ -132,6 +126,9 @@ async function seedToken(
   const expiresInSec = opts.expiresInSec ?? 3600;
   await ctx.storage.connectionOauthTokens.upsert({
     connection_id: connectionId,
+    // The connection's space. A space-bound caller reads this row fenced, so
+    // a space-less one is invisible to the runtime credential that owns it.
+    space_id: ctx.spaceId,
     access_token_encrypted: encryptSecret(
       accessPlain,
       SECRET_INFO.connectionOauthToken,
@@ -806,7 +803,7 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
         item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
       },
       keyHash,
-      undefined,
+      ctx.spaceId,
     );
 
     const fetchState = installFetchScript([
@@ -848,7 +845,7 @@ describe("POST /connections/:id/proxy/* — runtime credentials", () => {
         item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
       },
       keyHash,
-      undefined,
+      ctx.spaceId,
     );
 
     const res = await request(

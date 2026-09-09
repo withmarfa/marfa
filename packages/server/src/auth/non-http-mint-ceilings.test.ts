@@ -99,7 +99,6 @@ describe("install-pipeline — the space fence outlives the mint it guarded", ()
       performInstall(ctx.storage, {
         apiKeyId: await operatorKeyId(),
         spaceId: undefined,
-        authMode: "hosted",
         integrationItemId: integrationId,
         manifest: manifest(name),
       }),

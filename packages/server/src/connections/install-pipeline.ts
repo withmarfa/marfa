@@ -62,13 +62,6 @@ export interface InstallInput {
   apiKeyId: string;
   /** Space scope for every row written. */
   spaceId?: string;
-  /**
-   * The deployment's `AUTH_MODE`, for the space fence at step 2.
-   * Required rather than defaulted: the permissive value is the one that
-   * reopens the hole, so a caller that has not thought about it should
-   * not compile.
-   */
-  authMode: "hosted" | "keys";
   /** id of the system.integration item the connection binds to. */
   integrationItemId: string;
   /** The manifest blob (already validated on registration). Drives
@@ -353,7 +346,7 @@ export async function performInstall(
           { connection_id: connection.id },
         );
       }
-      assertMintableSpaceScope(current, input.authMode);
+      assertMintableSpaceScope(current);
     });
   } catch (err) {
     return rollback(err);

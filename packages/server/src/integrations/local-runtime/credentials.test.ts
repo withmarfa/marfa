@@ -100,7 +100,7 @@ async function createActiveConnection(
   if (integrationItemId) properties.integration_ref = integrationItemId;
   const item = await ctx.storage.items.create(
     { type: "system.connection", properties },
-    undefined,
+    ctx.spaceId,
   );
   return item.id;
 }
@@ -178,7 +178,6 @@ describe("mintLocalRuntimeCredential — direction is not an access level", () =
         ctx.storage,
         TEST_API_KEY_SALT,
         connectionId,
-        "keys",
       );
 
       const res = await request(ctx.app, "POST", "/items", {
@@ -205,7 +204,6 @@ describe("mintLocalRuntimeCredential — the ceiling on its reach", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     const credId = await credentialIdByHash(cred.api_key);
@@ -233,7 +231,6 @@ describe("mintLocalRuntimeCredential — own-connection read", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     // Handlers resolve properties.configuration this way on every run.
@@ -251,7 +248,6 @@ describe("mintLocalRuntimeCredential — own-connection read", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       mine,
-      "keys",
     );
 
     // The carve-out is per-item, not a space-wide system.connection grant:
@@ -271,7 +267,6 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -288,7 +283,6 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     // MANIFEST targets only core.note — a core.task write must be refused.
@@ -306,7 +300,6 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     // MANIFEST declares neither system.activity nor system.connection;
@@ -339,7 +332,6 @@ describe("mintLocalRuntimeCredential — least privilege", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -360,7 +352,6 @@ describe("mintLocalRuntimeCredential — expiry enforcement", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
       -60_000,
     );
     expect(new Date(cred.expires_at).getTime()).toBeLessThan(Date.now());
@@ -379,7 +370,6 @@ describe("mintLocalRuntimeCredential — expiry enforcement", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -402,7 +392,6 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
       -60_000,
     );
     const firstId = await credentialIdByHash(first.api_key);
@@ -411,7 +400,6 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
       TTL_MS,
     );
 
@@ -439,7 +427,6 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
       TTL_MS,
     );
     const firstId = await credentialIdByHash(first.api_key);
@@ -448,7 +435,6 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
       TTL_MS,
     );
 
@@ -467,7 +453,6 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
         ctx.storage,
         TEST_API_KEY_SALT,
         connectionId,
-        "keys",
         TTL_MS,
       );
     }
@@ -492,14 +477,12 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       theirs,
-      "keys",
       TTL_MS,
     );
     await mintLocalRuntimeCredential(
       ctx.storage,
       TEST_API_KEY_SALT,
       mine,
-      "keys",
       TTL_MS,
     );
 
@@ -518,7 +501,6 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
       TTL_MS,
     );
     const firstId = await credentialIdByHash(first.api_key);
@@ -532,7 +514,6 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
       TTL_MS,
     );
 
@@ -541,13 +522,17 @@ describe("mintLocalRuntimeCredential — revoke on supersede", () => {
 });
 
 /**
- * The two rules this mint shares with the hosted one.
+ * The two rules the mint applies in every mode.
  *
- * Every other case in this file runs in `keys` mode, where nothing
- * carries a space and the fence is a deliberate no-op — so the fence
- * could be deleted outright and the whole file would stay green. The
- * cases below boot `hosted` instead, which is the only mode where either
- * rule has anything to say.
+ * They used to be hosted-only: keys mode bound nothing to a space, so a
+ * space-less credential there was as scoped as any other and the fence
+ * returned early. Keys mode has a space of its own now, so a connection
+ * belonging to none is a defect wherever it appears and the fence reads
+ * the connection rather than the mode.
+ *
+ * These still boot `hosted`, because it is the deployment with more than
+ * one space — which is where a space-less credential's reach is something
+ * you can observe rather than merely assert.
  */
 describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
   beforeEach(async () => {
@@ -560,19 +545,31 @@ describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
 
   it("refuses to mint for a Connection with no space", async () => {
     // The rule is the substrate's, not the transport's. A space-less
-    // credential is not a narrow credential but the platform tier: the
+    // credential is not a narrow credential but the operator tier: the
     // RLS wrapper skips a space-less caller and the storage layer drops
     // its space predicate, so the integration reads every space's rows.
+    //
+    // Built inline rather than through `createActiveConnection`, which
+    // installs into the context's space like every other case here. The
+    // space-less connection is the defect this pins, so it has to be
+    // stated rather than inherited.
     const integrationId = await createIntegrationItem();
-    const connectionId = await createActiveConnection(integrationId);
+    const orphan = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: integrationId,
+        },
+      },
+      undefined,
+    );
+    const connectionId = orphan.id;
 
     await expect(
-      mintLocalRuntimeCredential(
-        ctx.storage,
-        TEST_API_KEY_SALT,
-        connectionId,
-        "hosted",
-      ),
+      mintLocalRuntimeCredential(ctx.storage, TEST_API_KEY_SALT, connectionId),
     ).rejects.toThrow(/no space/i);
   });
 
@@ -596,7 +593,6 @@ describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connection.id,
-      "hosted",
     );
     expect(credential.connection_id).toBe(connection.id);
   });
@@ -632,7 +628,6 @@ describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
           ctx.storage,
           TEST_API_KEY_SALT,
           connection.id,
-          "hosted",
         ).catch((err: unknown) => {
           settled = true;
           failure = err;
@@ -682,7 +677,6 @@ describe("mintLocalRuntimeCredential — the substrate's shared rules", () => {
         ctx.storage,
         TEST_API_KEY_SALT,
         missingId,
-        "hosted",
       );
     } catch (err) {
       failure = err;

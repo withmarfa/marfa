@@ -289,6 +289,12 @@ export const KeyResponseSchema = z.object({
   metadata_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
+  // Declared because the handler already sends it. The fifth family arrived
+  // with the permission model and this schema did not follow, so the published
+  // shape was short of a field every mint returns.
+  profile_permissions: z
+    .record(z.string(), z.enum(["read", "write"]))
+    .optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });

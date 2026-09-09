@@ -63,10 +63,13 @@ interface ItemResponse {
   item: { id: string; type: string };
 }
 
+// Written through storage rather than `POST /items`, because neither
+// credential can do this over the wire: the reserved namespace admits only a
+// platform credential, and that one holds no space to put the row in. A
+// connection is the install pipeline's to create, and it names the space.
 async function createConnection(refOverride?: string): Promise<string> {
-  const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
-    body: {
+  const item = await ctx.storage.items.create(
+    {
       type: "system.connection",
       properties: {
         kind: "integration",
@@ -75,12 +78,9 @@ async function createConnection(refOverride?: string): Promise<string> {
         integration_ref: refOverride ?? integrationId,
       },
     },
-  });
-  if (res.status !== 201) {
-    throw new Error(`createConnection failed: ${String(res.status)}`);
-  }
-  const body = (await res.json()) as ItemResponse;
-  return body.item.id;
+    ctx.spaceId,
+  );
+  return item.id;
 }
 
 async function createSubscription(
@@ -661,7 +661,6 @@ describe("inbound webhooks — integration runtime credential", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     const res = await request(
@@ -683,7 +682,6 @@ describe("inbound webhooks — integration runtime credential", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionA,
-      "keys",
     );
 
     const res = await request(

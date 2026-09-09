@@ -504,7 +504,7 @@ export function oauthStartRoutes(
       c,
       storage,
       options.auth,
-      "OAuth start requires admin or platform credential",
+      "Starting an OAuth connection needs `space.credentials`.",
       "space.credentials",
     );
     if (caller instanceof Response) return caller;

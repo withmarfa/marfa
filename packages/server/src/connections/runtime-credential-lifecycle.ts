@@ -53,23 +53,20 @@ export async function resolveRuntimeCredentialManifest(
  * admin without naming a space produces exactly that: an integration
  * built for one customer holding a key to all of them.
  *
- * Only a deployment that has spaces can be wrong about this. In `keys`
- * mode nothing carries a `space_id`, so a space-less credential is as
- * scoped as every other credential on the instance and refusing would
- * break every self-host. `authMode` is the switch that says whether
- * spaces exist, which is why the rule reads it rather than inferring
- * from whether some space happens to have been created.
+ * **This used to be a hosted-mode rule and is now everyone's.** Keys mode
+ * bound nothing to a space, so a space-less credential there was as scoped as
+ * every other credential on the instance and refusing would have broken every
+ * self-host. Keys mode now provisions one space at bootstrap and works through
+ * a credential bound to it, so a connection with no space is a defect in both
+ * modes rather than the norm in one — and the row constraint would refuse the
+ * credential anyway, at the database, with nothing useful to say about why.
  *
  * A refused Connection becomes undispatchable rather than dangerous.
  * That is the intended trade: the failure is loud, it names the missing
  * space, and an operator fixes it by installing the Connection into a
  * space.
  */
-export function assertMintableSpaceScope(
-  connection: Item,
-  authMode: "hosted" | "keys",
-): void {
-  if (authMode !== "hosted") return;
+export function assertMintableSpaceScope(connection: Item): void {
   if (connection.space_id) return;
   throw new MarfaError(
     ErrorCode.FORBIDDEN,

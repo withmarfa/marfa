@@ -671,7 +671,6 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
       installed = await performInstall(storage, {
         apiKeyId: caller.apiKeyId,
         spaceId: caller.spaceId,
-        authMode: c.get("config").authMode,
         clientIp: c.get("clientIp") ?? null,
         integrationItemId: id,
         manifest: props.manifest,

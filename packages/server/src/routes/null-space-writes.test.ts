@@ -102,7 +102,6 @@ async function runtimeCredential(
     ctx.storage,
     TEST_API_KEY_SALT,
     connection.id,
-    "hosted",
   );
   return { key: cred.api_key, connectionId: connection.id };
 }
@@ -234,12 +233,7 @@ describe("a runtime credential's writes belong to its space", () => {
       undefined,
     );
     await expect(
-      mintLocalRuntimeCredential(
-        ctx.storage,
-        TEST_API_KEY_SALT,
-        orphan.id,
-        "hosted",
-      ),
+      mintLocalRuntimeCredential(ctx.storage, TEST_API_KEY_SALT, orphan.id),
     ).rejects.toThrow(/no space/i);
   });
 });
