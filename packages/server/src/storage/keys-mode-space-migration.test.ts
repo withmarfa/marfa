@@ -173,7 +173,7 @@ describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
     // this migration's move excludes it. The gate has to exclude it too:
     // firing on a row the move then skips would create a Default space and
     // put nothing in it. A projection is not by itself a reason to invent a
-    // space -- the later `app_grants_join_the_sole_space` moves one into a
+    // space -- the later `app_grants_join_their_resolved_space` moves one into a
     // space that already exists, and moves nothing where there is none.
     const client = await seeded("grant-projection-only", async (c) => {
       await insertKey(c, {

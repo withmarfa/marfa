@@ -62,7 +62,7 @@
 -- to go. That premise did not survive: a sign-in on a keys-mode instance
 -- resolves the instance's one space now, and a projection left space-less is
 -- invisible to the security page and to every revoke door. The later
--- `app_grants_join_the_sole_space` moves them. Nothing changes in this file,
+-- `app_grants_join_their_resolved_space` moves them. Nothing changes in this file,
 -- which has already run everywhere it applies.
 --
 -- `custom_types` keeps `origin = 'platform'` and `origin = 'integration'`. The

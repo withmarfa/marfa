@@ -6,8 +6,10 @@
  * re-consent update, the audit row naming a reused grant -- looks in exactly
  * one space, the one a sign-in resolves. The keys-mode space migration left
  * these rows in the space-less bucket deliberately, because a keys-mode
- * sign-in resolved no space; it resolves the instance's one space now, so the
- * rows have to follow or every one of those surfaces misses them silently.
+ * sign-in resolved no space. It resolves one in both modes now -- the
+ * consenting account's own space where there is a row for it, the instance's
+ * only space otherwise -- so the rows have to follow or every one of those
+ * surfaces misses them silently.
  *
  * Nothing else in the repository can see this. The schema suites migrate an
  * empty database and compare structure, so a body that is one `UPDATE` is
@@ -47,8 +49,8 @@ const DRIZZLE_ROOT = resolve(
 
 /** The migration under test, per dialect. */
 const TAG = {
-  sqlite: "0095_app_grants_join_the_sole_space",
-  pg: "0109_app_grants_join_the_sole_space",
+  sqlite: "0095_app_grants_join_their_resolved_space",
+  pg: "0109_app_grants_join_their_resolved_space",
 } as const;
 
 /**
@@ -70,15 +72,30 @@ const SOLE = "01996d00-0000-7000-8000-0000000000aa";
 const OTHER = "01996d00-0000-7000-8000-0000000000bb";
 
 /** A grant projection as the consent path writes one. */
-function grantProps(clientId: string, userId: string): string {
-  return JSON.stringify({
+function grantProps(
+  clientId: string,
+  userId: string,
+): Record<string, string | string[]> {
+  return {
     kind: "app",
     status: "active",
     client_id: clientId,
     user_id: userId,
     scopes: ["core.note:read"],
     granted_at: NOW,
-  });
+  };
+}
+
+/**
+ * The same object as a SQLite `properties` value, which is text.
+ *
+ * Postgres takes it through `sql.json`, and that difference is load-bearing
+ * rather than cosmetic: a plain string parameter cast to `jsonb` becomes a
+ * JSON *string* rather than an object, so `properties->>'kind'` answers null
+ * and every case here passes for the wrong reason.
+ */
+function grantPropsText(clientId: string, userId: string): string {
+  return JSON.stringify(grantProps(clientId, userId));
 }
 
 describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
@@ -111,6 +128,20 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
     await client.execute({
       sql: `INSERT INTO spaces (id, name, created_at, status) VALUES (?, ?, ?, 'active')`,
       args: [id, id.slice(-2), NOW],
+    });
+  }
+
+  /** A hosted account: the `users` row that binds a Better Auth identity to a
+   *  space, which is the arm of the resolver a multi-space instance uses. */
+  async function insertAccount(
+    client: ReturnType<typeof createClient>,
+    authUserId: string,
+    spaceId: string,
+  ): Promise<void> {
+    await client.execute({
+      sql: `INSERT INTO users (id, provider, provider_id, space_id, auth_user_id, created_at, updated_at)
+            VALUES (?, 'better-auth', ?, ?, ?, ?, ?)`,
+      args: [`u-${authUserId}`, authUserId, spaceId, authUserId, NOW, NOW],
     });
   }
 
@@ -163,7 +194,7 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
         id: "grant",
         space_id: null,
         type: "system.connection",
-        properties: grantProps("app-1", "user-1"),
+        properties: grantPropsText("app-1", "user-1"),
       });
     });
     expect(await spaceOf(client, "grant")).toBe(SOLE);
@@ -186,10 +217,11 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
     expect(await spaceOf(client, "catalogue")).toBeNull();
   });
 
-  it("moves nothing on an instance holding more than one space", async () => {
-    // Two spaces is the state issuance itself declines to answer, because
-    // choosing between them means binding somebody's grant to whichever row
-    // came back first. A migration is in no better position.
+  it("moves nothing on an instance holding more than one space and no account row", async () => {
+    // Two spaces and nothing saying which one the account is in is the state
+    // issuance itself declines to answer, because choosing between them means
+    // binding somebody's grant to whichever row came back first. A migration
+    // is in no better position.
     const client = await seeded("two-spaces", async (c) => {
       await insertSpace(c, SOLE);
       await insertSpace(c, OTHER);
@@ -197,10 +229,39 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
         id: "grant",
         space_id: null,
         type: "system.connection",
-        properties: grantProps("app-1", "user-1"),
+        properties: grantPropsText("app-1", "user-1"),
       });
     });
     expect(await spaceOf(client, "grant")).toBeNull();
+  });
+
+  it("moves a grant to the space of the account that consented", async () => {
+    // The hosted arm, and the one a multi-space instance needs: the space is
+    // on the consenting account's row, so there is nothing to choose between
+    // even where the instance holds several. Without it a hosted instance
+    // carrying these rows keeps them stranded, which is the state the estate
+    // is actually in.
+    const client = await seeded("hosted-account", async (c) => {
+      await insertSpace(c, SOLE);
+      await insertSpace(c, OTHER);
+      await insertAccount(c, "user-1", OTHER);
+      await insertItem(c, {
+        id: "grant",
+        space_id: null,
+        type: "system.connection",
+        properties: grantPropsText("app-1", "user-1"),
+      });
+      // A second grant whose account has no row stays put, so the move is
+      // shown to follow the account rather than the presence of any account.
+      await insertItem(c, {
+        id: "unclaimed",
+        space_id: null,
+        type: "system.connection",
+        properties: grantPropsText("app-1", "user-2"),
+      });
+    });
+    expect(await spaceOf(client, "grant")).toBe(OTHER);
+    expect(await spaceOf(client, "unclaimed")).toBeNull();
   });
 
   it("moves nothing on an instance with no space at all", async () => {
@@ -209,7 +270,7 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
         id: "grant",
         space_id: null,
         type: "system.connection",
-        properties: grantProps("app-1", "user-1"),
+        properties: grantPropsText("app-1", "user-1"),
       });
     });
     expect(await spaceOf(client, "grant")).toBeNull();
@@ -227,13 +288,13 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
         id: "standing",
         space_id: SOLE,
         type: "system.connection",
-        properties: grantProps("app-1", "user-1"),
+        properties: grantPropsText("app-1", "user-1"),
       });
       await insertItem(c, {
         id: "stale",
         space_id: null,
         type: "system.connection",
-        properties: grantProps("app-1", "user-1"),
+        properties: grantPropsText("app-1", "user-1"),
       });
       // A different person's grant to the same app is not the same grant, so
       // it moves. Seeded alongside so the exclusion cannot be a blanket one.
@@ -241,7 +302,7 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
         id: "other-person",
         space_id: null,
         type: "system.connection",
-        properties: grantProps("app-1", "user-2"),
+        properties: grantPropsText("app-1", "user-2"),
       });
     });
     expect(await spaceOf(client, "stale")).toBeNull();
@@ -300,12 +361,12 @@ describe.skipIf(!isPg || !adminUrl)(
     };
 
     it("moves a space-less grant into the instance's one space", async () => {
-      await withDb("keys-mode-grant", async (sql, url) => {
+      await withDb("keys_mode_grant", async (sql, url) => {
         await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${SOLE}, 'sole', ${NOW}, 'active')`;
         await sql`
           INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
           VALUES ('grant', NULL, 'system.connection', 'active',
-                  ${grantProps("app-1", "user-1")}::jsonb, ${NOW}, ${NOW}, ${NOW})
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
         `;
         await runPgMigrations(url);
         expect(await spaceOf(sql, "grant")).toBe(SOLE);
@@ -324,26 +385,58 @@ describe.skipIf(!isPg || !adminUrl)(
       });
     });
 
-    it("moves nothing on an instance holding more than one space", async () => {
-      await withDb("two-spaces", async (sql, url) => {
+    it("moves nothing on an instance holding more than one space and no account row", async () => {
+      await withDb("two_spaces", async (sql, url) => {
         await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${SOLE}, 'sole', ${NOW}, 'active')`;
         await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${OTHER}, 'other', ${NOW}, 'active')`;
         await sql`
           INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
           VALUES ('grant', NULL, 'system.connection', 'active',
-                  ${grantProps("app-1", "user-1")}::jsonb, ${NOW}, ${NOW}, ${NOW})
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
         `;
         await runPgMigrations(url);
         expect(await spaceOf(sql, "grant")).toBeNull();
       });
     });
 
-    it("moves nothing on an instance with no space at all", async () => {
-      await withDb("no-space", async (sql, url) => {
+    it("moves a grant to the space of the account that consented", async () => {
+      // The hosted arm, and the one a multi-space instance needs. This is the
+      // dialect the deployments run, and the join is against a real `users`
+      // row rather than a fixture table, so a column named wrongly fails here
+      // rather than on a box.
+      await withDb("hosted_account", async (sql, url) => {
+        await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${SOLE}, 'sole', ${NOW}, 'active')`;
+        await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${OTHER}, 'other', ${NOW}, 'active')`;
+        await sql`
+          INSERT INTO auth_user (id, name, email, created_at, updated_at)
+          VALUES ('user-1', 'One', 'one@test.marfa.so', now(), now())
+        `;
+        await sql`
+          INSERT INTO users (id, provider, provider_id, space_id, auth_user_id, created_at, updated_at)
+          VALUES ('u-1', 'better-auth', 'user-1', ${OTHER}, 'user-1', ${NOW}, ${NOW})
+        `;
         await sql`
           INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
           VALUES ('grant', NULL, 'system.connection', 'active',
-                  ${grantProps("app-1", "user-1")}::jsonb, ${NOW}, ${NOW}, ${NOW})
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
+        `;
+        await sql`
+          INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
+          VALUES ('unclaimed', NULL, 'system.connection', 'active',
+                  ${sql.json(grantProps("app-1", "user-2"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
+        `;
+        await runPgMigrations(url);
+        expect(await spaceOf(sql, "grant")).toBe(OTHER);
+        expect(await spaceOf(sql, "unclaimed")).toBeNull();
+      });
+    });
+
+    it("moves nothing on an instance with no space at all", async () => {
+      await withDb("no_space", async (sql, url) => {
+        await sql`
+          INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
+          VALUES ('grant', NULL, 'system.connection', 'active',
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
         `;
         await runPgMigrations(url);
         expect(await spaceOf(sql, "grant")).toBeNull();
@@ -356,17 +449,17 @@ describe.skipIf(!isPg || !adminUrl)(
         await sql`
           INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
           VALUES ('standing', ${SOLE}, 'system.connection', 'active',
-                  ${grantProps("app-1", "user-1")}::jsonb, ${NOW}, ${NOW}, ${NOW})
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
         `;
         await sql`
           INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
           VALUES ('stale', NULL, 'system.connection', 'active',
-                  ${grantProps("app-1", "user-1")}::jsonb, ${NOW}, ${NOW}, ${NOW})
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
         `;
         await sql`
           INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
           VALUES ('other-person', NULL, 'system.connection', 'active',
-                  ${grantProps("app-1", "user-2")}::jsonb, ${NOW}, ${NOW}, ${NOW})
+                  ${sql.json(grantProps("app-1", "user-2"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
         `;
         await runPgMigrations(url);
         expect(await spaceOf(sql, "stale")).toBeNull();
