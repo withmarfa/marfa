@@ -1660,8 +1660,34 @@ export interface SpaceStore {
    * per-space. Returns spaces in arbitrary order; callers shouldn't
    * depend on ordering. Cost is O(spaces) — cleanup runs are off the
    * request hot path so the unbounded scan is acceptable.
+   *
+   * **Not for a request path.** A request that wants the instance's one
+   * space wants {@link SpaceStore.soleSpaceId}, which reads two rows
+   * whatever the instance holds.
    */
   list(): Promise<Space[]>;
+  /**
+   * The id of the instance's only space, or `null` when it holds any other
+   * number of them.
+   *
+   * Keys mode has exactly one space, and issuance binds a token to it. The
+   * question is asked on a request path, so it reads a bounded two rows
+   * rather than enumerating: one row answers it, a second says there is more
+   * than one, and nothing beyond that changes the answer. `null` for "not
+   * exactly one" rather than a guess, because binding a credential to
+   * whichever row a store happened to return first is how a token ends up in
+   * a space nobody chose.
+   *
+   * **A suspended space still counts, deliberately.** Suspension is not
+   * deletion: it is still the instance's one space, and answering `null` for
+   * it would refuse the sign-in outright rather than admitting a credential
+   * the suspension then governs. So a grant binds to it, and the write-guard
+   * sitting after the bearer middleware turns its writes away while its reads
+   * go through -- which is exactly what an API key in that space gets. One
+   * rule covering both credential kinds beats a second one reachable only
+   * here.
+   */
+  soleSpaceId(): Promise<string | null>;
   getConfig(
     id: string,
   ): Promise<import("@withmarfa/shared").SpaceConfig | null>;

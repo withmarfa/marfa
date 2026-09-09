@@ -575,17 +575,20 @@ describe("better-auth /auth/* surface", () => {
     expect(body.grant_types_supported).toContain(
       "urn:ietf:params:oauth:grant-type:device_code",
     );
-    // Other grants the plugin natively supports stay advertised — the
-    // augmentation is strictly additive (insertion preserves the
-    // upstream order before appending the URN).
+    // The other grants this server issues stay advertised, and the one it
+    // does not have is absent rather than filtered out on the way past: the
+    // plugin is configured with the grants this server has, so
+    // `grant_types_supported` is that list plus the URN the augmentation
+    // appends. A client reading the document has to be able to pick a grant
+    // that works.
     expect(body.grant_types_supported).toEqual(
       expect.arrayContaining([
         "authorization_code",
-        "client_credentials",
         "refresh_token",
         "urn:ietf:params:oauth:grant-type:device_code",
       ]),
     );
+    expect(body.grant_types_supported).not.toContain("client_credentials");
     expect(body.device_authorization_endpoint).toMatch(/\/auth\/device$/);
   });
 

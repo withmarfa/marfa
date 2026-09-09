@@ -27,15 +27,6 @@ import { getPermissionBundles } from "../config.js";
 import { publishableBundleScopes } from "./allowlist-withholding.js";
 
 /**
- * What a `client_credentials` token gets when the request names no scope
- * and the client registered none: nothing. The grant has no user, so no
- * consent screen ever reviews it — a machine client states what it needs
- * or receives a credential with no data-plane reach. Falling back to the
- * full allowlist here handed an anonymous-registered client `*:write`.
- */
-export const CLIENT_CREDENTIALS_DEFAULT_SCOPES: string[] = [];
-
-/**
  * The scopes that carry a session rather than data: `openid` mints the
  * id_token a sign-out needs, `offline_access` the refresh token a client
  * needs to stay signed in without asking again.

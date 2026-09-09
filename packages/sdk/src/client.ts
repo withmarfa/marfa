@@ -2348,9 +2348,12 @@ export class MarfaClient {
        * Read the calling space's quota row. Takes `space.usage`, and
        * resolves the space from the bearer's `space_id`. The operator key
        * holds no space permission, so it is refused with 403 rather than
-       * answered here; use `getById` for another space's row. The 400 is
-       * for a credential that holds `space.usage` and still has no space,
-       * which only a space-less OAuth bearer can be.
+       * answered here; use `getById` for another space's row.
+       *
+       * There is no 400. It used to answer one for a credential holding
+       * `space.usage` with no space, which only a space-less OAuth bearer
+       * could be, and such a bearer is now refused at the middleware in
+       * either mode.
        */
       getOwn: async (): Promise<SpaceQuota> => {
         return this.transport.request<SpaceQuota>("GET", "/spaces/me/quotas");

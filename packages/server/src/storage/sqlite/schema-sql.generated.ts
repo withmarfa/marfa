@@ -339,7 +339,7 @@ CREATE TABLE IF NOT EXISTS \`auth_oauth_client\` (
 	\`type\` text,
 	\`require_pkce\` integer,
 	\`reference_id\` text,
-	\`metadata\` text, \`application_type\` text, \`backchannel_logout_session_required\` integer, \`backchannel_logout_uri\` text, \`client_credentials_scopes\` text, \`client_discovery_id\` text, \`dpop_bound_access_tokens\` integer, \`jwks\` text, \`jwks_uri\` text,
+	\`metadata\` text, \`application_type\` text, \`backchannel_logout_session_required\` integer, \`backchannel_logout_uri\` text, \`client_discovery_id\` text, \`dpop_bound_access_tokens\` integer, \`jwks\` text, \`jwks_uri\` text,
 	FOREIGN KEY (\`user_id\`) REFERENCES \`auth_user\`(\`id\`) ON UPDATE no action ON DELETE cascade
 );
 

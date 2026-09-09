@@ -1023,7 +1023,6 @@ export const auth_oauth_client = pgTable(
       "backchannel_logout_session_required",
     ),
     backchannelLogoutUri: text("backchannel_logout_uri"),
-    clientCredentialsScopes: text("client_credentials_scopes").array(),
     clientDiscoveryId: text("client_discovery_id"),
     dpopBoundAccessTokens: boolean("dpop_bound_access_tokens"),
     jwks: text("jwks"),

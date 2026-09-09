@@ -37,7 +37,7 @@ const listAuditRoute = createRoute({
   tags: ["Audit"],
   summary: "List audit log entries",
   description:
-    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`: a space-bound caller sees only its own space's entries, a caller with no space binding sees every entry.",
+    "Returns audit-log entries in reverse-chronological order, filtered by action, resource, or time range, with cursor pagination. Records only state-changing calls and a few admin reads — item/edge reads, SSE, and search are not logged. Requires `space.audit_read`, and answers a caller's own space and nothing else. A credential with no space holds no space permission, so it is refused rather than shown the whole trail.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({

@@ -3,6 +3,7 @@ import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
+import { resolveSpaceIdForAuthUser } from "./auth/grant-space.js";
 import type { AppConfig } from "./config.js";
 import type { EmailTransport } from "./email/transport.js";
 import type { DeadLetterOps } from "./integrations/local-runtime/dead-letters.js";
@@ -228,8 +229,12 @@ export async function closeTestContexts(
  *
  * @param scopes literal scope strings (e.g. `["core.note:read"]`)
  * @param opts.clientName    visible client name (defaults to "Test App")
- * @param opts.spaceId      space for the system.connection item
- *                           (defaults to undefined — keys-mode self-host)
+ * @param opts.spaceId      the space to bind the token to. Omitted, it
+ *                           resolves the space issuance would, and throws
+ *                           when nothing resolves rather than minting the
+ *                           unbound token a fixture used to get by accident.
+ *                           Pass `null` deliberately for the unbound shape,
+ *                           which the middleware refuses.
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
  * @param opts.seedUserRow   Seed a `users` row bound to the `auth_user`, so
@@ -244,7 +249,7 @@ export async function seedOauthBearer(
   scopes: string[],
   opts: {
     clientName?: string;
-    spaceId?: string;
+    spaceId?: string | null;
     authUserId?: string;
     seedUserRow?: boolean;
   } = {},
@@ -340,7 +345,12 @@ export async function seedOauthBearer(
       },
       source: "test/oauth-bearer",
     },
-    opts.spaceId,
+    // **The projection item stays where the caller put it, which is normally
+    // nowhere.** A `system.connection` row with `kind: "app"` is a grant
+    // projection, and the provider store resolves those space-less on
+    // purpose, and the keys-mode migration excludes them from its move for
+    // the same reason. Only the token's `reference_id` binds to a space.
+    opts.spaceId ?? undefined,
   );
 
   // Mint the token pair via the plugin's storage helper. Hash the BARE
@@ -350,6 +360,43 @@ export async function seedOauthBearer(
   const rawToken = `marfa_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const rawRefresh = `marfa_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const { hashApiKey } = await import("./middleware/auth.js");
+  // **Bound the way issuance binds.** A token whose `reference_id` is NULL is
+  // refused by the middleware in either mode, because a space-less bearer is
+  // a principal the storage layer applies no space predicate to. Omitting the
+  // space here used to produce exactly that, so a fixture minted a token no
+  // deployment can issue and every test through it authenticated as something
+  // the product cannot make. `null` still means unbound, for the cases that
+  // are about the refusal.
+  //
+  // Through the resolver rather than a copy of it. A fixture that answered
+  // this question its own way would drift from issuance silently, and a
+  // fixture that drifts from the thing it stands in for is the reason this
+  // helper needed repairing in the first place.
+  //
+  // **Nothing unresolved is minted silently.** When the caller named no space
+  // and the resolver answers nothing, there is no shape to fall back to: an
+  // unbound token is refused on every request, so a permission test written
+  // through it stops testing the permission and starts re-testing the
+  // refusal, and it does that while staying green. That is the failure this
+  // helper has already caused once. Throwing names the two ways to get here
+  // -- no user row for the id, or an instance holding other than one space --
+  // and points at `spaceId: null` for a case that genuinely wants the unbound
+  // token.
+  let boundSpaceId: string | undefined;
+  if (opts.spaceId === undefined) {
+    boundSpaceId = await resolveSpaceIdForAuthUser(storage, authUserId);
+    if (boundSpaceId === undefined) {
+      throw new Error(
+        "seedOauthBearer: no space resolved for this bearer, so the token would " +
+          "be minted unbound and refused on every request. Seed a users row for " +
+          `"${authUserId}" or a single space, pass an explicit spaceId, or pass ` +
+          "spaceId: null if the unbound token is what the case is about.",
+      );
+    }
+  } else {
+    boundSpaceId = opts.spaceId ?? undefined;
+  }
+
   await storage.oauthProvider.mintTokenPair({
     accessTokenHash: hashApiKey(
       rawToken.slice("marfa_at_".length),
@@ -361,7 +408,7 @@ export async function seedOauthBearer(
     ),
     clientId,
     authUserId,
-    referenceId: opts.spaceId ?? null,
+    referenceId: boundSpaceId ?? null,
     scopes,
     accessTtlMs: 3600_000,
   });

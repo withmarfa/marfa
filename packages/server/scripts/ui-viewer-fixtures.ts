@@ -614,6 +614,16 @@ const AUTH_SCREENS: GalleryScreen[] = [
         label: "Request unverifiable",
         render: () => renderAuthorizeExpiredPage("unverifiable"),
       },
+      {
+        // Not a signature failure at all: the request is genuine and the
+        // server has nowhere to attach the grant. Reachable on a
+        // self-hosted server holding more than one space and on an account
+        // that has none, and it is the one state here that the person
+        // reading cannot resolve by starting again.
+        id: "no-space",
+        label: "No space to grant in",
+        render: () => renderAuthorizeExpiredPage("no_space"),
+      },
     ],
   },
   {

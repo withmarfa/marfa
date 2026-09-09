@@ -442,8 +442,10 @@ const DOORS: MintDoor[] = [
       expect(registered.has("*:write")).toBe(false);
       expect(registered.has("*:read")).toBe(false);
 
-      // The one grant with no user in it cannot be registered without
-      // authenticating — the fence in front of client_credentials.
+      // The one grant with no user in it is not a grant this server has, so
+      // no client registers for it and there is no mint door to bound. A
+      // machine acting on a space is an API key, which the keys doors above
+      // already cover.
       const m2m = await request(ctx.app, "POST", "/auth/oauth2/register", {
         body: {
           grant_types: ["client_credentials"],
@@ -647,10 +649,13 @@ describe("every way of asking for a credential is accounted for", () => {
     // A plugin upgrade that starts advertising a new grant type is a new
     // way of asking for a credential: it fails this pin and forces a
     // door row or a named exclusion, not a silent widening.
+    //
+    // `client_credentials` is absent because the server does not have it.
+    // The plugin advertises it unconditionally and the discovery document is
+    // filtered, so this pin is also what would notice the filter being lost.
     expect([...(body.grant_types_supported ?? [])].sort()).toEqual(
       [
         "authorization_code",
-        "client_credentials",
         "refresh_token",
         "urn:ietf:params:oauth:grant-type:device_code",
       ].sort(),

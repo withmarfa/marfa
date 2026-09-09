@@ -1,6 +1,7 @@
 import type { ApiKey } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { withConsentLock } from "./consent-lock.js";
+import { resolveSpaceIdForAuthUser } from "./grant-space.js";
 import { log } from "../middleware/logger.js";
 
 /**
@@ -29,10 +30,17 @@ import { log } from "../middleware/logger.js";
  * **The space is required for the answer to be safe, and an absent one means
  * space-less rather than every space.** One client can hold a grant in more
  * than one space on a hosted instance, so a filter on the client id alone
- * would let a revocation in one space reach keys in another. Callers that can
- * address any space — the operator key on `DELETE /grants/{id}` — pass the
- * grant's own space; keys mode passes nothing and gets the space-less rows,
- * which on such an instance is all of them.
+ * would let a revocation in one space reach keys in another. Callers pass the
+ * space the grant resolved to, keys mode included: a sign-in binds to the
+ * instance's one space there rather than to nothing.
+ *
+ * **The space-less arm is still reachable and answers nothing useful.** A
+ * caller passes whatever the resolver returned, and `undefined` is a real
+ * answer on exactly the deployments this is about: an account with no space,
+ * or a self-hosted server holding more than one. What that arm sweeps is
+ * empty, because the row constraint makes a space-less key the operator key
+ * and no app mints one, but it is empty by that constraint rather than
+ * because nothing can reach it.
  *
  * Both arms exclude revoked rows. **They differ on expiry** — `list` also
  * drops a key past its `expires_at` and `listForSpace` does not — and the
@@ -202,11 +210,9 @@ export async function auditGrantReused(
   },
 ): Promise<void> {
   try {
-    let spaceId: string | undefined;
-    if (storage.users) {
-      const userRow = await storage.users.getByAuthUserId(opts.authUserId);
-      spaceId = userRow?.space_id ?? undefined;
-    }
+    // The resolver the projection was written through, so this lookup asks
+    // the bucket the row is in.
+    const spaceId = await resolveSpaceIdForAuthUser(storage, opts.authUserId);
     let grantItemId: string | null = null;
     if (typeof storage.oauthProvider?.findGrantItemId === "function") {
       grantItemId = await storage.oauthProvider.findGrantItemId({

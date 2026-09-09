@@ -35,6 +35,10 @@ import {
   REFRESH_TOKEN_PREFIX,
 } from "../auth/oauth-provider.js";
 import {
+  NO_GRANT_SPACE_MESSAGE,
+  resolveSpaceIdForAuthUser,
+} from "../auth/grant-space.js";
+import {
   bundlePublishedScopes,
   catchUpClientScopeCeiling,
 } from "../auth/ceiling-catchup.js";
@@ -204,11 +208,18 @@ function selfServeEdgePermissions(
  * function as serving both would let a future authorize caller pick it up
  * and silently disable that revoke.
  *
- * `spaceId` resolves from the consenting Better Auth user's marfa `users`
- * row in hosted mode; with no `users` store at all the grant
- * is stamped space-less. Hosted mode without a provisioned space for the
- * authenticated user refuses outright — the OAuth flow can't honor a
- * grant without a space to scope it to.
+ * **`spaceId` comes from `resolveSpaceIdForAuthUser`, the same function
+ * issuance uses.** The projection's space and the token's `reference_id`
+ * have to agree or `findGrantItemId` looks in the wrong bucket and the
+ * revoke cascade finds nothing to revoke, silently. They used to agree by
+ * accident: in hosted mode both read the user's row, and in keys mode both
+ * were nothing. Keys mode has a space now, and one resolver is what keeps
+ * the agreement a fact rather than a coincidence.
+ *
+ * A grant with no space to scope it to is refused outright, in either mode.
+ * The OAuth flow cannot honor one, and a token minted against it is refused
+ * by the bearer middleware anyway, so refusing here is the difference
+ * between a person being told and a device polling forever.
  */
 async function createUserAppGrant(
   storage: Storage,
@@ -224,18 +235,15 @@ async function createUserAppGrant(
 }> {
   // Cycle metadata flows through `cycleRequestContext` (set by
   // `cycleMiddleware`) — `publish()` reads it automatically.
-  let spaceId: string | undefined;
-  if (storage.users) {
-    // Lookup by Better Auth user id (the canonical bridge); the
-    // `users` table keys on auth user id, not email.
-    const user = await storage.users.getByAuthUserId(consentingUser.id);
-    spaceId = user?.space_id;
-    if (!spaceId) {
-      throw new MarfaError(
-        ErrorCode.UNAUTHORIZED,
-        "No Marfa space is provisioned for this account; complete onboarding first",
-      );
-    }
+  const spaceId = await resolveSpaceIdForAuthUser(storage, consentingUser.id);
+  if (!spaceId) {
+    // The same words the code flow refuses in, because it is the same
+    // situation and the reader has no way to tell which surface they are on.
+    // The copy this replaced named onboarding, which is true of an account
+    // with no space and simply wrong about a self-hosted server holding more
+    // than one, and it sent a self-hoster looking for a step that does not
+    // exist.
+    throw new MarfaError(ErrorCode.UNAUTHORIZED, NO_GRANT_SPACE_MESSAGE);
   }
   const now = new Date().toISOString();
 
@@ -243,7 +251,7 @@ async function createUserAppGrant(
   let existingItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     existingItemId = await storage.oauthProvider.findGrantItemId({
-      spaceId: spaceId ?? null,
+      spaceId,
       clientId,
       authUserId: consentingUser.id,
     });
@@ -2031,16 +2039,11 @@ export function authRoutes(
       // outage.
     }
 
-    // 2. List grants for this user's space. In keys mode (no
-    //    storage.users), grants are space-less and we list them
-    //    that way; this matches the pattern in /auth/grants and the
-    //    existing DELETE handler.
-    let spaceId: string | undefined;
-    if (storage.users) {
-      // Lookup by Better Auth user id (the canonical bridge).
-      const userRow = await storage.users.getByAuthUserId(sessionUser.id);
-      spaceId = userRow?.space_id;
-    }
+    // 2. List grants for this user's space, resolved the one way every
+    //    grant surface resolves it. A copy of the lookup here would list a
+    //    different bucket from the one consent wrote into, and the symptom
+    //    is a security page showing no apps rather than an error.
+    const spaceId = await resolveSpaceIdForAuthUser(storage, sessionUser.id);
     const grantItems = await storage.items.list({
       type: "system.connection",
       state: "active",
@@ -2104,12 +2107,9 @@ export function authRoutes(
     if (gated instanceof Response) return gated;
     const sessionUser = gated.session.user;
 
-    let spaceId: string | undefined;
-    if (storage.users) {
-      // Lookup by Better Auth user id (the canonical bridge).
-      const userRow = await storage.users.getByAuthUserId(sessionUser.id);
-      spaceId = userRow?.space_id;
-    }
+    // The same resolver the grant was written through, so this door looks
+    // in the bucket the projection is actually in.
+    const spaceId = await resolveSpaceIdForAuthUser(storage, sessionUser.id);
     const id = c.req.param("id");
     const item = await storage.items.get(id, spaceId);
     if (item?.type !== "system.connection") {

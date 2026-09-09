@@ -1062,12 +1062,11 @@ export function keyRoutes(
       // credential with none**, which is the operator tier and holds nothing.
       // Derived from the space the minted key will have rather than from the
       // caller's operator flag, so the code says what it means. The two agree
-      // for a key by the row constraint; they part for a bearer admitted with
-      // no space, which is the keys-mode gap `middleware/auth.ts` records
-      // against itself. Such a bearer now reads the refusal below when it
-      // names reach, instead of reaching the insert; a request from one that
-      // names nothing still meets the row constraint there, and closing that
-      // is the bearer change rather than this one.
+      // for a key by the row constraint, and there is no longer a second
+      // shape they can part on: a bearer carrying no space is refused by the
+      // middleware in either mode, so the only space-less caller that reaches
+      // here is the operator key itself. The refusal below is what keeps that
+      // caller from naming reach it cannot hand down.
       //
       // Asked ahead of the two ceilings below because it is the more specific
       // answer. Either would refuse a named permission first, with a message

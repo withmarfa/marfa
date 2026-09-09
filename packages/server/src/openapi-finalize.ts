@@ -217,7 +217,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Auth"],
       summary: "Register an OAuth client",
       description:
-        "Dynamic Client Registration (RFC 7591). Registers a public OAuth client and returns its issued `client_id`. Unauthenticated; the `client_credentials` grant is rejected.",
+        "Dynamic Client Registration (RFC 7591). Registers a public OAuth client and returns its issued `client_id`. Unauthenticated. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
       requestBody: {
         required: true,
         content: {

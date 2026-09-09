@@ -186,12 +186,11 @@ const REPLAY_HEADER = "Idempotency-Replayed";
  * the property the digest wants the credential for. API keys keep their
  * own id, which does not rotate under them.
  *
- * **It identifies a principal, not a grant**, and two shapes collapse onto
- * one handle: two `client_credentials` tokens for one client, where the
- * user is null by design, and a revoke-then-re-consent for the same client
- * and user. Because a replay is served before the route's authorization
- * runs, a second and possibly narrower-scoped token of that client, making
- * the same request under the same key, is handed the first one's response.
+ * **It identifies a principal, not a grant**, so a revoke-then-re-consent
+ * for the same client and user collapses onto one handle. Because a replay
+ * is served before the route's authorization runs, a second and possibly
+ * narrower-scoped token of that client, making the same request under the
+ * same key, is handed the first one's response.
  * The blast radius is one client's own writes. Widening the handle is a
  * separate change; naming it here so the next reader is not misled into
  * thinking a grant is what is being compared.

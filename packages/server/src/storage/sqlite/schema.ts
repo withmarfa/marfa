@@ -962,7 +962,6 @@ export const auth_oauth_client = sqliteTable(
       { mode: "boolean" },
     ),
     backchannelLogoutUri: text("backchannel_logout_uri"),
-    clientCredentialsScopes: text("client_credentials_scopes"),
     clientDiscoveryId: text("client_discovery_id"),
     dpopBoundAccessTokens: integer("dpop_bound_access_tokens", {
       mode: "boolean",

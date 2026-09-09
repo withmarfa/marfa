@@ -350,7 +350,7 @@ export function createApp(
   // Auth middleware runs BEFORE rate limiting so the limiter can key on
   // the credential id (per-credential enforcement). Anonymous requests
   // still fall through to IP-based limiting inside rateLimitMiddleware.
-  app.use("*", authMiddleware(storage, config.apiKeySalt, config.authMode));
+  app.use("*", authMiddleware(storage, config.apiKeySalt));
 
   // Space-suspension write-guard. Sits AFTER `authMiddleware` so the
   // credential is resolved when this runs. Rejects every non-GET request
@@ -593,6 +593,12 @@ export function createApp(
       // Inject the device-code URN into `grant_types_supported`
       // (idempotent — guards against the plugin starting to advertise
       // it natively in a future version).
+      //
+      // Nothing here removes the client-credentials grant. The plugin is
+      // configured with the grants this server has, so it never publishes
+      // one; a filter here would be a second answer to the same question,
+      // and the shape where the two disagree is a document advertising a
+      // grant the token endpoint refuses.
       const URN = DEVICE_CODE_GRANT_TYPE;
       const grantsRaw = payload.grant_types_supported;
       const grants = Array.isArray(grantsRaw)

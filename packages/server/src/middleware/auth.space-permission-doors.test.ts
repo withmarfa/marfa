@@ -166,18 +166,27 @@ describe("GET /spaces/me/quotas — space.usage", () => {
     expect(body.webhooks_limit).toBe(null);
   });
 
-  it("rejects a space-less caller with 400", async () => {
-    // A keys-mode deployment binds its OAuth tokens to no space by design, so
-    // a token holds the permission and still has no "me" for this route to
-    // answer about. It is the only credential that reaches the branch: a
-    // space-less key is the operator tier, and no mint may give a key a space
-    // permission its creator does not hold, so an operator key's list is
-    // empty and the door above refuses it first.
-    const { token } = await seedOauthBearer(ctx.storage, ["space.usage"]);
-    const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
+  it("has no space-less caller left to reject", async () => {
+    // This door used to answer 400 for a keys-mode bearer, which bound its
+    // tokens to no space by design and so held the permission with no "me"
+    // for the route to answer about. Issuance binds now and the middleware
+    // refuses a token that arrives unbound anyway, so such a bearer never
+    // reaches the handler: it is turned away as a credential rather than
+    // told its request makes no sense. The other space-less shape is the
+    // operator key, which holds none of the eleven and is refused by the
+    // permission gate.
+    const { token } = await seedOauthBearer(ctx.storage, ["space.usage"], {
+      spaceId: null,
+    });
+    const unbound = await request(ctx.app, "GET", "/spaces/me/quotas", {
       key: token,
     });
-    expect(res.status).toBe(400);
+    expect(unbound.status).toBe(401);
+
+    const asOperator = await request(ctx.app, "GET", "/spaces/me/quotas", {
+      key: ctx.operatorKey,
+    });
+    expect(asOperator.status).toBe(403);
   });
 
   it("rejects a credential that does not hold space.usage", async () => {

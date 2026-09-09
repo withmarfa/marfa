@@ -16,7 +16,7 @@
 -- more than it looks: the instance has no space at all, and it has something
 -- that needs one.** A migration runs on every deployment, and on a hosted one a
 -- space-less row is not stale keys-mode data — it is instance-scoped by
--- design, shared by every tenant. Sweeping the catalogue into one tenant's
+-- design, shared by every tenant. Sweeping the catalog into one tenant's
 -- space would be a serious and quiet bug. So the first statement provisions a
 -- space only where none exists, at a known id, and every statement after it is
 -- conditioned on that row being there. On a hosted instance the insert writes
@@ -38,7 +38,7 @@
 -- that key admitted itself past every map under the old model.
 --
 -- Two signals looked like enough and were not. An instance holding only the
--- operator key, the manifest catalogue and its own registered types matches
+-- operator key, the manifest catalog and its own registered types matches
 -- neither, so it gets no space and its `custom_types` stay in the space-less
 -- bucket — which this file's own reasoning below calls out as the thing that
 -- stops a self-hoster's types resolving. Registered types, custom edge types,
@@ -52,20 +52,23 @@
 -- **Three tables keep some of their space-less rows, and each has a
 -- discriminator.**
 --
--- `items` keeps two kinds. A `system.integration` row is the registered
--- manifest catalogue, written with no space precisely so one registration is
--- visible everywhere, and read through the deliberate `space_id = $1 OR
--- space_id IS NULL` widening. A `system.connection` row with `kind = 'app'` is
--- an OAuth grant projection, and the provider store resolves those with an
--- inline `IS NULL` predicate rather than through the space fence — keys mode
--- has no user store, so the space it resolves for a sign-in stays undefined
--- whatever this migration does. Moving those rows would leave re-consent
--- unable to find a standing grant and minting a duplicate beside it.
+-- `items` keeps two kinds, and only one of them for good. A
+-- `system.integration` row is the registered manifest catalog, written with
+-- no space precisely so one registration is visible everywhere, and read
+-- through the deliberate `space_id = $1 OR space_id IS NULL` widening; it
+-- stays where it is. A `system.connection` row with `kind = 'app'` is an
+-- OAuth grant projection, and it was held back here on the premise that keys
+-- mode resolves no space for a sign-in, so a projection had nowhere truthful
+-- to go. That premise did not survive: a sign-in on a keys-mode instance
+-- resolves the instance's one space now, and a projection left space-less is
+-- invisible to the security page and to every revoke door. The later
+-- `app_grants_join_their_resolved_space` moves them. Nothing changes in this file,
+-- which has already run everywhere it applies.
 --
 -- `custom_types` keeps `origin = 'platform'` and `origin = 'integration'`. The
 -- shipped set is upserted into the `''` bucket at every boot and would simply
 -- be rewritten there; the same is true of a manifest's declared types, which
--- the catalogue reconcile re-registers with no space each start. Only
+-- the catalog reconcile re-registers with no space each start. Only
 -- `origin = 'user'` moves, and it has to: a self-hoster's own registered types
 -- stop resolving for a caller holding a space id, and an item write against
 -- one then fails as an unknown type.

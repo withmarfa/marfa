@@ -53,7 +53,12 @@
  *  10. `auth.account.hard_deleted` audit row (AFTER the sweep, so it
  *      is the one row that keeps its details payload).
  *   11. `auth_user` row — FK cascades drop `auth_session`,
- *      `auth_account`, `auth_passkey`.
+ *      `auth_account`, `auth_passkey`, and every `auth_oauth_*` row
+ *      keyed on the user: the clients the account registered, its
+ *      access and refresh tokens, and its consents. `auth_oauth_client`
+ *      belongs in that list and was missing from it; a reader taking
+ *      this as the inventory would have thought the account's own
+ *      registered clients survived the delete.
  *
  * The function takes the full `Storage` so step 4 / step 9 / step 10
  * flow through the store layer: the item purge and the audit writes are

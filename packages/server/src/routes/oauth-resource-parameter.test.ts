@@ -8,14 +8,34 @@
  * bearer middleware can resolve. Neither held: the plugin's audience list
  * defaulted to the bare issuer (so the MCP URI was rejected as
  * `invalid_target`), and an accepted `resource` flipped the mint to a
- * JWT-format access token that the opaque-token middleware cannot resolve —
- * a token that verifies nowhere.
+ * JWT-format access token that the opaque-token middleware cannot resolve, a
+ * token that verifies nowhere.
+ *
+ * **Driven through the authorization-code grant.** This suite used to seed a
+ * confidential client and mint through `client_credentials`, which was the
+ * cheapest way to reach the token endpoint. That grant is gone: a machine
+ * acting on a space is an API key, and a machine token would carry no space
+ * of its own, nothing on the security page, and no way for the person
+ * accountable for it to end it. So the client registers the way a real MCP
+ * client registers, through dynamic registration carrying a signed-in
+ * session, and the code flow runs end to end. That is slower, and it is also
+ * the path the parameter is actually sent on.
  */
 
-import { createHash } from "node:crypto";
-import { describe, it, expect, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createHash, randomBytes } from "node:crypto";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import {
+  createTestContext,
+  markEmailVerified,
+  request,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+
+// Each case signs a user up and in and drives a full grant before it asserts
+// anything, which is real work to fit inside the default budget with the rest
+// of the suite beside it. An overrun reports as a timeout, a result that says
+// nothing about the property under test.
+vi.setConfig({ testTimeout: 45_000 });
 
 let ctx: TestContext | undefined;
 
@@ -25,114 +45,172 @@ afterEach(async () => {
 });
 
 const ORIGIN = "http://localhost:0";
+const CALLBACK = "http://localhost:0/callback";
+const SCOPE = "core.note:read";
 
-/** Storage-level confidential client seed, mirroring the mint-ceiling
- *  suite: Marfa's DCR refuses the client_credentials grant, so the client
- *  exists by operator insert. */
-async function seedConfidentialClient(
-  c: TestContext,
-  secret: string,
-): Promise<string> {
-  const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
-  const clientPk = `pk_${Math.random().toString(36).slice(2, 10)}`;
-  if (!c.storage.betterAuthDb) {
-    throw new Error("seedConfidentialClient: storage.betterAuthDb missing");
-  }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
-  const db = c.storage.betterAuthDb as unknown as {
-    insert: (table: unknown) => {
-      values: (v: Record<string, unknown>) => {
-        run?: () => Promise<unknown>;
-        execute?: () => Promise<unknown>;
-      };
-    };
-  };
-  const now = new Date();
-  const asArray = (values: string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? values : JSON.stringify(values);
-  const op = db.insert(schemaModule.auth_oauth_client).values({
-    id: clientPk,
-    clientId,
-    clientSecret: createHash("sha256").update(secret).digest("base64url"),
-    name: "Resource Param Test",
-    redirectUris: asArray([]),
-    grantTypes: asArray(["client_credentials"]),
-    tokenEndpointAuthMethod: "client_secret_basic",
-    // 1.7 authorizes machine grants against an explicit per-client
-    // allowlist; a NULL here reads as "no authorized scopes" and the
-    // token endpoint answers unauthorized_client.
-    clientCredentialsScopes: asArray(["core.note:read"]),
-    public: false,
-    disabled: false,
-    createdAt: now,
-    updatedAt: now,
+async function signInUser(c: TestContext, email: string): Promise<string> {
+  const password = "correct horse battery";
+  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
+    body: { email, password, name: "Resource Param User" },
+    headers: { origin: ORIGIN },
   });
-  await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
-  return clientId;
+  if (signUpRes.status !== 200) {
+    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
+  }
+  await markEmailVerified(c.storage, email);
+  const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
+    body: { email, password },
+    headers: { origin: ORIGIN },
+  });
+  if (signInRes.status !== 200) {
+    throw new Error(`sign-in failed (${String(signInRes.status)})`);
+  }
+  const setCookie = signInRes.headers.get("set-cookie");
+  if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
+  for (const part of setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/)) {
+    const head = part.split(";")[0];
+    if (head?.includes("session_token")) return head;
+  }
+  throw new Error("sign-in: session_token cookie not found");
 }
 
-async function tokenRequest(
+/** Register through the Marfa-owned DCR endpoint with the person's session
+ *  on the request, which is what binds the client to their space. */
+async function registerClient(c: TestContext, cookie: string): Promise<string> {
+  const res = await request(c.app, "POST", "/auth/oauth2/register", {
+    body: {
+      redirect_uris: [CALLBACK],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      client_name: "Resource Param Test",
+      scope: SCOPE,
+    },
+    headers: { cookie, origin: ORIGIN },
+  });
+  if (res.status !== 201) {
+    throw new Error(`registration failed (${String(res.status)})`);
+  }
+  const body = (await res.json()) as { client_id: string };
+  return body.client_id;
+}
+
+/**
+ * Authorize, accept at the consent screen, exchange the code. `extra` is
+ * merged into the token request, which is where the `resource` under test
+ * goes.
+ */
+async function authorizationCodeGrant(
   c: TestContext,
   clientId: string,
-  secret: string,
+  cookie: string,
   extra: Record<string, string>,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
-  const basic = Buffer.from(`${clientId}:${secret}`).toString("base64");
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
   const params = new URLSearchParams({
-    grant_type: "client_credentials",
-    scope: "core.note:read",
-    ...extra,
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: CALLBACK,
+    state: "resource-state",
+    scope: SCOPE,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
   });
-  const res = await c.app.fetch(
-    new Request(`${ORIGIN}/auth/oauth2/token`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/x-www-form-urlencoded",
-        authorization: `Basic ${basic}`,
-        origin: ORIGIN,
-      },
-      body: params.toString(),
-    }),
+  const authorizeRes = await request(
+    c.app,
+    "GET",
+    `/auth/oauth2/authorize?${params.toString()}`,
+    { headers: { cookie } },
   );
+  expect(authorizeRes.status).toBe(302);
+  const location = authorizeRes.headers.get("location") ?? "";
+  if (!location.includes("/auth/authorize?")) {
+    throw new Error(`authorize did not reach consent: ${location}`);
+  }
+  const signedQuery = location.slice(location.indexOf("?") + 1);
+  const decisionRes = await request(c.app, "POST", "/auth/authorize/decision", {
+    form: {
+      accept: "true",
+      oauth_query: signedQuery,
+      scopes: SCOPE.split(" ").filter(Boolean),
+    },
+    headers: { cookie, origin: ORIGIN },
+  });
+  expect(decisionRes.status).toBe(302);
+  const code = new URL(
+    decisionRes.headers.get("location") ?? "",
+    ORIGIN,
+  ).searchParams.get("code");
+  if (!code) throw new Error("no code on callback redirect");
+
+  const tokenRes = await request(c.app, "POST", "/auth/oauth2/token", {
+    form: {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: CALLBACK,
+      client_id: clientId,
+      code_verifier: verifier,
+      ...extra,
+    },
+    headers: { origin: ORIGIN },
+  });
   return {
-    status: res.status,
-    body: (await res.json()) as Record<string, unknown>,
+    status: tokenRes.status,
+    body: (await tokenRes.json()) as Record<string, unknown>,
   };
+}
+
+/** A signed-in person and a client they registered, on a fresh context.
+ *  Assigns `ctx` so the file-level `afterEach` tears it down. */
+async function signedInClient(
+  base: string,
+  email: string,
+): Promise<{ context: TestContext; clientId: string; cookie: string }> {
+  const context = await createTestContext({
+    authMode: "hosted",
+    authAllowSignup: true,
+    authBaseUrl: base,
+  });
+  ctx = context;
+  const cookie = await signInUser(context, email);
+  return { context, clientId: await registerClient(context, cookie), cookie };
 }
 
 describe("resource parameter on the token endpoint", () => {
   it("accepts the MCP endpoint's canonical URI and mints a resolvable token", async () => {
     const base = "http://localhost:0";
-    ctx = await createTestContext({
-      authAllowSignup: false,
-      authBaseUrl: base,
-    });
-    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret);
+    const { context, clientId, cookie } = await signedInClient(
+      base,
+      "resource-mcp@marfa.so",
+    );
 
-    const token = await tokenRequest(ctx, clientId, secret, {
+    const token = await authorizationCodeGrant(context, clientId, cookie, {
       resource: `${base}/mcp`,
     });
     expect(token.status).toBe(200);
 
     const accessToken = token.body.access_token as string;
     // The mint must stay in the opaque family the bearer middleware
-    // resolves — a JWT here is a token that verifies nowhere.
+    // resolves. A JWT here is a token that verifies nowhere.
     expect(accessToken.startsWith("marfa_at_")).toBe(true);
 
-    const read = await request(ctx.app, "GET", "/items", { key: accessToken });
+    // And it resolves against the data plane, which is the half a shape
+    // assertion cannot see: the token carries the consenting person's space,
+    // so the storage layer has a predicate to apply.
+    const read = await request(context.app, "GET", "/items", {
+      key: accessToken,
+    });
     expect(read.status).toBe(200);
   });
 
   it("still mints identically when no resource is sent", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
-    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret);
+    const base = "http://localhost:0";
+    const { context, clientId, cookie } = await signedInClient(
+      base,
+      "resource-none@marfa.so",
+    );
 
-    const token = await tokenRequest(ctx, clientId, secret, {});
+    const token = await authorizationCodeGrant(context, clientId, cookie, {});
     expect(token.status).toBe(200);
     expect((token.body.access_token as string).startsWith("marfa_at_")).toBe(
       true,
@@ -141,19 +219,17 @@ describe("resource parameter on the token endpoint", () => {
 
   it("refuses a resource outside the accepted set with the RFC 8707 error", async () => {
     // The accepted audiences are pinned from the issuer base URL, so a
-    // client cannot pick its own token audience — the escalation class
-    // where a token minted under one grant is spent against another
-    // audience. Refused up front, before the mint, with the error shape
-    // RFC 8707 names for it.
+    // client cannot pick its own token audience: the escalation class where
+    // a token minted under one grant is spent against another audience.
+    // Refused up front, before the mint, with the error shape RFC 8707 names
+    // for it.
     const base = "http://localhost:0";
-    ctx = await createTestContext({
-      authAllowSignup: false,
-      authBaseUrl: base,
-    });
-    const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
-    const clientId = await seedConfidentialClient(ctx, secret);
+    const { context, clientId, cookie } = await signedInClient(
+      base,
+      "resource-evil@marfa.so",
+    );
 
-    const token = await tokenRequest(ctx, clientId, secret, {
+    const token = await authorizationCodeGrant(context, clientId, cookie, {
       resource: "https://evil.example.com/api",
     });
     expect(token.status).toBe(400);

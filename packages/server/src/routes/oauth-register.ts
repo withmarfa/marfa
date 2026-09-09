@@ -56,10 +56,8 @@ import type { AppEnv } from "../middleware/auth.js";
 import type { MarfaAuth } from "../auth/instance.js";
 import type { OauthProviderStore, Storage } from "../storage/interface.js";
 import { dcrDefaultScopes, withSessionScopes } from "../auth/mint-ceiling.js";
-import {
-  buildAllowedScopes,
-  resolveSpaceIdForAuthUser,
-} from "../auth/oauth-provider.js";
+import { buildAllowedScopes } from "../auth/oauth-provider.js";
+import { resolveSpaceIdForAuthUser } from "../auth/grant-space.js";
 import { log } from "../middleware/logger.js";
 
 import { DEVICE_CODE_GRANT_TYPE as DEVICE_CODE_GRANT } from "./auth-pages.js";
@@ -72,12 +70,18 @@ import { DEVICE_CODE_GRANT_TYPE as DEVICE_CODE_GRANT } from "./auth-pages.js";
  * still valid alongside any of the others — the OAuth2 spec treats
  * `refresh_token` as a refinement on grants that issue refresh tokens.
  *
- * Note that the @better-auth/oauth-provider plugin's
- * `/auth/oauth2/token` endpoint still only knows how to dispatch the
- * first three (verified at `dist/index.mjs:300-318`). Device-code
- * exchange targets the Marfa-owned `POST /auth/device/token` route in
- * `routes/auth-pages.ts`, not the plugin's `/oauth2/token`. The
- * discovery doc advertises both endpoints accordingly.
+ * `client_credentials` is here so it reaches the handler and gets the
+ * RFC 7591 refusal below, which names the reason. Dropping it from the enum
+ * would answer the same request with a schema-validation error that tells a
+ * client nothing about why the grant it asked for does not exist.
+ *
+ * Note that the plugin's `/auth/oauth2/token` endpoint dispatches only the
+ * grants this server configures it with, which are `authorization_code` and
+ * `refresh_token`. Device-code exchange targets the Marfa-owned
+ * `POST /auth/device/token` route in `routes/auth-pages.ts` rather than the
+ * plugin's endpoint, which is why the URN is accepted here and absent from
+ * that configured list; the discovery document advertises both endpoints
+ * accordingly.
  */
 const ACCEPTED_GRANT_TYPES = [
   "authorization_code",
@@ -257,15 +261,19 @@ export function oauthRegisterRoutes(
       );
     }
 
-    // `client_credentials` requires an authenticated registration per
-    // RFC 7591 §3.2.1. Marfa's DCR is unauthenticated (single-user self-
-    // hosts + public SDK clients), so we reject `client_credentials`
-    // outright — matches the plugin's behavior at `dist/index.mjs:1197`.
+    // The client-credentials grant is not one this server has, so no client
+    // registers for it. A machine acting on a space is an API key: minted
+    // into that space by a person or by a key, and listed, narrowed, revoked
+    // and rotated on the keys page. A client-credentials token would carry
+    // none of that, and it would hold space permissions no consent screen
+    // ever showed anybody. The token endpoint answers `unsupported_grant_type`
+    // for the same reason; refusing here means a client learns it at
+    // registration rather than at its first token request.
     if (grantTypes.includes("client_credentials")) {
       return c.json(
         dcrError(
           "invalid_client_metadata",
-          "client_credentials grant requires authenticated registration",
+          "This server does not support the client_credentials grant. Use an API key for a machine caller.",
         ),
         400,
       );

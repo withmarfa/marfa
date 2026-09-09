@@ -1,6 +1,6 @@
 /**
- * Bearer middleware: an OAuth token that resolves to no space is refused in
- * hosted mode.
+ * Bearer middleware: an OAuth token that resolves to no space is refused, in
+ * either mode.
  *
  * Token space binding is written at issuance (`postLogin.consentReferenceId`
  * → `auth_oauth_access_token.reference_id`). When that column is NULL — an
@@ -10,14 +10,18 @@
  * operator-key shape, reached by accident. Such a token did not see
  * nothing; it saw every space, bounded only by its granted scopes.
  *
- * Hosted mode refuses these tokens outright. Keys mode is untouched: there,
- * credentials are space-less by design and the single-space deployment is
- * the boundary.
+ * **Keys mode used to be exempt, and that exemption became a hole.** It was
+ * written when a self-host bound nothing to a space, so a space-less bearer
+ * there was the only shape there was. Keys mode has a space now, issuance
+ * binds to it, and the exemption would have admitted exactly the principal
+ * the row constraint exists to make unwritable, reached through the one path
+ * that builds a credential in memory rather than reading a row.
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { request, createTestContext, seedOauthBearer } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { resolveSpaceIdForAuthUser } from "../auth/grant-space.js";
 
 let ctx: TestContext;
 
@@ -36,7 +40,7 @@ function spaces() {
   return ctx.storage.spaces;
 }
 
-describe("space-less OAuth tokens (hosted mode)", () => {
+describe("space-less OAuth tokens", () => {
   it("refuses a token whose reference resolves to no space", async () => {
     // A real space with a real item — the data a space-less token must not
     // be able to reach.
@@ -52,8 +56,10 @@ describe("space-less OAuth tokens (hosted mode)", () => {
       space.id,
     );
 
-    // No spaceId → the token row's reference_id is NULL.
-    const { token } = await seedOauthBearer(ctx.storage, ["core.note:read"]);
+    // `null` → the token row's reference_id is NULL, deliberately.
+    const { token } = await seedOauthBearer(ctx.storage, ["core.note:read"], {
+      spaceId: null,
+    });
 
     const res = await request(ctx.app, "GET", "/items", { key: token });
     expect(res.status).toBe(401);
@@ -82,5 +88,72 @@ describe("space-less OAuth tokens (hosted mode)", () => {
       data: { properties: { title: string } }[];
     };
     expect(body.data.some((i) => i.properties.title === "own note")).toBe(true);
+  });
+});
+
+describe("space-less OAuth tokens in keys mode", () => {
+  // The exemption's own deployment shape. `resolveSpaceIdForAuthUser` answers
+  // from the instance's one space where there is no user store, so a token
+  // issued here is bound; and a token that somehow is not is refused rather
+  // than admitted, which is what the exemption used to do.
+  let keysCtx: TestContext;
+
+  afterEach(async () => {
+    await keysCtx.cleanup();
+  });
+
+  it("refuses a token that carries no space", async () => {
+    keysCtx = await createTestContext();
+    if (!keysCtx.storage.spaces) throw new Error("space store expected");
+    const space = await keysCtx.storage.spaces.create("the-one-space");
+    await keysCtx.storage.items.create(
+      {
+        type: "core.note",
+        tier: "library",
+        state: "active",
+        properties: { title: "private note", body: "not for a stray token" },
+        source: "test/spaceless-oauth-keys",
+      },
+      space.id,
+    );
+
+    const { token } = await seedOauthBearer(
+      keysCtx.storage,
+      ["core.note:read"],
+      { spaceId: null },
+    );
+
+    const res = await request(keysCtx.app, "GET", "/items", { key: token });
+    expect(res.status).toBe(401);
+  });
+
+  it("binds issuance to the instance's one space where there is no user store", async () => {
+    keysCtx = await createTestContext();
+    if (!keysCtx.storage.spaces) throw new Error("space store expected");
+    expect(keysCtx.storage.users).toBeUndefined();
+    const [only] = await keysCtx.storage.spaces.list();
+    expect(only).toBeDefined();
+
+    const resolved = await resolveSpaceIdForAuthUser(
+      keysCtx.storage,
+      "auth-user-with-no-row",
+    );
+    expect(resolved).toBe(only?.id);
+  });
+
+  it("resolves nothing where the instance has more than one space", async () => {
+    // Two is a state nothing here can choose between, and binding a token to
+    // a guess would be worse than refusing it: the token would work, against
+    // whichever space the store happened to return first.
+    keysCtx = await createTestContext();
+    if (!keysCtx.storage.spaces) throw new Error("space store expected");
+    await keysCtx.storage.spaces.create("a-second-space");
+    expect((await keysCtx.storage.spaces.list()).length).toBeGreaterThan(1);
+
+    const resolved = await resolveSpaceIdForAuthUser(
+      keysCtx.storage,
+      "auth-user-with-no-row",
+    );
+    expect(resolved).toBeUndefined();
   });
 });

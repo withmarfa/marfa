@@ -18,6 +18,12 @@
  * no-op here, or a stolen refresh token becomes a denial-of-service on
  * somebody else's grant. And an access-token revoke stays token-only: that
  * is a sign-out, not a disconnect.
+ *
+ * The last pair is about a token that carries no space, which is what an
+ * instance issued before a grant's space resolved and what its rows still
+ * hold after the migration moves the projection. Revoking with one has to
+ * reach the projection anyway, and rotating one has to be refused rather
+ * than answered with another token nothing accepts.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
@@ -30,6 +36,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
 import { resolveRevokeClientId } from "./oauth-provider.js";
+import { NO_GRANT_SPACE_MESSAGE } from "./grant-space.js";
 
 // Every case signs a user up and in and drives a full authorization-code
 // grant before asserting anything, which is more than the default budget
@@ -592,6 +599,128 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
     expect(rows.refreshTokens).toEqual([{ revoked: false }]);
     expect((await onlyGrant(ctx)).properties.status).toBe("active");
     expect((await revokedAudits(ctx)).data).toEqual([]);
+  });
+});
+
+/**
+ * Mint the token pair a deployment issued before a grant's space resolved:
+ * both rows carry a NULL `reference_id`. The migration that moves a stranded
+ * projection into the space the resolver now answers does not rewrite these,
+ * so this is the live shape on an upgraded instance until the tokens expire.
+ *
+ * Hashes are computed the way the plugin computes them, prefix stripped, so
+ * the presented string resolves through the same lookup a real token does.
+ */
+async function seedUnboundTokenPair(
+  c: TestContext,
+  clientId: string,
+  authUserId: string,
+  scopes: string[],
+): Promise<{ accessToken: string; refreshToken: string }> {
+  const provider = c.storage.oauthProvider;
+  if (typeof provider?.mintTokenPair !== "function") {
+    throw new Error("seedUnboundTokenPair: mintTokenPair missing");
+  }
+  const { hashApiKey } = await import("../middleware/auth.js");
+  const { TEST_API_KEY_SALT } = await import("../test-utils.js");
+  const accessToken = `marfa_at_${randomBytes(12).toString("hex")}`;
+  const refreshToken = `marfa_rt_${randomBytes(12).toString("hex")}`;
+  await provider.mintTokenPair({
+    accessTokenHash: hashApiKey(
+      accessToken.slice("marfa_at_".length),
+      TEST_API_KEY_SALT,
+    ),
+    refreshTokenHash: hashApiKey(
+      refreshToken.slice("marfa_rt_".length),
+      TEST_API_KEY_SALT,
+    ),
+    clientId,
+    authUserId,
+    referenceId: null,
+    scopes,
+    accessTtlMs: 3600_000,
+  });
+  return { accessToken, refreshToken };
+}
+
+describe("a token minted before the grant's space resolved", () => {
+  it("still ends the grant it belongs to when the client revokes it", async () => {
+    // The cascade reads the space off the presented token, and this token has
+    // none. The projection does: it was written into the space the resolver
+    // answers, or moved there by the migration. Keyed on the token alone the
+    // lookup finds nothing, `revokeProjectedGrant` takes its no-op arm, and
+    // the endpoint answers 200 over a grant the security page still lists as
+    // active. A revoke that reports success and ends nothing is the failure
+    // this whole change exists to close.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx, "Upgraded App");
+    const cookie = await signInUser(ctx, "unbound-revoke@example.com");
+    const authUserId = await authUserIdFor(ctx, "unbound-revoke@example.com");
+    const scope = "core.note:read offline_access";
+    await codeGrant(ctx, clientId, cookie, scope);
+
+    const grantBefore = await onlyGrant(ctx);
+    expect(grantBefore.properties.status).toBe("active");
+    // The projection is in a space; the legacy token is not. That pairing is
+    // the whole case, so assert it rather than assume it.
+    expect(grantBefore.space_id).toBeTruthy();
+
+    const legacy = await seedUnboundTokenPair(ctx, clientId, authUserId, [
+      "core.note:read",
+      "offline_access",
+    ]);
+    const res = await revoke(ctx, legacy.refreshToken, clientId);
+    expect(res.status).toBe(200);
+
+    expect((await onlyGrant(ctx)).properties.status).toBe("revoked");
+    const rows = await grantRows(ctx, clientId, authUserId);
+    expect(rows.consents).toBe(0);
+    expect(rows.accessTokens).toBe(0);
+  });
+
+  it("is refused at the token endpoint rather than rotated into another one", async () => {
+    // The plugin copies the presented token's reference onto the rotated
+    // token instead of resolving it again, so rotating an unbound token
+    // produces another unbound token and the bearer middleware answers 401 on
+    // every request made with it, naming nothing. This is the only grant that
+    // reaches a mint without passing through a code, so no other guard sees
+    // it.
+    ctx = await createTestContext({ authAllowSignup: true });
+    const clientId = await seedClient(ctx, "Rotating App");
+    const cookie = await signInUser(ctx, "unbound-refresh@example.com");
+    const authUserId = await authUserIdFor(ctx, "unbound-refresh@example.com");
+    await codeGrant(ctx, clientId, cookie, "core.note:read offline_access");
+    const legacy = await seedUnboundTokenPair(ctx, clientId, authUserId, [
+      "core.note:read",
+      "offline_access",
+    ]);
+
+    // The premise: the token authenticates and is refused for its space, not
+    // for being unknown.
+    const data = await request(ctx.app, "GET", "/items?type=core.note", {
+      headers: { authorization: `Bearer ${legacy.accessToken}` },
+    });
+    expect(data.status).toBe(401);
+
+    const res = await request(ctx.app, "POST", "/auth/oauth2/token", {
+      form: {
+        grant_type: "refresh_token",
+        refresh_token: legacy.refreshToken,
+        client_id: clientId,
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as {
+      error: string;
+      error_description: string;
+    };
+    expect(body.error).toBe("invalid_grant");
+    expect(body.error_description).toBe(NO_GRANT_SPACE_MESSAGE);
+
+    // The grant itself is untouched: this refuses a credential, it does not
+    // revoke anything.
+    expect((await onlyGrant(ctx)).properties.status).toBe("active");
   });
 });
 
