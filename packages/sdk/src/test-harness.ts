@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { createHmac } from "node:crypto";
 import {
   createApp,
+  ensureBootstrapSecret,
   createSqliteStorage,
   FilesystemBlobBackend,
   initEventLog,
@@ -199,9 +200,18 @@ export async function createKeysModeFixture(
   // right flow and the wrong test: a suite doing by hand what the product does
   // for itself exercises a path nobody takes and leaves the shipped one
   // uncovered.
+  //
+  // The mint presents the one-time secret the server prints to its boot log,
+  // because that call is the product's one unauthenticated write and is bound
+  // to whoever is running the instance. This fixture boots the app in-process
+  // and never reads a log, so it obtains the secret the way boot does.
+  const bootstrapSecret = await ensureBootstrapSecret(storage);
   const bootstrapRes = await fetch("http://localhost/keys", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapSecret}`,
+    },
     body: JSON.stringify({
       label: "test-operator",
       source: "sdk-test-operator",

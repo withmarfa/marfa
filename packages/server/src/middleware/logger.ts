@@ -82,6 +82,28 @@ function emitOtelLog(
   });
 }
 
+/** Per-call options for {@link log}. */
+export interface LogOptions {
+  /**
+   * Keep this line out of the OpenTelemetry mirror, so it reaches stdout and
+   * nothing else.
+   *
+   * **The redactor cannot help here, and that is why the flag exists.** It
+   * rewrites attributes and deliberately leaves the body alone, on the
+   * reasoning that a message string is Marfa-controlled and so safe by
+   * construction. A line whose message *is* a credential breaks that
+   * reasoning, and there is exactly one: the bootstrap secret, which has to
+   * be readable by whoever runs the instance and by nobody further. Exporting
+   * it would make "can read the log" mean "can read the observability
+   * backend", which is a much larger set than "runs this server".
+   *
+   * Not a general-purpose escape hatch. A line that needs this is a line
+   * carrying a secret, and the answer for anything else is a redacted
+   * attribute.
+   */
+  localOnly?: boolean;
+}
+
 /**
  * Emit one structured log line.
  *
@@ -95,6 +117,7 @@ export function log(
   level: LogLevel,
   message: string,
   data?: Record<string, unknown>,
+  options?: LogOptions,
 ): void {
   let payload: Record<string, unknown>;
   let line: string;
@@ -136,6 +159,7 @@ export function log(
     // stdout is gone (a closed pipe on shutdown). There is nothing left to
     // report the failure with, and throwing here would only hide the caller's.
   }
+  if (options?.localOnly === true) return;
   try {
     emitOtelLog(level, message, payload);
   } catch {

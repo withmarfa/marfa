@@ -5,6 +5,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
+import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { createApp } from "../app.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -40,7 +41,7 @@ describe("authentication", () => {
 });
 
 describe("bootstrap mode", () => {
-  it("allows key creation without auth when no keys exist", async () => {
+  it("mints the first key on the printed secret and no other credential", async () => {
     const freshTmpDir = mkdtempSync(join(tmpdir(), "marfa-boot-"));
     const storage = await createSqliteStorage(join(freshTmpDir, "boot.db"));
     const blobBackend = new FilesystemBlobBackend(join(freshTmpDir, "blobs"));
@@ -87,7 +88,13 @@ describe("bootstrap mode", () => {
       mcpEnabled: false,
     });
 
+    // The one unauthenticated write in the product is bound to the host: the
+    // first mint presents the one-time secret the server printed to its boot
+    // log. This test builds the app directly and never runs that boot path,
+    // so it obtains the secret the way boot does.
+    const bootstrapSecret = await ensureBootstrapSecret(storage);
     const res = await request(app, "POST", "/keys", {
+      key: bootstrapSecret,
       body: { label: "bootstrap-admin", source: "bootstrap-admin" },
     });
     expect(res.status).toBe(201);

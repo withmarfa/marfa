@@ -24,3 +24,10 @@ export {
 // afterwards: the wiring is module-global, so it outlives the app it was
 // turned on for.
 export { initEventLog, __resetCycleDetectionForTests } from "./pubsub.js";
+// Exposed for the same reason as the two above. `createApp` does not print
+// the bootstrap secret — the server's own boot does — so an app built from
+// `createApp` alone has an unbootstrapped instance with no secret on it and
+// no way for a harness to present one. Ensuring it is what boot does, and a
+// harness that drives the first mint has to do the same or it is testing a
+// door the product no longer has.
+export { ensureBootstrapSecret } from "./auth/bootstrap-secret.js";

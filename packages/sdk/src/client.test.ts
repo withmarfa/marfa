@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
+  ensureBootstrapSecret,
   createApp,
   createSqliteStorage,
   FilesystemBlobBackend,
@@ -95,13 +96,22 @@ beforeAll(async () => {
   testFetchFn = createTestFetch(app);
   const testFetch = testFetchFn;
 
-  // **The first, unauthenticated mint produces the operator key**, which holds
-  // no space and no permission: running the instance sits outside the model.
-  // It is not a working key, so the fixture uses it to create a space and mint
-  // one, which is the setup keys mode is meant to follow.
+  // **The first mint produces the operator key**, which holds no space and no
+  // permission: running the instance sits outside the model. It is not a
+  // working key, so the fixture uses it to create a space and mint one, which
+  // is the setup keys mode is meant to follow.
+  //
+  // It presents the one-time secret the server prints to its boot log, because
+  // that call is the product's one unauthenticated write and is bound to
+  // whoever runs the instance. This fixture boots the app in-process and never
+  // reads a log, so it obtains the secret the way boot does.
+  const bootstrapSecret = await ensureBootstrapSecret(storage);
   const bootstrapRes = await testFetch("http://localhost/keys", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrapSecret}`,
+    },
     body: JSON.stringify({
       label: "test-operator",
       source: "sdk-test-operator",

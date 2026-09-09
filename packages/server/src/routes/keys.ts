@@ -26,6 +26,11 @@ import {
   RESERVED_CREDENTIAL_SOURCE_PREFIXES,
 } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
+import {
+  BOOTSTRAP_SECRET_KEY,
+  bootstrapSecretMatches,
+  consumeBootstrapSecret,
+} from "../auth/bootstrap-secret.js";
 import type { Storage } from "../storage/interface.js";
 import { KeyResponseSchema } from "./_schemas.js";
 import {
@@ -118,7 +123,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: no authentication, and the key it mints is the operator key.\n\nIn keys mode the bootstrap call also provisions the instance's one space and mints a working key into it, returned as `space` and `space_key`. The operator key is not a working key — it holds no space and no permissions, because running the instance sits outside the permission model — so the space key is the one to configure a client with.",
+    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: the key it mints is the operator key, and the request must present the one-time secret the server printed to its log at startup, as a bearer token. That secret works once — the mint consumes it.\n\nIn keys mode the bootstrap call also provisions the instance's one space and mints a working key into it, returned as `space` and `space_key`. The operator key is not a working key — it holds no space and no permissions, because running the instance sits outside the permission model — so the space key is the one to configure a client with.",
 
   security: [{ bearerAuth: [] }],
   request: {
@@ -832,6 +837,36 @@ export function keyRoutes(
       );
     }
 
+    // **The one unauthenticated write in the product is bound to the host.**
+    // A fresh instance prints a one-time secret to its own boot log, and this
+    // mint has to present it as a bearer token. Reading that log is proof of
+    // running the instance, which is the only claim available before any
+    // credential exists — and without it the door stands open to whoever
+    // reaches the port first during the window between `up` and the operator's
+    // first call.
+    //
+    // **Checked before the claim**, for the same reason the body validation
+    // above is: the claim is one-shot and irreversible, so a request that can
+    // never mint must not consume it. A wrong secret would otherwise lock a
+    // fresh instance out of bootstrap for good.
+    //
+    // The middleware reads no `Authorization` header on this path, so the
+    // whole header is available here and the secret arrives the way every
+    // later credential will.
+    if (isBootstrap) {
+      const presented = (c.req.header("authorization") ?? "").replace(
+        /^Bearer\s+/i,
+        "",
+      );
+      const stored = await storage.settings.get(BOOTSTRAP_SECRET_KEY);
+      if (!bootstrapSecretMatches(stored, presented)) {
+        throw new MarfaError(
+          ErrorCode.UNAUTHORIZED,
+          "The first key is minted with the one-time secret this server printed to its log at startup. Present it as a bearer token.",
+        );
+      }
+    }
+
     // Under bootstrap, atomically claim the sentinel BEFORE minting. Two
     // concurrent unauthenticated POST /keys against a fresh DB both pass
     // the middleware gate (which reads the sentinel non-atomically); only
@@ -852,6 +887,12 @@ export function keyRoutes(
     // behind it, which is an instance nobody can reach and no route can
     // repair. Releasing on the way out makes the attempt retryable, so a
     // transient failure costs a retry rather than the instance.
+    //
+    // **The secret is spent inside that window, not before it.** Spending it
+    // beside the claim would survive the release and take the retry with it:
+    // the sentinel would be back, and the secret the caller has to present is
+    // gone, so the instance is no more reachable than before. Spent after the
+    // key exists, the two agree — either both stand, or neither has moved.
     return await withBootstrapRelease(isBootstrap, storage, async () => {
       assertUnreservedSource(body.source);
 
@@ -1045,6 +1086,14 @@ export function keyRoutes(
       // last three here makes it the shipped shape rather than three paragraphs
       // of documentation a person follows by hand.
       //
+      // The key row exists, so the secret has done its job and is spent.
+      // Ordered here rather than beside the claim because a failure before
+      // this point releases the claim, and a released claim with a spent
+      // secret is not a retry — it is the same lockout with an extra step.
+      if (isBootstrap) {
+        await consumeBootstrapSecret(storage);
+      }
+
       // Keys mode only. In hosted mode a space belongs to an account and
       // arrives with one, so provisioning here would leave a stray space owned
       // by nobody.

@@ -16,6 +16,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import type { Storage } from "../storage/interface.js";
 import { hashApiKey } from "../middleware/auth.js";
+import { ensureBootstrapSecret } from "../auth/bootstrap-secret.js";
 import { KeyResponseSchema } from "./_schemas.js";
 import { extensionLabelOf } from "../auth/extension-label.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
@@ -269,6 +270,14 @@ describe("bootstrap sentinel", () => {
   }): Promise<{
     app: ReturnType<typeof createApp>;
     storage: Storage;
+    /**
+     * The one-time secret the first mint must present, obtained the way boot
+     * obtains it. **Generated here rather than by the app**, because these
+     * tests build the app directly and never run the boot path that prints
+     * it — and a fixture that skipped the secret would be testing a door the
+     * product no longer has.
+     */
+    bootstrapSecret: string;
     /** Removed by the caller alongside `storage.close()`; nothing else
      *  removes it. */
     tmpDir: string;
@@ -333,13 +342,15 @@ describe("bootstrap sentinel", () => {
       mcpEnabled: false,
       ...overrides,
     });
-    return { app, storage, tmpDir };
+    const bootstrapSecret = await ensureBootstrapSecret(storage);
+    return { app, storage, bootstrapSecret, tmpDir };
   }
 
   it("admits the first unauthenticated POST /keys as bootstrap", async () => {
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const res = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: {
           label: "first-admin",
           source: "first-admin",
@@ -390,9 +401,10 @@ describe("bootstrap sentinel", () => {
     // setup story is mint the operator key, create a space, mint a key into
     // it, work with that key — and this is that story shipped rather than
     // written down.
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const res = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(res.status).toBe(201);
@@ -448,9 +460,12 @@ describe("bootstrap sentinel", () => {
     // credential applies no space predicate at all, so `*: write` here is
     // read and write over every space at once, in the one row shape the
     // constraint exists to make unwritable.
-    const { app, storage, tmpDir } = await freshApp({ authMode: "hosted" });
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({
+      authMode: "hosted",
+    });
     try {
       const res = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: {
           label: "greedy",
           source: "greedy",
@@ -510,7 +525,7 @@ describe("bootstrap sentinel", () => {
     //
     // The failure is injected after the key insert, which is the half the
     // release-on-any-failure shape got wrong.
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const list = storage.spaces!.list.bind(storage.spaces);
       storage.spaces!.list = () => {
@@ -518,6 +533,7 @@ describe("bootstrap sentinel", () => {
       };
 
       const res = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
 
@@ -533,6 +549,7 @@ describe("bootstrap sentinel", () => {
       expect(await storage.settings.get("bootstrapped")).toBe("true");
       storage.spaces!.list = list;
       const second = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "stranger", source: "stranger" },
       });
       expect(second.status).toBe(401);
@@ -549,13 +566,16 @@ describe("bootstrap sentinel", () => {
     // so this reaches the release the only way left, by making the audit
     // write throw synchronously. The point is not that path; it is that a
     // future step added after the insert cannot reopen the window by failing.
-    const { app, storage, tmpDir } = await freshApp({ authMode: "hosted" });
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({
+      authMode: "hosted",
+    });
     try {
       storage.audit.log = () => {
         throw new Error("storage is having a moment");
       };
 
       const res = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(res.status).toBe(500);
@@ -575,11 +595,12 @@ describe("bootstrap sentinel", () => {
     // migration's space in place. Creating a second is refused everywhere
     // downstream, but returning nothing would hand back an operator key and
     // call it setup — and the operator key is not a working key.
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const existing = await storage.spaces!.create("Already here");
 
       const res = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(res.status).toBe(201);
@@ -610,7 +631,7 @@ describe("bootstrap sentinel", () => {
     // an instance nobody can reach and no route can repair. The failure is
     // injected at the key insert because that is the write, and any of the
     // several after it fail the same way.
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const create = storage.keys.create.bind(storage.keys);
       storage.keys.create = () => {
@@ -618,15 +639,19 @@ describe("bootstrap sentinel", () => {
       };
 
       const failed = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(failed.status).toBe(500);
       expect(await storage.settings.get("bootstrapped")).toBeNull();
 
-      // The premise, and the point: the retry works. Without the release the
-      // middleware reads a stamped sentinel and answers 401 forever.
+      // The premise, and the point: the retry works, **presenting the same
+      // secret**. Releasing the claim while spending the secret would be no
+      // retry at all — the door would be open and the only thing that opens
+      // it would be gone.
       storage.keys.create = create;
       const retried = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(retried.status).toBe(201);
@@ -638,9 +663,12 @@ describe("bootstrap sentinel", () => {
   });
 
   it("provisions nothing in hosted mode, where a space belongs to an account", async () => {
-    const { app, storage, tmpDir } = await freshApp({ authMode: "hosted" });
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp({
+      authMode: "hosted",
+    });
     try {
       const res = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(res.status).toBe(201);
@@ -654,13 +682,92 @@ describe("bootstrap sentinel", () => {
     }
   });
 
+  it("refuses the first mint without the secret this instance printed", async () => {
+    // **The window this closes.** A fresh instance accepts one unauthenticated
+    // write, and until the secret existed that door was open to whoever
+    // reached the port first between `up` and the operator's first call.
+    const { app, storage, tmpDir } = await freshApp();
+    try {
+      const res = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(res.status).toBe(401);
+      // And the one-shot claim is intact, so the real operator can still
+      // bootstrap. A refused attempt that burned it would lock the instance
+      // out for good.
+      expect(await storage.settings.get("bootstrapped")).toBeNull();
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a secret that is not this instance's", async () => {
+    const { app, storage, tmpDir } = await freshApp();
+    try {
+      const res = await request(app, "POST", "/keys", {
+        key: "not-the-secret",
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(res.status).toBe(401);
+      expect(await storage.settings.get("bootstrapped")).toBeNull();
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("consumes the secret, so it cannot mint a second time", async () => {
+    // The log line stays on somebody's screen long after the mint. What stops
+    // a second use is the claim, and this is the belt beside it: the row is
+    // gone the moment the operator key exists.
+    //
+    // Deleted, not blanked. A blanked row reads as absent to `get` and as an
+    // empty string to a comparison, and `bootstrapSecretMatches("", "")` is
+    // true — so a request with no `Authorization` header at all presents the
+    // empty string and matches. `null` is the one state every reader agrees
+    // about.
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
+    try {
+      const first = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(first.status).toBe(201);
+      expect(await storage.settings.get("bootstrap.secret")).toBeNull();
+
+      const second = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
+        body: { label: "second", source: "second" },
+      });
+      expect(second.status).toBe(401);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the same secret across a restart before the first mint", async () => {
+    // An operator who copied the line and then restarted the container must
+    // not find it invalidated. Idempotence is what makes re-printing at every
+    // boot safe rather than confusing.
+    const { storage, bootstrapSecret, tmpDir } = await freshApp();
+    try {
+      expect(await ensureBootstrapSecret(storage)).toBe(bootstrapSecret);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("a rejected body does not burn the one-shot bootstrap claim", async () => {
     // The sentinel claim is irreversible. If a request that can never
     // mint consumed it, a single stray field would lock a brand-new
     // instance out of bootstrap permanently.
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const rejected = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: {
           label: "stray-field",
           source: "stray-field",
@@ -672,6 +779,7 @@ describe("bootstrap sentinel", () => {
 
       // Bootstrap still available to the corrected request.
       const retry = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(retry.status).toBe(201);
@@ -688,9 +796,10 @@ describe("bootstrap sentinel", () => {
     // branch. Avoids depending on the shared `ctx` because freshApp()
     // tests under PG truncate the shared container, which would wipe
     // the ctx's admin key and sentinel between tests.
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const bootstrapRes = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: {
           label: "bootstrap-admin",
           source: "bootstrap-admin",
@@ -744,10 +853,11 @@ describe("bootstrap sentinel", () => {
   });
 
   it("does NOT re-open bootstrap after every key is revoked", async () => {
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       // First unauthenticated POST succeeds as bootstrap.
       const firstRes = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: {
           label: "first-admin",
           source: "first-admin",
@@ -766,6 +876,7 @@ describe("bootstrap sentinel", () => {
       // Next unauthenticated POST must be rejected — this is the
       // regression the persistent sentinel prevents.
       const secondRes = await request(app, "POST", "/keys", {
+        key: bootstrapSecret,
         body: {
           label: "takeover",
           source: "takeover",
@@ -783,7 +894,7 @@ describe("bootstrap sentinel", () => {
   });
 
   it("concurrent unauthenticated POST /keys mints exactly one admin key", async () => {
-    const { app, storage, tmpDir } = await freshApp();
+    const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const N = 8;
       const bodies = Array.from({ length: N }, (_, i) => ({
@@ -792,7 +903,9 @@ describe("bootstrap sentinel", () => {
         type_permissions: { "*": "write" },
       }));
       const results = await Promise.all(
-        bodies.map((body) => request(app, "POST", "/keys", { body })),
+        bodies.map((body) =>
+          request(app, "POST", "/keys", { key: bootstrapSecret, body }),
+        ),
       );
       const statuses = results.map((r) => r.status);
       const successes = statuses.filter((s) => s === 201).length;

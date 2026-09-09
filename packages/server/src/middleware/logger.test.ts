@@ -200,6 +200,49 @@ describe("serializeError", () => {
  * permission error was occurring. Anything Error-shaped in a logged payload
  * has to survive the trip.
  */
+describe("the OpenTelemetry mirror", () => {
+  // **The one line whose message is a credential must not be exported.** The
+  // redaction processor rewrites attributes and deliberately leaves the body
+  // alone, on the reasoning that a message string is Marfa-controlled and so
+  // safe by construction. The bootstrap secret breaks that reasoning: it has
+  // to be readable by whoever runs the instance and by nobody further, and
+  // exporting it turns "can read the boot log" into "can read the
+  // observability backend".
+  //
+  // Asserted through the real logs API rather than a spy on the private
+  // helper, because the helper is what a refactor would move.
+  it("skips a line marked localOnly and mirrors every other", async () => {
+    const { logs } = await import("@opentelemetry/api-logs");
+    const emitted: string[] = [];
+    const previous = logs.getLogger.bind(logs);
+    // @ts-expect-error — replacing the accessor for the duration of the case.
+    logs.getLogger = () => ({
+      emit: (record: { body?: unknown }) => {
+        emitted.push(String(record.body));
+      },
+    });
+    const stdout: string[] = [];
+    const writer = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string) => {
+      stdout.push(chunk);
+      return true;
+    };
+    try {
+      log("warn", "secret-bearing line", undefined, { localOnly: true });
+      log("warn", "ordinary line");
+    } finally {
+      process.stdout.write = writer;
+      logs.getLogger = previous;
+    }
+
+    // Both reach the operator's own log.
+    expect(stdout.join("")).toContain("secret-bearing line");
+    expect(stdout.join("")).toContain("ordinary line");
+    // Only one leaves the machine.
+    expect(emitted).toEqual(["ordinary line"]);
+  });
+});
+
 describe("log payload serialization", () => {
   function captureLog(
     level: "info" | "warn" | "error",
