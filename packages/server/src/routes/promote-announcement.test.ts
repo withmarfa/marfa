@@ -68,7 +68,7 @@ async function promoteAMirror(): Promise<{
   });
   const cursor = await logCursor();
   const res = await request(ctx.app, "POST", `/items/${mirror.id}/promote`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status, await res.clone().text()).toBe(201);
   const promotedId = ((await res.json()) as { item: { id: string } }).item.id;

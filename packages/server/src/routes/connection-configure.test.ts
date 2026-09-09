@@ -205,7 +205,7 @@ describe("renderGoogleCalendarPicker", () => {
 /** A key holding no space permission, so the configure door refuses it. */
 async function mintUnprivilegedKey(): Promise<string> {
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       label: "configure-unprivileged",
       source: "configure-unprivileged",
@@ -337,7 +337,7 @@ describe("POST /connections/:id/configure — auth gate", () => {
       "POST",
       `/connections/${connectionId}/configure`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         headers: { origin: "https://not-this-deployment.example" },
         form: {
           selected_calendar_ids: "primary",
@@ -377,7 +377,7 @@ describe("POST /connections/:id/configure — happy path + persistence", () => {
       "POST",
       `/connections/${connectionId}/configure`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         form: {
           selected_calendar_ids: ["primary", "team@example.com"],
           default_write_calendar_id: "primary",
@@ -403,7 +403,7 @@ describe("POST /connections/:id/configure — happy path + persistence", () => {
   it("writes a connection.configure audit row", async () => {
     const { connectionId } = await seedGoogleCalendarConnection();
     await request(ctx.app, "POST", `/connections/${connectionId}/configure`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       form: {
         selected_calendar_ids: "primary",
         default_write_calendar_id: "primary",
@@ -435,7 +435,7 @@ describe("POST /connections/:id/configure — error paths", () => {
       "POST",
       `/connections/itm_does_not_exist/configure`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
@@ -457,7 +457,7 @@ describe("POST /connections/:id/configure — error paths", () => {
       "POST",
       `/connections/${connectionId}/configure`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         form: {
           write_family: "google",
           default_write_calendar_id: "primary",
@@ -484,7 +484,7 @@ describe("POST /connections/:id/configure — error paths", () => {
       "POST",
       `/connections/${connectionId}/configure`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         // from_write_families pins write_family to the manifest's declared
         // families, so a value outside them is the declared-contract
         // violation.
@@ -503,7 +503,7 @@ describe("POST /connections/:id/configure — error paths", () => {
       "POST",
       `/connections/${connectionId}/configure`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         form: {
           default_write_calendar_id: "primary",
           write_family: "google",
@@ -522,7 +522,7 @@ describe("POST /connections/:id/configure — error paths", () => {
       "POST",
       `/connections/${connectionId}/configure`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         form: {
           selected_calendar_ids: "primary",
           default_write_calendar_id: "primary",
@@ -554,7 +554,7 @@ describe("GET /connections/:id/configure", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/configure`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(409);
     expect(res.headers.get("location")).toBeNull();
@@ -695,7 +695,7 @@ describe("the configuration surface answers a browser session", () => {
     name: string,
   ): Promise<string> {
     const registered = await request(sessionCtx.app, "POST", "/integrations", {
-      key: sessionCtx.adminKey,
+      key: sessionCtx.operatorKey,
       body: { manifest: configurableManifest(name) },
     });
     expect(registered.status).toBe(201);
@@ -794,7 +794,7 @@ describe("the configuration surface answers a browser session", () => {
       required: true,
     };
     const registered = await request(sessionCtx.app, "POST", "/integrations", {
-      key: sessionCtx.adminKey,
+      key: sessionCtx.operatorKey,
       body: { manifest },
     });
     expect(registered.status).toBe(201);

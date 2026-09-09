@@ -77,7 +77,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     expect(trashed.state).toBe("trashed");
 
     const res = await request(c.app, "POST", `/items/${trashed.id}/restore`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(res.status).toBe(400);
 
@@ -100,14 +100,14 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     const c = ctx;
 
     const created = await request(c.app, "POST", "/items", {
-      key: c.adminKey,
+      key: c.spaceKey,
       body: { type: "core.note", properties: { body: "To restore" } },
     });
     expect(created.status).toBe(201);
     const { item } = (await created.json()) as { item: { id: string } };
 
     const deleted = await request(c.app, "DELETE", `/items/${item.id}`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(deleted.status).toBe(200);
     expect((await c.storage.items.getIncludingTrashed(item.id))?.state).toBe(
@@ -115,7 +115,7 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     );
 
     const restored = await request(c.app, "POST", `/items/${item.id}/restore`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(restored.status).toBe(200);
     expect((await c.storage.items.get(item.id))?.state).toBe("active");
@@ -128,7 +128,7 @@ describe("POST /items — a create names a state the type's lifecycle contains",
     const c = ctx;
 
     const res = await request(c.app, "POST", "/items", {
-      key: c.adminKey,
+      key: c.spaceKey,
       body: {
         type: SYSTEM_TYPE,
         state: "trashed",
@@ -155,7 +155,7 @@ describe("POST /items — a create names a state the type's lifecycle contains",
     // refusing the graph rather than enforcing it.
     for (const state of ["active", "revoked"]) {
       const res = await request(c.app, "POST", "/items", {
-        key: c.adminKey,
+        key: c.spaceKey,
         body: {
           type: SYSTEM_TYPE,
           state,
@@ -176,7 +176,7 @@ describe("POST /items — a create names a state the type's lifecycle contains",
 
     for (const state of ["archived", "trashed"]) {
       const res = await request(c.app, "POST", "/items", {
-        key: c.adminKey,
+        key: c.spaceKey,
         body: {
           type: "core.note",
           state,
@@ -189,7 +189,7 @@ describe("POST /items — a create names a state the type's lifecycle contains",
     // And `revoked`, which the canonical graph does not reach, is refused —
     // the same gate reading a different type's lifecycle.
     const revoked = await request(c.app, "POST", "/items", {
-      key: c.adminKey,
+      key: c.spaceKey,
       body: {
         type: "core.note",
         state: "revoked",
@@ -260,7 +260,7 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
     const res = await c.app.request("/admin/restore-archive", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${c.adminKey}`,
+        Authorization: `Bearer ${c.spaceKey}`,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -281,7 +281,7 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
       "POST",
       `/items/${archiveId}/restore`,
       {
-        key: c.adminKey,
+        key: c.spaceKey,
       },
     );
     expect(restore.status).toBe(400);

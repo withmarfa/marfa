@@ -31,7 +31,7 @@ afterAll(async () => {
 
 async function createConnection(status: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "system.connection",
       properties: {
@@ -54,7 +54,7 @@ describe("removing a system.connection row", () => {
     const id = await createConnection("active");
 
     const res = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     expect(res.status).toBe(400);
@@ -69,7 +69,7 @@ describe("removing a system.connection row", () => {
     // And the row is still there — a refusal that half-deleted would be
     // worse than the behavior it replaced.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(after.status).toBe(200);
   });
@@ -87,14 +87,14 @@ describe("removing a system.connection row", () => {
     const id = await createConnection("active");
 
     const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
     expect(body.error.message).toContain(`/connections/${id}/uninstall`);
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(after.status).toBe(200);
   });
@@ -105,7 +105,7 @@ describe("removing a system.connection row", () => {
     // anything.
     const deletable = await createConnection("revoked");
     const deleted = await request(ctx.app, "DELETE", `/items/${deletable}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(deleted.status).toBe(200);
 
@@ -114,14 +114,14 @@ describe("removing a system.connection row", () => {
     // 400. Purging directly would pass or fail for the wrong reason.
     const purgeable = await createConnection("revoked");
     const trashed = await request(ctx.app, "DELETE", `/items/${purgeable}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(trashed.status).toBe(200);
     const purged = await request(
       ctx.app,
       "DELETE",
       `/items/${purgeable}/purge`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(purged.status).toBe(200);
   });
@@ -135,7 +135,7 @@ describe("removing a system.connection row", () => {
     // listing them. The refusal sends the caller to the grant routes, whose
     // cascade drops all of it first.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -150,7 +150,7 @@ describe("removing a system.connection row", () => {
     const id = body.item!.id;
 
     const deleted = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(deleted.status).toBe(400);
     const refusal = (await deleted.json()) as {
@@ -162,7 +162,7 @@ describe("removing a system.connection row", () => {
 
     // The row is still there.
     const still = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(still.status).toBe(200);
   });
@@ -172,7 +172,7 @@ describe("removing a system.connection row", () => {
     // ordinary history. Nothing is left to strand, and the integration
     // uninstall gate must not fire on it either.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -190,7 +190,7 @@ describe("removing a system.connection row", () => {
       ctx.app,
       "DELETE",
       `/items/${body.item!.id}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(deleted.status).toBe(200);
   });
@@ -200,7 +200,7 @@ describe("removing a system.connection row", () => {
     // this is an item that looks like a connection to a guard reading
     // properties rather than the type — the mistake worth pinning.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.task",
         properties: { title: "ordinary", status: "active" },
@@ -211,7 +211,7 @@ describe("removing a system.connection row", () => {
     const item = body.item!;
 
     const deleted = await request(ctx.app, "DELETE", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(deleted.status).toBe(200);
   });

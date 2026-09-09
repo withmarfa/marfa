@@ -143,7 +143,7 @@ describe("admin happy paths", () => {
       expect(owner?.space_id).toBeTruthy();
 
       const res = await request(hosted.app, "GET", "/admin/spaces", {
-        key: hosted.adminKey,
+        key: hosted.operatorKey,
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -170,7 +170,7 @@ describe("admin happy paths", () => {
     if (!ctx.storage.spaces) return;
 
     const created = await request(ctx.app, "POST", "/admin/spaces", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { name: "provisioned" },
     });
     expect(created.status).toBe(201);
@@ -189,7 +189,7 @@ describe("admin happy paths", () => {
       "POST",
       `/admin/spaces/${space.id}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "provisioned key",
           source: "provisioned",
@@ -234,7 +234,7 @@ describe("admin happy paths", () => {
   it("POST /admin/spaces creates an unnamed space when no name is given", async () => {
     if (!ctx.storage.spaces) return;
     const res = await request(ctx.app, "POST", "/admin/spaces", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: {},
     });
     expect(res.status).toBe(201);
@@ -252,7 +252,7 @@ describe("admin happy paths", () => {
       "POST",
       `/admin/spaces/${t.id}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "bound admin",
           source: "bound-admin",
@@ -273,7 +273,7 @@ describe("admin happy paths", () => {
     if (!ctx.storage.spaces) return;
     const t = await ctx.storage.spaces.create("happy-list");
     const res = await request(ctx.app, "GET", "/admin/spaces", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -290,7 +290,7 @@ describe("admin happy paths", () => {
     await ctx.storage.spaceQuotas.set(t.id, { items_limit: 1234 });
 
     const res = await request(ctx.app, "GET", `/admin/spaces/${t.id}`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -313,7 +313,7 @@ describe("admin happy paths", () => {
       "POST",
       `/admin/spaces/${target.id}/keys`,
       {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: {
           label: "Raycast fallback",
           source: "raycast",
@@ -350,7 +350,7 @@ describe("admin happy paths", () => {
       ctx.app,
       "GET",
       "/admin/spaces/01999999-9999-7999-8999-999999999999",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(404);
   });
@@ -372,7 +372,7 @@ describe("admin happy paths", () => {
       ctx.app,
       "GET",
       `/admin/spaces/${spaceB.id}`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(showRes.status).toBe(200);
 
@@ -380,7 +380,7 @@ describe("admin happy paths", () => {
       ctx.app,
       "GET",
       `/admin/spaces/${spaceB.id}/metrics`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(metricsRes.status).toBe(200);
     const metrics = (await metricsRes.json()) as {
@@ -402,7 +402,7 @@ describe("admin happy paths", () => {
       ctx.app,
       "GET",
       `/admin/spaces/${spaceB.id}/keys`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(keysRes.status).toBe(200);
     const keysBody = (await keysRes.json()) as {
@@ -434,7 +434,7 @@ describe("space suspension", () => {
       ctx.app,
       "POST",
       `/admin/spaces/${t.id}/suspend`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(suspendRes.status).toBe(200);
     const suspended = (await suspendRes.json()) as {
@@ -480,13 +480,13 @@ describe("space suspension", () => {
     const t = await ctx.storage.spaces.create("unsuspend-restore");
 
     await request(ctx.app, "POST", `/admin/spaces/${t.id}/suspend`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     const unsuspendRes = await request(
       ctx.app,
       "POST",
       `/admin/spaces/${t.id}/unsuspend`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(unsuspendRes.status).toBe(200);
     const restored = (await unsuspendRes.json()) as { status: string };
@@ -513,7 +513,7 @@ describe("space suspension", () => {
       ctx.app,
       "POST",
       "/admin/spaces/01999999-9999-7999-8999-999999999999/suspend",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(404);
   });
@@ -522,14 +522,14 @@ describe("space suspension", () => {
     if (!ctx.storage.spaces) return;
     const t = await ctx.storage.spaces.create("platform-bypass");
     await request(ctx.app, "POST", `/admin/spaces/${t.id}/suspend`, {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     // The operator key operates without a `space_id`, but a real write
     // that targets the suspended space — e.g. flipping quotas — must
     // succeed. PUT /spaces/:id/quotas is the canonical operator write
     // surface.
     const quotaRes = await request(ctx.app, "PUT", `/spaces/${t.id}/quotas`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { items_limit: 9999 },
     });
     expect(quotaRes.status).toBe(200);
@@ -622,7 +622,7 @@ describe("POST /admin/account-deletion/purge-now", () => {
       ctx.app,
       "POST",
       "/admin/account-deletion/purge-now",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { purged_count: number; run_at: string };
@@ -671,7 +671,7 @@ describe("POST /admin/account-deletion/purge-now", () => {
       ctx.app,
       "POST",
       "/admin/account-deletion/purge-now",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { purged_count: number };
@@ -695,7 +695,7 @@ describe("POST /admin/account-deletion/purge-now", () => {
       ctx.app,
       "POST",
       "/admin/account-deletion/purge-now",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { purged_count: number };
@@ -711,19 +711,19 @@ describe("POST /admin/account-deletion/purge-now", () => {
   it("idempotent — calling twice with no pending rows returns 0 both times", async () => {
     // Drain anything residual from prior tests first.
     await request(ctx.app, "POST", "/admin/account-deletion/purge-now", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     const r1 = await request(
       ctx.app,
       "POST",
       "/admin/account-deletion/purge-now",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     const r2 = await request(
       ctx.app,
       "POST",
       "/admin/account-deletion/purge-now",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
@@ -757,7 +757,7 @@ describe("POST /admin/account-deletion/purge-now — graceDays=0 short-circuit",
         ctx0.app,
         "POST",
         "/admin/account-deletion/purge-now",
-        { key: ctx0.adminKey },
+        { key: ctx0.operatorKey },
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { purged_count: number };

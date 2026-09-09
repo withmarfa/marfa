@@ -415,7 +415,7 @@ describe("GET /items", () => {
     // caller would have walked every space's connections at once — finding
     // `elsewhere`'s live `acme/orphan-gone` and reporting the home space's
     // orphaned rows as healthy.
-    const items = await listItems(ctx.adminKey);
+    const items = await listItems(ctx.spaceKey);
 
     const here = need(items, goneItemId, "the home space's orphaned item");
     const there = need(items, elsewhereItemId, "the other space's item");
@@ -449,7 +449,7 @@ describe("GET /items", () => {
     );
     expect(stray.space_id).toBeNull();
 
-    const items = await listItems(ctx.adminKey);
+    const items = await listItems(ctx.spaceKey);
     const found = need(items, stray.id, "the space-less row");
 
     // `acme/orphan-gone` is live in `elsewhere` and revoked in `home`.

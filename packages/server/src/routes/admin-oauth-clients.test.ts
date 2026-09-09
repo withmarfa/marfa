@@ -312,7 +312,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       ctx,
       clientId,
       "not-the-id",
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(mismatch.status).toBe(400);
     expect((await clientRows(ctx, clientId)).clients).toBe(1);
@@ -343,7 +343,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     const [projection] =
       await ctx.storage.oauthProvider!.listGrantItemsForClient(clientId);
 
-    const res = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
+    const res = await deleteClient(ctx, clientId, clientId, ctx.spaceKey);
     expect(res.status).toBe(200);
     // The grant's cascade took its tokens, consent and codes, so nothing is
     // left for the client-wide sweep to count as a stray.
@@ -393,7 +393,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     expect(await ctx.storage.oauthProvider!.deleteClient(clientId)).toBe(true);
     expect((await clientRows(ctx, clientId)).projections).toBe(1);
 
-    const res = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
+    const res = await deleteClient(ctx, clientId, clientId, ctx.spaceKey);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       deleted: true,
@@ -410,7 +410,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
 
     // A second call finds nothing carrying the id: 404, and no second audit
     // row, so a repeat or a typo is not recorded as a removal.
-    const again = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
+    const again = await deleteClient(ctx, clientId, clientId, ctx.spaceKey);
     expect(again.status).toBe(404);
     const rows = await ctx.storage.audit.list({
       action: "auth.client.deleted",
@@ -456,7 +456,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       projections: 0,
     });
 
-    const res = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
+    const res = await deleteClient(ctx, clientId, clientId, ctx.spaceKey);
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       grants_removed: number;
@@ -491,7 +491,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     const [projection] =
       await ctx.storage.oauthProvider!.listGrantItemsForClient(clientId);
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { title: "points at the grant", body: "x" },
@@ -500,7 +500,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     expect(note.status).toBe(201);
     const noteId = ((await note.json()) as { item: { id: string } }).item.id;
     const edge = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         source_id: noteId,
         target_id: projection!.id,
@@ -510,7 +510,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
     expect(edge.status).toBe(201);
     const edgeId = ((await edge.json()) as { edge: { id: string } }).edge.id;
 
-    const res = await deleteClient(ctx, clientId, clientId, ctx.adminKey);
+    const res = await deleteClient(ctx, clientId, clientId, ctx.spaceKey);
     expect(res.status).toBe(200);
     // Edges are not foreign keys to items; they go explicitly, with the row.
     expect(await ctx.storage.edges.get(edgeId)).toBeNull();
@@ -552,7 +552,7 @@ describe("POST /admin/oauth-clients/{client_id}/delete", () => {
       ctx,
       "client_never_was",
       "client_never_was",
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     expect(res.status).toBe(404);
     const rows = await ctx.storage.audit.list({

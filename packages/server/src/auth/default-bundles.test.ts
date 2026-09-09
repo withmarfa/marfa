@@ -122,7 +122,7 @@ describe("runtime custom-namespace resolution", () => {
       };
       for (const id of ["acme.gadget", "acme.widget", "user.recipe"]) {
         const res = await request(ctx.app, "POST", "/types", {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { id, ...baseType },
         });
         expect(res.status).toBe(201);

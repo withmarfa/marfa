@@ -26,7 +26,7 @@ async function registerTypes(): Promise<void> {
     ],
   ] as const) {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id, version: 1, fields },
     });
     expect([201, 409]).toContain(res.status);
@@ -38,7 +38,7 @@ async function seed(
   type = "user.origin_log",
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items/bulk", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       items: [{ type, properties: { title: "a thing" }, source_id: sourceId }],
     },
@@ -61,7 +61,7 @@ async function upsert(
   }[];
 }> {
   const res = await request(ctx.app, "POST", "/items/bulk", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       atomic: false,
       ...(opts.retype === undefined ? {} : { retype: opts.retype }),
@@ -128,7 +128,7 @@ describe("moving a corpus through the bulk door", () => {
     const stuckId = await seed(stuck);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         atomic: false,
         retype: true,

@@ -100,7 +100,7 @@ describe("the modern era over HTTP", () => {
   it("serves server/discover naming the current revision", async () => {
     ctx = await createTestContext();
     const res = await ctx.app.fetch(
-      modernPost("server/discover", {}, ctx.adminKey),
+      modernPost("server/discover", {}, ctx.spaceKey),
     );
     expect(res.status).toBe(200);
     const body = (await readJson(res)) as {
@@ -111,7 +111,7 @@ describe("the modern era over HTTP", () => {
 
   it("lists the standard toolset with required result fields", async () => {
     ctx = await createTestContext();
-    const res = await ctx.app.fetch(modernPost("tools/list", {}, ctx.adminKey));
+    const res = await ctx.app.fetch(modernPost("tools/list", {}, ctx.spaceKey));
     expect(res.status).toBe(200);
     const body = (await readJson(res)) as {
       result?: {
@@ -144,7 +144,7 @@ describe("the modern era over HTTP", () => {
             properties: { title: "via mcp", body: "written over the wire" },
           },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
         { "Mcp-Name": "create_item" },
       ),
     );
@@ -160,7 +160,7 @@ describe("the modern era over HTTP", () => {
     if (!createdId) throw new Error("tools/call returned no item id");
 
     const read = await request(ctx.app, "GET", `/items/${createdId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(read.status).toBe(200);
   });
@@ -175,7 +175,7 @@ describe("the legacy era over HTTP", () => {
         headers: {
           "content-type": "application/json",
           accept: "application/json, text/event-stream",
-          authorization: `Bearer ${ctx.adminKey}`,
+          authorization: `Bearer ${ctx.spaceKey}`,
         },
         body: JSON.stringify({
           jsonrpc: "2.0",

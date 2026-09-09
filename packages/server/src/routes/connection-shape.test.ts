@@ -50,7 +50,7 @@ const VALID_INTEGRATION = {
 describe("system.connection — kind: integration shape", () => {
   it("accepts and persists every integration-shape field", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: VALID_INTEGRATION,
     });
     expect(res.status).toBe(201);
@@ -72,7 +72,7 @@ describe("system.connection — kind: integration shape", () => {
     expect(props.feed_activity).toBe(false);
 
     const getRes = await request(ctx.app, "GET", `/items/${created.item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(getRes.status).toBe(200);
     const fetched = (await getRes.json()) as ItemResponse;
@@ -81,7 +81,7 @@ describe("system.connection — kind: integration shape", () => {
 
   it("rejects an invalid runtime_status value", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -97,7 +97,7 @@ describe("system.connection — kind: integration shape", () => {
 
   it("rejects an invalid direction value", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -113,7 +113,7 @@ describe("system.connection — kind: integration shape", () => {
 
   it("rejects an invalid kind value", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -129,7 +129,7 @@ describe("system.connection — kind: integration shape", () => {
 
   it("accepts feed_activity: true (the per-Connection feed-tier toggle)", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -145,7 +145,7 @@ describe("system.connection — kind: integration shape", () => {
 
   it("regression: app kind still validates", async () => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {

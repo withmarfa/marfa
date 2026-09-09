@@ -53,7 +53,7 @@ afterAll(async () => {
 describe("GET /metrics scheduled_jobs", () => {
   it("publishes the installed reporter's reading", async () => {
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {

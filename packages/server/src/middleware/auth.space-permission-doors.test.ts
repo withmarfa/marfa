@@ -166,10 +166,10 @@ describe("GET /spaces/me/quotas — space.usage", () => {
   });
 
   it("rejects a space-less caller with 400", async () => {
-    // ctx.adminKey is the operator key, and an operator key has no space —
+    // ctx.spaceKey is the operator key, and an operator key has no space —
     // so there is no "me" for this route to answer about.
     const res = await request(ctx.app, "GET", "/spaces/me/quotas", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });

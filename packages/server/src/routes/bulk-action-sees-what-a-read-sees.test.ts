@@ -42,7 +42,7 @@ async function seedPair(
   marker: string,
 ): Promise<{ noteId: string; deviceId: string }> {
   const note = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "core.note",
       properties: { body: `ba-${marker}` },
@@ -51,7 +51,7 @@ async function seedPair(
   });
   expect(note.status).toBe(201);
   const device = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "system.device",
       properties: { name: `ba-${marker}`, kind: "laptop" },
@@ -69,7 +69,7 @@ async function matchedIds(filter: Record<string, unknown>): Promise<string[]> {
   const { initialStatus, result } = await runBulkActionAsync(
     ctx,
     { action: "update_tags", add: ["ba-probe"], filter, dry_run: true },
-    ctx.adminKey,
+    ctx.spaceKey,
   );
   expect(initialStatus).toBe(200);
   return result?.ids ?? [];
@@ -119,7 +119,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // below is the one the two gates were described in terms of, so a test
     // that drove any other comparison would be about a neighbouring claim.
     const revoked = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.device",
         state: "revoked",
@@ -282,7 +282,7 @@ describe("the bulk-action door and the list read agree about an omitted state", 
   it("excludes trashed rows on both doors when no state is named", async () => {
     const marker = Math.random().toString(36).slice(2, 8);
     const live = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `state-${marker}` },
@@ -291,7 +291,7 @@ describe("the bulk-action door and the list read agree about an omitted state", 
     });
     expect(live.status).toBe(201);
     const binned = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         state: "trashed",
@@ -313,7 +313,7 @@ describe("the bulk-action door and the list read agree about an omitted state", 
     // The list read, same filter, same omission. Both halves asserted, so
     // this cannot pass on a pair that agree by both matching nothing.
     const list = await request(ctx.app, "GET", `/items?tags=${marker}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(list.status).toBe(200);
     const listed = ((await list.json()) as { data: { id: string }[] }).data.map(

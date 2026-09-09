@@ -84,7 +84,7 @@ async function forceEdgeUpdatedAt(id: string, iso: string): Promise<void> {
 
 async function seedNote(body: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body } },
   });
   expect(res.status).toBe(201);
@@ -99,7 +99,7 @@ interface Page {
 
 async function listItems(query: string): Promise<Page> {
   const res = await request(ctx.app, "GET", `/items?${query}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   return (await res.json()) as Page;
@@ -218,7 +218,7 @@ describe("what a catch-up can see", () => {
     await forceItemUpdatedAt(id, EPOCH);
 
     const res = await request(ctx.app, "POST", `/items/${id}/tags`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tags: ["seen"] },
     });
     expect(res.status).toBe(200);
@@ -239,7 +239,7 @@ describe("what a catch-up can see", () => {
     await forceItemUpdatedAt(id, EPOCH);
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "updated twice" } },
     });
     expect(res.status).toBe(200);
@@ -257,7 +257,7 @@ describe("what a catch-up can see", () => {
     await forceItemUpdatedAt(id, EPOCH);
 
     const res = await request(ctx.app, "POST", `/items/${id}/transition`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { state: "archived" },
     });
     expect(res.status).toBe(200);
@@ -282,7 +282,7 @@ describe("what a catch-up can see", () => {
       ctx.app,
       "PUT",
       `/items/${id}/extensions/connection.inbound`,
-      { key: ctx.adminKey, body: { seen: "abc" } },
+      { key: ctx.spaceKey, body: { seen: "abc" } },
     );
     expect(res.status).toBe(200);
 
@@ -303,7 +303,7 @@ describe("state=any", () => {
     const live = await seedNote("state-live");
     const binned = await seedNote("state-binned");
     const res = await request(ctx.app, "POST", `/items/${binned}/transition`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { state: "trashed" },
     });
     expect(res.status).toBe(200);
@@ -319,7 +319,7 @@ describe("state=any", () => {
   it("leaves the default listing excluding trashed rows", async () => {
     const binned = await seedNote("default-binned");
     const res = await request(ctx.app, "POST", `/items/${binned}/transition`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { state: "trashed" },
     });
     expect(res.status).toBe(200);
@@ -334,7 +334,7 @@ describe("state=any", () => {
     const id = await seedNote("catchup-binned");
     await forceItemUpdatedAt(id, EPOCH);
     const res = await request(ctx.app, "POST", `/items/${id}/transition`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { state: "trashed" },
     });
     expect(res.status).toBe(200);
@@ -369,7 +369,7 @@ describe("an item cursor knows which ordering issued it", () => {
       ctx.app,
       "GET",
       `/items?limit=1&cursor=${encodeURIComponent(first.cursor ?? "")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
 
     // Dropping the filter while keeping the cursor is the natural client
@@ -391,7 +391,7 @@ describe("an item cursor knows which ordering issued it", () => {
       ctx.app,
       "GET",
       `/items?updated_after=${encodeURIComponent(EPOCH)}&limit=1&cursor=${encodeURIComponent(first.cursor ?? "")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
 
     expect(replayed.status).toBe(400);
@@ -439,7 +439,7 @@ describe("a time bound is read as the instant it names", () => {
       "GET",
       "/items?updated_after=yesterday",
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(res.status).toBe(400);
@@ -449,7 +449,7 @@ describe("a time bound is read as the instant it names", () => {
   it("applies to the item's own time bounds too", async () => {
     const id = await seedNote("timestamp-bound-target");
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { timestamp: "2008-08-08T08:08:08.500Z" },
     });
     expect(res.status).toBe(200);
@@ -473,7 +473,7 @@ describe("an empty bound is refused rather than widened", () => {
       ctx.app,
       "GET",
       "/items?updated_after=&limit=200",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
 
     expect(res.status).toBe(400);
@@ -489,7 +489,7 @@ describe("an empty bound is refused rather than widened", () => {
       "GET",
       "/edges?updated_after=&limit=200",
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(res.status).toBe(400);
@@ -500,7 +500,7 @@ describe("an empty bound is refused rather than widened", () => {
 /** Ids on one `/edges` page, in the order the server returned them. */
 async function listEdges(query: string): Promise<Page> {
   const res = await request(ctx.app, "GET", `/edges?${query}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   return (await res.json()) as Page;
@@ -508,7 +508,7 @@ async function listEdges(query: string): Promise<Page> {
 
 async function seedEdge(source: string, target: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { source_id: source, target_id: target, edge_type: "references" },
   });
   expect(res.status).toBe(201);

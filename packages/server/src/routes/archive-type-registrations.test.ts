@@ -103,7 +103,7 @@ async function exportArchive(ctx: TestContext, space: string): Promise<Buffer> {
     ctx.app,
     "GET",
     `/export?format=archive&target_space_id=${space}`,
-    { key: ctx.adminKey },
+    { key: ctx.spaceKey },
   );
   expect(res.status).toBe(200);
   return Buffer.from(await res.arrayBuffer());
@@ -119,7 +119,7 @@ async function restore(
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/gzip",
       },
       body: archive,

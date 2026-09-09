@@ -194,7 +194,7 @@ describe("editing a key an app made", () => {
   it("refuses the operator key too, because the rule is the key's", async () => {
     const id = await seedAppKey();
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type_permissions: { "*": "write" } },
     });
     expect(res.status).toBe(403);

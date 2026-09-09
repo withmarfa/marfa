@@ -68,7 +68,7 @@ afterAll(async () => {
 /** An item carrying two namespaces, one the scoped key may read. */
 async function itemWithTwoNamespaces(): Promise<string> {
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body: "two-namespaces" } },
   });
   expect(created.status).toBe(201);
@@ -81,7 +81,7 @@ async function itemWithTwoNamespaces(): Promise<string> {
       ctx.app,
       "PUT",
       `/items/${id}/extensions/${namespace}`,
-      { key: ctx.adminKey, body: value },
+      { key: ctx.spaceKey, body: value },
     );
     expect(res.status).toBe(200);
   }
@@ -106,7 +106,7 @@ describe("metadata.changed on the live stream", () => {
       "PUT",
       `/items/${id}/extensions/mine`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { visible: "updated" },
       },
     );
@@ -135,7 +135,7 @@ describe("metadata.changed on the live stream", () => {
     });
     await settle();
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "touched" } },
     });
     expect(patched.status).toBe(200);
@@ -153,14 +153,14 @@ describe("metadata.changed on the live stream", () => {
     // pass.
     const id = await itemWithTwoNamespaces();
     const stream = await request(ctx.app, "GET", "/events", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const reading = readSse(stream, {
       until: (text) => text.includes("metadata.changed"),
     });
     await settle();
     await request(ctx.app, "PUT", `/items/${id}/extensions/mine`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { visible: "updated" },
     });
     const { text } = await reading;
@@ -282,7 +282,7 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
       ctx.app,
       "PUT",
       `/items/${id}/extensions/mine`,
-      { key: ctx.adminKey, body: { visible: "replayed" } },
+      { key: ctx.spaceKey, body: { visible: "replayed" } },
     );
     expect(write.status).toBe(200);
     // The write really did append, so the replay below has something to
@@ -317,7 +317,7 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
       ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b))
       : 0n;
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "touched for replay" } },
     });
     expect(patched.status).toBe(200);

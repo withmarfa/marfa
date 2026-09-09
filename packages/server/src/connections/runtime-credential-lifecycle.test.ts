@@ -172,7 +172,7 @@ describe("a runtime credential is fenced by a space", () => {
     // the rule can be enforced.
     const integrationId = await makeIntegration("acme/install-fence");
     const res = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { integration_id: integrationId },
     });
 

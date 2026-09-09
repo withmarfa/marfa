@@ -122,9 +122,9 @@ describe("quota wiring — POST /blobs", () => {
     // weren't in place, space-less keys would hit it.
     await ctx.storage.spaceQuotas.set("", { blobs_limit: 0 });
 
-    // ctx.adminKey has no space_id (the bootstrap credential) — bypass kicks
+    // ctx.spaceKey has no space_id (the bootstrap credential) — bypass kicks
     // in.
-    const r = await uploadBlob(ctx, ctx.adminKey, "any-content");
+    const r = await uploadBlob(ctx, ctx.spaceKey, "any-content");
     expect(r.status).toBe(201);
   });
 });
@@ -173,11 +173,11 @@ describe("quota wiring — per-space rate ceiling", () => {
       rateLimitWindowMs: 60_000,
       defaultQuotaRatePerMinute: 2,
     });
-    // ctx.adminKey has no space_id — should bypass the per-space
+    // ctx.spaceKey has no space_id — should bypass the per-space
     // ceiling and only be subject to the per-credential cap (1000).
     for (let i = 0; i < 5; i++) {
       const r = await request(ctx.app, "GET", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(r.status).toBe(200);
     }

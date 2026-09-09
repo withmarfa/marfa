@@ -27,7 +27,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
   for (let i = 0; i < 3; i++) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: `unknown-key-probe-${String(i)}` },
@@ -51,7 +51,7 @@ afterAll(async () => {
 async function idsFrom(
   path: string,
 ): Promise<{ status: number; ids: string[] }> {
-  const res = await request(ctx.app, "GET", path, { key: ctx.adminKey });
+  const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
   if (res.status !== 200) return { status: res.status, ids: [] };
   const body = (await res.json()) as {
     data?: { id: string }[];
@@ -91,7 +91,7 @@ describe("GET /items — an unknown parameter is refused", () => {
 
   it("names the rejected parameter and what the door accepts", async () => {
     const res = await request(ctx.app, "GET", "/items?zzz_nonsense=1", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
@@ -109,7 +109,7 @@ describe("GET /items — an unknown parameter is refused", () => {
       ctx.app,
       "GET",
       `/items?limit=5&${encodeURIComponent("edge[about]")}=someid`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -135,7 +135,7 @@ describe("GET /items — an unknown parameter is refused", () => {
       ctx.app,
       "GET",
       `/items?limit=50&${encodeURIComponent("edge[about]")}=`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const body = (await named.json()) as { error: { message: string } };
     expect(body.error.message).toContain("edge[about]");
@@ -161,7 +161,7 @@ describe("GET /items — an unknown parameter is refused", () => {
 describe("GET /edges — the door the published rename points at", () => {
   it("refuses an unknown parameter", async () => {
     const res = await request(ctx.app, "GET", "/edges?limit=50&zzz=1", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
@@ -179,7 +179,7 @@ describe("GET /edges — the door the published rename points at", () => {
         ctx.app,
         "GET",
         `/edges?limit=50&${oldName}=${FUTURE}`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: { message: string } };
@@ -196,7 +196,7 @@ describe("GET /edges — the door the published rename points at", () => {
       ctx.app,
       "GET",
       `/edges?limit=50&timestamp_after=${FUTURE}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -208,7 +208,7 @@ describe("GET /edges — the door the published rename points at", () => {
       ctx.app,
       "GET",
       `/edges?limit=50&updated_after=1970-01-01T00:00:00.000Z`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -219,11 +219,11 @@ describe("the per-item edge listings — the sibling doors", () => {
     const id = excluded[0]!;
     for (const path of [`/items/${id}/edges`, `/items/${id}/backrefs`]) {
       const bad = await request(ctx.app, "GET", `${path}?edge_typ=about`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(bad.status).toBe(400);
       const good = await request(ctx.app, "GET", `${path}?edge_type=about`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(good.status).toBe(200);
     }
@@ -239,7 +239,7 @@ describe("GET /search and GET /export — the other filtered reads", () => {
 
   it("refuse an unknown parameter on export", async () => {
     const res = await request(ctx.app, "GET", "/export?zzz_nonsense=1", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
@@ -249,7 +249,7 @@ describe("GET /search and GET /export — the other filtered reads", () => {
       ctx.app,
       "GET",
       "/export?format=archive&zzz_nonsense=1",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
   });
@@ -271,7 +271,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
       "/export?format=archive&_trace=1",
     ];
     for (const path of doors()) {
-      const res = await request(ctx.app, "GET", path, { key: ctx.adminKey });
+      const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
       expect(res.status, `${path} refused a reserved-prefix parameter`).toBe(
         200,
       );
@@ -287,7 +287,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
       ctx.app,
       "GET",
       `/items?limit=50&timestamp_after=${FUTURE}&_cache_bust=9`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { id: string }[] };
@@ -305,7 +305,7 @@ describe("the reserved `_` prefix, on every door that refuses", () => {
       ctx.app,
       "GET",
       `/items?limit=50&timestamp_aftr=${FUTURE}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
   });
@@ -317,7 +317,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
     filter: Record<string, unknown>,
   ): Promise<{ status: number; ids: string[] }> {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         action: "update_tags",
         add: ["probe"],
@@ -356,7 +356,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
 
   it("names the rejected field", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         action: "update_tags",
         add: ["probe"],
@@ -372,7 +372,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
   /** The raw door, so a body can carry a key the typed helper would not. */
   async function post(body: Record<string, unknown>): Promise<Response> {
     return request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body,
     });
   }
@@ -477,7 +477,7 @@ describe("POST /items/bulk-actions — the door where a dropped key costs rows",
 
   it("still refuses the retired names with their own message", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         action: "update_tags",
         add: ["probe"],

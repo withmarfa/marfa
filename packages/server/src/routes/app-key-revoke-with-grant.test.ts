@@ -104,7 +104,7 @@ describe("revoking an app's grant", () => {
     const { grant, appKeyId, ownKeyId } = await seedSpace("no-sweep-space");
 
     const res = await request(ctx.app, "DELETE", `/auth/grants/${grant.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(204);
 
@@ -119,7 +119,7 @@ describe("revoking an app's grant", () => {
       ctx.app,
       "DELETE",
       `/auth/grants/${grant.id}?revoke_keys=true`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(204);
 
@@ -137,7 +137,7 @@ describe("revoking an app's grant", () => {
       ctx.app,
       "DELETE",
       `/auth/grants/${first.grant.id}?revoke_keys=true`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(204);
 
@@ -151,7 +151,7 @@ describe("revoking an app's grant", () => {
       ctx.app,
       "DELETE",
       `/auth/grants/${grant.id}?revoke_keys=true`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(204);
     const after = await ctx.storage.items.get(grant.id, undefined);

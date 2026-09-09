@@ -21,7 +21,7 @@ let integrationId: string;
 beforeAll(async () => {
   ctx = await createTestContext();
   const reg = await request(ctx.app, "POST", "/integrations", {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: { manifest: VALID_MANIFEST },
   });
   if (reg.status !== 201) {
@@ -92,7 +92,7 @@ async function issueLease(
   } = {},
 ): Promise<Response> {
   return request(ctx.app, "POST", `/connections/${connectionId}/lease-tokens`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       capability_id: overrides.capability_id ?? "drive.upload",
       ttl_seconds: overrides.ttl_seconds,
@@ -150,7 +150,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
       "POST",
       `/connections/${connectionId}/lease-tokens`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           capability_id: "drive.upload",
           ttl_seconds: 7200,
@@ -178,7 +178,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
 
   it("rejects when the connection has no integration_ref", async () => {
     const orphanRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -198,7 +198,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
   it("gates capabilities via integration_ref-resolved manifest", async () => {
     // 1. Register the integration.
     const regRes = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: { ...VALID_MANIFEST, name: "acme/lease-via-ref" } },
     });
     expect(regRes.status).toBe(201);
@@ -206,7 +206,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
 
     // 2. Connection bound to the registered integration.
     const conn = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -225,7 +225,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
       "POST",
       `/connections/${connBody.item.id}/lease-tokens`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { capability_id: "drive.upload" },
       },
     );
@@ -237,7 +237,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
       "POST",
       `/connections/${connBody.item.id}/lease-tokens`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { capability_id: "not.declared" },
       },
     );
@@ -408,7 +408,7 @@ describe("GET /connections/:id/lease-tokens & revoke", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens/${a.id}/revoke`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(revoke.status).toBe(200);
 
@@ -416,7 +416,7 @@ describe("GET /connections/:id/lease-tokens & revoke", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/lease-tokens`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(list.status).toBe(200);
     const body = (await list.json()) as { leases: ConnectionLeasedToken[] };
@@ -431,7 +431,7 @@ describe("GET /connections/:id/lease-tokens & revoke", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens/does-not-exist/revoke`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });
@@ -478,7 +478,7 @@ describe("POST /lease-tokens/validate", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens/${created.id}/revoke`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const res = await request(ctx.app, "POST", "/lease-tokens/validate", {
       body: { lease_token: created.lease_token },
@@ -590,7 +590,7 @@ describe("POST /connections/:id/lease-tokens — space scoping", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens`,
-      { key: ctx.adminKey, body: { capability_id: "drive.upload" } },
+      { key: ctx.spaceKey, body: { capability_id: "drive.upload" } },
     );
     expect(res.status).toBe(201);
     const created = (await res.json()) as CreatedConnectionLeasedToken;

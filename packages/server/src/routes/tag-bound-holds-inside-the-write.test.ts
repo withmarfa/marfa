@@ -35,7 +35,7 @@ afterAll(async () => {
 
 async function createNote(body: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body } },
   });
   expect(res.status).toBe(201);
@@ -165,7 +165,7 @@ describe("the tag bound is enforced where the tags are written", () => {
     const id = await createNote("too many in one body");
 
     const res = await request(ctx.app, "POST", `/items/${id}/tags`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { tags: tags("sent", MAX_TAGS_PER_ITEM + 1) },
     });
     expect(res.status).toBe(400);
@@ -198,7 +198,7 @@ describe("the tag bound is enforced where the tags are written", () => {
 describe("the bulk doors bound the tags they write", () => {
   it("refuses a bulk create over the bound, and writes nothing", async () => {
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -216,7 +216,7 @@ describe("the bulk doors bound the tags they write", () => {
     // Nothing landed. Keyed on a tag the refused entry carried, so a row
     // written in spite of the refusal is exactly what this finds.
     const after = await request(ctx.app, "GET", "/items?tags=bulkcreate-0", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(after.status).toBe(200);
     const listed = (await after.json()) as { data: unknown[] };
@@ -228,7 +228,7 @@ describe("the bulk doors bound the tags they write", () => {
     await ctx.storage.metadata.set(id, ["kept"]);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -250,7 +250,7 @@ describe("the bulk doors bound the tags they write", () => {
     await ctx.storage.metadata.set(id, ["selector"]);
 
     const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         action: "update_tags",
         filter: { tags: ["selector"] },

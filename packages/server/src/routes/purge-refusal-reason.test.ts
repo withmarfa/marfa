@@ -34,7 +34,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
 
   const spaceRes = await request(ctx.app, "POST", "/admin/spaces", {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: { name: "purge-refusal" },
   });
   const spaceBody = (await spaceRes.json()) as { id: string };
@@ -46,7 +46,7 @@ beforeAll(async () => {
     "POST",
     `/admin/spaces/${spaceId}/keys`,
     {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       // Reaches every type in its space and is still not the instance tier,
       // which is the whole shape this file is about: the reserved namespace
       // is fenced off a space credential however wide its maps are.
@@ -113,7 +113,7 @@ describe("purging a row a space credential may not write", () => {
     // The row is untouched. A refusal that half-purged would be worse than
     // the message it replaced.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(after.status).toBe(200);
   });
@@ -150,12 +150,12 @@ describe("purging a row a space credential may not write", () => {
     const id = await seedReservedRow("show:refusal-2");
 
     const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(trashed.status).toBe(200);
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(purged.status).toBe(200);
   });

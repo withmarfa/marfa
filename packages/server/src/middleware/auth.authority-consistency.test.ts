@@ -330,7 +330,7 @@ describe("/keys — the space fence keys on the binding, not on the permission",
       label: "control-visible",
     });
 
-    const res = await request(ctx.app, "GET", "/keys", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/keys", { key: ctx.spaceKey });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { keys: { label: string }[] };
     expect(body.keys.some((k) => k.label === "control-visible")).toBe(true);
@@ -417,7 +417,7 @@ describe("extensions — the reserved namespaces are the operator's", () => {
       ctx.app,
       "PUT",
       `/items/${item.id}/extensions/system`,
-      { key: ctx.adminKey, body: { ok: true } },
+      { key: ctx.spaceKey, body: { ok: true } },
     );
     expect(res.status).toBe(200);
   });

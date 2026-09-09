@@ -43,14 +43,14 @@ async function seedEdge(): Promise<SeededEdge> {
   const ids: string[] = [];
   for (const title of ["source", "target"]) {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: title } },
     });
     expect(res.status).toBe(201);
     ids.push(((await res.json()) as { item: { id: string } }).item.id);
   }
   const edge = await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       source_id: ids[0],
       target_id: ids[1],
@@ -78,7 +78,7 @@ describe("edge.updated", () => {
     await settle();
 
     const res = await request(ctx.app, "PATCH", `/edges/${edgeId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { note: "after" } },
     });
     expect(res.status).toBe(200);
@@ -106,7 +106,7 @@ describe("edge.updated", () => {
     // event the enum rejects is refused at create, so this is the whole
     // assertion.
     const res = await request(ctx.app, "POST", "/webhooks", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         url: "https://example.test/hook",
         events: ["edge.updated"],
@@ -125,7 +125,7 @@ describe("edge.updated", () => {
     await settle();
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         mode: "upsert",
         enable_fanout: true,

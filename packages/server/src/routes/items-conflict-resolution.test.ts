@@ -32,7 +32,7 @@ interface CreatedItem {
 /** A note at a known version, plus a second writer that moves it on. */
 async function collidingNote(): Promise<{ id: string; base: number }> {
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "core.note",
       properties: { title: "shared title", body: "shared body" },
@@ -42,7 +42,7 @@ async function collidingNote(): Promise<{ id: string; base: number }> {
   const { item } = (await created.json()) as CreatedItem;
 
   const winner = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       properties: {
         title: "title from the winner",
@@ -64,7 +64,7 @@ describe("the server resolves a conflict", () => {
       "PATCH",
       `/items/${id}?conflict=auto`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           properties: {
             title: "title from the loser",
@@ -77,7 +77,7 @@ describe("the server resolves a conflict", () => {
     expect(resolved.status).toBe(200);
 
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const { item } = (await read.json()) as {
       item: { properties: Record<string, unknown> };
@@ -103,7 +103,7 @@ describe("the server resolves a conflict", () => {
       "PATCH",
       `/items/${id}?conflict=auto`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           properties: { body: losing },
           version: base,
@@ -113,7 +113,7 @@ describe("the server resolves a conflict", () => {
     expect(resolved.status).toBe(200);
 
     const listed = await request(ctx.app, "GET", "/items?limit=200", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const { data } = (await listed.json()) as {
       data: { id: string; type: string; properties: Record<string, unknown> }[];
@@ -131,12 +131,12 @@ describe("the server resolves a conflict", () => {
     const { id, base } = await collidingNote();
 
     await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "tagged loser" }, version: base },
     });
 
     const listed = await request(ctx.app, "GET", "/items?limit=200", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const { data } = (await listed.json()) as {
       data: { id: string; properties: Record<string, unknown> }[];
@@ -151,7 +151,7 @@ describe("the server resolves a conflict", () => {
       "GET",
       `/items/${String(sibling?.id)}`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     const { metadata } = (await meta.json()) as {
@@ -164,7 +164,7 @@ describe("the server resolves a conflict", () => {
     const { id, base } = await collidingNote();
 
     const bare = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         properties: { body: "body from the loser" },
         version: base,
@@ -185,7 +185,7 @@ describe("the server resolves a conflict", () => {
         "PATCH",
         `/items/${id}?conflict=${mode}`,
         {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { properties: { body: `loser under ${mode}` }, version: base },
         },
       );
@@ -201,7 +201,7 @@ describe("the server resolves a conflict", () => {
     // dropped parameter reads to the caller as a resolution that happened,
     // and the losing edit is gone before anyone can see it did not.
     const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=merge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "never applied" }, version: base },
     });
     expect(res.status).toBe(400);
@@ -215,7 +215,7 @@ describe("a base version that has been thinned away", () => {
     base: number;
   }> {
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "v1" } },
     });
     const { item } = (await created.json()) as CreatedItem;
@@ -223,7 +223,7 @@ describe("a base version that has been thinned away", () => {
 
     for (const body of ["v2", "v3"]) {
       const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { properties: { body } },
       });
       expect(res.status).toBe(200);
@@ -243,7 +243,7 @@ describe("a base version that has been thinned away", () => {
     const { id, base } = await noteWithThinnedAncestor();
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         properties: { body: "based on a version nobody kept" },
         version: base,
@@ -270,7 +270,7 @@ describe("a base version that has been thinned away", () => {
     const { id, base } = await noteWithThinnedAncestor();
 
     const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "must not be merged" }, version: base },
     });
     // `auto` resolves a conflict against an ancestor. There isn't one, and
@@ -280,7 +280,7 @@ describe("a base version that has been thinned away", () => {
     expect(conflict.error.code).toBe("ancestor_unavailable");
 
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const { item } = (await read.json()) as {
       item: { properties: Record<string, unknown> };
@@ -294,7 +294,7 @@ describe("the conflict envelope", () => {
     const { id, base } = await collidingNote();
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "loser" }, version: base },
     });
     expect(res.status).toBe(409);
@@ -315,7 +315,7 @@ describe("the resolution report", () => {
     const { id, base } = await collidingNote();
 
     const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "reported loser" }, version: base },
     });
     expect(res.status).toBe(200);
@@ -342,7 +342,7 @@ describe("the resolution report", () => {
       "GET",
       `/items/${String(siblingId)}`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(sibling.status).toBe(200);
@@ -354,13 +354,13 @@ describe("the resolution report", () => {
 
   it("is absent from a write that resolved nothing", async () => {
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "uncontested" } },
     });
     const { item } = (await created.json()) as CreatedItem;
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "still uncontested" } },
     });
     expect(res.status).toBe(200);
@@ -374,7 +374,7 @@ describe("the resolution report", () => {
     const { id, base } = await collidingNote();
 
     const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "not on the row" }, version: base },
     });
     const answered = (await res.json()) as {
@@ -392,14 +392,14 @@ describe("a refusal and its replay describe one conflict", () => {
     const key = `conflict-header-${Math.random().toString(36).slice(2, 10)}`;
 
     const fresh = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Idempotency-Key": key },
       body: { properties: { body: "header check" }, version: base },
     });
     expect(fresh.status).toBe(409);
 
     const replay = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Idempotency-Key": key },
       body: { properties: { body: "header check" }, version: base },
     });
@@ -417,13 +417,13 @@ describe("a refusal and its replay describe one conflict", () => {
 
   it("names the ancestor_unavailable code in the header too", async () => {
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "h1" } },
     });
     const { item } = (await created.json()) as CreatedItem;
     for (const body of ["h2", "h3"]) {
       await request(ctx.app, "PATCH", `/items/${item.id}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { properties: { body } },
       });
     }
@@ -433,7 +433,7 @@ describe("a refusal and its replay describe one conflict", () => {
     );
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "no ancestor" }, version: item.version },
     });
     expect(res.status).toBe(409);

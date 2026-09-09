@@ -35,7 +35,7 @@ const SYSTEM_TYPE = "system.device";
 
 async function seedDevice(state: string, name: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: SYSTEM_TYPE,
       state,
@@ -69,7 +69,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
         dry_run: true,
         filter: { type: SYSTEM_TYPE, state: "revoked" },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
 
     expect(errorResponse).toBeUndefined();
@@ -86,7 +86,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
     const ids: Record<string, string> = {};
     for (const state of ["active", "archived", "trashed"]) {
       const res = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           type: "core.note",
           state,
@@ -112,7 +112,7 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
             filter: `properties.body eq "note-${state}-${suffix}"`,
           },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       expect(errorResponse).toBeUndefined();
       expect(initialStatus).toBe(200);
@@ -132,7 +132,7 @@ describe("POST /items/bulk — the create door names the same states as its sibl
   it("creates a system item in revoked, as POST /items already does", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {
@@ -162,7 +162,7 @@ describe("POST /items/bulk — the create door names the same states as its sibl
   it("still refuses revoked for a type whose lifecycle does not contain it", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         items: [
           {

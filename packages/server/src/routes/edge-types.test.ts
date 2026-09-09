@@ -41,7 +41,7 @@ interface ErrorBody {
  */
 async function createNarrowKey(label: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       label,
       source: `${label}-${Math.random().toString(36).slice(2, 10)}`,
@@ -94,7 +94,7 @@ describe("POST /edge-types — happy path and validation", () => {
   it("admin registers a custom edge type (201)", async () => {
     const id = `${NS}.happy`;
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id,
         label: "Happy",
@@ -114,7 +114,7 @@ describe("POST /edge-types — happy path and validation", () => {
 
   it("409 on redefinition of a core edge type", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: "about", cardinality: "many-to-many" },
     });
     expect(res.status).toBe(409);
@@ -124,7 +124,7 @@ describe("POST /edge-types — happy path and validation", () => {
 
   it("400 when `extends` is supplied (unsupported)", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: `${NS}.inherit`,
         cardinality: "many-to-many",
@@ -138,7 +138,7 @@ describe("POST /edge-types — happy path and validation", () => {
 
   it("400 on an invalid type identifier", async () => {
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: "INVALID", cardinality: "many-to-many" },
     });
     expect(res.status).toBe(400);
@@ -149,13 +149,13 @@ describe("GET /edge-types — list", () => {
   it("returns core types plus just-registered custom types", async () => {
     const id = `${NS}.list`;
     const create = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id, cardinality: "many-to-many" },
     });
     expect(create.status).toBe(201);
 
     const res = await request(ctx.app, "GET", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as EdgeTypeListResponse;
@@ -170,20 +170,20 @@ describe("DELETE /edge-types/:id — happy path and errors", () => {
   it("admin deletes a custom edge type (200), then it is gone from list", async () => {
     const id = `${NS}.delete-me`;
     const create = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id, cardinality: "many-to-many" },
     });
     expect(create.status).toBe(201);
 
     const del = await request(ctx.app, "DELETE", `/edge-types/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(del.status).toBe(200);
     const body = (await del.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
 
     const list = await request(ctx.app, "GET", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const data = (await list.json()) as EdgeTypeListResponse;
     expect(data.edge_types.map((t) => t.id)).not.toContain(id);
@@ -191,7 +191,7 @@ describe("DELETE /edge-types/:id — happy path and errors", () => {
 
   it("400 when attempting to delete a core edge type", async () => {
     const res = await request(ctx.app, "DELETE", "/edge-types/about", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as ErrorBody;
@@ -203,7 +203,7 @@ describe("DELETE /edge-types/:id — happy path and errors", () => {
       ctx.app,
       "DELETE",
       `/edge-types/${NS}.does-not-exist`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as ErrorBody;

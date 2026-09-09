@@ -45,7 +45,7 @@ beforeAll(async () => {
 
   const seed = async (timestamp: string, label: string): Promise<string> => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         // The FTS token is shared so one query returns all three; the
@@ -70,7 +70,7 @@ afterAll(async () => {
 
 async function searchIds(query: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", `/search?${query}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   const body = (await res.json()) as { results: { item: { id: string } }[] };
@@ -130,7 +130,7 @@ describe("GET /search — the time bounds it advertises", () => {
       ctx.app,
       "GET",
       `/search?q=${TOKEN}&timestamp_after=not-a-date`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -148,7 +148,7 @@ describe("GET /search — the time bounds it advertises", () => {
         ctx.app,
         "GET",
         `/items?type=core.note&limit=200&${query}`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { data: { id: string }[] };
@@ -192,7 +192,7 @@ describe("GET /search — the time bounds it advertises", () => {
         ctx.app,
         "GET",
         `/search?q=${TOKEN}&${oldName}=2023-01-01T00:00:00.000Z`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { error: { message: string } };

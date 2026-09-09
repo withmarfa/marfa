@@ -165,7 +165,7 @@ describe("GET /spaces/me/config — keys-mode fallback", () => {
     // The bootstrap test admin has no space_id, and authMode is "keys"
     // so storage.spaces is undefined. The handler short-circuits to {}.
     const res = await request(ctx.app, "GET", "/spaces/me/config", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
@@ -183,7 +183,7 @@ describe("PUT /spaces/me/config — keys-mode fallback", () => {
 
   it("rejects a non-space-scoped credential with 400 VALIDATION_ERROR", async () => {
     const res = await request(ctx.app, "PUT", "/spaces/me/config", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {},
     });
     expect(res.status).toBe(400);

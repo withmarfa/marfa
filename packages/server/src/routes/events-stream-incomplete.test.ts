@@ -172,7 +172,7 @@ describe("a catch-up that throws partway through", () => {
 
   it("tells the client and closes, instead of ending quietly", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "throw seed" } },
     });
     expect(seed.status).toBe(201);
@@ -216,7 +216,7 @@ describe("a catch-up that throws partway through", () => {
     });
 
     const res = await request(ctx.app, "GET", "/events?type=core.note", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -250,7 +250,7 @@ describe("live frames held past the limit while the catch-up runs", () => {
 
   it("tells the client and closes, instead of growing without a limit", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "overflow seed" } },
     });
     expect(seed.status).toBe(201);
@@ -307,7 +307,7 @@ describe("frames the subscriber would never receive", () => {
 
   it("do not fill the hold when the stream opted out of edges", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "edges-none seed" } },
     });
     expect(seed.status).toBe(201);
@@ -339,7 +339,7 @@ describe("frames the subscriber would never receive", () => {
 
   it("do not fill the hold when the credential cannot read their type", async () => {
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "scoped seed" } },
     });
     expect(seed.status).toBe(201);

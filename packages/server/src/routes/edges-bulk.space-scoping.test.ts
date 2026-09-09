@@ -247,7 +247,7 @@ describe("POST /edges/bulk — the operator key unaffected", () => {
     // The operator key's items carry no space scope; wire a fresh pair.
     const suffix = Math.random().toString(36).slice(2, 8);
     const src = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "p-src" },
@@ -255,7 +255,7 @@ describe("POST /edges/bulk — the operator key unaffected", () => {
       },
     });
     const tgt = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.entity",
         properties: { name: "p-tgt" },
@@ -266,7 +266,7 @@ describe("POST /edges/bulk — the operator key unaffected", () => {
     const targetId = ((await tgt.json()) as { item: { id: string } }).item.id;
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         edges: [
           { source_id: sourceId, target_id: targetId, edge_type: "about" },

@@ -92,7 +92,7 @@ describe("GET /items/:id/extensions", () => {
       ctx.app,
       "GET",
       `/items/${itemId}/extensions`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(adminRes.status).toBe(200);
     const adminBody = (await adminRes.json()) as {
@@ -122,7 +122,7 @@ describe("GET /items/:id/extensions", () => {
       ctx.app,
       "GET",
       "/items/not-a-valid-id/extensions",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
@@ -134,7 +134,7 @@ describe("GET /items/:id/extensions", () => {
       ctx.app,
       "GET",
       "/items/019537a0-7b80-7000-8000-000000000000/extensions",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
     const body = (await res.json()) as { error: { code: string } };
@@ -201,7 +201,7 @@ describe("GET /items/:id/extensions/:namespace", () => {
       ctx.app,
       "GET",
       "/items/019537a0-7b80-7000-8000-000000000001/extensions/friends",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });
@@ -316,7 +316,7 @@ describe("DELETE /items/:id/extensions/:namespace", () => {
       ctx.app,
       "DELETE",
       "/items/019537a0-7b80-7000-8000-000000000002/extensions/noter",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });

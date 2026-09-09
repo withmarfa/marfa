@@ -29,7 +29,7 @@ afterAll(async () => {
 /** Register `demo.tightened` with `body` optional, then create one item without it. */
 async function seedLooseItem(id: string): Promise<string> {
   const registered = await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       id,
       version: 1,
@@ -42,7 +42,7 @@ async function seedLooseItem(id: string): Promise<string> {
   expect(registered.status).toBe(201);
 
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: id, properties: { title: "no body here" } },
   });
   expect(created.status).toBe(201);
@@ -52,7 +52,7 @@ async function seedLooseItem(id: string): Promise<string> {
 
 async function tightenBodyToRequired(id: string): Promise<void> {
   const updated = await request(ctx.app, "PUT", `/types/${id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       id,
       version: 2,
@@ -72,7 +72,7 @@ describe("tightening required on a type with existing items", () => {
 
     // Editable before the tightening.
     const before = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "still fine" } },
     });
     expect(before.status).toBe(200);
@@ -82,7 +82,7 @@ describe("tightening required on a type with existing items", () => {
     // The same patch, touching only `title`, is now rejected — the merged set
     // is what gets validated, and it has no `body`.
     const after = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "no longer allowed" } },
     });
     expect(after.status).toBe(400);
@@ -101,13 +101,13 @@ describe("tightening required on a type with existing items", () => {
     await tightenBodyToRequired(typeId);
 
     const repaired = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "" } },
     });
     expect(repaired.status).toBe(200);
 
     const afterwards = await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "editable again" } },
     });
     expect(afterwards.status).toBe(200);
@@ -121,7 +121,7 @@ describe("marfa.captured_email keeps bodyless captures editable", () => {
     // of which would strand captures written before the handler populated it
     // unconditionally.
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "marfa.captured_email",
         properties: {
@@ -135,7 +135,7 @@ describe("marfa.captured_email keeps bodyless captures editable", () => {
     const { item } = (await created.json()) as { item: { id: string } };
 
     const patched = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { subject: "Retitled" } },
     });
     expect(patched.status).toBe(200);

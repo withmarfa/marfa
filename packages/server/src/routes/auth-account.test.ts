@@ -180,7 +180,7 @@ describe("deleting an account is a person's act", () => {
     await personAndKey("operator-refused@example.com");
 
     const res = await request(ctx.app, "POST", "/auth/account/delete", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { origin: ORIGIN },
     });
     expect(res.status).toBe(401);

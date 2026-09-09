@@ -75,7 +75,7 @@ async function isRegistered(name: string, version: string): Promise<boolean> {
     `/items?type=system.integration&filter=${encodeURIComponent(
       `properties.manifest_name eq "${name}" AND properties.manifest_version eq "${version}"`,
     )}`,
-    { key: ctx.adminKey },
+    { key: ctx.spaceKey },
   );
   const body = (await res.json()) as { data?: unknown[] };
   return (body.data ?? []).length > 0;
@@ -83,7 +83,7 @@ async function isRegistered(name: string, version: string): Promise<boolean> {
 
 async function register(body: Record<string, unknown>): Promise<Response> {
   return request(ctx.app, "POST", "/integrations", {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: { manifest: body },
   });
 }
@@ -106,7 +106,7 @@ describe("a manifest declaring its own type schemas", () => {
       "GET",
       "/types/acme.travelling_note",
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(typeRes.status).toBe(200);
@@ -209,7 +209,7 @@ describe("a manifest declaring a parent chain", () => {
 
     // Registered and resolvable, not merely recorded on the catalog row.
     const typeRes = await request(ctx.app, "GET", "/types/acme.ordered_leaf", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(typeRes.status).toBe(200);
     const body = (await typeRes.json()) as { parent?: string };
@@ -347,7 +347,7 @@ describe("a manifest declaring a parent chain", () => {
     expect(second.status).toBe(201);
 
     const typeRes = await request(ctx.app, "GET", "/types/acme.settled_type", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const body = (await typeRes.json()) as { description?: string };
     expect(body.description).toBe("Declared by the manifest that needs it.");

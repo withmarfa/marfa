@@ -251,7 +251,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
       "POST",
       `/connections/${connectionId}/proxy/api/v1/widgets?q=foo`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { hello: "world" },
       },
     );
@@ -287,7 +287,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
       ctx.app,
       "POST",
       `/connections/${spelled}/proxy/api/v1/widgets`,
-      { key: ctx.adminKey, body: { hello: "world" } },
+      { key: ctx.spaceKey, body: { hello: "world" } },
     );
 
     expect(res.status).toBe(200);
@@ -314,7 +314,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy`,
-      { key: ctx.adminKey, body: { hello: "world" } },
+      { key: ctx.spaceKey, body: { hello: "world" } },
     );
 
     expect(res.status).toBe(200);
@@ -339,7 +339,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/api`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(404);
   });
@@ -347,7 +347,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
   it("resolves OAuth config via credential_ref when set (preferred path)", async () => {
     // 1. Create a system.credential with the encrypted client secret.
     const credRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.credential",
         properties: {
@@ -370,7 +370,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
     // 2. Connection with credential_ref + NO inline OAuth config in
     //    `configuration`. The dual-read path should pick the credential.
     const connRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -399,7 +399,7 @@ describe("POST /connections/:id/proxy/* — happy path", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/api/v1/widgets`,
-      { key: ctx.adminKey, body: {} },
+      { key: ctx.spaceKey, body: {} },
     );
     expect(res.status).toBe(200);
     expect(fetchState.calls).toBe(1);
@@ -448,7 +448,7 @@ describe("POST /connections/:id/proxy/* — refresh on 401", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/things`,
-      { key: ctx.adminKey, body: { x: 1 } },
+      { key: ctx.spaceKey, body: { x: 1 } },
     );
     expect(res.status).toBe(200);
 
@@ -487,7 +487,7 @@ describe("POST /connections/:id/proxy/* — refresh on 401", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/things`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: { code: string } };
@@ -523,7 +523,7 @@ describe("POST /connections/:id/proxy/* — refresh on 401", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/things`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(401);
 
@@ -552,7 +552,7 @@ describe("POST /connections/:id/proxy/* — refresh on 401", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/things`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(401);
 
@@ -597,7 +597,7 @@ describe("POST /connections/:id/proxy/* — proactive refresh", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/api`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -623,7 +623,7 @@ describe("POST /connections/:id/proxy/* — proactive refresh", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/api`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     expect(fetchState.calls).toBe(1);
@@ -645,10 +645,10 @@ describe("POST /connections/:id/proxy/* — audit", () => {
     ]);
 
     await request(ctx.app, "POST", `/connections/${connectionId}/proxy/path1`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     await request(ctx.app, "POST", `/connections/${connectionId}/proxy/path2`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     // Allow async audit log writes to flush.
@@ -676,7 +676,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/path`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(proxyRes.status).toBe(422);
     const err = (await proxyRes.json()) as { error: { code: string } };
@@ -693,7 +693,7 @@ describe("POST /connections/:id/proxy/* — misconfiguration", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/path`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(proxyRes.status).toBe(422);
     const err = (await proxyRes.json()) as { error: { code: string } };
@@ -882,7 +882,7 @@ async function createApiTokenCredential(opts?: {
     apiTokenConfig.auth_scheme = cfg.auth_scheme;
   }
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "system.credential",
       properties: {
@@ -910,7 +910,7 @@ async function createApiTokenConnection(opts?: {
 }): Promise<string> {
   const credId = await createApiTokenCredential(opts);
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "system.connection",
       properties: {
@@ -949,7 +949,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/rest/v2/tasks`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     expect(fetchState.calls).toBe(1);
@@ -970,7 +970,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/rest/v2/tasks`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(401);
     const body = (await res.json()) as { error: { code: string } };
@@ -1005,7 +1005,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/proxy/things`,
-      { key: ctx.adminKey, body: { x: 1 } },
+      { key: ctx.spaceKey, body: { x: 1 } },
     );
     expect(res.status).toBe(200);
   });
@@ -1018,7 +1018,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token", () => {
     installFetchScript([() => jsonResponse(200, { ok: true })]);
 
     await request(ctx.app, "GET", `/connections/${connectionId}/proxy/path`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
 
     await vi.waitFor(async () => {
@@ -1064,7 +1064,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/api/v2/export/`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     expect(fetchState.calls).toBe(1);
@@ -1088,7 +1088,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/anything`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -1111,7 +1111,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/anything`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -1134,7 +1134,7 @@ describe("POST /connections/:id/proxy/* — kind:api_token auth_scheme", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/anything`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -1155,7 +1155,7 @@ describe("POST /connections/:id/proxy/* — upstream_base_url_override", () => {
     // per-connection override pointing at host B. The proxy MUST route to
     // host B — that's the whole point of the override.
     const connRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -1188,7 +1188,7 @@ describe("POST /connections/:id/proxy/* — upstream_base_url_override", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/people/me`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     expect(fetchState.calls).toBe(1);
@@ -1199,7 +1199,7 @@ describe("POST /connections/:id/proxy/* — upstream_base_url_override", () => {
       upstream_base_url: "https://shared-host.test",
     });
     const connRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -1227,7 +1227,7 @@ describe("POST /connections/:id/proxy/* — upstream_base_url_override", () => {
       ctx.app,
       "GET",
       `/connections/${connectionId}/proxy/people/me`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(422);
     const body = (await res.json()) as { error?: { code?: string } };

@@ -38,7 +38,7 @@ describe.skipIf(!isPg)("pg update read-modify-write race", () => {
 
   it("cannot revert a concurrent edit committed mid-transaction", async () => {
     const create = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "original body", title: "original title" },
@@ -100,7 +100,7 @@ describe.skipIf(!isPg)("pg update read-modify-write race", () => {
     // Land a user edit exactly inside the paused window.
     await pausedReached;
     const userEdit = request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { title: "edited while sweeping" } },
     });
     // The edit must be given time to reach the database. With the row
@@ -121,7 +121,7 @@ describe.skipIf(!isPg)("pg update read-modify-write race", () => {
     expect(userResult.status).toBe(200);
 
     const after = await request(ctx.app, "GET", `/items/${item.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const data = (await after.json()) as {
       item: { properties: Record<string, unknown> };

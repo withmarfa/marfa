@@ -150,7 +150,7 @@ describe("export → restore round trip", () => {
       source.app,
       "GET",
       `/export?format=archive&target_space_id=${space}`,
-      { key: source.adminKey },
+      { key: source.spaceKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -169,7 +169,7 @@ describe("export → restore round trip", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${destination.adminKey}`,
+          Authorization: `Bearer ${destination.spaceKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -254,7 +254,7 @@ describe("export → restore round trip", () => {
       source.app,
       "GET",
       `/export?format=archive&target_space_id=${space}`,
-      { key: source.adminKey },
+      { key: source.spaceKey },
     );
     const archive = Buffer.from(await exportRes.arrayBuffer());
 
@@ -262,7 +262,7 @@ describe("export → restore round trip", () => {
       source.app.request(`/admin/restore-archive?target_space_id=${space}`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${source.adminKey}`,
+          Authorization: `Bearer ${source.spaceKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -330,7 +330,7 @@ describe("export → restore round trip", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.adminKey}`,
+          Authorization: `Bearer ${ctx.spaceKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -374,7 +374,7 @@ describe("export → restore round trip", () => {
     );
 
     const readEdgeLines = async (path: string): Promise<unknown[]> => {
-      const res = await request(ctx.app, "GET", path, { key: ctx.adminKey });
+      const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
       expect(res.status).toBe(200);
       const text = await res.text();
       return text
@@ -457,7 +457,7 @@ describe("a platform-level export", () => {
       source.app,
       "GET",
       "/export?format=archive",
-      { key: source.adminKey },
+      { key: source.spaceKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -490,7 +490,7 @@ describe("a platform-level export", () => {
     const restoreRes = await destination.app.request("/admin/restore-archive", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${destination.adminKey}`,
+        Authorization: `Bearer ${destination.spaceKey}`,
         "Content-Type": "application/gzip",
       },
       body: archive,

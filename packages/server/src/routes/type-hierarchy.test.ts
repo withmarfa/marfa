@@ -55,7 +55,7 @@ function crossNamespaceChild(): { id: string; [k: string]: unknown } {
 async function registerChild(c: TestContext): Promise<string> {
   const schema = crossNamespaceChild();
   const res = await request(c.app, "POST", "/types", {
-    key: c.adminKey,
+    key: c.spaceKey,
     body: schema,
   });
   expect(
@@ -72,7 +72,7 @@ async function createNote(
   key?: string,
 ): Promise<string> {
   const res = await request(c.app, "POST", "/items", {
-    key: key ?? c.adminKey,
+    key: key ?? c.spaceKey,
     body: { type, properties: { body } },
   });
   expect(
@@ -88,7 +88,7 @@ async function listTypes(
   key?: string,
 ): Promise<string[]> {
   const res = await request(c.app, "GET", `/items?${query}`, {
-    key: key ?? c.adminKey,
+    key: key ?? c.spaceKey,
   });
   expect(
     res.status,
@@ -146,7 +146,7 @@ describe("a subtree query reaches a child declared outside its namespace", () =>
     // only thing that can return it from a `google.youtube` query is the name.
     await createNote(ctx, "core.note", "plain");
     const person = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.entity.person",
         properties: { name: "Ada Lovelace" },
@@ -181,7 +181,7 @@ describe("a permission map still resolves names, and only names", () => {
     // fetch would refuse — so a grant covers the namespace it names, and a
     // credential reaches this child only through a `user.*` grant of its own.
     const keyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "notes only",
         source: "test",
@@ -213,7 +213,7 @@ describe("a permission map still resolves names, and only names", () => {
     // it through the registry would hand a deliberately narrow credential a
     // subtree it was never given.
     const keyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "exact grant",
         source: "test",

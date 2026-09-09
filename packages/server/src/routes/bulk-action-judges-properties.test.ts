@@ -37,7 +37,7 @@ const REFUSED_BY_THE_TYPE = { body: 12345 };
 
 async function seed(marker: string, type = "core.note"): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type,
       properties:
@@ -56,7 +56,7 @@ async function seedOfType(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type, properties, tags: [marker] },
   });
   expect(res.status).toBe(201);
@@ -75,7 +75,7 @@ async function patchByTag(
   const { initialStatus, result } = await runBulkActionAsync(
     ctx,
     { action: "update_properties", patch, filter: { tags: [marker] } },
-    ctx.adminKey,
+    ctx.spaceKey,
   );
   // 202: this door queues a job and the helper waits for it. Only a dry run
   // answers synchronously.
@@ -89,7 +89,7 @@ async function patchByTag(
 
 async function bodyOf(id: string): Promise<unknown> {
   const res = await request(ctx.app, "GET", `/items/${id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   const { item } = (await res.json()) as {
@@ -183,7 +183,7 @@ describe("the bulk-action door judges a property patch", () => {
     // Reporting success is not writing. A door that skipped the row and
     // counted it anyway would pass on the counts alone.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const { item } = (await after.json()) as {
       item: { properties: { note?: unknown } };

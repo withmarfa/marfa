@@ -161,7 +161,7 @@ async function allGrantRows(c: TestContext) {
 async function listedGrants(
   c: TestContext,
 ): Promise<{ id: string; client_id: string; status: string }[]> {
-  const res = await request(c.app, "GET", "/auth/grants", { key: c.adminKey });
+  const res = await request(c.app, "GET", "/auth/grants", { key: c.spaceKey });
   expect(res.status).toBe(200);
   return (await res.json()) as {
     id: string;
@@ -336,7 +336,7 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(grant).toBeDefined();
 
     const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
@@ -361,7 +361,7 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     const [grant] = await listedGrants(c);
 
     const res = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -392,7 +392,7 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(revoke.headers.get("location")).toContain("notice=grant_revoked");
 
     const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(res.status).toBe(200);
     // The soft delete took: the row moved on the state axis. The list was
@@ -417,14 +417,14 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(row?.properties.status).toBe("active");
 
     const del = await request(c.app, "DELETE", `/items/${grant!.id}`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(del.status).toBe(400);
     expect(
       ((await del.json()) as { error: { message: string } }).error.message,
     ).toContain("still live");
     const purge = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(purge.status).toBe(400);
     expect(
@@ -452,7 +452,7 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     // caller can actually send, and the refusal has to come before the
     // store's transition rules get to say anything about it.
     const res = await request(c.app, "POST", `/items/${grant!.id}/transition`, {
-      key: c.adminKey,
+      key: c.spaceKey,
       body: { state: "archived" },
     });
     expect(res.status).toBe(400);
@@ -475,7 +475,7 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     const [grant] = await listedGrants(c);
 
     const note = await request(c.app, "POST", "/items", {
-      key: c.adminKey,
+      key: c.spaceKey,
       body: {
         type: "core.note",
         properties: { title: "parent", body: "holds the grant" },
@@ -484,13 +484,13 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(note.status).toBe(201);
     const noteId = ((await note.json()) as { item: { id: string } }).item.id;
     const edge = await request(c.app, "POST", "/edges", {
-      key: c.adminKey,
+      key: c.spaceKey,
       body: { source_id: noteId, target_id: grant!.id, edge_type: "parent-of" },
     });
     expect(edge.status).toBe(201);
 
     const res = await request(c.app, "DELETE", `/items/${noteId}`, {
-      key: c.adminKey,
+      key: c.spaceKey,
     });
     expect(res.status).toBe(400);
     expect(

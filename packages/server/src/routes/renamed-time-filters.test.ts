@@ -39,7 +39,7 @@ interface ErrorBody {
 
 async function seedNote(body: string, timestamp?: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "core.note",
       properties: { body },
@@ -65,7 +65,7 @@ describe("the renamed filters are refused rather than dropped", () => {
       ctx.app,
       "GET",
       `/items?since=${encodeURIComponent(CUTOFF)}&limit=200`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
 
     expect(res.status).toBe(400);
@@ -91,7 +91,7 @@ describe("the renamed filters are refused rather than dropped", () => {
       ctx.app,
       "GET",
       `/items?until=${encodeURIComponent(CUTOFF)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as ErrorBody).error.message).toContain(
@@ -104,7 +104,7 @@ describe("the renamed filters are refused rather than dropped", () => {
       ctx.app,
       "GET",
       `/export?since=${encodeURIComponent(CUTOFF)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const message = ((await res.json()) as ErrorBody).error.message;
@@ -125,7 +125,7 @@ describe("the renamed filters are refused rather than dropped", () => {
       const survivor = await seedNote(`bulk-survivor-${oldName}`, NEW);
 
       const res = await request(ctx.app, "POST", "/items/bulk-actions", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           action: "transition",
           state: "archived",
@@ -147,7 +147,7 @@ describe("the renamed filters are refused rather than dropped", () => {
       // the space — and this row would have been archived by a call that
       // asked for a dated slice.
       const after = await request(ctx.app, "GET", `/items/${survivor}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(after.status).toBe(200);
       expect(
@@ -165,7 +165,7 @@ describe("the renamed filters are refused rather than dropped", () => {
       ctx.app,
       "GET",
       `/audit?since=${encodeURIComponent(CUTOFF)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -180,7 +180,7 @@ describe("the new names do what the old ones did", () => {
       ctx.app,
       "GET",
       `/items?timestamp_after=${encodeURIComponent(CUTOFF)}&limit=200`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(lower.status).toBe(200);
     const lowerIds = (
@@ -193,7 +193,7 @@ describe("the new names do what the old ones did", () => {
       ctx.app,
       "GET",
       `/items?timestamp_before=${encodeURIComponent(CUTOFF)}&limit=200`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(upper.status).toBe(200);
     const upperIds = (
@@ -211,7 +211,7 @@ describe("the new names do what the old ones did", () => {
         ctx.app,
         "GET",
         `/items?${param}=${encodeURIComponent(CUTOFF)}&limit=200`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(200);
       const ids = ((await res.json()) as { data: { id: string }[] }).data.map(
@@ -231,7 +231,7 @@ describe("updated_after owns the ordering", () => {
       ctx.app,
       "GET",
       `/items?updated_after=${encodeURIComponent(CUTOFF)}&sort=created_at`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     expect(((await res.json()) as ErrorBody).error.message).toContain(
@@ -244,7 +244,7 @@ describe("updated_after owns the ordering", () => {
       ctx.app,
       "GET",
       `/items?updated_after=${encodeURIComponent(CUTOFF)}&direction=desc`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
   });
@@ -257,7 +257,7 @@ describe("updated_after owns the ordering", () => {
       ctx.app,
       "GET",
       `/items?updated_after=${encodeURIComponent(CUTOFF)}&sort=updated_at&direction=asc`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
   });
@@ -274,14 +274,14 @@ describe("an edges cursor knows which ordering issued it", () => {
       [a, c],
     ]) {
       const res = await request(ctx.app, "POST", "/edges", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { source_id: s, target_id: t, edge_type: "references" },
       });
       expect(res.status).toBe(201);
     }
 
     const first = await request(ctx.app, "GET", "/edges?limit=1", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(first.status).toBe(200);
     const cursor = ((await first.json()) as { cursor: string | null }).cursor;
@@ -291,7 +291,7 @@ describe("an edges cursor knows which ordering issued it", () => {
       ctx.app,
       "GET",
       `/edges?updated_after=${encodeURIComponent("2000-01-01T00:00:00.000Z")}&limit=1&cursor=${encodeURIComponent(cursor ?? "")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
 
     // Both orderings key on an ISO timestamp, so the wrong one compares

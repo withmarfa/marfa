@@ -38,7 +38,7 @@ async function createKey(overrides: Record<string, unknown> = {}): Promise<{
 }> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       label: `subject-${suffix}`,
       source: `subject-${suffix}`,
@@ -71,7 +71,7 @@ describe("the key a create route returns", () => {
   it("carries no expiry, because a create route cannot mint one", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: `expiry-${suffix}`,
         source: `expiry-${suffix}`,
@@ -120,7 +120,7 @@ describe("PATCH /keys/{id}", () => {
     const { id, source } = await createKey();
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "renamed",
         default_tier: "library",
@@ -150,7 +150,7 @@ describe("PATCH /keys/{id}", () => {
     });
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { label: "after" },
     });
     expect(res.status).toBe(200);
@@ -197,7 +197,7 @@ describe("PATCH /keys/{id}", () => {
     const { id } = await createKey();
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source: "something-else" },
     });
     expect(res.status).toBe(400);
@@ -233,7 +233,7 @@ describe("PATCH /keys/{id}", () => {
     expect(minted.expires_at).toBe(expiresAt);
 
     const res = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { label: "renamed runtime" },
     });
     expect(res.status).toBe(200);
@@ -251,7 +251,7 @@ describe("PATCH /keys/{id}", () => {
     // Valid UUIDv7 shape, guaranteed not to exist in the store.
     const ghostId = "00000000-0000-7000-8000-000000000000";
     const res = await request(ctx.app, "PATCH", `/keys/${ghostId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { label: "ghost" },
     });
     expect(res.status).toBe(404);
@@ -1548,7 +1548,7 @@ describe("POST /keys — space binding", () => {
 
   it("refuses a space-bound mint from an operator key, naming the route that does it", async () => {
     const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.adminKey,
+      key: hostedCtx.spaceKey,
       body: {
         label: "null-space-bound",
         source: "null-space-bound",
@@ -1571,7 +1571,7 @@ describe("POST /keys — space binding", () => {
     // over content rather than a lower rank.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.adminKey,
+      key: hostedCtx.spaceKey,
       body: {
         label: `null-space-narrow-${suffix}`,
         source: `null-space-narrow-${suffix}`,
@@ -1600,7 +1600,7 @@ describe("POST /keys — space binding", () => {
     // server, so a regression would only surface after release.
     const suffix = Math.random().toString(36).slice(2, 10);
     const firstHop = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.adminKey,
+      key: hostedCtx.spaceKey,
       body: {
         label: `harness-${suffix}`,
         source: `harness-${suffix}`,
@@ -1656,7 +1656,7 @@ describe("POST /keys — space binding", () => {
   it("rejects a body `space_id` instead of silently dropping it", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.adminKey,
+      key: hostedCtx.spaceKey,
       body: {
         label: `body-space-${suffix}`,
         source: `body-space-${suffix}`,
@@ -1682,7 +1682,7 @@ describe("POST /keys — single-space deployments keep minting space-less keys",
   it("mints a space-less key in keys mode", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: `self-host-${suffix}`,
         source: `self-host-${suffix}`,
@@ -1698,7 +1698,7 @@ describe("POST /keys — single-space deployments keep minting space-less keys",
   it("refuses a space-bound mint here too, where no space can exist", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: `self-host-bound-${suffix}`,
         source: `self-host-bound-${suffix}`,
@@ -1713,7 +1713,7 @@ describe("POST /keys — single-space deployments keep minting space-less keys",
   it("still rejects a body `space_id` in keys mode", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: `self-host-body-${suffix}`,
         source: `self-host-body-${suffix}`,

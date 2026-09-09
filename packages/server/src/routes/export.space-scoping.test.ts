@@ -154,7 +154,7 @@ describe("space-scoped export — the operator key", () => {
       ctx.app,
       "GET",
       `/export?target_space_id=${spaceA}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const ids = await readNdjsonItems(res);
@@ -165,7 +165,7 @@ describe("space-scoped export — the operator key", () => {
   it("falls through to unscoped (self-host compat) without target_space_id and audits as platform_unscoped", async () => {
     ctx = await createTestContext();
     const res = await request(ctx.app, "GET", "/export", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
 
@@ -225,7 +225,7 @@ describe("archive — manifest space_id round-trip", () => {
       {
         method: "POST",
         headers: {
-          authorization: `Bearer ${ctx.adminKey}`,
+          authorization: `Bearer ${ctx.spaceKey}`,
           "content-type": "application/gzip",
         },
         body: archive,

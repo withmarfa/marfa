@@ -158,11 +158,11 @@ describe.each(DOORS)("$name", (door) => {
   it("refuses a state the type's lifecycle does not contain", async () => {
     // `system.*` admits `active | revoked`. `trashed` is a real state and is
     // not in that graph, so nothing can produce it and nothing can leave it.
-    expect(await door.create(ctx.adminKey, "trashed")).toBe(400);
+    expect(await door.create(ctx.spaceKey, "trashed")).toBe(400);
   });
 
   it("refuses `archived` on the same grounds, so the rule is the graph and not one word", async () => {
-    expect(await door.create(ctx.adminKey, "archived")).toBe(400);
+    expect(await door.create(ctx.spaceKey, "archived")).toBe(400);
   });
 
   it("still admits a state the lifecycle does contain", async () => {
@@ -174,7 +174,7 @@ describe.each(DOORS)("$name", (door) => {
     // doors legitimately differ — the single create answers 201 and the bulk
     // endpoint answers 200 for a batch it accepted. Pinning either number
     // here would be asserting the other door's contract by accident.
-    expect(await door.create(ctx.adminKey, "active")).toBeLessThan(300);
+    expect(await door.create(ctx.spaceKey, "active")).toBeLessThan(300);
   });
 });
 

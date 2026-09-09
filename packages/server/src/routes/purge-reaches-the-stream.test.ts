@@ -54,7 +54,7 @@ afterAll(async () => {
 
 async function note(body: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body } },
   });
   expect(res.status).toBe(201);
@@ -99,14 +99,14 @@ async function currentCursor(): Promise<bigint> {
 describe("a purge reaches the stream", () => {
   it("the single-item door announces the item it removed", async () => {
     const doomed = await note("purge-announced");
-    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.adminKey });
+    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.spaceKey });
 
     // No edges anywhere near it. The cascade's edge events are what this
     // door already published, and an item with none of them was silent
     // outright — which is the case the edge suite cannot reach.
     const heard = await itemEventsDuring(async () => {
       const res = await request(ctx.app, "DELETE", `/items/${doomed}/purge`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(res.status).toBe(200);
     });
@@ -121,7 +121,7 @@ describe("a purge reaches the stream", () => {
   it("the bulk door announces every item it removed", async () => {
     const tag = `purged-${Math.random().toString(36).slice(2, 8)}`;
     const seed = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "bulk-purge-announced" },
@@ -130,7 +130,7 @@ describe("a purge reaches the stream", () => {
     });
     expect(seed.status).toBe(201);
     const doomed = ((await seed.json()) as { item: { id: string } }).item.id;
-    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.adminKey });
+    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.spaceKey });
 
     const heard = await itemEventsDuring(async () => {
       const run = await runBulkActionAsync(
@@ -140,7 +140,7 @@ describe("a purge reaches the stream", () => {
           confirm: "PURGE",
           filter: { tags: [tag], state: "trashed" },
         },
-        ctx.adminKey,
+        ctx.spaceKey,
       );
       expect(run.result?.succeeded).toBe(1);
     });
@@ -172,18 +172,18 @@ describe("a purge reaches the stream", () => {
 
   it("reaches a client that was away, under the name it publishes", async () => {
     const doomed = await note("purge-replayed");
-    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.adminKey });
+    await request(ctx.app, "DELETE", `/items/${doomed}`, { key: ctx.spaceKey });
 
     // Where the client's cursor stood when it went away.
     const cursor = await currentCursor();
 
     const res = await request(ctx.app, "DELETE", `/items/${doomed}/purge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
 
     const stream = await request(ctx.app, "GET", "/events", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(stream.status).toBe(200);
@@ -200,7 +200,7 @@ describe("a purge reaches the stream", () => {
     // The runtime vocabulary is a closed set. A published event nobody can
     // subscribe to reaches the stream and stops there.
     const res = await request(ctx.app, "POST", "/webhooks", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         url: "https://example.com/purged",
         events: ["item.purged"],

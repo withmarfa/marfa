@@ -102,7 +102,7 @@ describe("a restore does not rewind a row's version", () => {
       source.app,
       "GET",
       `/export?format=archive&target_space_id=${space}`,
-      { key: source.adminKey },
+      { key: source.spaceKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -125,7 +125,7 @@ describe("a restore does not rewind a row's version", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${destination.adminKey}`,
+          Authorization: `Bearer ${destination.spaceKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,

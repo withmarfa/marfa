@@ -58,7 +58,7 @@ describe("GET /audit", () => {
     await seedAudit("test.shape", "test", "shape-1");
 
     const res = await request(ctx.app, "GET", "/audit", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -77,7 +77,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       "/audit?action=test.filter.action",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -94,7 +94,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       "/audit?resource_type=unique-resource-type-xyz",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -112,7 +112,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?resource_id=${uniqueId}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -131,7 +131,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=test.window&until=${encodeURIComponent(before)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as AuditPage;
@@ -145,7 +145,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=test.window&since=${encodeURIComponent(before)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(sinceRes.status).toBe(200);
     const sinceBody = (await sinceRes.json()) as AuditPage;
@@ -154,14 +154,14 @@ describe("GET /audit", () => {
 
   it("rejects limit below 1 with 400", async () => {
     const res = await request(ctx.app, "GET", "/audit?limit=0", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
 
   it("rejects limit above 200 with 400", async () => {
     const res = await request(ctx.app, "GET", "/audit?limit=500", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });
@@ -172,7 +172,7 @@ describe("GET /audit", () => {
     // trusted source. The audit row must carry that peer.
     const uniqueTitle = `t027-peer-${Math.random().toString(36).slice(2, 8)}`;
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       peer: "203.0.113.42",
       body: { type: "core.task", properties: { title: uniqueTitle } },
     });
@@ -189,7 +189,7 @@ describe("GET /audit", () => {
           ctx.app,
           "GET",
           `/audit?action=item.create&resource_id=${created.item.id}`,
-          { key: ctx.adminKey, peer: "203.0.113.42" },
+          { key: ctx.spaceKey, peer: "203.0.113.42" },
         );
         expect(listRes.status).toBe(200);
         return (await listRes.json()) as AuditPage;
@@ -214,7 +214,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=${action}&limit=2`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(page1Res.status).toBe(200);
     const page1 = (await page1Res.json()) as AuditPage;
@@ -229,7 +229,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=${action}&limit=2&cursor=${encodeURIComponent(String(cursor))}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(page2Res.status).toBe(200);
     const page2 = (await page2Res.json()) as AuditPage;
@@ -276,7 +276,7 @@ describe("GET /audit", () => {
       ctx.app,
       "GET",
       `/audit?action=${uniqueAction}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(bootstrapRes.status).toBe(200);
     const bootstrapBody = (await bootstrapRes.json()) as AuditPage;
@@ -361,7 +361,7 @@ describe("GET /audit", () => {
     try {
       const uniqueTitle = `t027-proxy-${Math.random().toString(36).slice(2, 8)}`;
       const res = await request(trustedCtx.app, "POST", "/items", {
-        key: trustedCtx.adminKey,
+        key: trustedCtx.spaceKey,
         peer: "10.0.0.5",
         headers: { "x-forwarded-for": "203.0.113.7" },
         body: { type: "core.task", properties: { title: uniqueTitle } },
@@ -377,7 +377,7 @@ describe("GET /audit", () => {
             "GET",
             `/audit?action=item.create&resource_id=${created.item.id}`,
             {
-              key: trustedCtx.adminKey,
+              key: trustedCtx.spaceKey,
               peer: "10.0.0.5",
               headers: { "x-forwarded-for": "203.0.113.7" },
             },

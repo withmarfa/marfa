@@ -36,13 +36,13 @@ afterAll(async () => {
 
 async function createTrashedNote(title: string): Promise<string> {
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { title, body: title } },
   });
   expect(created.status).toBe(201);
   const id = ((await created.json()) as { item: { id: string } }).item.id;
   const trashed = await request(ctx.app, "POST", `/items/${id}/transition`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { state: "trashed" },
   });
   expect(trashed.status).toBe(200);
@@ -67,7 +67,7 @@ describe("bulk purge reporting", () => {
           filter: `properties.title starts_with "${marker}"`,
         },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
 
     const job = outcome.job;
@@ -79,7 +79,7 @@ describe("bulk purge reporting", () => {
     // And the rows really are gone, so the report and the outcome agree.
     for (const id of ids) {
       const res = await request(ctx.app, "GET", `/items/${id}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(res.status).toBe(404);
     }

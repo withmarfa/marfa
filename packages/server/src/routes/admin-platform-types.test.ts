@@ -98,7 +98,7 @@ describe("GET /admin/platform-types/drift", () => {
     const id = await seedDriftedType(ctx);
 
     const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -125,7 +125,7 @@ describe("GET /admin/platform-types/drift", () => {
     });
 
     const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     const body = (await res.json()) as {
       types: { item_count: number; removable: boolean }[];
@@ -165,7 +165,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       ctx.app,
       "POST",
       `/admin/platform-types/${id}/remove`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
 
@@ -186,7 +186,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       ctx.app,
       "POST",
       "/admin/platform-types/core.note/remove",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { code: string } };
@@ -220,7 +220,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       ctx.app,
       "POST",
       `/admin/platform-types/${id}/remove`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
 
@@ -260,7 +260,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       ctx.app,
       "POST",
       `/admin/platform-types/${id}/remove`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
 
@@ -295,7 +295,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       ctx.app,
       "POST",
       `/admin/platform-types/${parent}/remove`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(409);
 
@@ -319,7 +319,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     );
 
     const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     const body = (await res.json()) as {
       types: { id: string; child_types: string[]; removable: boolean }[];
@@ -345,7 +345,7 @@ describe("POST /admin/platform-types/{id}/remove", () => {
       ctx.app,
       "POST",
       `/admin/platform-types/${id}/remove`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(409);
 

@@ -59,7 +59,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       });
 
       // First seed an item via the admin key so there's something to read.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const created = await request(ctx.app, "POST", "/items", {
         key: admin,
         body: {
@@ -87,7 +87,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
     it("excludes out-of-scope types from list reads (implicit denial via allowed_types)", async () => {
       // Seed items of two types as admin so both are present in the DB.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       await request(ctx.app, "POST", "/items", {
         key: admin,
         body: { type: "core.note", properties: { body: "in-scope" } },
@@ -126,7 +126,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       ];
       for (const typeId of schemas) {
         const registered = await request(ctx.app, "POST", "/types", {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: {
             id: typeId,
             version: 1,
@@ -135,7 +135,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         });
         expect(registered.status).toBe(201);
         const created = await request(ctx.app, "POST", "/items", {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { type: typeId, properties: { title: typeId } },
         });
         expect(created.status).toBe(201);
@@ -158,7 +158,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
     });
 
     it("rejects single-item GET on an out-of-scope type with 403", async () => {
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -207,7 +207,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:write"],
       });
       // Seed two notes via admin so there are referencable items.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -240,7 +240,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
         scopes: ["core.note:write", "edge.parent-of:write"],
       });
       // Seed two notes via admin.
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -268,7 +268,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
       const { rawToken } = await mintOAuthToken({
         scopes: ["core.note:write", "edge.*:write"],
       });
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const a = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -340,7 +340,7 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 
   describe("malformed scope grants are inert", () => {
     it("a token with only nonsense scopes returns empty data on list and 403 on direct access", async () => {
-      const admin = ctx.adminKey;
+      const admin = ctx.spaceKey;
       const created = (await (
         await request(ctx.app, "POST", "/items", {
           key: admin,
@@ -400,7 +400,7 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
   // registers a distinct `user.*` id to avoid a cross-test 409.
   async function registerUserType(typeId: string): Promise<void> {
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: typeId,
         version: 1,
@@ -423,7 +423,7 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
   it("namespace wildcard user.*:read reads user.* items; writing still needs :write", async () => {
     await registerUserType("user.ks_read");
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "user.ks_read", properties: { title: "seed" } },
     });
 

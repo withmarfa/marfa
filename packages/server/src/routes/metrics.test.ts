@@ -56,7 +56,7 @@ describe("GET /metrics", () => {
   it("returns numeric counters throughout the payload", async () => {
     // Seed at least one item so `items.by_state` is non-empty.
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "metrics shape test" },
@@ -65,7 +65,7 @@ describe("GET /metrics", () => {
     expect(createRes.status).toBe(201);
 
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
 
@@ -101,7 +101,7 @@ describe("GET /metrics", () => {
 
   it("items.total equals the sum of items.by_state", async () => {
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -118,7 +118,7 @@ describe("GET /metrics", () => {
     // in the table so accumulation stays visible after revocation; `active`
     // is the live subset.
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -139,7 +139,7 @@ describe("GET /metrics", () => {
     // rather than a list of jobs that have never ticked, so its absence
     // reads as "no queue substrate" instead of "nothing ran".
     const res = await request(ctx.app, "GET", "/metrics", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;

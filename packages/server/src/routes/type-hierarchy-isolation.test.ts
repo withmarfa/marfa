@@ -166,7 +166,7 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     ctx = await createTestContext();
     const child = childSchema();
     const reg = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: child,
     });
     expect(
@@ -175,12 +175,12 @@ describe("a permission map is resolved by name, and the gate agrees", () => {
     ).toBe(201);
 
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "granted" } },
     });
     expect(note.status).toBe(201);
     const denied = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: child.id, properties: { body: "denied" } },
     });
     expect(denied.status).toBe(201);

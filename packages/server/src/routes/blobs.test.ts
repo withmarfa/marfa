@@ -18,7 +18,7 @@ describe("POST /blobs", () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -39,7 +39,7 @@ describe("POST /blobs", () => {
     const res1 = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "text/plain",
       },
       body: data,
@@ -47,7 +47,7 @@ describe("POST /blobs", () => {
     const res2 = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "text/plain",
       },
       body: data,
@@ -61,7 +61,7 @@ describe("POST /blobs", () => {
     const res = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: new Uint8Array(0),
@@ -86,7 +86,7 @@ describe("GET /blobs/:hash", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "text/plain",
       },
       body: original,
@@ -94,7 +94,7 @@ describe("GET /blobs/:hash", () => {
     const { hash } = (await uploadRes.json()) as { hash: string };
 
     const downloadRes = await request(ctx.app, "GET", `/blobs/${hash}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(downloadRes.status).toBe(200);
     expect(downloadRes.headers.get("Content-Type")).toBe("text/plain");
@@ -107,7 +107,7 @@ describe("GET /blobs/:hash", () => {
     const fakeHash =
       "sha256:0000000000000000000000000000000000000000000000000000000000000000";
     const res = await request(ctx.app, "GET", `/blobs/${fakeHash}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(404);
   });
@@ -119,7 +119,7 @@ describe("HEAD /blobs/:hash", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "text/plain",
       },
       body: data,
@@ -127,7 +127,7 @@ describe("HEAD /blobs/:hash", () => {
     const { hash } = (await uploadRes.json()) as { hash: string };
 
     const headRes = await request(ctx.app, "HEAD", `/blobs/${hash}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(headRes.status).toBe(200);
     expect(headRes.headers.get("Content-Type")).toBe("text/plain");
@@ -138,14 +138,14 @@ describe("HEAD /blobs/:hash", () => {
     const fakeHash =
       "sha256:0000000000000000000000000000000000000000000000000000000000000000";
     const headRes = await request(ctx.app, "HEAD", `/blobs/${fakeHash}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(headRes.status).toBe(404);
   });
 
   it("returns 400 for invalid hash format", async () => {
     const headRes = await request(ctx.app, "HEAD", "/blobs/sha256:invalid", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(headRes.status).toBe(400);
   });
@@ -167,7 +167,7 @@ describe("POST /blobs/cleanup", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -178,7 +178,7 @@ describe("POST /blobs/cleanup", () => {
       ctx.app,
       "POST",
       "/blobs/cleanup?dry_run=true",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(cleanupRes.status).toBe(200);
     const body = (await cleanupRes.json()) as {
@@ -198,7 +198,7 @@ describe("POST /blobs/cleanup", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -207,7 +207,7 @@ describe("POST /blobs/cleanup", () => {
 
     // Create an item referencing the blob via a custom field name
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "has a logo", logo_blob_hash: hash },
@@ -219,7 +219,7 @@ describe("POST /blobs/cleanup", () => {
       ctx.app,
       "POST",
       "/blobs/cleanup?dry_run=true",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     const body = (await cleanupRes.json()) as {
       total_blobs: number;
@@ -234,7 +234,7 @@ describe("POST /blobs/cleanup", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -242,7 +242,7 @@ describe("POST /blobs/cleanup", () => {
     const { hash } = (await uploadRes.json()) as { hash: string };
 
     const cleanupRes = await request(ctx.app, "POST", "/blobs/cleanup", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(cleanupRes.status).toBe(200);
     const body = (await cleanupRes.json()) as {
@@ -257,7 +257,7 @@ describe("POST /blobs/cleanup", () => {
     // The orphan is untouched: deletion always requires an explicit ask.
     const headRes = await ctx.app.request(`/blobs/${hash}`, {
       method: "HEAD",
-      headers: { Authorization: `Bearer ${ctx.adminKey}` },
+      headers: { Authorization: `Bearer ${ctx.spaceKey}` },
     });
     expect(headRes.status).toBe(200);
   });
@@ -267,7 +267,7 @@ describe("POST /blobs/cleanup", () => {
       ctx.app,
       "POST",
       "/blobs/cleanup?dry_run=false",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(cleanupRes.status).toBe(200);
     const body = (await cleanupRes.json()) as {
@@ -294,7 +294,7 @@ describe("POST /blobs/cleanup", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -302,7 +302,7 @@ describe("POST /blobs/cleanup", () => {
     const { hash } = (await uploadRes.json()) as { hash: string };
 
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         state: "trashed",
@@ -315,7 +315,7 @@ describe("POST /blobs/cleanup", () => {
       ctx.app,
       "POST",
       "/blobs/cleanup?dry_run=false",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(cleanupRes.status).toBe(200);
 
@@ -323,7 +323,7 @@ describe("POST /blobs/cleanup", () => {
     // orphans would pass whether or not this particular hash survived.
     const headRes = await ctx.app.request(`/blobs/${hash}`, {
       method: "HEAD",
-      headers: { Authorization: `Bearer ${ctx.adminKey}` },
+      headers: { Authorization: `Bearer ${ctx.spaceKey}` },
     });
     expect(headRes.status).toBe(200);
   });
@@ -341,7 +341,7 @@ describe("POST /blobs/cleanup", () => {
       const uploadRes = await ctx.app.request("/blobs", {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.adminKey}`,
+          Authorization: `Bearer ${ctx.spaceKey}`,
           "Content-Type": "application/octet-stream",
         },
         body: data,
@@ -349,7 +349,7 @@ describe("POST /blobs/cleanup", () => {
       const { hash } = (await uploadRes.json()) as { hash: string };
 
       const createRes = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { type, state, properties: { ...properties, blob_ref: hash } },
       });
       expect(createRes.status).toBe(201);
@@ -358,13 +358,13 @@ describe("POST /blobs/cleanup", () => {
         ctx.app,
         "POST",
         "/blobs/cleanup?dry_run=false",
-        { key: ctx.adminKey },
+        { key: ctx.operatorKey },
       );
       expect(cleanupRes.status).toBe(200);
 
       const headRes = await ctx.app.request(`/blobs/${hash}`, {
         method: "HEAD",
-        headers: { Authorization: `Bearer ${ctx.adminKey}` },
+        headers: { Authorization: `Bearer ${ctx.spaceKey}` },
       });
       expect(headRes.status).toBe(200);
     }
@@ -375,7 +375,7 @@ describe("POST /blobs/cleanup", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -386,7 +386,7 @@ describe("POST /blobs/cleanup", () => {
     // key so the hash survives only in the version snapshot of the old
     // state.
     const createRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "carries a file", attachment_hash: hash },
@@ -396,7 +396,7 @@ describe("POST /blobs/cleanup", () => {
     const created = (await createRes.json()) as { item: { id: string } };
     const id = created.item.id;
     const patchRes = await request(ctx.app, "PATCH", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { attachment_hash: "replaced" } },
     });
     if (patchRes.status !== 200) {
@@ -407,14 +407,14 @@ describe("POST /blobs/cleanup", () => {
       ctx.app,
       "POST",
       "/blobs/cleanup?dry_run=false",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(cleanupRes.status).toBe(200);
 
     // The bytes a version still points at must survive the cleanup.
     const headRes = await ctx.app.request(`/blobs/${hash}`, {
       method: "HEAD",
-      headers: { Authorization: `Bearer ${ctx.adminKey}` },
+      headers: { Authorization: `Bearer ${ctx.spaceKey}` },
     });
     expect(headRes.status).toBe(200);
   });
@@ -427,7 +427,7 @@ describe("POST /blobs/reconcile", () => {
     const uploadRes = await ctx.app.request("/blobs", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/octet-stream",
       },
       body: data,
@@ -435,7 +435,7 @@ describe("POST /blobs/reconcile", () => {
     expect(uploadRes.status).toBe(201);
 
     const res = await request(ctx.app, "POST", "/blobs/reconcile", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -464,7 +464,7 @@ describe("POST /blobs/reconcile", () => {
     await ctx.blobBackend.put(orphanHash, Buffer.from("orphan data"));
 
     const res = await request(ctx.app, "POST", "/blobs/reconcile", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
@@ -484,7 +484,7 @@ describe("POST /blobs/reconcile", () => {
       ctx.app,
       "POST",
       "/blobs/reconcile?dry_run=false",
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as {

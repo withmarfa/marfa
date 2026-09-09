@@ -120,7 +120,7 @@ async function restoreInto(
   return ctx.app.request(`/admin/restore-archive?target_space_id=${space}`, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${ctx.adminKey}`,
+      Authorization: `Bearer ${ctx.spaceKey}`,
       "Content-Type": "application/gzip",
     },
     body: archive,

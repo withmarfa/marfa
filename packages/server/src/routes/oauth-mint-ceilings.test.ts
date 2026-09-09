@@ -162,7 +162,7 @@ describe("lease-token scope claims are bounded", () => {
     ctx = await createTestContext({ authAllowSignup: false });
     const attempt = (scopes: string[]) =>
       request(ctx!.app, "POST", "/connections/some-id/lease-tokens", {
-        key: ctx!.adminKey,
+        key: ctx!.spaceKey,
         body: { capability_id: "cap", scopes },
       });
 

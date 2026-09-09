@@ -29,7 +29,7 @@ interface ErrorResponse {
 
 async function registerType(body: Record<string, unknown>): Promise<void> {
   const res = await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body,
   });
   // The type registry is a process-level singleton, so a sibling suite that
@@ -44,7 +44,7 @@ async function registerType(body: Record<string, unknown>): Promise<void> {
 
 async function createItem(type: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body:
       type === "core.note"
         ? { type, properties: { body: `note-${String(Math.random())}` } }
@@ -61,7 +61,7 @@ async function createItem(type: string): Promise<string> {
 /** Media types carry `title`, unlike the note/collection shapes above. */
 async function createMedia(type: string, title: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type, properties: { title } },
   });
   expect(
@@ -78,7 +78,7 @@ async function joinCollection(
   properties?: Record<string, unknown>,
 ): Promise<Response> {
   return await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       source_id: memberId,
       target_id: collectionId,
@@ -137,7 +137,7 @@ describe("in-collection membership", () => {
     expect((await joinCollection(member, second)).status).toBe(201);
 
     const edges = await request(ctx.app, "GET", `/items/${member}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const data = (await edges.json()) as {
       data: { edge_type: string; target_id: string }[];
@@ -160,7 +160,7 @@ describe("in-collection membership", () => {
       ctx.app,
       "GET",
       `/items/${collection}/backrefs`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const data = (await back.json()) as {
       data: { edge_type: string; source_id: string }[];
@@ -256,7 +256,7 @@ describe("in-collection deletion", () => {
   // member out of `active`.
   async function stateOf(id: string): Promise<string> {
     const res = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { item: { state: string } };
@@ -269,7 +269,7 @@ describe("in-collection deletion", () => {
     expect((await joinCollection(member, collection)).status).toBe(201);
 
     const del = await request(ctx.app, "DELETE", `/items/${collection}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(del.status).toBe(200);
 
@@ -284,13 +284,13 @@ describe("in-collection deletion", () => {
     expect((await joinCollection(member, collection)).status).toBe(201);
 
     await request(ctx.app, "DELETE", `/items/${collection}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const purge = await request(
       ctx.app,
       "DELETE",
       `/items/${collection}/purge`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(purge.status).toBe(200);
 
@@ -298,7 +298,7 @@ describe("in-collection deletion", () => {
 
     // The membership edge went with its container; the member did not.
     const edges = await request(ctx.app, "GET", `/items/${member}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const data = (await edges.json()) as { data: { edge_type: string }[] };
     expect(data.data.filter((e) => e.edge_type === "in-collection")).toEqual(
@@ -340,15 +340,15 @@ describe("in-collection media membership", () => {
     expect((await joinCollection(episode, series)).status).toBe(201);
 
     await request(ctx.app, "DELETE", `/items/${series}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const purge = await request(ctx.app, "DELETE", `/items/${series}/purge`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(purge.status).toBe(200);
 
     const survivor = await request(ctx.app, "GET", `/items/${episode}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(survivor.status).toBe(200);
     const data = (await survivor.json()) as { item: { state: string } };

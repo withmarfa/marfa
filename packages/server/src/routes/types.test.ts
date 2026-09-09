@@ -36,7 +36,7 @@ describe("POST /types — metadata.types:write gating", () => {
     // credential is exempt from it. `space_permissions` is named because
     // omitting it mints a copy of the caller's set, which here is all eleven.
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "no-types-key",
         source: "no-types-key-src",
@@ -62,7 +62,7 @@ describe("POST /types — metadata.types:write gating", () => {
 
   it("allows a key when metadata.types:write is granted", async () => {
     const createKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "types-writer-key",
         source: "types-writer-key-src",
@@ -88,7 +88,7 @@ describe("POST /types — metadata.types:write gating", () => {
 describe("POST /types", () => {
   it("rejects type IDs with forward slashes", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...baseType, id: "demo/bad-type", label: "Bad Type" },
     });
     expect(res.status).toBe(400);
@@ -98,7 +98,7 @@ describe("POST /types", () => {
 
   it("auto-generates label from type ID when missing", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...baseType, id: "test.auto_label" },
     });
     expect(res.status).toBe(201);
@@ -108,7 +108,7 @@ describe("POST /types", () => {
 
   it("auto-generates label with hyphens", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...baseType, id: "test.my-custom-thing" },
     });
     expect(res.status).toBe(201);
@@ -118,7 +118,7 @@ describe("POST /types", () => {
 
   it("preserves explicit label", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...baseType, id: "test.explicit_label", label: "My Label" },
     });
     expect(res.status).toBe(201);
@@ -128,7 +128,7 @@ describe("POST /types", () => {
 
   it("rejects single-segment type IDs", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...baseType, id: "badtype", label: "Bad" },
     });
     expect(res.status).toBe(400);
@@ -138,7 +138,7 @@ describe("POST /types", () => {
 describe("GET /types", () => {
   it("lists all types including core", async () => {
     const res = await request(ctx.app, "GET", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const types = (await res.json()) as TypeSchema[];
@@ -151,7 +151,7 @@ describe("GET /types", () => {
   // response at all, and it is the field a client reads this endpoint for:
   // "which of these can hold a collection" is a question about the list.
   it("carries roles for the types that have them, and omits them otherwise", async () => {
-    const res = await request(ctx.app, "GET", "/types", { key: ctx.adminKey });
+    const res = await request(ctx.app, "GET", "/types", { key: ctx.spaceKey });
     const types = (await res.json()) as TypeSchema[];
 
     const containers = types
@@ -185,7 +185,7 @@ describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () 
   for (const [family, id] of SHIPPED) {
     it(`refuses to update the ${family} type ${id}`, async () => {
       const res = await request(ctx.app, "PUT", `/types/${id}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { ...baseType, version: 2 },
       });
       expect(res.status).toBe(403);
@@ -195,7 +195,7 @@ describe("PUT / DELETE /types/:id — platform-shipped types are immutable", () 
 
     it(`refuses to delete the ${family} type ${id}`, async () => {
       const res = await request(ctx.app, "DELETE", `/types/${id}`, {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       });
       expect(res.status).toBe(403);
       const body = (await res.json()) as { error: { code: string } };
@@ -210,7 +210,7 @@ describe("inheritance rule enforcement", () => {
     // own phrasing. Nothing else asserts what this door actually says, so a
     // transposed interpolation would read as the other door's message.
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.orphan_child",
         label: "Orphan Child",
@@ -231,7 +231,7 @@ describe("inheritance rule enforcement", () => {
     // as something else leaves two incompatible readings of one property
     // name on items a bookmark-aware reader expects to understand.
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.bookmark_redef",
         label: "Bookmark Redef",
@@ -272,7 +272,7 @@ describe("inheritance rule enforcement", () => {
 
   it("allows a child type that sharpens an inherited field's description", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.bookmark_refine",
         label: "Bookmark Refine",
@@ -288,7 +288,7 @@ describe("inheritance rule enforcement", () => {
 
   it("allows a child type that adds a new field on top of the parent", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.bookmark_extra",
         label: "Bookmark Extra",
@@ -328,7 +328,7 @@ describe("first-class field shadow rejection", () => {
   for (const name of SHADOWED_FIELD_NAMES) {
     it(`rejects a schema declaring fields.${name} with PROPERTY_SHADOWS_FIELD`, async () => {
       const res = await request(ctx.app, "POST", "/types", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           id: `test.shadow_${name}`,
           label: `Shadow ${name}`,
@@ -356,7 +356,7 @@ describe("first-class field shadow rejection", () => {
 
   it("accepts a schema whose fields don't shadow any first-class Item field", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.shadow_clean",
         label: "Shadow Clean",
@@ -372,7 +372,7 @@ describe("first-class field shadow rejection", () => {
 
   it("reports every shadowing field at once, not just the first", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.shadow_many",
         label: "Shadow Many",
@@ -402,7 +402,7 @@ describe("first-class field shadow rejection", () => {
 describe("merge_policy on type schemas", () => {
   it("GET /types/core.note returns the resolved merge_policy", async () => {
     const res = await request(ctx.app, "GET", "/types/core.note", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const schema = (await res.json()) as TypeSchema;
@@ -414,7 +414,7 @@ describe("merge_policy on type schemas", () => {
 
   it("POST /types accepts a custom type with a valid merge_policy", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.custom_with_policy",
         label: "Custom",
@@ -437,7 +437,7 @@ describe("merge_policy on type schemas", () => {
 
   it("POST /types rejects a merge_policy with an unknown strategy", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.bad_strategy",
         label: "Bad",
@@ -451,7 +451,7 @@ describe("merge_policy on type schemas", () => {
 
   it("POST /types rejects a merge_policy referencing an unknown field", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.unknown_field_policy",
         label: "Bad",
@@ -467,7 +467,7 @@ describe("merge_policy on type schemas", () => {
     // `body` lives on core.note. A child that doesn't redeclare the field
     // but overrides its merge strategy is legitimate.
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.note_body_override",
         label: "Note Override",
@@ -484,7 +484,7 @@ describe("merge_policy on type schemas", () => {
 
   it("POST /types rejects a child of core.note whose merge_policy references a nonexistent field", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.note_bad_override",
         label: "Bad Override",
@@ -514,7 +514,7 @@ describe("GET /types/:id — inheritance resolution", () => {
     // Register a custom child that adds one field on top of core.note.
     // GET should return the union of core.note's fields and the child's.
     const postRes = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.note_with_tag",
         label: "Note With Tag",
@@ -526,7 +526,7 @@ describe("GET /types/:id — inheritance resolution", () => {
     expect(postRes.status).toBe(201);
 
     const getRes = await request(ctx.app, "GET", "/types/test.note_with_tag", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(getRes.status).toBe(200);
     const schema = (await getRes.json()) as TypeSchema;
@@ -542,7 +542,7 @@ describe("GET /types/:id — inheritance resolution", () => {
 
   it("inherits display_hints from the nearest ancestor", async () => {
     const postRes = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.note_inherit_hints",
         label: "Note Inheriting Hints",
@@ -557,7 +557,7 @@ describe("GET /types/:id — inheritance resolution", () => {
       ctx.app,
       "GET",
       "/types/test.note_inherit_hints",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(getRes.status).toBe(200);
     const schema = (await getRes.json()) as TypeSchema;
@@ -569,7 +569,7 @@ describe("GET /types/:id — inheritance resolution", () => {
 
   it("child display_hints override parent hints (nearest-ancestor-wins)", async () => {
     const postRes = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.note_own_hints",
         label: "Note With Own Hints",
@@ -583,7 +583,7 @@ describe("GET /types/:id — inheritance resolution", () => {
     expect(postRes.status).toBe(201);
 
     const getRes = await request(ctx.app, "GET", "/types/test.note_own_hints", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(getRes.status).toBe(200);
     const schema = (await getRes.json()) as TypeSchema;
@@ -595,7 +595,7 @@ describe("GET /types/:id — inheritance resolution", () => {
 
   it("inherits merge_policy from parent when child omits it", async () => {
     const postRes = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.note_inherit_policy",
         label: "Note Inheriting Policy",
@@ -610,7 +610,7 @@ describe("GET /types/:id — inheritance resolution", () => {
       ctx.app,
       "GET",
       "/types/test.note_inherit_policy",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(getRes.status).toBe(200);
     const schema = (await getRes.json()) as TypeSchema;
@@ -622,7 +622,7 @@ describe("GET /types/:id — inheritance resolution", () => {
   it("merges version_policy field-by-field across the chain", async () => {
     // Parent sets recent_days + max_versions.
     const parentRes = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.vp_parent",
         label: "VP Parent",
@@ -635,7 +635,7 @@ describe("GET /types/:id — inheritance resolution", () => {
 
     // Child overrides only max_versions.
     const childRes = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "test.vp_child",
         label: "VP Child",
@@ -648,7 +648,7 @@ describe("GET /types/:id — inheritance resolution", () => {
     expect(childRes.status).toBe(201);
 
     const getRes = await request(ctx.app, "GET", "/types/test.vp_child", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(getRes.status).toBe(200);
     const schema = (await getRes.json()) as TypeSchema;
@@ -659,7 +659,7 @@ describe("GET /types/:id — inheritance resolution", () => {
 
   it("root type schema is unchanged by resolution (no-op on core.note)", async () => {
     const res = await request(ctx.app, "GET", "/types/core.note", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const schema = (await res.json()) as TypeSchema;
@@ -677,7 +677,7 @@ describe("compatible_with at the gate and on the wire", () => {
     // core.note requires body; a claim that omits it does not hold, and the
     // refusal names the mechanism so a client can act on it.
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "demo.hollow_note",
         version: 1,
@@ -692,7 +692,7 @@ describe("compatible_with at the gate and on the wire", () => {
 
   it("registers a holding claim and serves it on every read surface", async () => {
     const created = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "demo.meal_plan",
         version: 1,
@@ -708,13 +708,13 @@ describe("compatible_with at the gate and on the wire", () => {
     expect(createdBody.type.compatible_with).toEqual(["core.note"]);
 
     const single = await request(ctx.app, "GET", "/types/demo.meal_plan", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const singleBody = (await single.json()) as TypeSchema;
     expect(singleBody.compatible_with).toEqual(["core.note"]);
 
     const list = await request(ctx.app, "GET", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const listBody = (await list.json()) as TypeSchema[];
     const fromList = listBody.find((t) => t.id === "demo.meal_plan");
@@ -727,7 +727,7 @@ describe("compatible_with at the gate and on the wire", () => {
     // Exercised through a credential narrowed by its type map, so the
     // resolution path a filtered caller takes is the one under test.
     const keyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "compat-member",
         source: "compat-member-src",
@@ -769,7 +769,7 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
   for (const tier of ["core", "system", "marfa"] as const) {
     it(`refuses a ${tier}.* registration from the operator key`, async () => {
       const res = await request(ctx.app, "POST", "/types", {
-        key: ctx.adminKey, // the bootstrap credential: is_operator, no space
+        key: ctx.spaceKey, // the bootstrap credential: is_operator, no space
         body: { id: `${tier}.runtime-authored-probe`, ...baseType },
       });
       // Previously 201: the gate admitted the operator key, which put
@@ -785,7 +785,7 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
 
   it("still admits an ordinary namespace from the same credential", async () => {
     const res = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: "user.runtime-authored-probe", ...baseType },
     });
     expect(res.status).toBe(201);
@@ -870,7 +870,7 @@ describe("POST /types — publisher-tier handle ownership", () => {
 
   it("exempts the operator key", async () => {
     const res = await request(hosted.app, "POST", "/types", {
-      key: hosted.adminKey, // the bootstrap credential: is_operator, no space
+      key: hosted.spaceKey, // the bootstrap credential: is_operator, no space
       body: { id: "somevendor.platform-seeded", ...baseType },
     });
     expect(res.status).toBe(201);
@@ -936,11 +936,11 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
     const parent = `acme.del_parent_${suffix}`;
     const child = `acme.del_child_${suffix}`;
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: parent, ...baseType },
     });
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: child,
         version: 1,
@@ -953,7 +953,7 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
 
   async function resolvedFieldNames(id: string): Promise<string[]> {
     const res = await request(ctx.app, "GET", `/types/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const body = (await res.json()) as { fields?: Record<string, unknown> };
     return Object.keys(body.fields ?? {}).sort();
@@ -965,7 +965,7 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
     expect(before).toContain("name");
 
     const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
@@ -992,7 +992,7 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
       ctx.app,
       "DELETE",
       `/types/${parent}?force=true`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { code: string } };
@@ -1004,11 +1004,11 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
   it("is reported ahead of the items refusal when both apply", async () => {
     const { parent } = await pair("both");
     await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: parent, properties: { name: "an item" } },
     });
     const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as { error: { code: string } };
@@ -1019,12 +1019,12 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
   it("goes through once the subtype is given a different parent", async () => {
     const { parent, child } = await pair("repointed");
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: "acme.del_new_parent", ...baseType },
     });
 
     const repoint = await request(ctx.app, "PUT", `/types/${child}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         version: 2,
         parent: "acme.del_new_parent",
@@ -1034,18 +1034,18 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
     expect(repoint.status).toBe(200);
 
     const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
 
     const gone = await request(ctx.app, "GET", `/types/${parent}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(gone.status).toBe(404);
 
     // The child followed its new parent rather than being left behind.
     const moved = await request(ctx.app, "GET", `/types/${child}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const body = (await moved.json()) as { parent?: string };
     expect(body.parent).toBe("acme.del_new_parent");
@@ -1056,7 +1056,7 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
   it("names the immediate subtype and not the one below it", async () => {
     const { parent, child } = await pair("deep");
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "acme.del_grandchild",
         version: 1,
@@ -1066,7 +1066,7 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
     });
 
     const res = await request(ctx.app, "DELETE", `/types/${parent}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
@@ -1077,11 +1077,11 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
 
   it("deletes a leaf type with no subtypes", async () => {
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: "acme.del_leaf", ...baseType },
     });
     const res = await request(ctx.app, "DELETE", "/types/acme.del_leaf", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
   });
@@ -1097,11 +1097,11 @@ describe("DELETE /types/:id — a type another type inherits from", () => {
 describe("a parent's change reaches its descendants' validation", () => {
   it("stops accepting a write the parent no longer allows", async () => {
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: "acme.cache_parent", version: 1, fields: {} },
     });
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: "acme.cache_child",
         version: 1,
@@ -1112,7 +1112,7 @@ describe("a parent's change reaches its descendants' validation", () => {
 
     // Compiles and caches the child's schema, inherited fields and all.
     const first = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "acme.cache_child", properties: {} },
     });
     expect(first.status).toBe(201);
@@ -1121,7 +1121,7 @@ describe("a parent's change reaches its descendants' validation", () => {
     // omitting it must now be refused rather than served from the schema
     // compiled a moment ago.
     const update = await request(ctx.app, "PUT", "/types/acme.cache_parent", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         version: 2,
         fields: { mandatory: { type: "string", required: true } },
@@ -1130,7 +1130,7 @@ describe("a parent's change reaches its descendants' validation", () => {
     expect(update.status).toBe(200);
 
     const second = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "acme.cache_child", properties: {} },
     });
     expect(second.status).toBe(400);
@@ -1148,7 +1148,7 @@ describe("a parent's change reaches its descendants' validation", () => {
 describe("PUT /types/:id — re-parenting counts what hangs below", () => {
   async function makeType(id: string, parent?: string): Promise<Response> {
     return request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id, version: 1, fields: {}, ...(parent ? { parent } : {}) },
     });
   }
@@ -1171,7 +1171,7 @@ describe("PUT /types/:id — re-parenting counts what hangs below", () => {
 
   async function reparent(parent: string, version: number): Promise<Response> {
     return request(ctx.app, "PUT", "/types/rp.a", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { version, parent, fields: {} },
     });
   }
@@ -1192,7 +1192,7 @@ describe("PUT /types/:id — re-parenting counts what hangs below", () => {
   it("still accepts the same move for a type carrying nothing", async () => {
     await makeType("rp.leaf");
     const res = await request(ctx.app, "PUT", "/types/rp.leaf", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { version: 2, parent: "rp.c8", fields: {} },
     });
     expect(res.status).toBe(200);
@@ -1211,7 +1211,7 @@ describe("a type whose stored chain cannot be resolved", () => {
 
   beforeAll(async () => {
     await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id: "broken.victim", version: 1, fields: {} },
     });
     registerTypeSchema({ id: link(0), version: 1, fields: {} });
@@ -1237,7 +1237,7 @@ describe("a type whose stored chain cannot be resolved", () => {
 
   it("answers a coded refusal rather than a server fault", async () => {
     const res = await request(ctx.app, "GET", "/types/broken.victim", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).not.toBe(500);
     expect(res.status).toBe(409);
@@ -1247,13 +1247,13 @@ describe("a type whose stored chain cannot be resolved", () => {
 
   it("can still be corrected, which is the way back", async () => {
     const fixed = await request(ctx.app, "PUT", "/types/broken.victim", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { version: 2, fields: {} },
     });
     expect(fixed.status).toBe(200);
 
     const res = await request(ctx.app, "GET", "/types/broken.victim", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
   });

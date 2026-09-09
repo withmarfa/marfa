@@ -83,7 +83,7 @@ async function createNote(
   body: Record<string, unknown> = {},
 ): Promise<Response> {
   return request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", id, properties: { body: "first" }, ...body },
   });
 }
@@ -126,7 +126,7 @@ describe("a repeated item create", () => {
     // Read back independently of the response, so the assertion is about
     // the row rather than about what the route chose to echo.
     const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(((await read.json()) as ItemBody).item.properties).toEqual({
       body: "first",
@@ -138,7 +138,7 @@ describe("a repeated item create", () => {
     expect((await createNote(id)).status).toBe(201);
 
     const repeat = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.task", id, properties: { title: "different" } },
     });
     expect(repeat.status).toBe(409);
@@ -186,7 +186,7 @@ describe("a repeated item create", () => {
 describe("a repeated edge create", () => {
   async function seedItem(label: string): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: label } },
     });
     expect(res.status).toBe(201);
@@ -205,7 +205,7 @@ describe("a repeated edge create", () => {
       properties: { note: "first" },
     };
     expect(
-      (await request(ctx.app, "POST", "/edges", { key: ctx.adminKey, body }))
+      (await request(ctx.app, "POST", "/edges", { key: ctx.spaceKey, body }))
         .status,
     ).toBe(201);
 
@@ -214,7 +214,7 @@ describe("a repeated edge create", () => {
     await settle();
 
     const repeat = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { ...body, properties: { note: "second" } },
     });
     expect(repeat.status).toBe(200);
@@ -279,7 +279,7 @@ describe("the gates an acknowledgement still runs", () => {
     // Ceiling set to exactly what the space now holds, so any genuine
     // create is refused and only the acknowledgement can answer 200.
     const quota = await request(ctx.app, "PUT", `/spaces/${spaceId}/quotas`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { items_limit: 1 },
     });
     expect(quota.status).toBe(200);
@@ -403,7 +403,7 @@ describe("the gates an acknowledgement still runs", () => {
     const id = generateId();
     expect((await createNote(id)).status).toBe(201);
     expect(
-      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.adminKey }))
+      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey }))
         .status,
     ).toBe(200);
 
@@ -456,11 +456,11 @@ describe("a repeated edge create under concurrency", () => {
     // collision under test. A race the harness cannot hold still is not
     // evidence about this code — the deterministic version is.
     const source = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "race-source" } },
     });
     const target = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "race-target" } },
     });
     const sourceId = ((await source.json()) as { item: { id: string } }).item
@@ -476,7 +476,7 @@ describe("a repeated edge create under concurrency", () => {
     };
 
     expect(
-      (await request(ctx.app, "POST", "/edges", { key: ctx.adminKey, body }))
+      (await request(ctx.app, "POST", "/edges", { key: ctx.spaceKey, body }))
         .status,
     ).toBe(201);
 
@@ -512,7 +512,7 @@ describe("a repeated edge create under concurrency", () => {
     let res: Response;
     try {
       res = await request(ctx.app, "POST", "/edges", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body,
       });
     } finally {
@@ -532,7 +532,7 @@ describe("a repeated edge create under concurrency", () => {
     expect(parsed.edge.id).toBe(id);
 
     const listed = await request(ctx.app, "GET", `/items/${sourceId}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(1);
   });
@@ -749,7 +749,7 @@ describe("attribution on the two acknowledged doors", () => {
     // description untrue of the trashed answer.
     const sourceId = `mismatch-${Math.random().toString(36).slice(2, 8)}`;
     const seeded = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         source_id: sourceId,
@@ -759,12 +759,12 @@ describe("attribution on the two acknowledged doors", () => {
     expect(seeded.status).toBe(201);
     const id = ((await seeded.json()) as ItemBody).item.id;
     expect(
-      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.adminKey }))
+      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey }))
         .status,
     ).toBe(200);
 
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.task",
         source_id: sourceId,

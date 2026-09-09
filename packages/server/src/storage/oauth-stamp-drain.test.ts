@@ -30,7 +30,7 @@ describe("oauth last-used stamp drains at close", () => {
 
   async function createItem(): Promise<string> {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { title: "stamp target", body: "" },

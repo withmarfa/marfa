@@ -44,7 +44,7 @@ interface ErrorResponse {
 
 async function registerType(body: Record<string, unknown>): Promise<Response> {
   return await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body,
   });
 }
@@ -66,7 +66,7 @@ async function createItem(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type, properties },
   });
   expect(
@@ -79,7 +79,7 @@ async function createItem(
 
 async function join(sourceId: string, targetId: string): Promise<Response> {
   return await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       source_id: sourceId,
       target_id: targetId,
@@ -165,7 +165,7 @@ describe("a shipped integration's own container", () => {
     expect((await join(second, show)).status).toBe(201);
 
     const back = await request(ctx.app, "GET", `/items/${show}/backrefs`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const data = (await back.json()) as {
       data: { edge_type: string; source_id: string }[];
@@ -177,7 +177,7 @@ describe("a shipped integration's own container", () => {
     expect(members).toEqual([first, second].sort());
 
     const edges = await request(ctx.app, "GET", `/items/${first}/edges`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     const outbound = (await edges.json()) as {
       data: { edge_type: string; target_id: string }[];
@@ -286,7 +286,7 @@ describe("the role vocabulary is closed", () => {
     // An unknown role matches no type, so the edge would refuse every
     // endpoint while reading as though it admitted a family of them.
     const res = await request(ctx.app, "POST", "/edge-types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: `user.shelved-in-${suffix}`,
         cardinality: "many-to-many",

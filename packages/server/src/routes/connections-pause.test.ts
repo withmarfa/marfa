@@ -63,7 +63,7 @@ function manifest(name: string): IntegrationManifest {
 async function ownerKey(spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
-    key: ctx.adminKey,
+    key: ctx.operatorKey,
     body: {
       label: `owner-${suffix}`,
       source: `owner-${suffix}`,

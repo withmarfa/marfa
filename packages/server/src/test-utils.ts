@@ -1,4 +1,5 @@
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
+import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
@@ -69,7 +70,13 @@ export interface TestContext {
   app: Hono<AppEnv>;
   storage: Storage;
   blobBackend: BlobBackend;
-  adminKey: string;
+  /**
+   * The instance tier, and nothing else: no space, no permissions, exactly
+   * what the one unauthenticated mint hands back. It opens the instance
+   * routes and reaches no content at all, so a test about anything inside a
+   * space wants `spaceKey`.
+   */
+  operatorKey: string;
   /**
    * The instance's one space. Keys mode provisions one at bootstrap, so a
    * fixture that stamps the sentinel instead has to provision it here or it
@@ -78,10 +85,10 @@ export interface TestContext {
   spaceId: string;
   /**
    * A credential bound to `spaceId`, holding every space permission and
-   * writing every content family — an ordinary working key, which is what a
-   * self-hoster actually holds. `adminKey` is the operator key beside it and
-   * is not a working key: it reaches the instance routes and carries no space,
-   * which is now the whole of what a space-less credential can be.
+   * writing every content family — an ordinary working key, and what a
+   * self-hoster is handed alongside the operator key. This is the suite's
+   * working credential: content, space administration, everything but the
+   * instance routes.
    */
   spaceKey: string;
   /** The per-context temporary directory holding the sqlite database and
@@ -561,6 +568,45 @@ export async function waitForConsentLockDepth(
   }
 }
 
+/**
+ * A working credential bound to `spaceId`, shaped the way
+ * `POST /admin/spaces/{id}/keys` shapes one: everything in that space unless
+ * the caller narrows it, and never the operator tier.
+ *
+ * For a test that needs a second space beside the one `createTestContext`
+ * provisions, or a narrower credential in that space. Minting through the
+ * store rather than the route keeps a fixture out of the operator key's way,
+ * and the shape is the route's — `test-context-credentials.test.ts` is what
+ * holds the two together.
+ */
+export async function mintSpaceKey(
+  ctx: Pick<TestContext, "storage">,
+  spaceId: string,
+  options?: Partial<CreateKeyInput> & { rawKey?: string },
+): Promise<string> {
+  const suffix = Math.random().toString(36).slice(2, 14);
+  const rawKey = options?.rawKey ?? `marfa_k1_test_space_${suffix}`;
+  const { rawKey: _ignored, ...input } = options ?? {};
+  await ctx.storage.keys.create(
+    {
+      label: `test-space-key-${suffix}`,
+      source: `test-space-key-${suffix}`,
+      type_permissions: { "*": "write" },
+      extension_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
+      profile_permissions: { "*": "write" },
+      space_permissions: [...SPACE_PERMISSIONS],
+      default_tier: "library",
+      ...input,
+      is_operator: false,
+    },
+    hashApiKey(rawKey, SALT),
+    spaceId,
+  );
+  return rawKey;
+}
+
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
   /**
@@ -598,12 +644,27 @@ export async function createTestContext(
   }
 }
 
-async function buildTestContext(
+/**
+ * An app and its storage with nothing seeded: no key, no space, and no
+ * `bootstrapped` sentinel. The shape a brand-new installation starts from, so
+ * a test can drive the product's own first-mint doors rather than describing
+ * what they produce.
+ */
+export interface UnbootstrappedTestApp {
+  app: Hono<AppEnv>;
+  storage: Storage;
+  blobBackend: BlobBackend;
+  config: AppConfig;
+  tmpDir: string;
+  cleanup: () => Promise<void>;
+}
+
+async function buildUnbootstrappedApp(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
   emailTransport?: EmailTransport,
   deadLetterOps?: DeadLetterOps,
-): Promise<TestContext> {
+): Promise<UnbootstrappedTestApp> {
   const dialect = process.env.DB_DIALECT ?? "sqlite";
   const blobPath = join(tmpDir, "blobs");
 
@@ -687,46 +748,114 @@ async function buildTestContext(
     deadLetterOps,
   );
 
+  return {
+    app,
+    storage,
+    blobBackend,
+    config,
+    tmpDir,
+    cleanup: async () => {
+      try {
+        if (pgCleanup) {
+          await pgCleanup();
+        } else {
+          try {
+            await storage.close();
+          } catch {
+            // Best-effort.
+          }
+        }
+      } finally {
+        // In `finally` because a failed close must not strand the
+        // directory: the database file inside it is unreachable either
+        // way, and one leaked directory per context is what filled a
+        // disk with six hundred thousand of them.
+        rmSync(tmpDir, { recursive: true, force: true });
+      }
+    },
+  };
+}
+
+/**
+ * Build an app with nothing seeded, in its own temporary directory. The
+ * caller owns `cleanup`.
+ */
+export async function createUnbootstrappedTestApp(
+  overrides?: Partial<AppConfig>,
+  emailTransport?: EmailTransport,
+  deadLetterOps?: DeadLetterOps,
+): Promise<UnbootstrappedTestApp> {
+  const tmpDir = mkdtempSync(join(tmpdir(), "marfa-unbootstrapped-"));
+  try {
+    return await buildUnbootstrappedApp(
+      tmpDir,
+      overrides,
+      emailTransport,
+      deadLetterOps,
+    );
+  } catch (error) {
+    rmSync(tmpDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+async function buildTestContext(
+  tmpDir: string,
+  overrides?: Partial<AppConfig>,
+  emailTransport?: EmailTransport,
+  deadLetterOps?: DeadLetterOps,
+): Promise<TestContext> {
+  const { app, storage, blobBackend, cleanup } = await buildUnbootstrappedApp(
+    tmpDir,
+    overrides,
+    emailTransport,
+    deadLetterOps,
+  );
+
   const suffix = Math.random().toString(36).slice(2, 14);
-  const rawKey = `marfa_k1_test_admin_key_${suffix}`;
+  const rawKey = `marfa_k1_test_operator_key_${suffix}`;
   const keyHash = hashApiKey(rawKey, SALT);
   await storage.keys.create(
     {
-      label: "test-admin",
-      source: `test-admin-${suffix}`,
-      // **Every map is named, because nothing is implied any more.** This key
-      // used to carry a rank that bypassed the permission maps outright, so an
-      // empty `type_permissions` still reached every type. With one permission
-      // model the maps are the whole of a credential's reach, so the fixture
-      // has to say what the rank used to grant it silently.
+      label: "test-operator",
+      source: `test-operator-${suffix}`,
+      // **The shape bootstrap forces, stated in full.** The one
+      // unauthenticated mint takes nothing on any axis — five empty maps and
+      // an empty permission list — because running the instance sits outside
+      // the permission model rather than being a large set inside it. A
+      // space-less row also has no space predicate applied to it, so reach
+      // here would be reach over every space at once.
       //
-      // **This is deliberately wider than any operator key the product can
-      // mint.** Bootstrap forces all four maps empty, and an operator key can
-      // only mint another operator key clamped to its own set, so the shape
-      // below is reachable solely by writing the row. The suite needs one
-      // credential that reaches everything; do not read this fixture as
-      // evidence that an operator key carries content reach, because it does
-      // not.
-      type_permissions: { "*": "write" },
-      extension_permissions: { "*": "write" },
-      edge_permissions: { "*": "write" },
-      metadata_permissions: { "*": "write" },
-      space_permissions: [...SPACE_PERMISSIONS],
+      // Named rather than left to the store's defaults so the fixture says
+      // what it is, and so a default that drifted would show up here.
+      // `test-context-credentials.test.ts` compares this row against one
+      // driven out of the real door.
+      type_permissions: {},
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+      profile_permissions: {},
+      space_permissions: [],
       default_tier: "library",
-      // Tests need to register helper types and exercise system.* paths.
       is_operator: true,
     },
     keyHash,
   );
   await storage.settings.set("bootstrapped", "true");
 
-  // **The instance's one space, provisioned here because bootstrap provisions
-  // it there.** This fixture stamps the sentinel directly rather than driving
-  // the unauthenticated mint, so nothing else would create it — and a keys-mode
-  // instance with no space is a shape the product no longer produces. Anything
-  // a real caller would own lives in it: connections above all, because a
-  // connection with no space cannot mint a runtime credential now that a
-  // space-less credential is the operator key and nothing else.
+  // **The instance's one space and the key that works in it, provisioned here
+  // because bootstrap provisions them there.** This fixture stamps the
+  // sentinel directly rather than driving the unauthenticated mint, so nothing
+  // else would create either — and a keys-mode instance with no space is a
+  // shape the product no longer produces. Everything a real caller owns lives
+  // in the space: connections above all, because a connection with no space
+  // cannot mint a runtime credential now that a space-less credential is the
+  // operator key and nothing else.
+  //
+  // The wildcard maps and the whole permission list are what
+  // `POST /admin/spaces/{id}/keys` hands back for a body that names no
+  // narrowing, and what a keys-mode bootstrap provisions: a seed with no
+  // creator above it takes everything in its space.
   const space = await storage.spaces?.create("test-space");
   const spaceRawKey = `marfa_k1_test_space_key_${suffix}`;
   if (space) {
@@ -752,29 +881,11 @@ async function buildTestContext(
     app,
     storage,
     blobBackend,
-    adminKey: rawKey,
+    operatorKey: rawKey,
     spaceId: space?.id ?? "",
     spaceKey: spaceRawKey,
     tmpDir,
-    cleanup: async () => {
-      try {
-        if (pgCleanup) {
-          await pgCleanup();
-        } else {
-          try {
-            await storage.close();
-          } catch {
-            // Best-effort.
-          }
-        }
-      } finally {
-        // In `finally` because a failed close must not strand the
-        // directory: the database file inside it is unreachable either
-        // way, and one leaked directory per context is what filled a
-        // disk with six hundred thousand of them.
-        rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
+    cleanup,
   };
 }
 

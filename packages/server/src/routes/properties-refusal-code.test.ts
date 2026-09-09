@@ -78,7 +78,7 @@ async function errorCode(res: Response): Promise<string> {
 
 async function makeNote(): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: GOOD },
   });
   expect(res.status).toBe(201);
@@ -95,7 +95,7 @@ async function bulkEntryOutcome(
   extra: Record<string, unknown> = {},
 ): Promise<BulkEntryResult> {
   const res = await request(ctx.app, "POST", "/items/bulk", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { atomic: false, ...extra, items },
   });
   expect(res.status, await res.clone().text()).toBe(200);
@@ -125,7 +125,7 @@ const doors: { name: string; refuse: () => Promise<string> }[] = [
     refuse: async () =>
       errorCode(
         await request(ctx.app, "POST", "/items", {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { type: "core.note", properties: BAD },
         }),
       ),
@@ -135,7 +135,7 @@ const doors: { name: string; refuse: () => Promise<string> }[] = [
     refuse: async () =>
       errorCode(
         await request(ctx.app, "PATCH", `/items/${await makeNote()}`, {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { properties: BAD },
         }),
       ),
@@ -255,7 +255,7 @@ describe("the generic refusal", () => {
     // generic, and moving them too would leave the specific code meaning
     // nothing in particular.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: GOOD,

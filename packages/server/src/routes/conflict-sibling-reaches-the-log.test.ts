@@ -55,7 +55,7 @@ async function logSince(cursor: bigint): Promise<LogRow[]> {
 /** A note whose next stale write at `base` collides on `body`. */
 async function collidingNote(): Promise<{ id: string; base: number }> {
   const created = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "core.note",
       properties: { title: "shared title", body: "shared body" },
@@ -65,7 +65,7 @@ async function collidingNote(): Promise<{ id: string; base: number }> {
     item: { id: string; version: number };
   };
   const winner = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       properties: { title: "winner title", body: "winner body" },
       version: item.version,
@@ -81,7 +81,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     const cursor = await logCursor();
 
     const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "the losing edit" }, version: base },
     });
     expect(res.status).toBe(200);
@@ -118,7 +118,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
     const cursor = await logCursor();
 
     await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: "report stays off the row" }, version: base },
     });
 
@@ -146,7 +146,7 @@ describe("a conflicted copy is observable to a client that was not the writer", 
       "PATCH",
       `/items/${id}?conflict=auto`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         headers: { "Idempotency-Key": key },
         body: { properties: { body: "retried edit" }, version: base },
       },
@@ -178,7 +178,7 @@ describe("a conflicted copy is findable", () => {
 
     // The control: an ordinary create, indexed by the path this one bypasses.
     const control = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: `${needle} control` } },
     });
     expect(control.status).toBe(201);
@@ -186,7 +186,7 @@ describe("a conflicted copy is findable", () => {
       .id;
 
     const res = await request(ctx.app, "PATCH", `/items/${id}?conflict=auto`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { body: `${needle} sibling` }, version: base },
     });
     expect(res.status).toBe(200);
@@ -200,7 +200,7 @@ describe("a conflicted copy is findable", () => {
       ctx.app,
       "GET",
       `/search?q=${encodeURIComponent(needle)}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(found.status).toBe(200);
     const ids = (

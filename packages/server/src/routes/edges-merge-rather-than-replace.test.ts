@@ -43,7 +43,7 @@ interface WireEdge {
 
 async function note(body: string): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type: "core.note", properties: { body } },
   });
   expect(res.status).toBe(201);
@@ -58,7 +58,7 @@ async function edgeWith(
   const source = await note(`src-${marker}`);
   const target = await note(`tgt-${marker}`);
   const res = await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       source_id: source,
       target_id: target,
@@ -79,7 +79,7 @@ async function edgeWith(
  *  storing a replaced row would satisfy the weaker check. */
 async function storedProperties(id: string): Promise<Record<string, unknown>> {
   const res = await request(ctx.app, "GET", `/edges/${id}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   return ((await res.json()) as { edge: WireEdge }).edge.properties;
@@ -96,7 +96,7 @@ describe("an edge update merges over what the edge holds", () => {
     const { edge } = await edgeWith(BOTH);
 
     const res = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: PATCH },
     });
     expect(res.status).toBe(200);
@@ -109,7 +109,7 @@ describe("an edge update merges over what the edge holds", () => {
     // the two doors disagreed, and the item door is the one clients have
     // been written against.
     const itemRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { body: "merge-parity", ...BOTH },
@@ -121,16 +121,16 @@ describe("an edge update merges over what the edge holds", () => {
     const { edge } = await edgeWith(BOTH);
 
     await request(ctx.app, "PATCH", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: PATCH },
     });
     await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: PATCH },
     });
 
     const item = await request(ctx.app, "GET", `/items/${itemId}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     }).then(
       async (r) =>
         ((await r.json()) as { item: { properties: Record<string, unknown> } })
@@ -150,7 +150,7 @@ describe("an edge update merges over what the edge holds", () => {
     const { edge, source, target } = await edgeWith(BOTH);
 
     const res = await request(ctx.app, "POST", "/edges/bulk", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         edges: [
           {
@@ -176,7 +176,7 @@ describe("an edge update merges over what the edge holds", () => {
     const { edge } = await edgeWith(BOTH);
 
     const res = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { label: null } },
     });
     expect(res.status).toBe(200);
@@ -193,13 +193,13 @@ describe("an edge update merges over what the edge holds", () => {
     const { edge } = await edgeWith(BOTH);
 
     const moved = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: PATCH },
     });
     expect(moved.status).toBe(200);
 
     const stale = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { properties: { label: "loser" }, version: edge.version },
     });
     expect(stale.status).toBe(409);
@@ -243,7 +243,7 @@ describe("an edge update merges over what the edge holds", () => {
     const responses = await Promise.all(
       keys.map((k) =>
         request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: { properties: { [k]: k } },
         }),
       ),

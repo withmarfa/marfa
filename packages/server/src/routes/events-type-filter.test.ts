@@ -75,7 +75,7 @@ async function createItem(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type, properties },
   });
   expect(res.status).toBe(201);
@@ -92,7 +92,7 @@ async function listed(
     ctx.app,
     "GET",
     `/items?type=${encodeURIComponent(spelling)}&limit=100`,
-    { key: ctx.adminKey },
+    { key: ctx.spaceKey },
   );
   if (res.status !== 200) return { status: res.status, ids: new Set() };
   const body = (await res.json()) as { data: { id: string }[] };
@@ -102,7 +102,7 @@ async function listed(
 describe("GET /events?type= on the live stream", () => {
   it("delivers a subtype of the filtered type, and nothing outside it", async () => {
     const stream = await request(ctx.app, "GET", "/events?type=core.media", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(stream.status).toBe(200);
 
@@ -158,7 +158,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     });
 
     const res = await request(ctx.app, "GET", "/events?type=core.media", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -203,7 +203,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     const anchorId = await createItem("core.media", { title: "ZZanchorZZ" });
 
     const filtered = await request(ctx.app, "GET", "/events?type=core.media", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(filtered.status).toBe(200);
@@ -217,7 +217,7 @@ describe("GET /events?type= on the Last-Event-ID replay", () => {
     expect(filteredText).not.toContain("ZZtypelessZZ");
 
     const unfiltered = await request(ctx.app, "GET", "/events", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(unfiltered.status).toBe(200);
@@ -263,7 +263,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 
   beforeAll(async () => {
     const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         id: OUTSIDE_TYPE,
         version: 1,
@@ -287,7 +287,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 
   it("delivers what the list returns for a subtree wildcard, replaying", async () => {
     const res = await request(ctx.app, "GET", "/events?type=core.*", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       headers: { "Last-Event-ID": String(cursor) },
     });
     expect(res.status).toBe(200);
@@ -307,7 +307,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
 
   it("delivers what the list returns for a subtree wildcard, live", async () => {
     const res = await request(ctx.app, "GET", "/events?type=core.*", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
 
@@ -345,7 +345,7 @@ describe("GET /events?type= answers the spellings /items answers", () => {
         ctx.app,
         "GET",
         `/events?type=${encodeURIComponent(spelling)}`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
     });

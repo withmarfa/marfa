@@ -32,7 +32,7 @@ beforeAll(async () => {
   ctx = await createTestContext();
   for (const id of [SEEN, HIDDEN]) {
     const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id, version: 1, fields: { body: { type: "string" } } },
     });
     expect(registered.status).toBe(201);
@@ -45,7 +45,7 @@ beforeAll(async () => {
   ] as [string, number][]) {
     for (let i = 0; i < n; i++) {
       const created = await request(ctx.app, "POST", "/items", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: { type: id, properties: { body: `row ${String(i)}` } },
       });
       expect(created.status).toBe(201);
@@ -68,7 +68,7 @@ const total = (s: Record<string, number>): number =>
 
 describe("GET /items/stats?by=type", () => {
   it("names the types in use, with their counts", async () => {
-    const byType = await stats(ctx.adminKey, "?by=type");
+    const byType = await stats(ctx.spaceKey, "?by=type");
     expect(byType[SEEN]).toBe(2);
     expect(byType[HIDDEN]).toBe(1);
   });
@@ -76,15 +76,15 @@ describe("GET /items/stats?by=type", () => {
   it("describes the same rows as the state breakdown", async () => {
     // The two groupings are of one population, so the totals agree. This is
     // what catches a breakdown that dropped a filter the other still applies.
-    const byState = await stats(ctx.adminKey);
-    const byType = await stats(ctx.adminKey, "?by=type");
+    const byState = await stats(ctx.spaceKey);
+    const byType = await stats(ctx.spaceKey, "?by=type");
     expect(total(byType)).toBe(total(byState));
   });
 
   it("defaults to the state breakdown, unchanged", async () => {
     // The parameter is additive: an existing caller sees exactly what it saw.
-    const bare = await stats(ctx.adminKey);
-    const explicit = await stats(ctx.adminKey, "?by=state");
+    const bare = await stats(ctx.spaceKey);
+    const explicit = await stats(ctx.spaceKey, "?by=state");
     expect(bare).toEqual(explicit);
     // States, not types — the shape is a record either way, so asserting the
     // keys is what tells them apart.
@@ -122,7 +122,7 @@ describe("GET /items/stats?by=type", () => {
     // Fail loudly rather than silently answering the state question, which
     // is what an unvalidated parameter would do to a typo.
     const res = await request(ctx.app, "GET", "/items/stats?by=nonsense", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
   });

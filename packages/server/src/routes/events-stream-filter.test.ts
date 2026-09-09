@@ -66,7 +66,7 @@ async function createItem(
   properties: Record<string, unknown>,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { type, properties },
   });
   if (res.status !== 201) {
@@ -80,7 +80,7 @@ async function createEdge(): Promise<string> {
   const source = await createItem("core.note", { body: "edge source" });
   const target = await createItem("core.note", { body: "edge target" });
   const res = await request(ctx.app, "POST", "/edges", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { source_id: source, target_id: target, edge_type: "about" },
   });
   if (res.status !== 201) {
@@ -141,7 +141,7 @@ async function deliveredLive(query: string, scenario: Scenario): Promise<void> {
   const terminator = `${tag}end`;
 
   const stream = await request(ctx.app, "GET", `/events${query}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(stream.status).toBe(200);
 
@@ -176,7 +176,7 @@ async function deliveredOnReplay(
   assertTerminator(expectations, terminator);
 
   const res = await request(ctx.app, "GET", `/events${query}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     headers: { "Last-Event-ID": String(cursor) },
   });
   expect(res.status).toBe(200);
@@ -293,7 +293,7 @@ describe.each(PATHS)("GET /events?edges=none ($name)", ({ run }) => {
 describe("GET /events refuses a filter it cannot honor", () => {
   async function open(query: string): Promise<number> {
     const res = await request(ctx.app, "GET", `/events${query}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     await res.body?.cancel();
     return res.status;

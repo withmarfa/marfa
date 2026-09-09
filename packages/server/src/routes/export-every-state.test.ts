@@ -31,7 +31,7 @@ beforeAll(async () => {
 
   const create = async (state: string, tag: string): Promise<string> => {
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         state,
@@ -57,7 +57,7 @@ afterAll(async () => {
 /** Ids carried by an NDJSON export, restricted to this file's rows. */
 async function ndjsonIds(query: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", `/export${query}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
   const mine = new Set([activeId, archivedId, trashedId]);
@@ -72,7 +72,7 @@ async function ndjsonIds(query: string): Promise<string[]> {
 /** Ids carried by an archive export's `items.ndjson`, same restriction. */
 async function archiveIds(query: string): Promise<string[]> {
   const res = await request(ctx.app, "GET", `/export${query}`, {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
   });
   expect(res.status).toBe(200);
 
@@ -132,7 +132,7 @@ describe("GET /export — the all-states sentinel", () => {
 
   it("refuses a state that is not a state", async () => {
     const res = await request(ctx.app, "GET", "/export?state=nonsense", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
@@ -156,7 +156,7 @@ describe("GET /export?format=archive — the same sentinel on the other format",
       ctx.app,
       "GET",
       "/export?format=archive&state=nonsense",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };

@@ -18,7 +18,7 @@ interface ItemResponse {
 
 async function createItemWithTags(tags: string[]): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       type: "core.note",
       properties: { body: `tags-${tags.join("-")}-${String(Math.random())}` },
@@ -40,7 +40,7 @@ describe("GET /metadata/tags", () => {
     await createItemWithTags(["alpha"]);
 
     const res = await request(ctx.app, "GET", "/metadata/tags", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -62,16 +62,16 @@ describe("GET /metadata/tags", () => {
     const id = await createItemWithTags(["only-on-trashed-item"]);
     // Confirm tag visible while active.
     let res = await request(ctx.app, "GET", "/metadata/tags", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     let data = (await res.json()) as { tags: { tag: string }[] };
     expect(data.tags.some((t) => t.tag === "only-on-trashed-item")).toBe(true);
 
     // Trash the item.
-    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.adminKey });
+    await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey });
 
     res = await request(ctx.app, "GET", "/metadata/tags", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     data = (await res.json()) as { tags: { tag: string }[] };
     expect(data.tags.some((t) => t.tag === "only-on-trashed-item")).toBe(false);
@@ -98,7 +98,7 @@ describe("DELETE /items/{id}/tags/{tag} takes the tag the caller named", () => {
   /** The tags on an item, read back through the API rather than storage. */
   async function tagsOf(id: string): Promise<string[]> {
     const res = await request(ctx.app, "GET", `/items/${id}/metadata`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { metadata: { tags: string[] } };
@@ -115,7 +115,7 @@ describe("DELETE /items/{id}/tags/{tag} takes the tag the caller named", () => {
       ctx.app,
       "DELETE",
       `/items/${id}/tags/${encodeURIComponent("50%off")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
 
     expect(res.status).toBe(200);
@@ -135,7 +135,7 @@ describe("DELETE /items/{id}/tags/{tag} takes the tag the caller named", () => {
       ctx.app,
       "DELETE",
       `/items/${id}/tags/${encodeURIComponent("50%25off")}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
 
     expect(res.status).toBe(200);

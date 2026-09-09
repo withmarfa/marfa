@@ -111,14 +111,14 @@ describe("per-space quota enforcement", () => {
   it("the space-less operator key bypasses quota enforcement entirely", async () => {
     ctx = await createTestContext();
     // Set a quota for an arbitrary space — irrelevant here because the
-    // bootstrap credential (ctx.adminKey) has no space_id.
+    // bootstrap credential (ctx.spaceKey) has no space_id.
     await ctx.storage.spaceQuotas.set("phantom-space", { webhooks_limit: 0 });
 
     // The operator key can create webhooks freely; it does not have a
     // space_id, so enforceQuota is a no-op.
     for (let i = 0; i < 3; i++) {
       const res = await request(ctx.app, "POST", "/webhooks", {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           url: `https://example.com/admin-hook-${String(i)}`,
           events: ["item.created"],
@@ -208,7 +208,7 @@ describe("per-space quota enforcement", () => {
       "GET",
       `/spaces/${space.id}/quotas`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(initial.status).toBe(200);
@@ -219,7 +219,7 @@ describe("per-space quota enforcement", () => {
 
     // PUT a quota
     const put = await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { items_limit: 100, webhooks_limit: 5 },
     });
     expect(put.status).toBe(200);
@@ -232,7 +232,7 @@ describe("per-space quota enforcement", () => {
 
     // GET reflects
     const after = await request(ctx.app, "GET", `/spaces/${space.id}/quotas`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(after.status).toBe(200);
     const afterBody = (await after.json()) as { items_limit: number };

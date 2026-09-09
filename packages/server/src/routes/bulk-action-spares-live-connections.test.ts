@@ -34,7 +34,7 @@ async function seedConnection(
   status: "active" | "revoked",
 ): Promise<string> {
   const res = await request(c.app, "POST", "/items", {
-    key: c.adminKey,
+    key: c.spaceKey,
     body: {
       type: "system.connection",
       properties: { kind: "app", status, granted_at: new Date().toISOString() },
@@ -62,7 +62,7 @@ describe("bulk actions spare a live connection", () => {
         state: "trashed",
         filter: { type: "system.connection" },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     const liveEntry = result?.errors?.find((e) => e.id === live);
     expect(liveEntry?.code).toBe("connection_live");
@@ -87,7 +87,7 @@ describe("bulk actions spare a live connection", () => {
     // An edge on the live grant: the edge deletes run on the narrowed ids
     // too, so it has to survive with the row.
     const note = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: "core.note",
         properties: { title: "n", body: "holds the grant" },
@@ -96,7 +96,7 @@ describe("bulk actions spare a live connection", () => {
     expect(note.status).toBe(201);
     const noteId = ((await note.json()) as { item: { id: string } }).item.id;
     const edge = await request(ctx.app, "POST", "/edges", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { source_id: noteId, target_id: live, edge_type: "references" },
     });
     expect(edge.status).toBe(201);
@@ -119,7 +119,7 @@ describe("bulk actions spare a live connection", () => {
         confirm: "PURGE",
         filter: { type: "system.connection" },
       },
-      ctx.adminKey,
+      ctx.spaceKey,
     );
     // Longer than the house default because this only drains in-process
     // delivery: every publish was awaited inside the chunk before the helper

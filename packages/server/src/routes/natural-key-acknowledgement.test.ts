@@ -52,7 +52,7 @@ const GRANTED_NS = "acme.probe";
 beforeAll(async () => {
   ctx = await createTestContext();
   const registered = await request(ctx.app, "POST", "/types", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: { id: SYNCED, version: 1, fields: { title: { type: "string" } } },
   });
   expect(registered.status).toBe(201);
@@ -126,7 +126,7 @@ async function trashedRow(cred: SyncKey, sourceId: string): Promise<string> {
     ctx.app,
     "PUT",
     `/items/${id}/extensions/${PRIVATE_NS}`,
-    { key: ctx.adminKey, body: { secret: "not the caller's to read" } },
+    { key: ctx.spaceKey, body: { secret: "not the caller's to read" } },
   );
   expect(admin.status).toBe(200);
 

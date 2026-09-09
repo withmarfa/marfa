@@ -170,7 +170,7 @@ describe("runtime substrate acceptance", () => {
       ctx.app,
       "GET",
       `/items?type=system.activity&limit=50`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(listRes.status).toBe(200);
     const listed = (await listRes.json()) as {

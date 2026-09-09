@@ -95,7 +95,7 @@ describe("POST /integrations (registry)", () => {
   it("registers a valid manifest as a system.integration item", async () => {
     const manifest = baseManifest({ name: "acme/test-register" });
     const res = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest },
     });
     expect(res.status).toBe(201);
@@ -116,7 +116,7 @@ describe("POST /integrations (registry)", () => {
 
   it("rejects an invalid manifest with VALIDATION_ERROR", async () => {
     const res = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: { name: "missing-everything" } },
     });
     expect(res.status).toBe(400);
@@ -127,12 +127,12 @@ describe("POST /integrations (registry)", () => {
   it("409s when registering the same manifest_name + version twice", async () => {
     const manifest = baseManifest({ name: "acme/dup-version" });
     const first = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest },
     });
     expect(first.status).toBe(201);
     const dup = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest },
     });
     expect(dup.status).toBe(409);
@@ -142,14 +142,14 @@ describe("POST /integrations (registry)", () => {
 
   it("permits sibling registration of a new version", async () => {
     const v1 = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: {
         manifest: baseManifest({ name: "acme/sibling", version: "1.0.0" }),
       },
     });
     expect(v1.status).toBe(201);
     const v2 = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: {
         manifest: baseManifest({ name: "acme/sibling", version: "1.1.0" }),
       },
@@ -164,11 +164,11 @@ describe("POST /integrations (registry)", () => {
 describe("GET /integrations + /integrations/:id", () => {
   it("lists registered integrations and supports manifest_name filter", async () => {
     await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/list-a" }) },
     });
     await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/list-b" }) },
     });
 
@@ -176,7 +176,7 @@ describe("GET /integrations + /integrations/:id", () => {
       ctx.app,
       "GET",
       "/integrations?manifest_name=acme/list-a",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(filtered.status).toBe(200);
     const body = (await filtered.json()) as ListResponse;
@@ -192,7 +192,7 @@ describe("GET /integrations + /integrations/:id", () => {
       "GET",
       "/integrations/itm_does_not_exist",
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
       },
     );
     expect(res.status).toBe(404);
@@ -200,12 +200,12 @@ describe("GET /integrations + /integrations/:id", () => {
 
   it("returns the manifest blob on get-by-id", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/get-by-id" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
     const get = await request(ctx.app, "GET", `/integrations/${regBody.id}`, {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(get.status).toBe(200);
     const getBody = (await get.json()) as RegisterResponse;
@@ -219,7 +219,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
     overrides: Partial<IntegrationManifest>,
   ): Promise<RegisterResponse> {
     const res = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest(overrides) },
     });
     expect(res.status).toBe(201);
@@ -257,7 +257,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
       ctx.app,
       "GET",
       "/integrations?latest=true&limit=1",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const rows = ((await res.json()) as ListResponse).data;
     expect(rows).toHaveLength(1);
@@ -334,7 +334,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
       ctx.app,
       "GET",
       `/integrations?manifest_name=${name}`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     const rows = ((await res.json()) as ListResponse).data;
     expect(rows).toHaveLength(2);
@@ -435,7 +435,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
 describe("GET /integrations/:id/install (consent HTML)", () => {
   it("renders an HTML form referencing the manifest's surfaces", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/consent-html" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
@@ -444,7 +444,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
       ctx.app,
       "GET",
       `/integrations/${regBody.id}/install`,
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
@@ -478,7 +478,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
         "POST",
         "/credentials/oauth-provider",
         {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: {
             label,
             oauth_authorize_url: "https://accounts.example.com/oauth2/auth",
@@ -496,7 +496,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
 
     it("omits the hidden field when no credential_ref is provided", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { manifest: baseManifest({ name: "acme/no-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
@@ -505,7 +505,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
         ctx.app,
         "GET",
         `/integrations/${regBody.id}/install`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(200);
       const html = await res.text();
@@ -515,7 +515,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
 
     it("renders the hidden field + hint when a valid credential_ref is provided", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { manifest: baseManifest({ name: "acme/with-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
@@ -525,7 +525,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
         ctx.app,
         "GET",
         `/integrations/${regBody.id}/install?credential_ref=${cred.id}`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(200);
       const html = await res.text();
@@ -539,7 +539,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
 
     it("rejects credential_ref that does not resolve in this space", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { manifest: baseManifest({ name: "acme/bad-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
@@ -548,7 +548,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
         ctx.app,
         "GET",
         `/integrations/${regBody.id}/install?credential_ref=01999999-9999-7999-9999-999999999999`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as {
@@ -562,7 +562,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
 
     it("rejects credential_ref that resolves to a non-oauth_token credential", async () => {
       const reg = await request(ctx.app, "POST", "/integrations", {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { manifest: baseManifest({ name: "acme/wrong-kind-prearm" }) },
       });
       const regBody = (await reg.json()) as RegisterResponse;
@@ -582,7 +582,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
         ctx.app,
         "GET",
         `/integrations/${regBody.id}/install?credential_ref=${wrongKindCred.id}`,
-        { key: ctx.adminKey },
+        { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as {
@@ -597,7 +597,7 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
 describe("POST /integrations/:id/install (install pipeline)", () => {
   it("end-to-end: installs a connection + activity on approve", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/install-happy" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
@@ -673,7 +673,7 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
 
   it("declines without writing rows when decision != approve", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/install-deny" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
@@ -685,7 +685,7 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
     const res = await ctx.app.request(`/integrations/${regBody.id}/install`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: "decision=deny",
@@ -713,7 +713,7 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.adminKey}`,
+          Authorization: `Bearer ${ctx.spaceKey}`,
           "Content-Type": "application/x-www-form-urlencoded",
         },
         body: "decision=approve",
@@ -758,10 +758,10 @@ describe("GET /integrations — catalog visibility", () => {
   }
 
   it("returns platform-registered manifests to a space-bound token", async () => {
-    // The operator credential (ctx.adminKey) registers a fresh manifest. It
+    // The operator credential (ctx.spaceKey) registers a fresh manifest. It
     // lands with space_id: null because that key carries no space.
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/space-token-visibility" }) },
     });
     expect(reg.status).toBe(201);
@@ -792,7 +792,7 @@ describe("GET /integrations — catalog visibility", () => {
     // behavior: a token with no system.integration grant still
     // resolves the endpoint at status 200 — no new rejection introduced.
     await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/space-token-no-grant" }) },
     });
 
@@ -813,7 +813,7 @@ describe("GET /integrations — catalog visibility", () => {
     // Existing operator-key behavior preserved. Sanity check that the
     // widening flag doesn't accidentally constrain the operator key's reads.
     await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/platform-still-sees" }) },
     });
 
@@ -821,7 +821,7 @@ describe("GET /integrations — catalog visibility", () => {
       ctx.app,
       "GET",
       "/integrations?manifest_name=acme/platform-still-sees",
-      { key: ctx.adminKey },
+      { key: ctx.spaceKey },
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListResponse;
@@ -862,7 +862,7 @@ describe("GET /integrations — catalog visibility", () => {
     // A platform-scoped manifest also lives in the catalog so we can
     // assert the space-B token still sees null-space rows.
     const platformManifest = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: {
         manifest: baseManifest({ name: "acme/platform-catalog-iso" }),
       },
@@ -982,7 +982,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     // Pre-fix this returned 404 to any caller with a real space; the
     // space-fenced get filtered the null-space row out.
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/t234-get-by-id" }) },
     });
     expect(reg.status).toBe(201);
@@ -1003,7 +1003,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
   it("GET /integrations/:id/install renders consent HTML for a space-bound Bearer token", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/t234-install-html" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
@@ -1035,7 +1035,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
     // the reference then finds nothing, and every row in the catalog says
     // zero however many connections the space is running.
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/t234-installed-count" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
@@ -1073,7 +1073,7 @@ describe("GET /integrations/:id + /:id/install — platform-scope", () => {
 
   it("POST /integrations/:id/install stamps the connection with the caller's space_id", async () => {
     const reg = await request(ctx.app, "POST", "/integrations", {
-      key: ctx.adminKey,
+      key: ctx.operatorKey,
       body: { manifest: baseManifest({ name: "acme/t234-install-post" }) },
     });
     const regBody = (await reg.json()) as RegisterResponse;
@@ -1256,7 +1256,7 @@ describe("/integrations/:id/install — browser session auth", () => {
 
   async function registerIntegration(name: string): Promise<string> {
     const res = await request(sessionCtx.app, "POST", "/integrations", {
-      key: sessionCtx.adminKey,
+      key: sessionCtx.operatorKey,
       body: { manifest: baseManifest({ name }) },
     });
     if (res.status !== 201) {
@@ -1334,7 +1334,7 @@ describe("/integrations/:id/install — browser session auth", () => {
     );
     const res = await sessionCtx.app.request(
       `/integrations/${integrationId}/install`,
-      { headers: { Authorization: `Bearer ${sessionCtx.adminKey}` } },
+      { headers: { Authorization: `Bearer ${sessionCtx.spaceKey}` } },
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");

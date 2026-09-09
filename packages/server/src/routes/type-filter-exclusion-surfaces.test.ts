@@ -49,12 +49,12 @@ beforeAll(async () => {
   ];
   for (const [id, tag] of seed) {
     const registered = await request(ctx.app, "POST", "/types", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { id, version: 1, fields: { title: { type: "string" } } },
     });
     expect(registered.status).toBe(201);
     const created = await request(ctx.app, "POST", "/items", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         type: id,
         properties: { title: `zqxbrindle ${id}` },

@@ -294,7 +294,7 @@ const DOORS: MintDoor[] = [
     specRoute: "post /admin/spaces/{id}/keys",
     forgedSource: async () => {
       const created = await request(ctx.app, "POST", "/admin/spaces", {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { name: `forged-${Math.random().toString(36).slice(2, 8)}` },
       });
       expect(created.status).toBe(201);
@@ -304,7 +304,7 @@ const DOORS: MintDoor[] = [
         "POST",
         `/admin/spaces/${spaceId}/keys`,
         {
-          key: ctx.adminKey,
+          key: ctx.operatorKey,
           body: {
             label: "forged",
             source: `integration:${"c".repeat(8)}`,
@@ -315,7 +315,7 @@ const DOORS: MintDoor[] = [
     },
     ceiling: async () => {
       const created = await request(ctx.app, "POST", "/admin/spaces", {
-        key: ctx.adminKey,
+        key: ctx.operatorKey,
         body: { name: "mint-door-space" },
       });
       expect(created.status).toBe(201);
@@ -325,7 +325,7 @@ const DOORS: MintDoor[] = [
         "POST",
         `/admin/spaces/${spaceId}/keys`,
         {
-          key: ctx.adminKey,
+          key: ctx.operatorKey,
           body: {
             label: "space-scoped",
             source: `mint-adm-${Math.random().toString(36).slice(2, 8)}`,
@@ -355,7 +355,7 @@ const DOORS: MintDoor[] = [
         "POST",
         "/connections/nonexistent/lease-tokens",
         {
-          key: ctx.adminKey,
+          key: ctx.spaceKey,
           body: {
             capability_id: "cap",
             scopes: Array.from({ length: 33 }, (_, i) => `c-${String(i)}`),

@@ -95,7 +95,7 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
       {
         // Bound to no space, so the route's own lookup narrows nothing. The
         // door is `space.credentials`, which this key holds.
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {},
       },
     );
@@ -150,7 +150,7 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
       "POST",
       `/connections/${conn.id}/oauth/start`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {},
       },
     );
@@ -220,7 +220,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       "POST",
       `/connections/${connId}/oauth/start`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {},
       },
     );
@@ -243,7 +243,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       "POST",
       `/connections/${connId}/oauth/start`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {
           // Override `prompt`; leave `access_type` to the credential default.
           extra_params: { prompt: "none" },
@@ -266,7 +266,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       "POST",
       `/connections/${connId}/oauth/start`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {},
       },
     );
@@ -323,7 +323,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
       "POST",
       `/connections/${conn.id}/oauth/start`,
       {
-        key: ctx.adminKey,
+        key: ctx.spaceKey,
         body: {},
       },
     );
@@ -381,7 +381,7 @@ describe("POST /connections/:id/oauth/start — the redirect URI is derived", ()
       ctx.app,
       "POST",
       `/connections/${connId}/oauth/start`,
-      { key: ctx.adminKey, body },
+      { key: ctx.spaceKey, body },
     );
     expect(res.status).toBe(200);
     return (await res.json()) as {

@@ -155,7 +155,7 @@ describe("space status projection reaches the suspension gate", () => {
       ctx.app,
       "POST",
       `/admin/spaces/${space.id}/unsuspend`,
-      { key: ctx.adminKey },
+      { key: ctx.operatorKey },
     );
     expect(unsuspend.status).toBe(200);
 
