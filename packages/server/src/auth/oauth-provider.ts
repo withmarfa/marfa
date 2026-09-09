@@ -49,7 +49,10 @@ import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
 import { deriveCustomTypeNamespaces } from "./default-bundles.js";
-import { resolveSpaceIdForAuthUser } from "./grant-space.js";
+import {
+  NO_GRANT_SPACE_MESSAGE,
+  resolveSpaceIdForAuthUser,
+} from "./grant-space.js";
 import { dcrDefaultScopes, SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 import {
@@ -1987,6 +1990,32 @@ async function guardAuthorizationCodeGrant(
 
   // Unknown code: not ours to judge. The plugin returns the spec error.
   if (!row) return;
+
+  // **The last place a grant with no space can be stopped, and the only one
+  // that covers every path to a code.** The consent route refuses before it
+  // mints one, but the plugin answers `/oauth2/authorize` itself when a
+  // standing consent already covers the request and redirects to the callback
+  // without that route running at all. An account whose space stops resolving
+  // after it consented reaches the exchange by that path, and the token minted
+  // for it would carry no space and be refused on every request, with nothing
+  // telling anybody why.
+  //
+  // Refused here rather than in a before-hook on the authorize endpoint,
+  // because a before-hook has no session: Better Auth resolves one inside the
+  // endpoint. The code has already reached the client's callback by this
+  // point, so this does not spare the redirect; what it spares is a
+  // credential that mints and then reaches nothing, and it names the cause
+  // where a client is listening.
+  if ((await resolveSpaceIdForAuthUser(storage, row.userId)) === undefined) {
+    log("info", "oauth authorization-code refused: no space for the account", {
+      client_id: row.clientId,
+    });
+    throw new APIError("BAD_REQUEST", {
+      error: "invalid_grant",
+      error_description: NO_GRANT_SPACE_MESSAGE,
+    });
+  }
+
   if (row.hasConsent) return;
 
   log("info", "oauth authorization-code refused: grant revoked", {

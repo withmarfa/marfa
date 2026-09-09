@@ -75,12 +75,13 @@ import { DEVICE_CODE_GRANT_TYPE as DEVICE_CODE_GRANT } from "./auth-pages.js";
  * would answer the same request with a schema-validation error that tells a
  * client nothing about why the grant it asked for does not exist.
  *
- * Note that the @better-auth/oauth-provider plugin's
- * `/auth/oauth2/token` endpoint still only knows how to dispatch the
- * first three (verified at `dist/index.mjs:300-318`). Device-code
- * exchange targets the Marfa-owned `POST /auth/device/token` route in
- * `routes/auth-pages.ts`, not the plugin's `/oauth2/token`. The
- * discovery doc advertises both endpoints accordingly.
+ * Note that the plugin's `/auth/oauth2/token` endpoint dispatches only the
+ * grants this server configures it with, which are `authorization_code` and
+ * `refresh_token`. Device-code exchange targets the Marfa-owned
+ * `POST /auth/device/token` route in `routes/auth-pages.ts` rather than the
+ * plugin's endpoint, which is why the URN is accepted here and absent from
+ * that configured list; the discovery document advertises both endpoints
+ * accordingly.
  */
 const ACCEPTED_GRANT_TYPES = [
   "authorization_code",

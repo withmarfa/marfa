@@ -16,12 +16,23 @@
 -- updating it. Nothing errors in any of that.
 --
 -- **The target is what the runtime resolver answers, in both of its arms.**
--- With a `users` row for the consenting account it is that account's space,
--- which is the hosted answer and the one that reaches an instance holding
--- many spaces. Without one it is the instance's only space, which is the
--- keys-mode answer, and it is deliberately not a guess: an instance holding
--- any other number resolves nothing and keeps its rows where they are, the
--- same way issuance declines to bind a token it cannot place.
+-- The resolver branches on whether a `users` store is wired, which is hosted
+-- mode: there, the space is the one on the consenting account's row and an
+-- account with no row resolves nothing. Keys mode has no user store, and
+-- there the space is the instance's only one.
+--
+-- **The second arm is gated on the table being empty, not on the first arm
+-- missing.** A `COALESCE` alone reads "no account row, so fall through", and
+-- that is a different question: on a hosted instance holding one space it
+-- would sweep an orphan whose account is gone into a space belonging to
+-- somebody else, and the security page lists a space's grants without
+-- filtering by person, so that somebody would be shown an app they never
+-- authorized and offered a button to disconnect it. `NOT EXISTS (SELECT 1
+-- FROM users)` is the SQL spelling of "no user store": hosted always has
+-- rows, keys mode never does.
+--
+-- Neither arm guesses. An instance answering neither keeps its rows where
+-- they are, the same way issuance declines to bind a token it cannot place.
 --
 -- **A projection whose target space already holds a standing one for the same
 -- app and person stays where it is.** That pair can exist where somebody
@@ -31,6 +42,18 @@
 -- person is not looking at. The stale row confers nothing either way -- its
 -- tokens carry no space and are refused on every request -- so leaving it
 -- costs nothing and needs a person rather than a guess.
+--
+-- **Only the newest of several stranded rows for one pair moves.** The guard
+-- below compares against the target space, and a single statement sees one
+-- snapshot, so two space-less rows for the same app and person would both
+-- move and land beside each other. The newest is the one a caller would have
+-- been served, so it is the one that moves; the rest stay where they are,
+-- under the paragraph above.
+--
+-- **Only a live row moves.** A projection soft-deleted through the type's
+-- own lifecycle is invisible to every read surface, and the guard below
+-- already ignores one, so moving it would be the one asymmetry in the
+-- statement.
 UPDATE `items` AS `orphan`
 SET `space_id` = `resolved`.`space_id`
 FROM (
@@ -41,10 +64,12 @@ FROM (
         WHERE `u`.`auth_user_id` = json_extract(`o`.`properties`, '$.user_id')
         LIMIT 1),
       (SELECT `s`.`id` FROM `spaces` AS `s`
-        WHERE (SELECT COUNT(*) FROM `spaces`) = 1)
+        WHERE (SELECT COUNT(*) FROM `spaces`) = 1
+          AND NOT EXISTS (SELECT 1 FROM `users`))
     ) AS `space_id`
   FROM `items` AS `o`
   WHERE `o`.`space_id` IS NULL
+    AND `o`.`state` = 'active'
     AND `o`.`type` = 'system.connection'
     AND json_extract(`o`.`properties`, '$.kind') = 'app'
 ) AS `resolved`
@@ -60,4 +85,16 @@ WHERE `orphan`.`id` = `resolved`.`item_id`
           = json_extract(`orphan`.`properties`, '$.client_id')
       AND json_extract(`standing`.`properties`, '$.user_id')
           = json_extract(`orphan`.`properties`, '$.user_id')
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM `items` AS `newer`
+    WHERE `newer`.`space_id` IS NULL
+      AND `newer`.`state` = 'active'
+      AND `newer`.`type` = 'system.connection'
+      AND json_extract(`newer`.`properties`, '$.kind') = 'app'
+      AND json_extract(`newer`.`properties`, '$.client_id')
+          = json_extract(`orphan`.`properties`, '$.client_id')
+      AND json_extract(`newer`.`properties`, '$.user_id')
+          = json_extract(`orphan`.`properties`, '$.user_id')
+      AND `newer`.`id` > `orphan`.`id`
   );

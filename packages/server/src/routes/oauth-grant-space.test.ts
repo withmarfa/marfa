@@ -118,13 +118,43 @@ async function authorize(
   expect(started.status).toBe(302);
   const location = started.headers.get("location") ?? "";
   if (!location.includes("/auth/authorize?")) {
-    throw new Error(`authorize did not reach consent: ${location}`);
+    // Not a failure on its own: the plugin answers this endpoint itself when
+    // a standing consent covers the request, and one case below is about
+    // exactly that. Hand the response back and let the case judge it.
+    return { consent: started, verifier };
   }
   const query = location.slice(location.indexOf("?") + 1);
   const consent = await request(c.app, "GET", `/auth/authorize?${query}`, {
     headers: { cookie },
   });
   return { consent, signedQuery: query, verifier };
+}
+
+/** The plugin's own authorize endpoint, unfollowed, with the verifier the
+ *  exchange will need. */
+async function authorizeRaw(
+  c: TestContext,
+  clientId: string,
+  cookie: string,
+): Promise<Response & { verifier: string }> {
+  const verifier = randomBytes(32).toString("base64url");
+  const challenge = createHash("sha256").update(verifier).digest("base64url");
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: clientId,
+    redirect_uri: CALLBACK,
+    state: "grant-space-state",
+    scope: SCOPE,
+    code_challenge: challenge,
+    code_challenge_method: "S256",
+  });
+  const res = await request(
+    c.app,
+    "GET",
+    `/auth/oauth2/authorize?${params.toString()}`,
+    { headers: { cookie } },
+  );
+  return Object.assign(res, { verifier });
 }
 
 async function decide(
@@ -290,6 +320,67 @@ describe("a grant with no space to land in is refused before a code exists", () 
 
     const decision = await decide(context, cookie, attempt.signedQuery!);
     expect(decision.status).toBe(403);
+  });
+});
+
+describe("a standing grant whose space stops resolving", () => {
+  it("cannot be exchanged for a token, on the path the consent route never sees", async () => {
+    // **The path the consent guards cannot see.** The plugin answers
+    // `/oauth2/authorize` itself when the standing consent already covers the
+    // request, and 302s to the callback with a code without Marfa's route
+    // running at all. So a grant made while a space resolved, on an account
+    // whose space later stops resolving, still minted a code here -- and the
+    // token behind it carried no space and was refused on every request, with
+    // nothing naming the cause. That is the symptom this whole change removes,
+    // on the one path that did not check.
+    const context = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
+    ctx = context;
+    const cookie = await signInUser(context, "standing-grant@marfa.so");
+    const clientId = await registerClient(context, cookie);
+
+    // A first consent, while the account still has its space.
+    const first = await authorize(context, clientId, cookie);
+    expect(first.consent.status).toBe(200);
+    expect((await decide(context, cookie, first.signedQuery!)).status).toBe(
+      302,
+    );
+
+    // Now the space is gone. The consent row and the projection both survive.
+    await detachAccountFromItsSpace(context, "standing-grant@marfa.so");
+
+    // The plugin's already-consented check is what answers this, so the
+    // assertion below is about a request Marfa's consent route never sees.
+    // The plugin answers it directly: straight to the callback with a code,
+    // Marfa's consent route never running. Pinned rather than worked around,
+    // because it is the premise of everything below.
+    const second = await authorizeRaw(context, clientId, cookie);
+    expect(second.status).toBe(302);
+    const callback = new URL(second.headers.get("location") ?? "", ORIGIN);
+    expect(callback.pathname).toBe("/callback");
+    const code = callback.searchParams.get("code");
+    expect(code).toBeTruthy();
+
+    // And the exchange refuses, so no credential exists that mints and then
+    // reaches nothing. The reason travels with it, in the field a client
+    // reads.
+    const tokenRes = await request(context.app, "POST", "/auth/oauth2/token", {
+      form: {
+        grant_type: "authorization_code",
+        code: code!,
+        redirect_uri: CALLBACK,
+        client_id: clientId,
+        code_verifier: second.verifier,
+      },
+      headers: { origin: ORIGIN },
+    });
+    expect(tokenRes.status).toBe(400);
+    const body = (await tokenRes.json()) as Record<string, unknown>;
+    expect(body.error).toBe("invalid_grant");
+    expect(String(body.error_description)).toContain("no space");
+    expect(body.access_token).toBeUndefined();
   });
 });
 

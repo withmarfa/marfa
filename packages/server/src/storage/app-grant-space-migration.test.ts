@@ -87,12 +87,16 @@ function grantProps(
 }
 
 /**
- * The same object as a SQLite `properties` value, which is text.
+ * The same object as a SQLite `properties` value.
  *
- * Postgres takes it through `sql.json`, and that difference is load-bearing
- * rather than cosmetic: a plain string parameter cast to `jsonb` becomes a
- * JSON *string* rather than an object, so `properties->>'kind'` answers null
- * and every case here passes for the wrong reason.
+ * **Seeded through `jsonb()` because that is what the item store writes.**
+ * `json_extract` reads plain text too, so a text fixture is not vacuous, but
+ * it is not the encoding the statement will meet on a real database, and a
+ * fixture that differs from production in exactly the field the predicate
+ * reads is how the Postgres half of this suite passed against a migration
+ * that moved nothing: a JSON string parameter cast to `jsonb` becomes a JSON
+ * *string* rather than an object, and `properties->>'kind'` answered null.
+ * Postgres takes the object through `sql.json` for the same reason.
  */
 function grantPropsText(clientId: string, userId: string): string {
   return JSON.stringify(grantProps(clientId, userId));
@@ -139,6 +143,11 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
     spaceId: string,
   ): Promise<void> {
     await client.execute({
+      sql: `INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at)
+            VALUES (?, ?, ?, 1, ?, ?)`,
+      args: [authUserId, authUserId, `${authUserId}@test.marfa.so`, NOW, NOW],
+    });
+    await client.execute({
       sql: `INSERT INTO users (id, provider, provider_id, space_id, auth_user_id, created_at, updated_at)
             VALUES (?, 'better-auth', ?, ?, ?, ?, ?)`,
       args: [`u-${authUserId}`, authUserId, spaceId, authUserId, NOW, NOW],
@@ -157,7 +166,7 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
   ): Promise<void> {
     await client.execute({
       sql: `INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, jsonb(?), ?, ?, ?)`,
       args: [
         row.id,
         row.space_id,
@@ -308,6 +317,74 @@ describe.skipIf(isPg)("the SQLite app-grant space migration", () => {
     expect(await spaceOf(client, "stale")).toBeNull();
     expect(await spaceOf(client, "standing")).toBe(SOLE);
     expect(await spaceOf(client, "other-person")).toBe(SOLE);
+  });
+
+  it("does not sweep an accountless orphan into a hosted instance's only space", async () => {
+    // **The fall-through the resolver does not have.** In hosted mode the
+    // resolver reads the account's row and stops; it never asks for the sole
+    // space. A migration that fell through to it would move an orphan whose
+    // account is gone into a space belonging to somebody else, and the
+    // security page lists a space's grants without filtering by person, so
+    // that person would be shown an app they never authorized and offered a
+    // button to disconnect it.
+    const client = await seeded("hosted-one-space", async (c) => {
+      await insertSpace(c, SOLE);
+      await insertAccount(c, "user-1", SOLE);
+      await insertItem(c, {
+        id: "theirs",
+        space_id: null,
+        type: "system.connection",
+        properties: grantPropsText("app-1", "user-1"),
+      });
+      await insertItem(c, {
+        id: "accountless",
+        space_id: null,
+        type: "system.connection",
+        properties: grantPropsText("app-1", "user-2"),
+      });
+    });
+    expect(await spaceOf(client, "theirs")).toBe(SOLE);
+    expect(await spaceOf(client, "accountless")).toBeNull();
+  });
+
+  it("moves only the newest of several stranded rows for one app and person", async () => {
+    // The guard against a duplicate compares against the target space, and
+    // one statement sees one snapshot, so without a second guard both rows
+    // move and land beside each other -- the exact state the first guard
+    // exists to prevent. The newest is the one a caller would have been
+    // served.
+    const client = await seeded("stranded-pair", async (c) => {
+      await insertSpace(c, SOLE);
+      for (const id of ["grant-a", "grant-b", "grant-c"]) {
+        await insertItem(c, {
+          id,
+          space_id: null,
+          type: "system.connection",
+          properties: grantPropsText("app-1", "user-1"),
+        });
+      }
+    });
+    expect(await spaceOf(client, "grant-c")).toBe(SOLE);
+    expect(await spaceOf(client, "grant-a")).toBeNull();
+    expect(await spaceOf(client, "grant-b")).toBeNull();
+  });
+
+  it("leaves a projection that was soft-deleted through its own lifecycle", async () => {
+    // `system.connection` soft-deletes to `revoked`, and every read surface
+    // requires an active row, so a tombstone is invisible wherever it sits.
+    // The guard beside this one already ignores one; moving it would be the
+    // statement's only asymmetry.
+    const client = await seeded("tombstone", async (c) => {
+      await insertSpace(c, SOLE);
+      await insertItem(c, {
+        id: "tombstone",
+        space_id: null,
+        type: "system.connection",
+        state: "revoked",
+        properties: grantPropsText("app-1", "user-1"),
+      });
+    });
+    expect(await spaceOf(client, "tombstone")).toBeNull();
   });
 });
 
@@ -465,6 +542,67 @@ describe.skipIf(!isPg || !adminUrl)(
         expect(await spaceOf(sql, "stale")).toBeNull();
         expect(await spaceOf(sql, "standing")).toBe(SOLE);
         expect(await spaceOf(sql, "other-person")).toBe(SOLE);
+      });
+    });
+
+    it("does not sweep an accountless orphan into a hosted instance's only space", async () => {
+      // The dialect the deployments run, and the case where the migration and
+      // the resolver could most easily disagree: in hosted mode the resolver
+      // reads the account's row and stops, and a fall-through to the sole
+      // space would hand somebody else's space an app nobody there authorized.
+      await withDb("hosted_one_space", async (sql, url) => {
+        await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${SOLE}, 'sole', ${NOW}, 'active')`;
+        await sql`
+          INSERT INTO auth_user (id, name, email, created_at, updated_at)
+          VALUES ('user-1', 'One', 'one@test.marfa.so', now(), now())
+        `;
+        await sql`
+          INSERT INTO users (id, provider, provider_id, space_id, auth_user_id, created_at, updated_at)
+          VALUES ('u-1', 'better-auth', 'user-1', ${SOLE}, 'user-1', ${NOW}, ${NOW})
+        `;
+        await sql`
+          INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
+          VALUES ('theirs', NULL, 'system.connection', 'active',
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
+        `;
+        await sql`
+          INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
+          VALUES ('accountless', NULL, 'system.connection', 'active',
+                  ${sql.json(grantProps("app-1", "user-2"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
+        `;
+        await runPgMigrations(url);
+        expect(await spaceOf(sql, "theirs")).toBe(SOLE);
+        expect(await spaceOf(sql, "accountless")).toBeNull();
+      });
+    });
+
+    it("moves only the newest of several stranded rows for one app and person", async () => {
+      await withDb("stranded_pair", async (sql, url) => {
+        await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${SOLE}, 'sole', ${NOW}, 'active')`;
+        for (const id of ["grant-a", "grant-b", "grant-c"]) {
+          await sql`
+            INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
+            VALUES (${id}, NULL, 'system.connection', 'active',
+                    ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
+          `;
+        }
+        await runPgMigrations(url);
+        expect(await spaceOf(sql, "grant-c")).toBe(SOLE);
+        expect(await spaceOf(sql, "grant-a")).toBeNull();
+        expect(await spaceOf(sql, "grant-b")).toBeNull();
+      });
+    });
+
+    it("leaves a projection that was soft-deleted through its own lifecycle", async () => {
+      await withDb("tombstone", async (sql, url) => {
+        await sql`INSERT INTO spaces (id, name, created_at, status) VALUES (${SOLE}, 'sole', ${NOW}, 'active')`;
+        await sql`
+          INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
+          VALUES ('tombstone', NULL, 'system.connection', 'revoked',
+                  ${sql.json(grantProps("app-1", "user-1"))}::jsonb, ${NOW}, ${NOW}, ${NOW})
+        `;
+        await runPgMigrations(url);
+        expect(await spaceOf(sql, "tombstone")).toBeNull();
       });
     });
   },
