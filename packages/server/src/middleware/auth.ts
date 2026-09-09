@@ -385,13 +385,19 @@ export function authMiddleware(
       // Space id from the plugin's referenceId column (= our clientReference
       // output, which returns the user's space_id at consent time).
       const oauthSpaceId = oauthToken.referenceId ?? undefined;
-      // A NULL reference binds the token to no space, and in hosted mode
-      // that is never a valid credential shape: the storage layer drops its
-      // space predicate for a space-less caller, so honoring the token
-      // would hand an accidental platform tier to whatever consent gap
-      // produced it. Refuse like any other unresolvable bearer. Keys-mode
-      // deployments are single-space and space-less by design, so they are
-      // untouched.
+      // A NULL reference binds the token to no space, which is never a
+      // valid credential shape: the storage layer drops its space predicate
+      // for a space-less caller, so honoring the token would hand the reach
+      // of the operator key to whatever consent gap produced it.
+      //
+      // **The `hosted` condition is a known gap and is not a justification.**
+      // It was written when keys mode bound nothing to a space, so a
+      // space-less bearer there was the only shape there was. Keys mode has
+      // a space now, and `resolveSpaceIdForAuthUser` still answers
+      // `undefined` without a `users` store — so a keys-mode deployment with
+      // better-auth wired issues tokens this branch then admits space-less.
+      // Closing it needs issuance to bind the token to the instance's one
+      // space, which is a change to the provider rather than to this line.
       if (authMode === "hosted" && oauthSpaceId === undefined) {
         c.set("apiKey", undefined);
         c.set("authType", undefined);

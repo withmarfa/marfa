@@ -243,7 +243,7 @@ export function exportRoutes(
     // both archive and NDJSON paths. `details.scope: "platform_unscoped"`
     // signals operators when the operator key exports without a
     // target_space_id (the self-host fallback that returns all rows —
-    // fine on single-space deployments, a real concern on hosted
+    // fine where nothing carries a space, a real concern on hosted
     // multi-space). Alerting on this shape catches accidental cross-
     // space exports.
     const platformUnscoped =
@@ -424,7 +424,7 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   /**
-   * space_id stamped at export time. `null` for single-space
+   * space_id stamped at export time. `null` for instance-wide
    * self-host exports (no space scope on either side); a string for
    * hosted-mode exports. Used by `/admin/restore-archive` to verify
    * cross-space restore attempts (rejected unless the operator key

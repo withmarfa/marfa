@@ -1246,7 +1246,7 @@ export interface SpaceConfig {
    * Maximum number of hops a single event may traverse before the bus
    * drops it as a suspected cycle. Integration reactions can publish further
    * events; without a budget, a malformed integration could spin a feedback
-   * loop. Default 5; it is raised on `space.settings` for deeply pipelined integrations
+   * loop. Default 5; raise it on `space.settings` for deeply pipelined integrations
    * or lower it to tighten the leash.
    */
   max_event_hop_budget?: number;

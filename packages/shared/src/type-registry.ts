@@ -268,7 +268,7 @@ export function shippedPlatformTypes(): SeededPlatformType[] {
  * space A is therefore invisible to space B's lookups — the isolation that
  * keeps one space's type vocabulary out of another's, so one space can't
  * instantiate (or validate against) a type it never defined. The sentinel
- * `NULL_SPACE` key holds custom types with no space (single-space
+ * `NULL_SPACE` key holds custom types with no space (the platform
  * self-hosts, platform-registered types) so the keys-mode flow is unaffected.
  */
 const _customBySpace = new Map<string, Map<string, TypeSchema>>();

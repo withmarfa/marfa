@@ -27,7 +27,7 @@
  *
  * Step ordering (after the step-0 re-check):
  *   1. Resolve `users.space_id`. If no row, only the auth_user
- *      cleanup runs (the user never had a space — a single-space
+ *      cleanup runs (the user never had a space — an instance-wide
  *      self-host shape, or a sign-up that bailed before space
  *      provisioning).
  *   2. Per-space teardown of connection-related artifacts. The full

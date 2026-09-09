@@ -1694,7 +1694,7 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   // Normalized, because the two sides spell "no space" differently: a caller's
   // is `undefined` and a row's is `null`, so a space-less caller reading a
   // space-less job took the cloaked-404 arm and the 403 below was unreachable
-  // on a single-space instance.
+  // on an instance with no space plane.
   if ((apiKey.space_id ?? null) !== (job.space_id ?? null)) {
     throw new MarfaError(ErrorCode.BULK_JOB_NOT_FOUND, "Job not found");
   }

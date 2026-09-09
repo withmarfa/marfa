@@ -230,7 +230,7 @@ const MAX_HELD_FRAMES = 500;
  * subscription's space filter and the caller's type projection already
  * fence, so a viewer costs the database nothing once it is caught up.
  * Without both set the replay runs on the owner connection — used for
- * SQLite, for space-less callers (the operator key / single-space
+ * SQLite, for a space-less caller (which is the operator key and nothing
  * self-host), and when RLS enforcement is disabled instance-wide.
  */
 /** A live frame published while the stream was still holding delivery. */

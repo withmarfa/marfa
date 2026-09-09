@@ -32,7 +32,7 @@ const _coreRegistry = new Map<string, EdgeTypeSchema>(
  */
 const _customBySpace = new Map<string, Map<string, EdgeTypeSchema>>();
 
-// Sentinel for custom edge types with no owning space — single-space
+// Sentinel for custom edge types with no owning space — the platform
 // self-hosts and platform-registered types. An empty string can't collide
 // with a real space id (ids are non-empty), so it's a safe bucket key.
 const NULL_SPACE = "";

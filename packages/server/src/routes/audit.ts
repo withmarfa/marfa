@@ -118,7 +118,7 @@ export function auditRoutes(storage: Storage) {
       c.req.valid("query");
 
     // A credential with no `space_id` reads every row — preserves the
-    // self-hosted single-space operator view. A space-bound credential
+    // instance-wide operator view. A space-bound credential
     // reads only its own space. Mirrors the `ItemStore.list`
     // admit-all-when-space-less pattern.
     const callerSpaceId = c.get("apiKey")?.space_id ?? null;

@@ -790,7 +790,7 @@ export async function* subscribe(
       // The space goes to the matcher, or a space's own subtype of a
       // shipped type does not answer a filter naming that type. `?? null`
       // rather than passing the value through: the list surfaces resolve
-      // a space-less caller against the null-space overlay a single-space
+      // a space-less caller against the null-space overlay a platform
       // self-host registers into, and a stream resolving it against core
       // types alone would disagree with them for exactly those
       // deployments. It also matters that this is not `undefined`, which

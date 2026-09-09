@@ -1004,7 +1004,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
 
   router.openapi(createSpaceRoute, async (c) => {
     requireOperatorKey(c);
-    // A single-space deployment has no space store at all. `NOT_FOUND`
+    // A deployment with no space plane has no space store at all. `NOT_FOUND`
     // rather than a dedicated code, matching every sibling route here: the
     // resource does not exist on this instance.
     if (!storage.spaces) {

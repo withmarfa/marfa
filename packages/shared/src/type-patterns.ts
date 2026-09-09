@@ -228,7 +228,7 @@ export function typeSubtreeToSql(
  *
  * `spaceId` reads exactly as it does for {@link typeSubtreeToSql}:
  * `undefined` means the caller resolves names only and the declared
- * clause is skipped, `null` is the real null-space scope a single-space
+ * clause is skipped, `null` is the real null-space scope a platform
  * self-host registers into, and a string is that space.
  *
  * Ordered cheapest first, and the ordering is load-bearing rather than

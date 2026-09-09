@@ -12,11 +12,10 @@
  * webhook, so the test also proves the join predicate filters correctly.
  *
  * Plus the load-bearing NO-FORCE invariant: with RLS enabled on `users`, an
- * owner-connection sign-up still provisions a `users` row, and the bearer
- * middleware's lookup of that row (also an owner-connection read) still
- * resolves the caller's space. A `FORCE ROW LEVEL SECURITY` on `users` would
- * break both — this suite is the regression guard that keeps the migration
- * on plain `ENABLE`.
+ * owner-connection sign-up still provisions a `users` row, and a signed-in
+ * caller still reaches a space-fenced door. A `FORCE ROW LEVEL SECURITY` on
+ * `users` would break the first outright, and this suite is the regression
+ * guard that keeps the migration on plain `ENABLE`.
  *
  * SQLite skips the entire suite — RLS is a Postgres-only concern.
  */
@@ -272,10 +271,11 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
 
         // `GET /keys` is gated on `space.keys` and fenced on the caller's
         // space, so a 200 says the bearer's space survived the RLS wrapper.
-        // The space comes off the grant rather than from a `users` lookup —
-        // that read is the cookie-session path's, covered by the case above —
-        // so what this adds is the end-to-end half: a signed-in caller
-        // reaching a fenced door with policies installed.
+        // The space comes off the grant rather than from a `users` lookup:
+        // the owner-connection read of that row is the cookie-session path's
+        // and token issuance's, and no case here covers it. What this adds is
+        // the end-to-end half — a signed-in caller reaching a fenced door
+        // with policies installed.
         const res = await request(ctx.app, "GET", "/keys", { key: token });
         expect(res.status).toBe(200);
       } finally {

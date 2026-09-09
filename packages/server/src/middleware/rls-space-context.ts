@@ -25,7 +25,7 @@ import type { AppEnv } from "./auth.js";
  *   1. **RLS disabled** (`config.rlsEnforce === false`; the flag
  *      defaults to enabled, so this is the explicit opt-out).
  *      Pass-through. No transaction wrapper. All queries flow on the
- *      base owner connection with no SET LOCAL — single-space
+ *      base owner connection with no SET LOCAL — instance-wide
  *      self-hosts and the existing application-layer scoping
  *      continue unchanged.
  *

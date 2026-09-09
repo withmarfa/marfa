@@ -785,7 +785,7 @@ export interface ItemStore {
    * `spaceId` semantics:
    * - `undefined` — every row older than the cutoff.
    * - `string` — only rows where `space_id` matches.
-   * - `null` — only rows where `space_id IS NULL` (single-space
+   * - `null` — only rows where `space_id IS NULL` (instance-wide
    *   self-host items + any rows with no space scope).
    */
   purgeTrashedOlderThan(
@@ -1278,8 +1278,8 @@ export interface KeyStore {
  * `(space_id, hash)`; the same hash can appear under multiple space_ids
  * (the storage backend dedupes physically — one file per hash — but each
  * space gets their own metadata row). The empty string `""` is the
- * sentinel for "instance-wide / single-space / operator"; routes pass
- * `key.space_id ?? ""` so single-space deployments and operator uploads
+ * sentinel for "instance-wide / operator"; routes pass
+ * `key.space_id ?? ""` so instance-wide rows and operator uploads
  * continue to interoperate.
  *
  * `register`, `get`, `remove` all take a space scope — passing the wrong
@@ -2431,7 +2431,7 @@ export interface AuditLogEntry {
   key_id?: string;
   /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
    *  handlers; null for system-initiated audits and for the operator shape
-   *  on self-hosted single-space deployments. */
+   *  on rows carrying no space. */
   space_id?: string | null;
   action: string;
   resource_type: string;
@@ -2890,7 +2890,7 @@ export interface EdgeStore {
    * to that space so a space-scoped caller cannot delete another space's
    * edge by id — a cross-space id matches zero rows and is a silent no-op
    * (the route layer's prior 404-cloak is the user-visible signal). Omitting
-   * `spaceId` leaves the delete unscoped (operator / single-space
+   * `spaceId` leaves the delete unscoped (the operator key, and nothing
    * self-host).
    */
   delete(id: string, spaceId?: string): Promise<void>;

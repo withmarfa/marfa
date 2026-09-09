@@ -699,6 +699,14 @@ async function buildTestContext(
       // empty `type_permissions` still reached every type. With one permission
       // model the maps are the whole of a credential's reach, so the fixture
       // has to say what the rank used to grant it silently.
+      //
+      // **This is deliberately wider than any operator key the product can
+      // mint.** Bootstrap forces all four maps empty, and an operator key can
+      // only mint another operator key clamped to its own set, so the shape
+      // below is reachable solely by writing the row. The suite needs one
+      // credential that reaches everything; do not read this fixture as
+      // evidence that an operator key carries content reach, because it does
+      // not.
       type_permissions: { "*": "write" },
       extension_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },

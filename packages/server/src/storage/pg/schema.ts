@@ -363,7 +363,7 @@ export const apiKeys = pgTable(
 // ---------------------------------------------------------------------------
 
 // Composite PK on (space_id, hash); empty-string sentinel for instance-wide /
-// operator-key / single-space rows. See sqlite/schema.ts for design rationale.
+// operator-key and instance-wide rows. See sqlite/schema.ts for rationale.
 export const blobs = pgTable(
   "blobs",
   {
@@ -444,7 +444,7 @@ export const customTypes = pgTable(
 // Custom edge types are namespaced per space. The composite PK on
 // (space_id, id) lets two spaces register the same edge-type id
 // independently — each owns its own relationship vocabulary. `space_id`
-// is NOT NULL DEFAULT '' (empty-string sentinel) for single-space
+// is NOT NULL DEFAULT '' (empty-string sentinel) for instance-wide
 // self-host / platform registrations, mirroring the `blobs` table.
 export const customEdgeTypes = pgTable(
   "custom_edge_types",

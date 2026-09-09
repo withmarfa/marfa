@@ -21,11 +21,14 @@
  *
  * The runtime source is read on two schedules, because registrations are
  * space-scoped and consent is per-space. At boot, the space-less bucket is
- * folded into the instance-wide bundle set — that bucket is where a
- * registration made before keys mode had a space still lives, so folding it
- * in is what keeps such a registration reachable. In hosted mode a registration belongs to one space,
- * and folding it in instance-wide would present one space's namespaces on
- * every other space's consent screen; the consent route instead derives
+ * folded into the instance-wide bundle set. That bucket holds the
+ * platform-shipped registrations and a manifest's declared types, which are
+ * meant to be offerable from every space; a self-host's own registrations
+ * are not in it and have not been since keys mode got a space, so the fold
+ * is about the platform set rather than about a deployment shape. In hosted
+ * mode a registration belongs to one space, and folding it in instance-wide
+ * would present one space's namespaces on every other space's consent
+ * screen; the consent route instead derives
  * that space's own roots at render time ({@link resolveRuntimeCustomNamespaces}
  * with a space id). The scope allowlist, which is an acceptance set rather
  * than anything a person sees, keeps the boot-time restart-re-enumeration
@@ -66,11 +69,10 @@ export function deriveCustomTypeNamespaces(): string[] {
  * With a `spaceId`, the answer is that space's own registrations and
  * nothing else — the consent screen's question, asked at render time so a
  * space's registrations are offerable without a restart. Without one, the
- * answer is the space-less bucket: every registration on a single-space
- * self-host, and only platform-scoped registrations on a hosted instance.
- * Never both at once — a space's consent screen deliberately does not
- * inherit the platform bucket, whose types resolve only for space-less
- * callers.
+ * answer is the space-less bucket, which holds the platform-scoped
+ * registrations and nothing a space owns. Never both at once — a space's
+ * consent screen deliberately does not inherit the platform bucket, whose
+ * types resolve only for space-less callers.
  */
 export interface RuntimeNamespaceRoots {
   /** Roots holding types the person registered themselves. */

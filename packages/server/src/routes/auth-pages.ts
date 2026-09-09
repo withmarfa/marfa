@@ -205,7 +205,7 @@ function selfServeEdgePermissions(
  * and silently disable that revoke.
  *
  * `spaceId` resolves from the consenting Better Auth user's marfa `users`
- * row in hosted mode; in single-space mode (no `users` store) the grant
+ * row in hosted mode; with no `users` store at all the grant
  * is stamped space-less. Hosted mode without a provisioned space for the
  * authenticated user refuses outright — the OAuth flow can't honor a
  * grant without a space to scope it to.

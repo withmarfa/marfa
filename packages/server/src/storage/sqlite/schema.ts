@@ -429,7 +429,7 @@ export const customTypes = sqliteTable(
 // Custom edge types are namespaced per space. The composite PK on
 // (space_id, id) lets two spaces register the same edge-type id
 // independently — each owns its own relationship vocabulary. `space_id`
-// is NOT NULL DEFAULT '' (empty-string sentinel) for single-space
+// is NOT NULL DEFAULT '' (empty-string sentinel) for instance-wide
 // self-host / platform registrations, mirroring the `blobs` table.
 export const customEdgeTypes = sqliteTable(
   "custom_edge_types",

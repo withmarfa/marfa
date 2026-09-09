@@ -413,7 +413,7 @@ export function blobRoutes(
             { resource: "storage_bytes", increment: data.length },
           ]);
           // Register the metadata row scoped to the caller's space. Empty-
-          // string sentinel for instance-wide / single-space / operator-key
+          // string sentinel for instance-wide and operator-key
           // uploads. Different spaces uploading the same hash bytes get
           // separate rows; the storage backend dedupes the physical file.
           await storage.blobs.register(

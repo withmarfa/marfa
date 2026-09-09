@@ -449,7 +449,7 @@ export function adminArchiveRoutes(
 
     // Items and blobs restore into the same resolved space. The
     // empty-string sentinel is a blobs-table convention only; the items
-    // and edges layers use NULL for the single-space shape.
+    // and edges layers use NULL for the space-less shape.
     const spaceId = restoreSpaceId || undefined;
 
     const items: { item: Record<string, unknown>; metadata?: unknown }[] = [];

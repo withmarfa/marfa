@@ -550,7 +550,7 @@ export function edgeRoutes(storage: Storage) {
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
     // space: a space-scoped caller must never learn another space's edge
-    // exists. The operator key and single-space keys carry no space_id and skip
+    // exists. The operator key carries no space_id and skips
     // the check.
     if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
@@ -581,7 +581,7 @@ export function edgeRoutes(storage: Storage) {
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
     // space: a space-scoped caller must never learn another space's edge
-    // exists, let alone mutate it. The operator key and single-space keys carry
+    // exists, let alone mutate it. The operator key carries
     // no space_id and skip the check.
     if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
@@ -673,7 +673,7 @@ export function edgeRoutes(storage: Storage) {
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
     // space: a space-scoped caller must never learn another space's edge
-    // exists, let alone delete it. The operator key and single-space keys carry
+    // exists, let alone delete it. The operator key carries
     // no space_id and skip the check.
     if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
