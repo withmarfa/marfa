@@ -142,7 +142,6 @@ async function install(
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKeyId,
     spaceId,
-    authMode: "hosted",
     integrationItemId,
     manifest: m,
     clientIp: null,
@@ -1202,7 +1201,6 @@ describe("the single-space self-host shape", () => {
       const result = await performInstall(selfHost.storage, {
         apiKeyId: admin.id,
         spaceId: selfHost.spaceId,
-        authMode: "keys",
         integrationItemId: row.id,
         manifest: m,
         clientIp: null,

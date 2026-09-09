@@ -69,7 +69,6 @@ async function install(): Promise<string> {
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: ctx.spaceId,
-    authMode: "keys",
     integrationItemId: integration.id,
     manifest: MANIFEST,
     clientIp: null,
@@ -125,7 +124,6 @@ describe("install refuses configuration outside the declared contract", () => {
     return performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: ctx.spaceId,
-      authMode: "keys",
       integrationItemId: integration.id,
       manifest,
       clientIp: null,

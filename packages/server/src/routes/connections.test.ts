@@ -91,7 +91,6 @@ async function installFresh(): Promise<{
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: ctx.spaceId,
-    authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifest(integrationName),
   });
@@ -535,7 +534,6 @@ async function installItemEventConnection(): Promise<{
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: ctx.spaceId,
-    authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifestWithItemEventTrigger(integrationName),
   });

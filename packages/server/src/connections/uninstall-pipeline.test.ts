@@ -81,7 +81,6 @@ async function installFresh(): Promise<{
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: ctx.spaceId,
-    authMode: "keys",
     integrationItemId: integration.id,
     manifest: {
       ...manifest(),
@@ -375,7 +374,6 @@ async function installWithCredential(credentialRef: string): Promise<{
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
     spaceId: ctx.spaceId,
-    authMode: "keys",
     integrationItemId: integration.id,
     manifest: { ...manifest(), name: `acme.upstream-${stamp}` },
     credentialRef,
@@ -577,7 +575,6 @@ describe("performUninstall — a connection inside a space", () => {
     const result = await performInstall(hosted.storage, {
       apiKeyId: adminKey.id,
       spaceId: space.id,
-      authMode: "hosted",
       integrationItemId: integration.id,
       manifest: { ...manifest(), name: `acme.hosted-${stamp}` },
     });

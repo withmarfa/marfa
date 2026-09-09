@@ -129,7 +129,6 @@ describe("performInstall — happy path", () => {
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: ctx.spaceId,
-      authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
     });
@@ -168,7 +167,6 @@ describe("performInstall — happy path", () => {
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: ctx.spaceId,
-      authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
     });
@@ -230,7 +228,6 @@ describe("performInstall — the manifest's declared defaults are written in", (
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: ctx.spaceId,
-      authMode: "keys",
       integrationItemId: integration.id,
       manifest: withDefaults,
       ...(configuration ? { configuration } : {}),
@@ -340,7 +337,6 @@ describe("performInstall — compensating writes on activity failure", () => {
         {
           apiKeyId: "api_admin",
           spaceId: STUB_SPACE_ID,
-          authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
         },
@@ -451,7 +447,6 @@ describe("performInstall — compensating writes on activity failure", () => {
         {
           apiKeyId: "api_admin",
           spaceId: STUB_SPACE_ID,
-          authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
         },
@@ -568,7 +563,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
         spaceId: ctx.spaceId,
-        authMode: "keys",
         integrationItemId: integrationId,
         manifest: noOauth,
         credentialRef: credential.id,
@@ -606,7 +600,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: ctx.spaceId,
-      authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
       credentialRef: credentialId,
@@ -637,7 +630,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
         spaceId: ctx.spaceId,
-        authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
         credentialRef: "itm_credref_does_not_exist",
@@ -664,7 +656,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
       performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
         spaceId: ctx.spaceId,
-        authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
         credentialRef: wrongKindCredential.id,
@@ -696,7 +687,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: ctx.spaceId,
-      authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
       credentialRef: apiTokenCredential.id,
@@ -719,7 +709,6 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
       spaceId: ctx.spaceId,
-      authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
     });
@@ -792,7 +781,6 @@ describe("performInstall — the state a rolled-back install leaves", () => {
       performInstall(hosted.storage, {
         apiKeyId: adminKey.id,
         spaceId: undefined,
-        authMode: "hosted",
         integrationItemId: integration.id,
         manifest: { ...manifest(), name: `acme.rollback-${stamp}` },
       }),
@@ -872,7 +860,6 @@ describe("performInstall — an unaudited install does not stand", () => {
       performInstall(storage, {
         apiKeyId: adminKey.id,
         spaceId: ctx.spaceId,
-        authMode: "keys",
         integrationItemId: integration.id,
         manifest: { ...manifest(), name: `acme.audit-${stamp}` },
       }),

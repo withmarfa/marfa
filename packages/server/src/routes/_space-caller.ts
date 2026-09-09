@@ -87,9 +87,12 @@ export async function resolveSpaceCaller(
       // cannot be minted at all, because a space-less non-operator credential
       // is the one shape the row constraint refuses.
       //
-      // So the instance's one space is resolved and handed back. There is
-      // exactly one by construction: bootstrap provisions it, and keys mode
-      // has no route that makes a second.
+      // So the instance's one space is resolved and handed back. One is the
+      // shape both provisioning paths aim at — the migration creates it where
+      // an instance has none, and bootstrap creates it where the migration
+      // found nothing to move — but neither can promise it: `POST
+      // /admin/spaces` is open to the operator key on a keys-mode instance
+      // like any other, and `POST /admin/spaces/{id}/delete` is too.
       if (!storage.users) {
         const spaces = (await storage.spaces?.list()) ?? [];
         const only = spaces[0];
@@ -97,7 +100,20 @@ export async function resolveSpaceCaller(
           // Nothing here can pick between two, and there is nothing to act in
           // when there are none. Refusing names the state; guessing would
           // write into whichever the store happened to return first.
-          throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
+          //
+          // Its own message, not the caller's. Every surface behind this
+          // resolver phrases its refusal as something about the caller's
+          // account — "your account is not attached to a space" — which is
+          // true in hosted mode and false here, where a keys-mode instance
+          // has no accounts at all. A person reading that goes looking for an
+          // account problem that does not exist, when what is wrong is the
+          // number of spaces on the instance and the fix is an operator's.
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            spaces.length === 0
+              ? "This instance has no space, so there is nothing for these pages to act in. Create one with POST /admin/spaces using the operator key."
+              : `This instance has ${String(spaces.length)} spaces. These pages resolve the one space a self-hosted instance has, and cannot choose between several. Remove the spares with POST /admin/spaces/{id}/delete using the operator key.`,
+          );
         }
         return { apiKeyId: `auth_user:${session.user.id}`, spaceId: only.id };
       }

@@ -2771,6 +2771,16 @@ export interface SettingsStore {
    *  exactly one of N concurrent `POST /keys` on a fresh DB wins the right
    *  to mint the seed operator key. */
   claim(key: string, value: string): Promise<boolean>;
+  /** Give a claim back. Removes the row if it exists and is a no-op if it
+   *  does not.
+   *
+   *  Bootstrap is the reason this exists. The claim has to come first, or two
+   *  concurrent callers both mint; but everything after it can fail, and a
+   *  burned claim with no operator key behind it is an instance nobody can
+   *  reach — the middleware admits an unauthenticated mint only while the
+   *  sentinel is absent. Releasing on failure makes the attempt retryable
+   *  instead, which is the property that was missing. */
+  release(key: string): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------

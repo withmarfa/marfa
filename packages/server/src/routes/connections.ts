@@ -873,7 +873,6 @@ export function connectionRoutes(
     const result = await performInstall(storage, {
       apiKeyId: apiKey.id,
       spaceId,
-      authMode: c.get("config").authMode,
       integrationItemId: integration.id,
       manifest: props.manifest,
       clientIp,

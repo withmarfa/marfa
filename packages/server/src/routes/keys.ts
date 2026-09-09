@@ -633,6 +633,33 @@ function refuseWideningAnAppsKey(
   }
 }
 
+/**
+ * Run the bootstrap mint, and give the sentinel back if it throws.
+ *
+ * `settings.claim` is atomic and one-shot, which is what keeps two concurrent
+ * unauthenticated mints from both succeeding. It is also what tells
+ * `authMiddleware` to stop admitting an unauthenticated `POST /keys`, and
+ * nothing else clears it — so a claim followed by a failure is an instance
+ * with no credential and no route that can make one. Releasing here turns
+ * that into a retry.
+ *
+ * A non-bootstrap call passes straight through, because there is no claim to
+ * give back.
+ */
+async function withBootstrapRelease<T>(
+  isBootstrap: boolean,
+  storage: Storage,
+  mint: () => Promise<T>,
+): Promise<T> {
+  if (!isBootstrap) return await mint();
+  try {
+    return await mint();
+  } catch (error) {
+    await storage.settings.release("bootstrapped");
+    throw error;
+  }
+}
+
 /** Everything, in the wildcard form, on one content family. */
 const EVERY_TYPE = { "*": "write" } as const;
 
@@ -663,6 +690,16 @@ async function provisionKeysModeSpace(
   | undefined
 > {
   if (!storage.spaces) return undefined;
+  // Same guard the migration carries: provision only where there is no space
+  // at all. Two paths reach this state — an instance migrated from before
+  // keys mode had spaces, and a fresh one bootstrapping now — and without the
+  // guard they compound. A keys-mode instance can reach `POST /keys` with the
+  // migration's space already in place (an install through a signed-in
+  // session creates rows before anything is bootstrapped), and a second space
+  // is not a cosmetic surplus: `resolveSpaceCaller` refuses on anything but
+  // exactly one, so every session-authenticated surface would 403 for good.
+  const existing = await storage.spaces.list();
+  if (existing.length > 0) return undefined;
   const space = await storage.spaces.create("Default");
   const rawKey = generateRawKey();
   const stored = await storage.keys.create(
@@ -760,216 +797,239 @@ export function keyRoutes(
       }
     }
 
-    assertUnreservedSource(body.source);
+    // **Everything after the claim runs where a failure can be given back.**
+    // The claim has to come first or two concurrent callers both mint, but it
+    // is also what tells the middleware to stop admitting an unauthenticated
+    // mint. A throw between the two — a failed insert, a provisioning error,
+    // a dropped connection — used to leave a sentinel with no operator key
+    // behind it, which is an instance nobody can reach and no route can
+    // repair. Releasing on the way out makes the attempt retryable, so a
+    // transient failure costs a retry rather than the instance.
+    return await withBootstrapRelease(isBootstrap, storage, async () => {
+      assertUnreservedSource(body.source);
 
-    // **The default for a session is a key like the session.** An OAuth caller
-    // that names no permission maps gets the ones its own grant projects, which
-    // the bearer middleware has already computed and hung on the synthetic key.
-    // The alternative default is `{}`, which under one permission model is a
-    // credential that can read nothing — so "mint me a key" would hand back
-    // something inert, and the only way to get a working one would be to
-    // enumerate by hand what the session already holds.
-    const callerGrant = c.get("oauthGrant");
-    const callerKey = c.get("apiKey");
-    const mintingFromSession = !isBootstrap && c.get("authType") === "oauth";
+      // **The default for a session is a key like the session.** An OAuth caller
+      // that names no permission maps gets the ones its own grant projects, which
+      // the bearer middleware has already computed and hung on the synthetic key.
+      // The alternative default is `{}`, which under one permission model is a
+      // credential that can read nothing — so "mint me a key" would hand back
+      // something inert, and the only way to get a working one would be to
+      // enumerate by hand what the session already holds.
+      const callerGrant = c.get("oauthGrant");
+      const callerKey = c.get("apiKey");
+      const mintingFromSession = !isBootstrap && c.get("authType") === "oauth";
 
-    // **Through this route the operator key mints another operator key and
-    // nothing else.** The instance tier is the absence of a space binding, and
-    // a credential's space is always its creator's, so an operator caller has
-    // no space to hand down: a key it minted here that was not itself an
-    // operator key would be space-less and ordinary, which is the one shape
-    // the row constraint refuses. Everything space-bound goes through
-    // `POST /admin/spaces/{id}/keys`, which names the space in the path.
-    const callerIsOperator =
-      isBootstrap || c.get("apiKey")?.is_operator === true;
-    if (!isBootstrap && callerIsOperator && body.is_operator === false) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "An operator key mints another operator key here, or a space key through POST /admin/spaces/{id}/keys. It has no space of its own to give a key minted from it.",
-      );
-    }
-    if (!isBootstrap && !callerIsOperator && body.is_operator === true) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "Only an operator key can mint another. Running the instance sits outside the permission model, so nothing in a permission set reaches it.",
-      );
-    }
-
-    // **The creator is the ceiling, and omitting the list takes the whole of
-    // it.** A key gets what its creator holds unless the request names less,
-    // and anything it names is honoured whatever the creator holds — which
-    // together mean a key can be narrowed at the moment of minting and can
-    // never be widened by one.
-    //
-    // The bootstrap key takes nothing, because it is the operator key: the
-    // instance tier is fenced outside the model rather than expressed as a
-    // full set inside it.
-    const callerHeldSpacePermissions: SpacePermission[] = isBootstrap
-      ? []
-      : mintingFromSession
-        ? (c.get("oauthGrant")?.scopes ?? []).filter(isSpacePermission)
-        : (c.get("apiKey")?.space_permissions ?? []);
-    const requestedSpacePermissions =
-      body.space_permissions?.filter(isSpacePermission);
-    if (requestedSpacePermissions !== undefined) {
-      const beyond = requestedSpacePermissions.find(
-        (permission) => !callerHeldSpacePermissions.includes(permission),
-      );
-      if (beyond !== undefined) {
+      // **Through this route the operator key mints another operator key and
+      // nothing else.** The instance tier is the absence of a space binding, and
+      // a credential's space is always its creator's, so an operator caller has
+      // no space to hand down: a key it minted here that was not itself an
+      // operator key would be space-less and ordinary, which is the one shape
+      // the row constraint refuses. Everything space-bound goes through
+      // `POST /admin/spaces/{id}/keys`, which names the space in the path.
+      const callerIsOperator =
+        isBootstrap || c.get("apiKey")?.is_operator === true;
+      if (!isBootstrap && callerIsOperator && body.is_operator === false) {
         throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
-          { required_scope: beyond },
+          ErrorCode.VALIDATION_ERROR,
+          "An operator key mints another operator key here, or a space key through POST /admin/spaces/{id}/keys. It has no space of its own to give a key minted from it.",
         );
       }
-    }
-    const spacePermissions =
-      requestedSpacePermissions ?? callerHeldSpacePermissions;
+      if (!isBootstrap && !callerIsOperator && body.is_operator === true) {
+        throw new MarfaError(
+          ErrorCode.FORBIDDEN,
+          "Only an operator key can mint another. Running the instance sits outside the permission model, so nothing in a permission set reaches it.",
+        );
+      }
 
-    const requested = {
-      type_permissions: body.type_permissions,
-      edge_permissions: body.edge_permissions,
-      metadata_permissions: body.metadata_permissions,
-      extension_permissions: body.extension_permissions,
-      profile_permissions: body.profile_permissions,
-    };
-    // **The ceiling is asked of every creator, not only of a session.** A
-    // session is measured against its granted scopes; a key is measured against
-    // the literals its own maps confer, which is the same question through the
-    // same comparison. Bootstrap is the exception the design names: it is a
-    // seed, with no creator above it to be bounded by.
-    //
-    // Checked before the derive below, because the derived case cannot exceed
-    // anything: it is a copy of what the creator already holds.
-    if (mintingFromSession) {
-      refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
-    } else if (!isBootstrap && callerKey) {
-      refuseKeyReachAboveCreator(callerKey, requested);
-    }
+      // **The creator is the ceiling, and omitting the list takes the whole of
+      // it.** A key gets what its creator holds unless the request names less,
+      // and anything it names is honoured whatever the creator holds — which
+      // together mean a key can be narrowed at the moment of minting and can
+      // never be widened by one.
+      //
+      // The bootstrap key takes nothing, because it is the operator key: the
+      // instance tier is fenced outside the model rather than expressed as a
+      // full set inside it.
+      const callerHeldSpacePermissions: SpacePermission[] = isBootstrap
+        ? []
+        : mintingFromSession
+          ? (c.get("oauthGrant")?.scopes ?? []).filter(isSpacePermission)
+          : (c.get("apiKey")?.space_permissions ?? []);
+      const requestedSpacePermissions =
+        body.space_permissions?.filter(isSpacePermission);
+      if (requestedSpacePermissions !== undefined) {
+        const beyond = requestedSpacePermissions.find(
+          (permission) => !callerHeldSpacePermissions.includes(permission),
+        );
+        if (beyond !== undefined) {
+          throw new MarfaError(
+            ErrorCode.FORBIDDEN,
+            `This credential does not hold ${beyond}, so it cannot give a key a permission it does not hold itself.`,
+            { required_scope: beyond },
+          );
+        }
+      }
+      const spacePermissions =
+        requestedSpacePermissions ?? callerHeldSpacePermissions;
 
-    // **A body naming no reach at all takes the creator's whole set; a body
-    // naming any family gets only what it named.** One rule, and the second
-    // half of it is deliberate: naming a narrow type map and receiving the
-    // creator's edges for free would be a key wider than the request, which is
-    // a different failure from a key wider than the creator and just as
-    // unwanted. Asking all five families is what makes "named nothing"
-    // unambiguous.
-    //
-    // Deriving is what stops the other shape — a credential holding every
-    // permission in a space and unable to read a row of it, which is what an
-    // empty default produced and what the space mint was already fixed for.
-    // Bootstrap derives from nothing, because the operator key holds nothing
-    // to give.
-    const namesNoReach =
-      body.type_permissions === undefined &&
-      body.edge_permissions === undefined &&
-      body.metadata_permissions === undefined &&
-      body.extension_permissions === undefined &&
-      body.profile_permissions === undefined;
-    const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
-    const typePermissions =
-      creator?.type_permissions ?? body.type_permissions ?? {};
-    const edgePermissions =
-      creator?.edge_permissions ?? body.edge_permissions ?? {};
-    const metadataPermissions =
-      creator?.metadata_permissions ?? body.metadata_permissions ?? {};
-    const profilePermissions =
-      creator?.profile_permissions ?? body.profile_permissions ?? {};
-    const extensionPermissions =
-      creator?.extension_permissions ?? body.extension_permissions ?? {};
+      const requested = {
+        type_permissions: body.type_permissions,
+        edge_permissions: body.edge_permissions,
+        metadata_permissions: body.metadata_permissions,
+        extension_permissions: body.extension_permissions,
+        profile_permissions: body.profile_permissions,
+      };
+      // **The ceiling is asked of every creator, not only of a session.** A
+      // session is measured against its granted scopes; a key is measured against
+      // the literals its own maps confer, which is the same question through the
+      // same comparison. Bootstrap is the exception the design names: it is a
+      // seed, with no creator above it to be bounded by.
+      //
+      // Checked before the derive below, because the derived case cannot exceed
+      // anything: it is a copy of what the creator already holds.
+      if (mintingFromSession) {
+        refuseSessionReachAboveGrant(callerGrant?.scopes ?? [], requested);
+      } else if (!isBootstrap && callerKey) {
+        refuseKeyReachAboveCreator(callerKey, requested);
+      }
 
-    const rawKey = generateRawKey();
-    const keyHash = hashApiKey(rawKey, salt);
+      // **A body naming no reach at all takes the creator's whole set; a body
+      // naming any family gets only what it named.** One rule, and the second
+      // half of it is deliberate: naming a narrow type map and receiving the
+      // creator's edges for free would be a key wider than the request, which is
+      // a different failure from a key wider than the creator and just as
+      // unwanted. Asking all five families is what makes "named nothing"
+      // unambiguous.
+      //
+      // Deriving is what stops the other shape — a credential holding every
+      // permission in a space and unable to read a row of it, which is what an
+      // empty default produced and what the space mint was already fixed for.
+      // Bootstrap derives from nothing, because the operator key holds nothing
+      // to give.
+      const namesNoReach =
+        body.type_permissions === undefined &&
+        body.edge_permissions === undefined &&
+        body.metadata_permissions === undefined &&
+        body.extension_permissions === undefined &&
+        body.profile_permissions === undefined;
+      const creator = !isBootstrap && namesNoReach ? callerKey : undefined;
+      // **Bootstrap takes nothing on any axis, the content maps included.** The
+      // space permissions are already forced empty above; leaving the four maps
+      // to the body would let an unauthenticated first caller name `*: write` on
+      // every family and get a space-less credential holding it. A space-less
+      // credential applies no space predicate at all, so that is reach over
+      // every space at once — the exact shape the row constraint and this
+      // route's ceiling exist to make unwritable. There is no ceiling to clamp
+      // it against either, because bootstrap has no creator.
+      const typePermissions = isBootstrap
+        ? {}
+        : (creator?.type_permissions ?? body.type_permissions ?? {});
+      const edgePermissions = isBootstrap
+        ? {}
+        : (creator?.edge_permissions ?? body.edge_permissions ?? {});
+      const metadataPermissions = isBootstrap
+        ? {}
+        : (creator?.metadata_permissions ?? body.metadata_permissions ?? {});
+      const profilePermissions = isBootstrap
+        ? {}
+        : (creator?.profile_permissions ?? body.profile_permissions ?? {});
+      const extensionPermissions = isBootstrap
+        ? {}
+        : (creator?.extension_permissions ?? body.extension_permissions ?? {});
 
-    // The new key's space is always the caller's, and an operator caller has
-    // none to give. The row constraint holds the pair together: space-less
-    // when and only when the key is an operator key.
-    const newKeySpaceId = c.get("apiKey")?.space_id;
+      const rawKey = generateRawKey();
+      const keyHash = hashApiKey(rawKey, salt);
 
-    // Resolved ahead of the write, so nothing between the insert and the
-    // response can fail and take the plaintext with it.
-    const grantItemId = await resolveGrantItemId(storage, c);
+      // The new key's space is always the caller's, and an operator caller has
+      // none to give. The row constraint holds the pair together: space-less
+      // when and only when the key is an operator key.
+      const newKeySpaceId = c.get("apiKey")?.space_id;
 
-    const stored = await storage.keys.create(
-      {
-        label: body.label.trim(),
-        source: body.source.trim(),
-        default_tier: body.default_tier,
-        is_operator: callerIsOperator,
-        space_permissions: spacePermissions,
-        type_permissions: typePermissions,
-        extension_permissions: extensionPermissions,
-        edge_permissions: edgePermissions,
-        metadata_permissions: metadataPermissions,
-        profile_permissions: profilePermissions,
-        // Set from who is minting, never from the body. A key an app made
-        // belongs to that app: the keys page groups it there, and revoking the
-        // app offers to revoke it.
-        oauth_client_id: mintingFromSession
-          ? c.get("oauthGrant")?.clientId
-          : undefined,
-      },
-      keyHash,
-      newKeySpaceId,
-    );
+      // Resolved ahead of the write, so nothing between the insert and the
+      // response can fail and take the plaintext with it.
+      const grantItemId = await resolveGrantItemId(storage, c);
 
-    // A key with no space is instance tier: the RLS middleware skips its
-    // wrapper for it and the storage layer drops its space predicate. Only the
-    // operator key is minted that way, and the audit row records the tier so
-    // every such credential can be enumerated later. Derived from the stored
-    // space alone rather than from how the instance is configured, so the
-    // trail stays accurate whatever the deployment shape.
-    const platformTierMint = !newKeySpaceId;
+      const stored = await storage.keys.create(
+        {
+          label: body.label.trim(),
+          source: body.source.trim(),
+          default_tier: body.default_tier,
+          is_operator: callerIsOperator,
+          space_permissions: spacePermissions,
+          type_permissions: typePermissions,
+          extension_permissions: extensionPermissions,
+          edge_permissions: edgePermissions,
+          metadata_permissions: metadataPermissions,
+          profile_permissions: profilePermissions,
+          // Set from who is minting, never from the body. A key an app made
+          // belongs to that app: the keys page groups it there, and revoking the
+          // app offers to revoke it.
+          oauth_client_id: mintingFromSession
+            ? c.get("oauthGrant")?.clientId
+            : undefined,
+        },
+        keyHash,
+        newKeySpaceId,
+      );
 
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
-      key_id: c.get("apiKey")?.id,
-      action: isBootstrap ? "key.bootstrap" : "key.create",
-      resource_type: "key",
-      resource_id: stored.id,
-      details: mintDetails(c, platformTierMint, grantItemId),
+      // A key with no space is instance tier: the RLS middleware skips its
+      // wrapper for it and the storage layer drops its space predicate. Only the
+      // operator key is minted that way, and the audit row records the tier so
+      // every such credential can be enumerated later. Derived from the stored
+      // space alone rather than from how the instance is configured, so the
+      // trail stays accurate whatever the deployment shape.
+      const platformTierMint = !newKeySpaceId;
+
+      void storage.audit.log({
+        client_ip: c.get("clientIp") ?? null,
+        space_id: c.get("apiKey")?.space_id ?? null,
+        key_id: c.get("apiKey")?.id,
+        action: isBootstrap ? "key.bootstrap" : "key.create",
+        resource_type: "key",
+        resource_id: stored.id,
+        details: mintDetails(c, platformTierMint, grantItemId),
+      });
+
+      // **A keys-mode instance gets its space here, not by hand.** The operator
+      // key is not a working key — no space, no permissions, because running the
+      // instance sits outside the model — so a self-host handed only that has a
+      // credential it cannot use. The design's setup story is "mint the operator
+      // key, create a space, mint a key into it, work with that key"; doing the
+      // last three here makes it the shipped shape rather than three paragraphs
+      // of documentation a person follows by hand.
+      //
+      // Keys mode only. In hosted mode a space belongs to an account and arrives
+      // with one, so provisioning here would leave a stray space owned by
+      // nobody. Ordered after the operator key so a failure leaves an instance
+      // that is bootstrapped and usable through the instance routes rather than
+      // one that is neither.
+      const bootstrapSpace =
+        isBootstrap && authMode === "keys" && storage.spaces
+          ? await provisionKeysModeSpace(storage, salt)
+          : undefined;
+
+      return c.json(
+        {
+          id: stored.id,
+          key: rawKey,
+          label: stored.label,
+          source: stored.source,
+          default_tier: stored.default_tier,
+          is_operator: stored.is_operator,
+          space_permissions: stored.space_permissions,
+          oauth_client_id: stored.oauth_client_id,
+          type_permissions: stored.type_permissions,
+          extension_permissions: stored.extension_permissions,
+          edge_permissions: stored.edge_permissions,
+          metadata_permissions: stored.metadata_permissions,
+          profile_permissions: stored.profile_permissions,
+          created_at: stored.created_at,
+          last_used_at: stored.last_used_at,
+          ...(bootstrapSpace ?? {}),
+        },
+        201,
+      );
     });
-
-    // **A keys-mode instance gets its space here, not by hand.** The operator
-    // key is not a working key — no space, no permissions, because running the
-    // instance sits outside the model — so a self-host handed only that has a
-    // credential it cannot use. The design's setup story is "mint the operator
-    // key, create a space, mint a key into it, work with that key"; doing the
-    // last three here makes it the shipped shape rather than three paragraphs
-    // of documentation a person follows by hand.
-    //
-    // Keys mode only. In hosted mode a space belongs to an account and arrives
-    // with one, so provisioning here would leave a stray space owned by
-    // nobody. Ordered after the operator key so a failure leaves an instance
-    // that is bootstrapped and usable through the instance routes rather than
-    // one that is neither.
-    const bootstrapSpace =
-      isBootstrap && authMode === "keys" && storage.spaces
-        ? await provisionKeysModeSpace(storage, salt)
-        : undefined;
-
-    return c.json(
-      {
-        id: stored.id,
-        key: rawKey,
-        label: stored.label,
-        source: stored.source,
-        default_tier: stored.default_tier,
-        is_operator: stored.is_operator,
-        space_permissions: stored.space_permissions,
-        oauth_client_id: stored.oauth_client_id,
-        type_permissions: stored.type_permissions,
-        extension_permissions: stored.extension_permissions,
-        edge_permissions: stored.edge_permissions,
-        metadata_permissions: stored.metadata_permissions,
-        profile_permissions: stored.profile_permissions,
-        created_at: stored.created_at,
-        last_used_at: stored.last_used_at,
-        ...(bootstrapSpace ?? {}),
-      },
-      201,
-    );
   });
 
   router.openapi(listKeysRoute, async (c) => {

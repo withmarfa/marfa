@@ -31,12 +31,23 @@
 -- by bootstrap, which provisions the space and mints the working key into it,
 -- and a fresh hosted one is covered by sign-up.
 --
--- Two signals rather than one, because either alone misses a real instance.
+-- **The gate asks about every table the body moves, not two of them.**
 -- Space-less ordinary keys are the rows the constraint below refuses, so they
 -- are the reason this migration exists — but an instance whose operator did
 -- everything through the bootstrap key has data and has never held one, since
--- that key admitted itself past every map under the old model. Space-less
--- items outside the manifest catalogue catch that instance.
+-- that key admitted itself past every map under the old model.
+--
+-- Two signals looked like enough and were not. An instance holding only the
+-- operator key, the manifest catalogue and its own registered types matches
+-- neither, so it gets no space and its `custom_types` stay in the space-less
+-- bucket — which this file's own reasoning below calls out as the thing that
+-- stops a self-hoster's types resolving. Registered types, custom edge types,
+-- webhooks on both sides, blobs and edges each say "there is data here that
+-- needs a home" on their own, so each is asked about.
+--
+-- The `items` arm carries the same two exclusions the move does, rather than
+-- a looser version of them. A gate that fires on a row the move then skips
+-- provisions a Default space and puts nothing in it.
 --
 -- **Three tables keep some of their space-less rows, and each has a
 -- discriminator.**
@@ -79,7 +90,18 @@ SELECT
 WHERE NOT EXISTS (SELECT 1 FROM `spaces`)
   AND (
     EXISTS (SELECT 1 FROM `api_keys` WHERE `space_id` IS NULL AND `is_operator` = 0)
-    OR EXISTS (SELECT 1 FROM `items` WHERE `space_id` IS NULL AND `type` <> 'system.integration')
+    OR EXISTS (
+      SELECT 1 FROM `items`
+      WHERE `space_id` IS NULL
+        AND `type` <> 'system.integration'
+        AND NOT (`type` = 'system.connection' AND json_extract(`properties`, '$.kind') = 'app')
+    )
+    OR EXISTS (SELECT 1 FROM `custom_types` WHERE `space_id` = '' AND `origin` = 'user')
+    OR EXISTS (SELECT 1 FROM `custom_edge_types` WHERE `space_id` = '')
+    OR EXISTS (SELECT 1 FROM `outbound_webhooks` WHERE `space_id` IS NULL)
+    OR EXISTS (SELECT 1 FROM `inbound_webhooks` WHERE `space_id` IS NULL)
+    OR EXISTS (SELECT 1 FROM `blobs` WHERE `space_id` = '')
+    OR EXISTS (SELECT 1 FROM `edges` WHERE `space_id` IS NULL)
   );
 --> statement-breakpoint
 UPDATE `items` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
@@ -123,6 +145,31 @@ WHERE `space_id` IS NULL
 UPDATE `audit_log` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
 WHERE `space_id` IS NULL
   AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+-- **Duplicate replays are collapsed before the move, on SQLite only.**
+-- `idx_bulk_action_jobs_idempotency` is UNIQUE on (`space_id`,
+-- `idempotency_key`) with NULLs distinct, so while every job here is
+-- space-less two replays of one `Idempotency-Key` are representable and the
+-- upsert's conflict target never matches. Postgres was rebuilt NULLS NOT
+-- DISTINCT in 0061 for exactly that; SQLite has no such clause and kept the
+-- older shape. Moving the rows onto one space is what makes them collide, and
+-- an aborted migration naming a unique index is not something a self-hoster
+-- can act on. The newest row per key is the one the caller would have been
+-- served, so it is the one kept.
+DELETE FROM `bulk_action_jobs`
+WHERE `space_id` IS NULL
+  AND `idempotency_key` IS NOT NULL
+  AND `id` NOT IN (
+    SELECT `id` FROM `bulk_action_jobs` AS `keep`
+    WHERE `keep`.`space_id` IS NULL
+      AND `keep`.`idempotency_key` IS NOT NULL
+      AND `keep`.`created_at` = (
+        SELECT MAX(`newest`.`created_at`) FROM `bulk_action_jobs` AS `newest`
+        WHERE `newest`.`space_id` IS NULL
+          AND `newest`.`idempotency_key` = `keep`.`idempotency_key`
+      )
+    GROUP BY `keep`.`idempotency_key`
+  );
 --> statement-breakpoint
 UPDATE `bulk_action_jobs` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
 WHERE `space_id` IS NULL

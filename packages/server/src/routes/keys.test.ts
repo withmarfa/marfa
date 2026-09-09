@@ -440,6 +440,126 @@ describe("bootstrap sentinel", () => {
     }
   });
 
+  it("takes no content reach on bootstrap, whatever the body asks for", async () => {
+    // **The operator key holds nothing on any axis.** The space permissions
+    // are forced empty and the clamp refuses anything requested, but the four
+    // content maps used to come straight off the body — and bootstrap is
+    // unauthenticated with no creator to clamp against. A space-less
+    // credential applies no space predicate at all, so `*: write` here is
+    // read and write over every space at once, in the one row shape the
+    // constraint exists to make unwritable.
+    const { app, storage, tmpDir } = await freshApp({ authMode: "hosted" });
+    try {
+      const res = await request(app, "POST", "/keys", {
+        body: {
+          label: "greedy",
+          source: "greedy",
+          type_permissions: { "*": "write" },
+          edge_permissions: { "*": "write" },
+          metadata_permissions: { "*": "write" },
+          profile_permissions: { "*": "write" },
+          extension_permissions: { "*": "write" },
+        },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        key: string;
+        is_operator: boolean;
+        type_permissions: Record<string, string>;
+        edge_permissions: Record<string, string>;
+        metadata_permissions: Record<string, string>;
+        profile_permissions: Record<string, string>;
+        extension_permissions: Record<string, string>;
+      };
+      expect(body.is_operator).toBe(true);
+      expect(body.type_permissions).toEqual({});
+      expect(body.edge_permissions).toEqual({});
+      expect(body.metadata_permissions).toEqual({});
+      expect(body.profile_permissions).toEqual({});
+      expect(body.extension_permissions).toEqual({});
+
+      // The stored row, not just the response: a map echoed empty and
+      // persisted wide would satisfy everything above.
+      const stored = (await storage.keys.list()).find(
+        (k) => k.source === "greedy",
+      );
+      expect(stored?.type_permissions).toEqual({});
+
+      // And it cannot write. This is the assertion with teeth — a map is
+      // only interesting because of what it admits, and an echoed-empty map
+      // over a stored wide one would pass every check above.
+      const written = await request(app, "POST", "/items", {
+        key: body.key,
+        body: { type: "core.note", properties: { body: "hello" } },
+      });
+      expect(written.status).toBe(403);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("provisions no second space where one already exists", async () => {
+    // Two paths provision the keys-mode space — the migration, for an
+    // instance that predates spaces, and bootstrap, for a fresh one — and an
+    // instance can reach bootstrap with a space already in place, because
+    // rows can be written through a signed-in session before anything is
+    // bootstrapped. A second space is not a cosmetic surplus: the resolver
+    // behind every session-authenticated surface refuses on anything but
+    // exactly one, so the instance would 403 there for good.
+    const { app, storage, tmpDir } = await freshApp();
+    try {
+      const existing = await storage.spaces!.create("Already here");
+
+      const res = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { space?: unknown };
+      expect(body.space).toBeUndefined();
+
+      const spaces = await storage.spaces!.list();
+      expect(spaces.map((s) => s.id)).toEqual([existing.id]);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("gives the one-shot claim back when the mint itself fails", async () => {
+    // The claim has to come first or two concurrent callers both mint, and it
+    // is also what stops the middleware admitting an unauthenticated mint. A
+    // throw after it used to leave a sentinel with no operator key behind it:
+    // an instance nobody can reach and no route can repair. The failure is
+    // injected at the key insert because that is the write, and any of the
+    // several after it fail the same way.
+    const { app, storage, tmpDir } = await freshApp();
+    try {
+      const create = storage.keys.create.bind(storage.keys);
+      storage.keys.create = () => {
+        throw new Error("storage is having a moment");
+      };
+
+      const failed = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(failed.status).toBe(500);
+      expect(await storage.settings.get("bootstrapped")).toBeNull();
+
+      // The premise, and the point: the retry works. Without the release the
+      // middleware reads a stamped sentinel and answers 401 forever.
+      storage.keys.create = create;
+      const retried = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(retried.status).toBe(201);
+      expect(await storage.settings.get("bootstrapped")).toBe("true");
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("provisions nothing in hosted mode, where a space belongs to an account", async () => {
     const { app, storage, tmpDir } = await freshApp({ authMode: "hosted" });
     try {
