@@ -59,10 +59,6 @@ const VALID_MANIFEST = {
   manifest_schema_version: "2.0.0",
 };
 
-interface ItemResponse {
-  item: { id: string; type: string };
-}
-
 // Written through storage rather than `POST /items`, because neither
 // credential can do this over the wire: the reserved namespace admits only a
 // platform credential, and that one holds no space to put the row in. A
@@ -182,9 +178,9 @@ describe("POST /connections/:id/inbound-webhooks", () => {
   it("rejects when the connection has no integration_ref", async () => {
     // Create a connection with NO integration_ref — the route refuses
     // with MISSING_REQUIRED_FIELD; there is no inline manifest fallback.
-    const orphanRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
+    // Through storage, for the reason `createConnection` states.
+    const orphan = await ctx.storage.items.create(
+      {
         type: "system.connection",
         properties: {
           kind: "integration",
@@ -192,12 +188,12 @@ describe("POST /connections/:id/inbound-webhooks", () => {
           granted_at: new Date().toISOString(),
         },
       },
-    });
-    const orphan = (await orphanRes.json()) as ItemResponse;
+      ctx.spaceId,
+    );
     const res = await request(
       ctx.app,
       "POST",
-      `/connections/${orphan.item.id}/inbound-webhooks`,
+      `/connections/${orphan.id}/inbound-webhooks`,
       {
         key: ctx.spaceKey,
         body: { events: ["thing.created"] },
@@ -277,20 +273,7 @@ describe("POST /connections/:id/inbound-webhooks", () => {
     const reg = (await regRes.json()) as { id: string };
 
     // 2. Create a connection bound to the registered integration.
-    const conn = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-          integration_ref: reg.id,
-        },
-      },
-    });
-    const connBody = (await conn.json()) as ItemResponse;
-    const connectionId = connBody.item.id;
+    const connectionId = await createConnection(reg.id);
 
     // 3. Create the subscription with NO manifest in the body — the
     // route should resolve it via integration_ref.
@@ -312,12 +295,16 @@ describe("POST /connections/:id/inbound-webhooks", () => {
 describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
   // The two halves of one invariant: a space-bound key holding
   // `space.connections` must be able to subscribe against a
-  // platform-scoped (space_id IS NULL) integration item, and whoever
-  // creates the subscription, the row must land in the
-  // CONNECTION's space — the local substrate's receipt route looks
-  // subscriptions up fenced on the connection's space, so a row stamped
-  // with the caller's (absent) space is a subscription that never
-  // delivers.
+  // platform-scoped (space_id IS NULL) integration item, and the row must
+  // land in the CONNECTION's space — the local substrate's receipt route
+  // looks subscriptions up fenced on the connection's space, so a row
+  // stamped with anything else is a subscription that never delivers.
+  //
+  // The route stamps the connection's space rather than the caller's, and
+  // the only credential for which those could differ is a space-less one.
+  // That is the operator key alone, and it holds no `space.connections`,
+  // so the door refuses it: the second case below pins both the refusal
+  // and the stamp that follows from it.
   async function spaceScopedConnection(): Promise<{
     spaceId: string;
     spaceKey: string;
@@ -374,13 +361,26 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
     expect(created.space_id).toBe(spaceId);
   });
 
-  it("an operator key's create stamps the connection's space, not its own", async () => {
-    const { spaceId, connectionId } = await spaceScopedConnection();
+  it("refuses the one space-less caller, and the row lands in the connection's space", async () => {
+    const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
+
+    // The operator key is the only credential that carries no space. It
+    // clears the space-scope guard on operator authority and is then
+    // refused for the permission, which is what keeps the caller's space
+    // and the connection's from ever diverging on this door.
+    const asOperator = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/inbound-webhooks`,
+      { key: ctx.operatorKey, body: { events: ["thing.created"] } },
+    );
+    expect(asOperator.status).toBe(403);
+
     const res = await request(
       ctx.app,
       "POST",
       `/connections/${connectionId}/inbound-webhooks`,
-      { key: ctx.spaceKey, body: { events: ["thing.created"] } },
+      { key: spaceKey, body: { events: ["thing.created"] } },
     );
     expect(res.status).toBe(201);
     const created = (await res.json()) as CreatedInboundWebhook;

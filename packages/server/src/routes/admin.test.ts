@@ -529,7 +529,7 @@ describe("space suspension", () => {
     // succeed. PUT /spaces/:id/quotas is the canonical operator write
     // surface.
     const quotaRes = await request(ctx.app, "PUT", `/spaces/${t.id}/quotas`, {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: { items_limit: 9999 },
     });
     expect(quotaRes.status).toBe(200);

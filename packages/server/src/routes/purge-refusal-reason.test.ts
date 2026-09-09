@@ -26,7 +26,8 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 /** Space-scoped and deliberately NOT platform: the credential the refusal is
- *  about. The operator key is refused by neither gate. */
+ *  about. The operator key is no alternative to it, holding neither a space
+ *  to address these rows in nor the permission to purge one. */
 let spaceKey: string;
 let spaceId: string;
 
@@ -111,9 +112,11 @@ describe("purging a row a space credential may not write", () => {
     expect(body.error.message).not.toContain("trashed");
 
     // The row is untouched. A refusal that half-purged would be worse than
-    // the message it replaced.
+    // the message it replaced. Read back through the same credential, which
+    // is the one that can address this space: reads are not fenced by the
+    // reserved namespace, only writes are.
     const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.spaceKey,
+      key: spaceKey,
     });
     expect(after.status).toBe(200);
   });
@@ -145,17 +148,20 @@ describe("purging a row a space credential may not write", () => {
 
   it("purges a reserved-namespace row once it is trashed, as before", async () => {
     // The non-regression the guard's placement exists for. The new check
-    // runs only on the not-trashed path, so a credential that may write the
-    // namespace still trashes and purges exactly as it did.
+    // runs only on the not-trashed path, so an already-trashed row is purged
+    // exactly as it was before the guard existed.
+    //
+    // Trashed through the storage layer, which is how a reserved-namespace
+    // row reaches that state at all: the trash door asks the same write rule
+    // and refuses every space credential, and the operator key holds no
+    // permissions to pass it with either. So the platform's own machinery is
+    // what moves these rows, and the state this test needs is the state a
+    // retention sweep or an uninstall leaves behind.
     const id = await seedReservedRow("show:refusal-2");
-
-    const trashed = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
-    });
-    expect(trashed.status).toBe(200);
+    await ctx.storage.items.transition(id, "trashed", spaceId);
 
     const purged = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
-      key: ctx.spaceKey,
+      key: spaceKey,
     });
     expect(purged.status).toBe(200);
   });

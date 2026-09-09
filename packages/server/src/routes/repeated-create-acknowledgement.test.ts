@@ -278,8 +278,10 @@ describe("the gates an acknowledgement still runs", () => {
 
     // Ceiling set to exactly what the space now holds, so any genuine
     // create is refused and only the acknowledgement can answer 200.
+    // Quotas are an operator surface: the key that sets them is the
+    // instance's, not one bound to the space being capped.
     const quota = await request(ctx.app, "PUT", `/spaces/${spaceId}/quotas`, {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: { items_limit: 1 },
     });
     expect(quota.status).toBe(200);

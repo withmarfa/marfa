@@ -127,7 +127,10 @@ describe("runtime custom-namespace resolution", () => {
         });
         expect(res.status).toBe(201);
       }
-      const roots = await resolveRuntimeCustomNamespaces(ctx.storage);
+      const roots = await resolveRuntimeCustomNamespaces(
+        ctx.storage,
+        ctx.spaceId,
+      );
       expect(roots.own).toEqual(["acme"]);
     } finally {
       await ctx.cleanup();

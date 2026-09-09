@@ -205,9 +205,11 @@ describe("a property payload one door refuses, the other refuses too", () => {
   // Delete the guard and this case reddens with that refusal.
   it("accepts a same-type update to a type with no schema to judge it against", async () => {
     const orphan = "user.orphaned_by_this_test";
+    // Into the caller's own space: the registry overlay is per space, and a
+    // space-bound credential resolves nothing registered outside its own.
     registerTypeSchema(
       { id: orphan, version: 1, fields: { note: { type: "string" } } },
-      undefined,
+      ctx.spaceId,
     );
     const sourceId = `agree-orphan-${Math.random().toString(36).slice(2, 8)}`;
     const seeded = await request(ctx.app, "POST", "/items/bulk", {
@@ -221,7 +223,7 @@ describe("a property payload one door refuses, the other refuses too", () => {
     expect(seeded.status).toBe(200);
 
     // The row outlives its type, which is the state the guard is for.
-    unregisterTypeSchema(orphan, undefined);
+    unregisterTypeSchema(orphan, ctx.spaceId);
 
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: ctx.spaceKey,

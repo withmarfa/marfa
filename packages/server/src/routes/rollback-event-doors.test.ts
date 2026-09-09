@@ -605,13 +605,18 @@ const doors: Door[] = [
     transactions: 1,
     setup: async () => {
       // Promotion is defined against a row an integration wrote, and no
-      // route stamps that source, so the mirror is planted through storage.
-      const mirror = await ctx.storage.items.create({
-        type: "core.note",
-        properties: { body: "upstream copy" },
-        source: "integration:promote-fixture",
-        source_id: uniq("mirror"),
-      });
+      // route stamps that source, so the mirror is planted through storage —
+      // into the space the caller below is bound to, or the door never
+      // resolves it.
+      const mirror = await ctx.storage.items.create(
+        {
+          type: "core.note",
+          properties: { body: "upstream copy" },
+          source: "integration:promote-fixture",
+          source_id: uniq("mirror"),
+        },
+        ctx.spaceId,
+      );
       return { item: mirror.id };
     },
     act: async (s) => {

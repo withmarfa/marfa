@@ -32,6 +32,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
   markEmailVerified,
+  mintSpaceKey,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -92,24 +93,42 @@ async function seedClient(c: TestContext): Promise<string> {
   return clientId;
 }
 
-/** Sign up + verify + sign in; returns the session cookie header value. */
-async function signInUser(c: TestContext, email: string): Promise<string> {
+/**
+ * Sign up + verify + sign in.
+ *
+ * Returns the session cookie, the space the provisioning hook put the new
+ * account in, and a working key inside it. The space is the load-bearing
+ * half: a grant is projected into the account's own space, so every read and
+ * every item door below has to be asked from inside that space or it is
+ * asking about somewhere else.
+ */
+async function signInUser(
+  c: TestContext,
+  email: string,
+): Promise<{ cookie: string; spaceId: string; key: string }> {
   const password = "correct horse battery";
-  await request(c.app, "POST", "/auth/sign-up/email", {
+  const signUp = await request(c.app, "POST", "/auth/sign-up/email", {
     body: { email, password, name: "Tester" },
     headers: { origin: ORIGIN },
   });
+  const authUserId = ((await signUp.json()) as { user?: { id?: string } }).user
+    ?.id;
+  if (!authUserId) throw new Error("sign-up: no user id");
   await markEmailVerified(c.storage, email);
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
   });
   expect(signIn.status).toBe(200);
+  const spaceId = (await c.storage.users?.getByAuthUserId(authUserId))
+    ?.space_id;
+  if (!spaceId) throw new Error("sign-up: no space provisioned");
+  const key = await mintSpaceKey(c, spaceId);
   const setCookie = signIn.headers.get("set-cookie");
   if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
   for (const entry of setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/)) {
     const head = entry.split(";")[0];
-    if (head?.includes("session_token")) return head;
+    if (head?.includes("session_token")) return { cookie: head, spaceId, key };
   }
   throw new Error("sign-in: session_token cookie not found");
 }
@@ -155,13 +174,14 @@ async function allGrantRows(c: TestContext) {
   return listed.data;
 }
 
-/** `GET /auth/grants` as the operator key, which is unbound and so
- *  sees every space's grants. This is the surface the Disconnect button
- *  reads from, so it is what "the user can see it" means here. */
+/** `GET /auth/grants` from inside the account's own space, which is where its
+ *  grants are projected. This is the surface the Disconnect button reads
+ *  from, so it is what "the user can see it" means here. */
 async function listedGrants(
   c: TestContext,
+  key: string,
 ): Promise<{ id: string; client_id: string; status: string }[]> {
-  const res = await request(c.app, "GET", "/auth/grants", { key: c.spaceKey });
+  const res = await request(c.app, "GET", "/auth/grants", { key });
   expect(res.status).toBe(200);
   return (await res.json()) as {
     id: string;
@@ -188,10 +208,13 @@ function resolveGrantItemId(
 
 describe("a soft-deleted grant is not resurrected by a re-approval", () => {
   it("REGRESSION: a re-approval inserts a fresh grant and leaves the unreachable row revoked", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(
+    const { cookie, key } = await signInUser(
       c,
       "grant-visibility-softdelete@example.com",
     );
@@ -201,7 +224,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     // The baseline. An empty list at the end proves nothing unless the
     // grant was listed to begin with, and this is also what pins that the
     // operator key can read this surface at all.
-    const before = await listedGrants(c);
+    const before = await listedGrants(c, key);
     expect(before.length).toBe(1);
     const originalId = before[0]!.id;
     expect(before[0]!.client_id).toBe(clientId);
@@ -219,13 +242,13 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
     const hidden = await c.storage.items.get(originalId);
     expect(hidden?.state).toBe("revoked");
     expect(hidden?.properties.status).toBe("active");
-    expect(await listedGrants(c)).toEqual([]);
+    expect(await listedGrants(c, key)).toEqual([]);
     const hiddenGrantedAt = hidden?.properties.granted_at;
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
 
     // Exactly one grant, and it is not the one an operator deleted.
-    const after = await listedGrants(c);
+    const after = await listedGrants(c, key);
     expect(after.length).toBe(1);
     expect(after[0]!.id).not.toBe(originalId);
     expect(after[0]!.client_id).toBe(clientId);
@@ -246,10 +269,16 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
   });
 
   it("findGrantItemId returns null for a grant no read surface will list", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "grant-visibility-lookup@example.com");
+    const { cookie } = await signInUser(
+      c,
+      "grant-visibility-lookup@example.com",
+    );
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const grant = (await allGrantRows(c))[0]!;
@@ -275,16 +304,19 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
 describe("an ordinary revoke still re-establishes on re-approval", () => {
   it("keeps updating the same row when only properties.status was revoked", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(
+    const { cookie, key } = await signInUser(
       c,
       "grant-visibility-reapprove@example.com",
     );
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
-    const listed = await listedGrants(c);
+    const listed = await listedGrants(c, key);
     expect(listed.length).toBe(1);
     const grantId = listed[0]!.id;
 
@@ -305,7 +337,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
     const afterRevoke = await c.storage.items.get(grantId);
     expect(afterRevoke?.state).toBe("active");
     expect(afterRevoke?.properties.status).toBe("revoked");
-    expect(await listedGrants(c)).toEqual([]);
+    expect(await listedGrants(c, key)).toEqual([]);
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
 
@@ -313,7 +345,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
     // `state`, so a row the user revoked is still the row the approval
     // reaches, and the projection stays single-row per (space, client,
     // user).
-    const reapproved = await listedGrants(c);
+    const reapproved = await listedGrants(c, key);
     expect(reapproved.length).toBe(1);
     expect(reapproved[0]!.id).toBe(grantId);
     expect(reapproved[0]!.status).toBe("active");
@@ -325,18 +357,42 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
   });
 });
 
+/**
+ * Two of the doors below no longer reach the grant refusal at all, and the
+ * cases that pin it are red because of it rather than because the refusal
+ * moved.
+ *
+ * `DELETE /items/{id}` and `POST /items/{id}/transition` both run
+ * `requireTypeAccess(item.type, "write")` before `refuseUnlessUninstalled`,
+ * and a grant is a `system.connection`. The reserved-namespace fence admits
+ * only the operator key there, and the operator key's own type map is empty,
+ * so `resolveTypePermission` then refuses it too: no credential in the
+ * product can write a `system.connection`, and both doors answer 403
+ * `type_not_permitted` before the grant refusal is consulted. The refusal is
+ * still reached through the delete cascade and through the purge door, which
+ * consult it ahead of the write rule, and those cases pass.
+ *
+ * Making the refusal answer first at the other two doors is a change to the
+ * routes, not to a fixture, so the cases below stand as written.
+ */
 describe("an operator cannot strand a live grant through the item doors", () => {
   it("DELETE /items/{id} refuses a live grant and names the grant routes", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "grant-visibility-refuse@example.com");
+    const { cookie, key } = await signInUser(
+      c,
+      "grant-visibility-refuse@example.com",
+    );
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
-    const [grant] = await listedGrants(c);
+    const [grant] = await listedGrants(c, key);
     expect(grant).toBeDefined();
 
     const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
-      key: c.spaceKey,
+      key,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
@@ -346,41 +402,50 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(body.error.message).toContain(`/auth/grants/${grant!.id}/revoke`);
 
     // Nothing moved: still listed, still live on both axes.
-    expect((await listedGrants(c)).map((g) => g.id)).toEqual([grant!.id]);
+    expect((await listedGrants(c, key)).map((g) => g.id)).toEqual([grant!.id]);
     const row = await c.storage.items.get(grant!.id);
     expect(row?.state).toBe("active");
     expect(row?.properties.status).toBe("active");
   });
 
   it("DELETE /items/{id}/purge refuses the same grant before the trash gate can answer", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "grant-visibility-purge@example.com");
+    const { cookie, key } = await signInUser(
+      c,
+      "grant-visibility-purge@example.com",
+    );
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
-    const [grant] = await listedGrants(c);
+    const [grant] = await listedGrants(c, key);
 
     const res = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
-      key: c.spaceKey,
+      key,
     });
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { message: string } };
     // The refusal is the grant one, not the ordering one about trashing
     // first, which would send the caller to a step that is itself refused.
     expect(body.error.message).toContain("still live");
-    expect((await listedGrants(c)).map((g) => g.id)).toEqual([grant!.id]);
+    expect((await listedGrants(c, key)).map((g) => g.id)).toEqual([grant!.id]);
   });
 
   it("a grant revoked through the grants surface deletes freely", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(
+    const { cookie, key } = await signInUser(
       c,
       "grant-visibility-tombstone@example.com",
     );
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
-    const [grant] = await listedGrants(c);
+    const [grant] = await listedGrants(c, key);
 
     const revoke = await request(
       c.app,
@@ -392,7 +457,7 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(revoke.headers.get("location")).toContain("notice=grant_revoked");
 
     const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
-      key: c.spaceKey,
+      key,
     });
     expect(res.status).toBe(200);
     // The soft delete took: the row moved on the state axis. The list was
@@ -405,26 +470,32 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     // not a tombstone: tokens live, consent row standing, listed by neither
     // read surface. Purging it would make the strand permanent, since
     // nothing could ever run the cascade for it again.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "grant-visibility-strand@example.com");
+    const { cookie, key } = await signInUser(
+      c,
+      "grant-visibility-strand@example.com",
+    );
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
-    const [grant] = await listedGrants(c);
+    const [grant] = await listedGrants(c, key);
     await softDeleteGrantRow(c, grant!.id);
     const row = await c.storage.items.get(grant!.id);
     expect(row?.state).toBe("revoked");
     expect(row?.properties.status).toBe("active");
 
     const del = await request(c.app, "DELETE", `/items/${grant!.id}`, {
-      key: c.spaceKey,
+      key,
     });
     expect(del.status).toBe(400);
     expect(
       ((await del.json()) as { error: { message: string } }).error.message,
     ).toContain("still live");
     const purge = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
-      key: c.spaceKey,
+      key,
     });
     expect(purge.status).toBe(400);
     expect(
@@ -437,22 +508,25 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     // Defence in depth: the lifecycle table refuses every state but
     // `revoked` for a `system.*` type and this route cannot name it, so
     // what is pinned is that the connection refusal answers first.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(
+    const { cookie, key } = await signInUser(
       c,
       "grant-visibility-transition@example.com",
     );
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
-    const [grant] = await listedGrants(c);
+    const [grant] = await listedGrants(c, key);
 
     // The route's own schema admits only `active`, `archived` and `trashed`,
     // so `revoked` was never reachable here; `archived` is the shape a
     // caller can actually send, and the refusal has to come before the
     // store's transition rules get to say anything about it.
     const res = await request(c.app, "POST", `/items/${grant!.id}/transition`, {
-      key: c.spaceKey,
+      key,
       body: { state: "archived" },
     });
     expect(res.status).toBe(400);
@@ -467,15 +541,21 @@ describe("an operator cannot strand a live grant through the item doors", () => 
   it("the delete cascade refuses a live grant reached through an edge, and the whole delete rolls back", async () => {
     // `parent-of` cascades on delete and admits any type at either end, so
     // a row anyone can write could otherwise carry the grant out with it.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({
+      authMode: "hosted",
+      authAllowSignup: true,
+    });
     const c = ctx;
     const clientId = await seedClient(c);
-    const cookie = await signInUser(c, "grant-visibility-cascade@example.com");
+    const { cookie, key } = await signInUser(
+      c,
+      "grant-visibility-cascade@example.com",
+    );
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
-    const [grant] = await listedGrants(c);
+    const [grant] = await listedGrants(c, key);
 
     const note = await request(c.app, "POST", "/items", {
-      key: c.spaceKey,
+      key,
       body: {
         type: "core.note",
         properties: { title: "parent", body: "holds the grant" },
@@ -484,13 +564,13 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(note.status).toBe(201);
     const noteId = ((await note.json()) as { item: { id: string } }).item.id;
     const edge = await request(c.app, "POST", "/edges", {
-      key: c.spaceKey,
+      key,
       body: { source_id: noteId, target_id: grant!.id, edge_type: "parent-of" },
     });
     expect(edge.status).toBe(201);
 
     const res = await request(c.app, "DELETE", `/items/${noteId}`, {
-      key: c.spaceKey,
+      key,
     });
     expect(res.status).toBe(400);
     expect(
@@ -499,6 +579,6 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     // Rolled back as a whole: the parent is untouched too.
     expect((await c.storage.items.get(noteId))?.state).toBe("active");
     expect((await c.storage.items.get(grant!.id))?.state).toBe("active");
-    expect((await listedGrants(c)).map((g) => g.id)).toEqual([grant!.id]);
+    expect((await listedGrants(c, key)).map((g) => g.id)).toEqual([grant!.id]);
   });
 });

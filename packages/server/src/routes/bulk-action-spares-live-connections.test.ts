@@ -1,24 +1,32 @@
 /**
- * The bulk doors narrow a live connection out rather than moving it.
+ * A bulk action reaches no connection at all.
  *
- * `POST /items/bulk-actions` takes a filter, not a list, and a filter naming
- * `system.connection` matches every connection in the space. A purge would
- * hard-delete every live grant outright, since `bulkPurge` carries no
- * soft-delete gate of its own. A transition out of `active` is refused by
- * the lifecycle table for a `system.*` type in any case; the refusal here
- * is defence in depth and decides which answer the caller reads. Both skip
- * a live connection with a `connection_live` entry naming the door that
- * retires it properly, act on the rest, and a skipped row is not a chunk
- * failure, so what did purge is still announced.
+ * `POST /items/bulk-actions` takes a filter, not a list, so a filter naming
+ * `system.connection` addresses every connection in the space at once. A purge
+ * of that match set would hard-delete every live grant outright, since
+ * `bulkPurge` carries no soft-delete gate of its own, leaving the app's tokens
+ * and stored consent behind with nothing listing them.
+ *
+ * The door's reserved-namespace narrowing is what stands in front of that, and
+ * it closes on both axes at once. It admits a reserved type only for a
+ * credential that may write it, and beyond the `system.activity` carve-out
+ * `mayWriteReserved` admits only the operator tier — while the operator key's
+ * own type map is empty, so the writable-type filter beside it narrows that
+ * caller to nothing in turn. The two rules meet in the middle and no
+ * credential the product mints falls between them, which the database itself
+ * guarantees: `CHECK ((space_id IS NULL) = (is_operator = 1))` makes the
+ * operator tier and a space binding mutually exclusive, so a wide map and
+ * operator authority cannot coexist on one row.
+ *
+ * So the assertions are the outcome rather than the mechanism: the match set
+ * is empty, and every connection is still standing afterwards, live and
+ * revoked alike.
  */
 import { describe, it, expect, afterEach } from "vitest";
 import {
-  collectEdgeEvents,
-  collectItemEvents,
   createTestContext,
   request,
   runBulkActionAsync,
-  settle,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
@@ -29,63 +37,78 @@ afterEach(async () => {
   ctx = undefined;
 });
 
+/**
+ * A connection row in the context's space, written through the storage layer.
+ *
+ * `system.connection` is a reserved namespace, so no credential writes one and
+ * the grant routes and the integrations runtime put these rows down through
+ * the store directly. Seeding the same way is what a bulk action actually
+ * meets; driving it through `POST /items` would only be watching the namespace
+ * fence refuse a fixture.
+ */
 async function seedConnection(
   c: TestContext,
   status: "active" | "revoked",
 ): Promise<string> {
-  const res = await request(c.app, "POST", "/items", {
-    key: c.spaceKey,
-    body: {
+  const item = await c.storage.items.create(
+    {
       type: "system.connection",
       properties: { kind: "app", status, granted_at: new Date().toISOString() },
     },
-  });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { item: { id: string } }).item.id;
+    c.spaceId,
+  );
+  return item.id;
 }
 
-describe("bulk actions spare a live connection", () => {
-  it("a bulk transition out of active skips the live grant with an entry naming the grant routes", async () => {
+describe("bulk actions spare every connection", () => {
+  it("a transition naming connections matches none of them, under either credential", async () => {
     // The action's schema admits `active`, `archived` and `trashed`, so
-    // `trashed` is the shape a caller can send. The live row is narrowed
-    // out before the store's own transition rules get to answer, so the
-    // entry names the door that retires a grant rather than a lifecycle
-    // complaint about a system type.
+    // `trashed` is the shape a caller can send. Both credentials are asked,
+    // because they are narrowed by opposite halves of the same rule and a
+    // regression in either half would reopen the door on its own.
     ctx = await createTestContext();
     const live = await seedConnection(ctx, "active");
     const tombstone = await seedConnection(ctx, "revoked");
 
-    const { result } = await runBulkActionAsync(
-      ctx,
-      {
-        action: "transition",
-        state: "trashed",
-        filter: { type: "system.connection" },
-      },
-      ctx.spaceKey,
+    for (const [name, key] of [
+      ["the working key", ctx.spaceKey],
+      ["the operator key", ctx.operatorKey],
+    ] as const) {
+      const { result } = await runBulkActionAsync(
+        ctx,
+        {
+          action: "transition",
+          state: "trashed",
+          filter: { type: "system.connection" },
+        },
+        key,
+      );
+      expect(result?.matched, name).toBe(0);
+      expect(result?.succeeded, name).toBe(0);
+      expect(result?.errors ?? [], name).toEqual([]);
+    }
+
+    // Both rows untouched on both axes: the lifecycle state and the status
+    // the grant routes own.
+    for (const id of [live, tombstone]) {
+      const row = await ctx.storage.items.get(id);
+      expect(row?.state).toBe("active");
+    }
+    expect((await ctx.storage.items.get(live))?.properties.status).toBe(
+      "active",
     );
-    const liveEntry = result?.errors?.find((e) => e.id === live);
-    expect(liveEntry?.code).toBe("connection_live");
-    expect(liveEntry?.message).toContain(`/auth/grants/${live}`);
-    // The tombstone reaches the store, which refuses the lifecycle move for
-    // a system type: a different entry, and the row unchanged on both axes.
-    const tombstoneEntry = result?.errors?.find((e) => e.id === tombstone);
-    expect(tombstoneEntry).toBeDefined();
-    expect(tombstoneEntry?.code).not.toBe("connection_live");
-    const tombstoneRow = await ctx.storage.items.get(tombstone);
-    expect(tombstoneRow?.state).toBe("active");
-    expect(tombstoneRow?.properties.status).toBe("revoked");
-    const row = await ctx.storage.items.get(live);
-    expect(row?.state).toBe("active");
-    expect(row?.properties.status).toBe("active");
+    expect((await ctx.storage.items.get(tombstone))?.properties.status).toBe(
+      "revoked",
+    );
   });
 
-  it("a bulk purge skips the live grant, its edges included, and removes the revoked one", async () => {
+  it("a purge naming connections removes neither the live grant nor the revoked one", async () => {
     ctx = await createTestContext();
     const live = await seedConnection(ctx, "active");
     const tombstone = await seedConnection(ctx, "revoked");
-    // An edge on the live grant: the edge deletes run on the narrowed ids
-    // too, so it has to survive with the row.
+
+    // An edge on the live grant: the edge deletes run on whatever the match
+    // set holds, so it has to survive with the row.
     const note = await request(ctx.app, "POST", "/items", {
       key: ctx.spaceKey,
       body: {
@@ -102,16 +125,6 @@ describe("bulk actions spare a live connection", () => {
     expect(edge.status).toBe(201);
     const edgeId = ((await edge.json()) as { edge: { id: string } }).edge.id;
 
-    // The narrowed row is an error entry, not a chunk failure, so what did
-    // purge is announced: the publish gate used to key on an empty error
-    // list, which one skipped grant turned off for the whole chunk. Listen
-    // for the frames rather than trusting the counts, which never consulted
-    // the gate.
-    const items = new AbortController();
-    const edges = new AbortController();
-    const heardItems = collectItemEvents(items.signal);
-    const heardEdges = collectEdgeEvents(edges.signal);
-    await settle();
     const { result } = await runBulkActionAsync(
       ctx,
       {
@@ -121,28 +134,28 @@ describe("bulk actions spare a live connection", () => {
       },
       ctx.spaceKey,
     );
-    // Longer than the house default because this only drains in-process
-    // delivery: every publish was awaited inside the chunk before the helper
-    // returned, so the frames exist and nothing here encodes a deadline.
-    await settle(400);
-    items.abort();
-    edges.abort();
-    await heardItems.done;
-    await heardEdges.done;
-    expect(
-      heardItems.events
-        .filter((e) => e.item.id === tombstone)
-        .map((e) => e.type),
-    ).toEqual(["purged"]);
-    expect(heardItems.events.filter((e) => e.item.id === live)).toEqual([]);
-    expect(heardEdges.events.filter((e) => e.edge.id === edgeId)).toEqual([]);
-    expect(result?.errors?.map((e) => e.id)).toEqual([live]);
-    expect(result?.errors?.[0]?.code).toBe("connection_live");
+    expect(result?.matched).toBe(0);
+    expect(result?.succeeded).toBe(0);
+
+    // Nothing was destroyed, and the revoked row is asserted beside the live
+    // one on purpose: a narrowing that spared only what it recognized as live
+    // would still have hard-deleted this one.
     expect(await ctx.storage.items.get(live)).not.toBeNull();
-    expect(await ctx.storage.items.get(tombstone)).toBeNull();
-    // The edge deletes run on the narrowed ids too, so the live grant's
-    // edge is still there.
+    expect(await ctx.storage.items.get(tombstone)).not.toBeNull();
     expect(await ctx.storage.edges.get(edgeId)).not.toBeNull();
-    expect(result?.succeeded).toBe(1);
+
+    // And the operator key is no way round it: purging is gated on
+    // `space.item_purge`, which the instance tier does not hold.
+    const asOperator = await runBulkActionAsync(
+      ctx,
+      {
+        action: "purge",
+        confirm: "PURGE",
+        filter: { type: "system.connection" },
+      },
+      ctx.operatorKey,
+    );
+    expect(asOperator.initialStatus).toBe(403);
+    expect(await ctx.storage.items.get(live)).not.toBeNull();
   });
 });

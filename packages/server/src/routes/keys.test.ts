@@ -1548,7 +1548,7 @@ describe("POST /keys — space binding", () => {
 
   it("refuses a space-bound mint from an operator key, naming the route that does it", async () => {
     const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.spaceKey,
+      key: hostedCtx.operatorKey,
       body: {
         label: "null-space-bound",
         source: "null-space-bound",
@@ -1571,7 +1571,7 @@ describe("POST /keys — space binding", () => {
     // over content rather than a lower rank.
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.spaceKey,
+      key: hostedCtx.operatorKey,
       body: {
         label: `null-space-narrow-${suffix}`,
         source: `null-space-narrow-${suffix}`,
@@ -1600,7 +1600,7 @@ describe("POST /keys — space binding", () => {
     // server, so a regression would only surface after release.
     const suffix = Math.random().toString(36).slice(2, 10);
     const firstHop = await request(hostedCtx.app, "POST", "/keys", {
-      key: hostedCtx.spaceKey,
+      key: hostedCtx.operatorKey,
       body: {
         label: `harness-${suffix}`,
         source: `harness-${suffix}`,
@@ -1682,7 +1682,7 @@ describe("POST /keys — single-space deployments keep minting space-less keys",
   it("mints a space-less key in keys mode", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: {
         label: `self-host-${suffix}`,
         source: `self-host-${suffix}`,
@@ -1698,7 +1698,7 @@ describe("POST /keys — single-space deployments keep minting space-less keys",
   it("refuses a space-bound mint here too, where no space can exist", async () => {
     const suffix = Math.random().toString(36).slice(2, 10);
     const res = await request(ctx.app, "POST", "/keys", {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: {
         label: `self-host-bound-${suffix}`,
         source: `self-host-bound-${suffix}`,

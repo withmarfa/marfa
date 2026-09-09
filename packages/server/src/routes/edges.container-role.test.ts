@@ -15,10 +15,24 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
+
+/**
+ * The credential a shipped integration actually holds. `marfa.*` is a
+ * reserved namespace, so an ordinary key cannot write a podcast row or an
+ * edge whose source is one; a runtime credential naming those literals can,
+ * which is the only shape the cases below can be driven through.
+ */
+let integrationKey: string;
+const INTEGRATION_SOURCE = "integration:acme.podcasts";
 
 // A publisher who is not us, registering the pair an integration would ship.
 const suffix = Math.random().toString(36).slice(2, 8);
@@ -64,9 +78,10 @@ async function registerTypeOk(body: Record<string, unknown>): Promise<void> {
 async function createItem(
   type: string,
   properties: Record<string, unknown>,
+  key: string = ctx.spaceKey,
 ): Promise<string> {
   const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
+    key,
     body: { type, properties },
   });
   expect(
@@ -77,9 +92,13 @@ async function createItem(
   return data.item.id;
 }
 
-async function join(sourceId: string, targetId: string): Promise<Response> {
+async function join(
+  sourceId: string,
+  targetId: string,
+  key: string = ctx.spaceKey,
+): Promise<Response> {
   return await request(ctx.app, "POST", "/edges", {
-    key: ctx.spaceKey,
+    key,
     body: {
       source_id: sourceId,
       target_id: targetId,
@@ -90,6 +109,25 @@ async function join(sourceId: string, targetId: string): Promise<Response> {
 
 beforeAll(async () => {
   ctx = await createTestContext();
+  integrationKey = `marfa_k1_container_role_${Math.random().toString(36).slice(2, 14)}`;
+  await ctx.storage.keys.createRuntimeCredential(
+    {
+      label: "podcast-integration",
+      source: `podcast-integration-${suffix}`,
+      // The exact literals, not a wildcard: the reserved fence reads the map
+      // directly, so a wildcard would reach nothing here.
+      type_permissions: {
+        "marfa.podcast.show": "write",
+        "marfa.podcast.episode": "write",
+      },
+      edge_permissions: { "*": "write" },
+      connection_id: `conn_container_role_${suffix}`,
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      item_source: INTEGRATION_SOURCE,
+    },
+    hashApiKey(integrationKey, TEST_API_KEY_SALT),
+    ctx.spaceId,
+  );
   await registerTypeOk({
     id: PUBLISHER_CONTAINER,
     label: "Library",
@@ -139,18 +177,24 @@ describe("a shipped integration's own container", () => {
   // written, the show was written, and only the join was refused — once per
   // episode, each leaving an action-required row against the connection.
   async function createShow(title: string): Promise<string> {
-    return await createItem("marfa.podcast.show", {
-      title,
-      feed_url: `https://example.com/${Math.random().toString(36).slice(2)}.xml`,
-    });
+    return await createItem(
+      "marfa.podcast.show",
+      {
+        title,
+        feed_url: `https://example.com/${Math.random().toString(36).slice(2)}.xml`,
+      },
+      integrationKey,
+    );
   }
 
   it("joins an episode to its show", async () => {
     const show = await createShow("Signal Hill");
-    const episode = await createItem("marfa.podcast.episode", {
-      title: "Letter 1",
-    });
-    const res = await join(episode, show);
+    const episode = await createItem(
+      "marfa.podcast.episode",
+      { title: "Letter 1" },
+      integrationKey,
+    );
+    const res = await join(episode, show, integrationKey);
     expect(
       res.status,
       `POST /edges -> ${String(res.status)}: ${await res.clone().text()}`,
@@ -159,10 +203,18 @@ describe("a shipped integration's own container", () => {
 
   it("puts the join on the show's backrefs and the episode's edges", async () => {
     const show = await createShow("Harbour Lights");
-    const first = await createItem("marfa.podcast.episode", { title: "One" });
-    const second = await createItem("marfa.podcast.episode", { title: "Two" });
-    expect((await join(first, show)).status).toBe(201);
-    expect((await join(second, show)).status).toBe(201);
+    const first = await createItem(
+      "marfa.podcast.episode",
+      { title: "One" },
+      integrationKey,
+    );
+    const second = await createItem(
+      "marfa.podcast.episode",
+      { title: "Two" },
+      integrationKey,
+    );
+    expect((await join(first, show, integrationKey)).status).toBe(201);
+    expect((await join(second, show, integrationKey)).status).toBe(201);
 
     const back = await request(ctx.app, "GET", `/items/${show}/backrefs`, {
       key: ctx.spaceKey,
@@ -194,7 +246,7 @@ describe("a shipped integration's own container", () => {
     // becomes an illegal source the moment it declares itself a container.
     const outer = await createShow("Outer");
     const inner = await createShow("Inner");
-    const res = await join(inner, outer);
+    const res = await join(inner, outer, integrationKey);
     expect(res.status).toBe(400);
     const data = (await res.json()) as ErrorResponse;
     expect(data.error.details?.constraint).toBe("nesting");

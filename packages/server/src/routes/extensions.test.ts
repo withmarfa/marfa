@@ -14,18 +14,18 @@ let scopedKey: string;
 // that is load-bearing rather than incidental. The reserved-namespace fence
 // admits any operator key, and a space-less key must be one — the api_keys
 // CHECK constraint ties the two together — so a space-less fixture would pass
-// the very door two tests here exist to see refused. Items are therefore
-// seeded straight into this space instead of being written through the
-// space-less admin key, which the scoped credential could not see.
-const SCOPED_SPACE = `ext-space-${Math.random().toString(36).slice(2, 10)}`;
-
+// the very door two tests here exist to see refused.
+//
+// It shares the context's own space, so the working key and the scoped key
+// address the same items and the difference between them is the permission
+// map alone, which is the only thing the filtering tests are about.
 async function createItem(): Promise<string> {
   const item = await ctx.storage.items.create(
     {
       type: "core.note",
       properties: { body: `ext-item-${String(Math.random())}` },
     },
-    SCOPED_SPACE,
+    ctx.spaceId,
   );
   return item.id;
 }
@@ -48,7 +48,7 @@ beforeAll(async () => {
       is_operator: false,
     },
     hashApiKey(scopedKey, "test-salt"),
-    SCOPED_SPACE,
+    ctx.spaceId,
   );
 });
 

@@ -31,30 +31,39 @@ async function seedMappedConnection(name: string): Promise<string> {
     webhook_verification: { method: "hmac-sha256" },
     supports_user_mappings: true,
   };
-  const integration = await ctx.storage.items.create({
-    type: "system.integration",
-    properties: {
-      manifest,
-      manifest_name: name,
-      manifest_version: "0.1.0",
-      publisher: "demo",
-      summary: manifest.description,
-      direction: "read",
-      registered_at: new Date().toISOString(),
+  // Both rows land in the context's space: the mapping routes resolve a
+  // connection fenced to the caller's space, so a space-less row is one no
+  // credential can address.
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest,
+        manifest_name: name,
+        manifest_version: "0.1.0",
+        publisher: "demo",
+        summary: manifest.description,
+        direction: "read",
+        registered_at: new Date().toISOString(),
+      },
     },
-  });
-  const connection = await ctx.storage.items.create({
-    type: "system.connection",
-    properties: {
-      kind: "integration",
-      status: "active",
-      granted_at: new Date().toISOString(),
-      integration_ref: integration.id,
-      configuration: {},
-      direction: "read",
-      triggers: [{ type: "manual" }],
+    ctx.spaceId,
+  );
+  const connection = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        integration_ref: integration.id,
+        configuration: {},
+        direction: "read",
+        triggers: [{ type: "manual" }],
+      },
     },
-  });
+    ctx.spaceId,
+  );
   return connection.id;
 }
 

@@ -14,6 +14,18 @@
  * upstream tokens and inbound webhook subscriptions. Two teardowns drift,
  * and the one reached by an ordinary `DELETE` is the one nobody would think
  * to keep in step.
+ *
+ * **How a caller reaches the delete door at all is the fixture's whole
+ * problem.** `DELETE /items/{id}` asks for write on the target row's type
+ * before it looks at what the row is, and the reserved namespace admits no
+ * credential the product can mint: a space key is refused by the operator
+ * gate, and the operator key's own permission maps are empty. What is left
+ * is the cascade. `parent-of` cascades on delete and admits any type at
+ * either end, so deleting an ordinary row that parents a connection aims the
+ * same door at the connection — which is why the handler guards every row
+ * the cascade reaches and not only the one named in the URL. The purge door
+ * is reached directly, because it reads the row and refuses before it asks
+ * the write question.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -29,33 +41,61 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-async function createConnection(status: string): Promise<string> {
-  const res = await request(ctx.app, "POST", "/items", {
+/**
+ * A `system.connection` row, seeded through the storage layer because no
+ * credential writes one: the reserved-namespace gate admits only the operator
+ * key and the operator key's own permission maps are empty, so the platform's
+ * own machinery writes these rows through storage rather than through a door.
+ */
+async function seedConnection(properties: {
+  kind: "integration" | "app";
+  status: string;
+  revoked_at?: string;
+}): Promise<string> {
+  const item = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: { granted_at: new Date().toISOString(), ...properties },
+    },
+    ctx.spaceId,
+  );
+  return item.id;
+}
+
+/**
+ * An ordinary row the caller may delete, parenting `childId`. Deleting it
+ * runs the cascade onto the child, which is how the delete door is put in
+ * front of a connection by a credential that cannot name one directly.
+ */
+async function parentOf(childId: string): Promise<string> {
+  const parent = await ctx.storage.items.create(
+    { type: "core.note", properties: { body: "parent of a connection" } },
+    ctx.spaceId,
+  );
+  const edge = await request(ctx.app, "POST", "/edges", {
     key: ctx.spaceKey,
     body: {
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status,
-        granted_at: new Date().toISOString(),
-      },
+      source_id: parent.id,
+      target_id: childId,
+      edge_type: "parent-of",
     },
   });
-  // Read once. `await res.text()` inside the assertion message consumes the
-  // body, and the `res.json()` after it then throws "Body is unusable" —
-  // which reports as a failure of the case rather than of its setup.
-  const body = (await res.json()) as { item?: { id: string } };
-  expect(res.status, JSON.stringify(body)).toBe(201);
-  return body.item!.id;
+  expect(edge.status).toBe(201);
+  return parent.id;
 }
 
 describe("removing a system.connection row", () => {
   it("refuses to delete one that is still live, and says where to go", async () => {
-    const id = await createConnection("active");
+    const id = await seedConnection({ kind: "integration", status: "active" });
 
-    const res = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
-    });
+    const res = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${await parentOf(id)}`,
+      {
+        key: ctx.spaceKey,
+      },
+    );
 
     expect(res.status).toBe(400);
     const body = (await res.json()) as {
@@ -84,7 +124,7 @@ describe("removing a system.connection row", () => {
     // this guard deleted — which it did, and a mutation run is what said
     // so. Two refusals that share a status and differ in reason are
     // indistinguishable to a test that reads only the status.
-    const id = await createConnection("active");
+    const id = await seedConnection({ kind: "integration", status: "active" });
 
     const res = await request(ctx.app, "DELETE", `/items/${id}/purge`, {
       key: ctx.spaceKey,
@@ -103,19 +143,39 @@ describe("removing a system.connection row", () => {
     // Uninstall has run by then, so the credentials are gone and the row is
     // ordinary history. Refusing here would strand it instead of protecting
     // anything.
-    const deletable = await createConnection("revoked");
-    const deleted = await request(ctx.app, "DELETE", `/items/${deletable}`, {
-      key: ctx.spaceKey,
+    const deletable = await seedConnection({
+      kind: "integration",
+      status: "revoked",
     });
+    const deleted = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${await parentOf(deletable)}`,
+      { key: ctx.spaceKey },
+    );
     expect(deleted.status).toBe(200);
+    // The cascade took the connection with it rather than stopping at the
+    // guard, which is the half a 200 on the parent alone would not show. A
+    // soft delete lands the row in its own type's soft-delete state, and for
+    // a bounded lifecycle that is `revoked` rather than `trashed`.
+    const swept = await ctx.storage.items.get(deletable, ctx.spaceId);
+    expect(swept?.state).toBe("revoked");
 
-    // Trashed first, because `/purge` refuses an item that is not — a rule
+    // Soft-deleted first, because `/purge` refuses a row that is not — a rule
     // this guard has nothing to do with, and one that answers with the same
-    // 400. Purging directly would pass or fail for the wrong reason.
-    const purgeable = await createConnection("revoked");
-    const trashed = await request(ctx.app, "DELETE", `/items/${purgeable}`, {
-      key: ctx.spaceKey,
+    // 400. Purging directly would pass or fail for the wrong reason. The
+    // state that counts is the type's own soft-delete state, which the store
+    // derives per type: `revoked` here, never `trashed`.
+    const purgeable = await seedConnection({
+      kind: "integration",
+      status: "revoked",
     });
+    const trashed = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${await parentOf(purgeable)}`,
+      { key: ctx.spaceKey },
+    );
     expect(trashed.status).toBe(200);
     const purged = await request(
       ctx.app,
@@ -134,24 +194,14 @@ describe("removing a system.connection row", () => {
     // leave the tokens live and the consent row standing with nothing
     // listing them. The refusal sends the caller to the grant routes, whose
     // cascade drops all of it first.
-    const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-    });
-    const body = (await res.json()) as { item?: { id: string } };
-    expect(res.status, JSON.stringify(body)).toBe(201);
-    const id = body.item!.id;
+    const id = await seedConnection({ kind: "app", status: "active" });
 
-    const deleted = await request(ctx.app, "DELETE", `/items/${id}`, {
-      key: ctx.spaceKey,
-    });
+    const deleted = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${await parentOf(id)}`,
+      { key: ctx.spaceKey },
+    );
     expect(deleted.status).toBe(400);
     const refusal = (await deleted.json()) as {
       error: { code: string; message: string };
@@ -171,28 +221,21 @@ describe("removing a system.connection row", () => {
     // Once the grant cascade has run, `status` reads revoked and the row is
     // ordinary history. Nothing is left to strand, and the integration
     // uninstall gate must not fire on it either.
-    const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          status: "revoked",
-          granted_at: new Date().toISOString(),
-          revoked_at: new Date().toISOString(),
-        },
-      },
+    const id = await seedConnection({
+      kind: "app",
+      status: "revoked",
+      revoked_at: new Date().toISOString(),
     });
-    const body = (await res.json()) as { item?: { id: string } };
-    expect(res.status, JSON.stringify(body)).toBe(201);
 
     const deleted = await request(
       ctx.app,
       "DELETE",
-      `/items/${body.item!.id}`,
+      `/items/${await parentOf(id)}`,
       { key: ctx.spaceKey },
     );
     expect(deleted.status).toBe(200);
+    const swept = await ctx.storage.items.get(id, ctx.spaceId);
+    expect(swept?.state).toBe("revoked");
   });
 
   it("leaves every other type alone", async () => {

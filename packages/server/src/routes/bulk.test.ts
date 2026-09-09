@@ -663,7 +663,13 @@ describe("POST /items/bulk", () => {
       item: { source?: string; source_id?: string };
     };
     expect(item.item.source).not.toBe(forgedSource);
-    expect(item.item.source?.startsWith("test-admin-")).toBe(true);
+    // Against the credential's own `source` rather than a prefix, so the
+    // claim is that the stamp came from the caller's row and not that the
+    // fixture happens to name its keys a certain way.
+    const credential = await ctx.storage.keys.validate(
+      hashApiKey(ctx.spaceKey, "test-salt"),
+    );
+    expect(item.item.source).toBe(credential?.source);
     expect(item.item.source_id).toBe(payloadSourceId);
   });
 

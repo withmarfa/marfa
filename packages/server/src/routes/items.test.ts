@@ -597,11 +597,19 @@ describe("POST /items — the operator gate", () => {
     expect(body.error.message).toMatch(/system/);
   });
 
-  it("admits the bootstrap credential (is_operator: true) writing system.*", async () => {
-    // Sanity check the legitimate path stays open. Bootstrap admin is
-    // the test fixture admin which is platform-shaped.
+  it("stops the operator key at its own map rather than at the fence", async () => {
+    // The positive arm of the gate, and it reaches no row. `is_operator` is
+    // exactly what the fence asks for, so the operator key clears it — and is
+    // then refused by its own type map, which the one unauthenticated mint
+    // forces empty. Nothing writes a reserved row through a credential now,
+    // which is why the platform's own machinery writes these rows through the
+    // storage layer instead.
+    //
+    // The two refusals are told apart by what they name: the fence names the
+    // namespace and this one names the type. Asserting the status alone would
+    // pass against a gate that had started refusing the operator tier too.
     const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: {
         type: "system.connection",
         properties: {
@@ -613,7 +621,12 @@ describe("POST /items — the operator gate", () => {
         },
       },
     });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error: { code: string; message: string };
+    };
+    expect(body.error.message).not.toMatch(/operator key/i);
+    expect(body.error.message).toContain("system.connection");
   });
 
   it("admits runtime credentials writing system.activity (carve-out for integration status reporting)", async () => {
@@ -2877,21 +2890,20 @@ describe("GET /items?include=system", () => {
         tags: [`include-system-${marker}`],
       },
     });
-    const device = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
+    expect(note.status).toBe(201);
+    const { item: noteItem } = (await note.json()) as { item: { id: string } };
+    // The system row goes in through the storage layer, because the reserved
+    // namespace refuses a write to every credential. What this block is about
+    // is who reads one back; the seed is not the claim.
+    const device = await ctx.storage.items.create(
+      {
         type: "system.device",
         properties: { name: `include-system-${marker}`, kind: "laptop" },
-        tags: [`include-system-${marker}`],
       },
-    });
-    expect(note.status).toBe(201);
-    expect(device.status).toBe(201);
-    const { item: noteItem } = (await note.json()) as { item: { id: string } };
-    const { item: deviceItem } = (await device.json()) as {
-      item: { id: string };
-    };
-    return { noteId: noteItem.id, deviceId: deviceItem.id };
+      ctx.spaceId,
+    );
+    await ctx.storage.metadata.set(device.id, [`include-system-${marker}`]);
+    return { noteId: noteItem.id, deviceId: device.id };
   }
 
   async function listedIdsAs(key: string, query: string): Promise<string[]> {

@@ -67,10 +67,13 @@ async function seedKey(
   return stored.id;
 }
 
-/** A space holding one active grant for `CLIENT`, plus a key that app made,
- *  a key the person made, and a caller that may revoke grants. */
-async function seedSpace(name: string) {
-  const space = await spaces().create(name);
+/** One active grant for `CLIENT` in `spaceId`, plus a key that app made and a
+ *  key the person made.
+ *
+ *  Seeded into a named space rather than into none: the caller that revokes
+ *  the grant is bound to a space, so a grant written outside one is a row it
+ *  cannot see. */
+async function seedSpace(spaceId: string) {
   const grant = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -86,11 +89,11 @@ async function seedSpace(name: string) {
       },
       source: "test/app-key-revoke",
     },
-    space.id,
+    spaceId,
   );
-  const appKeyId = await seedKey(space.id, "app-made", CLIENT);
-  const ownKeyId = await seedKey(space.id, "own", undefined);
-  return { space, grant, appKeyId, ownKeyId };
+  const appKeyId = await seedKey(spaceId, "app-made", CLIENT);
+  const ownKeyId = await seedKey(spaceId, "own", undefined);
+  return { spaceId, grant, appKeyId, ownKeyId };
 }
 
 /** Whether a key is still live. `list` excludes revoked and expired rows. */
@@ -101,7 +104,7 @@ async function isLive(id: string): Promise<boolean> {
 
 describe("revoking an app's grant", () => {
   it("leaves the app's keys alone when nothing asked for them", async () => {
-    const { grant, appKeyId, ownKeyId } = await seedSpace("no-sweep-space");
+    const { grant, appKeyId, ownKeyId } = await seedSpace(ctx.spaceId);
 
     const res = await request(ctx.app, "DELETE", `/auth/grants/${grant.id}`, {
       key: ctx.spaceKey,
@@ -113,7 +116,7 @@ describe("revoking an app's grant", () => {
   });
 
   it("takes them when the door is asked to", async () => {
-    const { grant, appKeyId, ownKeyId } = await seedSpace("sweep-space");
+    const { grant, appKeyId, ownKeyId } = await seedSpace(ctx.spaceId);
 
     const res = await request(
       ctx.app,
@@ -130,8 +133,12 @@ describe("revoking an app's grant", () => {
   });
 
   it("does not reach a second space the same app is connected to", async () => {
-    const first = await seedSpace("sweep-here-space");
-    const second = await seedSpace("sweep-not-here-space");
+    const first = await seedSpace(ctx.spaceId);
+    // A second space the same app is connected to. The caller never holds a
+    // credential in it, which is the point: the sweep must stop at the space
+    // the grant it was handed lives in.
+    const elsewhere = await spaces().create("sweep-not-here-space");
+    const second = await seedSpace(elsewhere.id);
 
     const res = await request(
       ctx.app,
@@ -146,7 +153,7 @@ describe("revoking an app's grant", () => {
   });
 
   it("revokes the grant itself either way", async () => {
-    const { grant } = await seedSpace("record-space");
+    const { grant } = await seedSpace(ctx.spaceId);
     const res = await request(
       ctx.app,
       "DELETE",

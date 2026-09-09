@@ -393,7 +393,7 @@ describe("the remaining doors that write an edge", () => {
         source: "integration:acme.promotefixture",
         source_id: `mirror-${Math.random().toString(36).slice(2, 8)}`,
       },
-      undefined,
+      ctx.spaceId,
     );
 
     let promotedId = "";

@@ -869,8 +869,25 @@ describe("POST /types — publisher-tier handle ownership", () => {
   });
 
   it("exempts the operator key", async () => {
+    // The exemption reads `is_operator` and nothing exempts anyone from the
+    // metadata map, so the credential that reaches this arm is an operator key
+    // holding `metadata.types:write`. An operator caller mints one: the
+    // creator ceiling does not apply to it, so the maps it names are honored,
+    // and the key it mints is space-less and operator like itself.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const minted = await request(hosted.app, "POST", "/keys", {
+      key: hosted.operatorKey,
+      body: {
+        label: `operator-seeder-${suffix}`,
+        source: `operator-seeder-${suffix}`,
+        metadata_permissions: { types: "write" },
+      },
+    });
+    expect(minted.status).toBe(201);
+    const { key: seederKey } = (await minted.json()) as { key: string };
+
     const res = await request(hosted.app, "POST", "/types", {
-      key: hosted.spaceKey, // the bootstrap credential: is_operator, no space
+      key: seederKey,
       body: { id: "somevendor.platform-seeded", ...baseType },
     });
     expect(res.status).toBe(201);
@@ -1214,25 +1231,36 @@ describe("a type whose stored chain cannot be resolved", () => {
       key: ctx.spaceKey,
       body: { id: "broken.victim", version: 1, fields: {} },
     });
-    registerTypeSchema({ id: link(0), version: 1, fields: {} });
+    // Into the caller's own space, because that is the overlay its lookups
+    // read. Registered space-less, the broken chain sits in a bucket the
+    // credential never resolves and the route answers about the sound row it
+    // registered a moment ago.
+    registerTypeSchema({ id: link(0), version: 1, fields: {} }, ctx.spaceId);
     for (let n = 1; n < LENGTH; n += 1) {
-      registerTypeSchema({
-        id: link(n),
-        version: 1,
-        parent: link(n - 1),
-        fields: {},
-      });
+      registerTypeSchema(
+        {
+          id: link(n),
+          version: 1,
+          parent: link(n - 1),
+          fields: {},
+        },
+        ctx.spaceId,
+      );
     }
-    registerTypeSchema({
-      id: "broken.victim",
-      version: 1,
-      parent: link(LENGTH - 1),
-      fields: {},
-    });
+    registerTypeSchema(
+      {
+        id: "broken.victim",
+        version: 1,
+        parent: link(LENGTH - 1),
+        fields: {},
+      },
+      ctx.spaceId,
+    );
   });
 
   afterAll(() => {
-    for (let n = LENGTH - 1; n >= 0; n -= 1) unregisterTypeSchema(link(n));
+    for (let n = LENGTH - 1; n >= 0; n -= 1)
+      unregisterTypeSchema(link(n), ctx.spaceId);
   });
 
   it("answers a coded refusal rather than a server fault", async () => {

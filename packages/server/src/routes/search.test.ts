@@ -235,18 +235,18 @@ describe("GET /search?include=system", () => {
         properties: { body: `${word} note` },
       },
     });
-    const device = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "system.device",
-        properties: { name: word, kind: "laptop" },
-      },
-    });
     expect(note.status).toBe(201);
-    expect(device.status).toBe(201);
     const { item: n } = (await note.json()) as { item: { id: string } };
-    const { item: d } = (await device.json()) as { item: { id: string } };
-    return { noteId: n.id, deviceId: d.id };
+    // The reserved namespace is closed to every credential, so the platform's
+    // own machinery writes a `system.*` row through the storage layer. The
+    // store indexes it for search on the way in, which is all this pair needs
+    // — the claim under test is what the read surface does with the row, not
+    // how it got there.
+    const device = await ctx.storage.items.create(
+      { type: "system.device", properties: { name: word, kind: "laptop" } },
+      ctx.spaceId,
+    );
+    return { noteId: n.id, deviceId: device.id };
   }
 
   async function foundIds(query: string): Promise<string[]> {

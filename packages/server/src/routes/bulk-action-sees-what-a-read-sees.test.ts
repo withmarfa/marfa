@@ -1,10 +1,12 @@
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import {
   createTestContext,
+  mintSpaceKey,
   request,
   runBulkActionAsync,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import type { Item, ItemState } from "@withmarfa/shared";
 import { hashApiKey } from "../middleware/auth.js";
 
 /**
@@ -26,21 +28,78 @@ import { hashApiKey } from "../middleware/auth.js";
  * recognizes `state` as a system field with no value allowlist. Narrowing the
  * type column rather than the state column is what makes one fix cover both,
  * and a fix that closed one and not the other would close nothing.
+ *
+ * **The reserved row here is a `system.activity` one, because the opt-in has
+ * exactly one holder.** Widening this door asks `mayWriteReserved`, and that
+ * fence admits the operator key or a runtime credential writing its own
+ * connection's activity. The operator key holds no type at all, so the type
+ * filter empties its match set before the fence is reached; a runtime
+ * credential is the only credential that both passes the fence and holds a
+ * reserved type. Any other reserved type is therefore unopenable on this door
+ * by anybody, which is a property of the fence rather than of the row.
  */
 
 let ctx: TestContext;
 
+/**
+ * A runtime credential and the connection it speaks for. The reserved rows
+ * below are attributed to that connection, because the attribution rule
+ * narrows a runtime credential to its own.
+ */
+const connectionId = "conn-bulk-action-probe";
+let runtimeKey: string;
+
 beforeAll(async () => {
   ctx = await createTestContext();
+  runtimeKey = `marfa_k1_runtime_${Math.random().toString(36).slice(2)}`;
+  await ctx.storage.keys.createRuntimeCredential(
+    {
+      label: "bulk-action-runtime",
+      source: `bulk-action-runtime-${Math.random().toString(36).slice(2)}`,
+      type_permissions: { "core.note": "write", "system.activity": "write" },
+      connection_id: connectionId,
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      item_source: "integration.acme.probe",
+    },
+    hashApiKey(runtimeKey, "test-salt"),
+    ctx.spaceId,
+  );
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
+/**
+ * A reserved row in the context's space. It goes in through storage because
+ * no credential writes a reserved namespace: the fence admits the operator
+ * key, whose own type permissions are empty, so the platform's own machinery
+ * writes these rows.
+ */
+function seedActivity(
+  marker: string,
+  spaceId: string,
+  state?: ItemState,
+): Promise<Item> {
+  return ctx.storage.items.create(
+    {
+      type: "system.activity",
+      properties: {
+        connection_id: connectionId,
+        severity: "info",
+        summary: `ba-${marker}`,
+      },
+      ...(state === undefined ? {} : { state }),
+      tags: [marker],
+      source: `bulk-action-seed-${marker}-${Math.random().toString(36).slice(2, 8)}`,
+    },
+    spaceId,
+  );
+}
+
 async function seedPair(
   marker: string,
-): Promise<{ noteId: string; deviceId: string }> {
+): Promise<{ noteId: string; activityId: string }> {
   const note = await request(ctx.app, "POST", "/items", {
     key: ctx.spaceKey,
     body: {
@@ -50,26 +109,20 @@ async function seedPair(
     },
   });
   expect(note.status).toBe(201);
-  const device = await request(ctx.app, "POST", "/items", {
-    key: ctx.spaceKey,
-    body: {
-      type: "system.device",
-      properties: { name: `ba-${marker}`, kind: "laptop" },
-      tags: [marker],
-    },
-  });
-  expect(device.status).toBe(201);
   const { item: n } = (await note.json()) as { item: { id: string } };
-  const { item: d } = (await device.json()) as { item: { id: string } };
-  return { noteId: n.id, deviceId: d.id };
+  const activity = await seedActivity(marker, ctx.spaceId);
+  return { noteId: n.id, activityId: activity.id };
 }
 
 /** The ids a dry run reports for a filter, which is the enumeration itself. */
-async function matchedIds(filter: Record<string, unknown>): Promise<string[]> {
+async function matchedIds(
+  filter: Record<string, unknown>,
+  key: string = ctx.spaceKey,
+): Promise<string[]> {
   const { initialStatus, result } = await runBulkActionAsync(
     ctx,
     { action: "update_tags", add: ["ba-probe"], filter, dry_run: true },
-    ctx.spaceKey,
+    key,
   );
   expect(initialStatus).toBe(200);
   return result?.ids ?? [];
@@ -78,7 +131,7 @@ async function matchedIds(filter: Record<string, unknown>): Promise<string[]> {
 describe("the bulk-action door and the read doors agree about system rows", () => {
   it("does not match a system row when the filter names no type", async () => {
     const marker = Math.random().toString(36).slice(2, 8);
-    const { noteId, deviceId } = await seedPair(marker);
+    const { noteId, activityId } = await seedPair(marker);
 
     const ids = await matchedIds({ tags: [marker] });
 
@@ -86,12 +139,12 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // nothing at all, which is the shape this whole area keeps producing.
     // The note is what says the filter reached rows.
     expect(ids).toContain(noteId);
-    expect(ids).not.toContain(deviceId);
+    expect(ids).not.toContain(activityId);
   });
 
   it("does not match one through the free-text filter grammar either", async () => {
     const marker = Math.random().toString(36).slice(2, 8);
-    const { deviceId } = await seedPair(marker);
+    const { activityId } = await seedPair(marker);
 
     // The other way in. The free-text grammar compiles a comparison straight
     // through to SQL, so it reaches rows the structured filter fields never
@@ -99,16 +152,20 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // than the state one, and a fix that closed one and not the other would
     // close nothing.
     const ids = await matchedIds({
-      filter: `properties.name eq "ba-${marker}"`,
+      filter: `properties.summary eq "ba-${marker}"`,
     });
-    expect(ids).not.toContain(deviceId);
+    expect(ids).not.toContain(activityId);
 
-    // Not vacuous: the same grammar, with the namespace named, finds it.
-    const named = await matchedIds({
-      type: "system.device",
-      filter: `properties.name eq "ba-${marker}"`,
-    });
-    expect(named).toContain(deviceId);
+    // Not vacuous: the same grammar, with the namespace named and on the one
+    // credential the fence admits, finds it.
+    const named = await matchedIds(
+      {
+        type: "system.activity",
+        filter: `properties.summary eq "ba-${marker}"`,
+      },
+      runtimeKey,
+    );
+    expect(named).toContain(activityId);
   });
 
   it("does not match a revoked reserved row through the state predicate", async () => {
@@ -118,54 +175,52 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // state a platform-internal row actually sits in, and the predicate
     // below is the one the two gates were described in terms of, so a test
     // that drove any other comparison would be about a neighbouring claim.
-    const revoked = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "system.device",
-        state: "revoked",
-        properties: { name: `ba-rev-${marker}`, kind: "laptop" },
-        tags: [marker],
-      },
-    });
-    expect(revoked.status).toBe(201);
-    const { item } = (await revoked.json()) as {
-      item: { id: string; state: string };
-    };
-    expect(item.state).toBe("revoked");
+    const revoked = await seedActivity(`rev-${marker}`, ctx.spaceId, "revoked");
+    expect(revoked.state).toBe("revoked");
+    // The tag the filters below select on: `seedActivity` tags with the
+    // marker it was handed.
+    const tag = `rev-${marker}`;
 
     // `state` is a recognized system field in the filter grammar with no
     // value allowlist, so this compiles straight through and would otherwise
     // reach a row the structured `state` enum cannot name on this door.
     const ids = await matchedIds({
-      tags: [marker],
+      tags: [tag],
       filter: 'state eq "revoked"',
     });
-    expect(ids).not.toContain(item.id);
+    expect(ids).not.toContain(revoked.id);
 
-    const named = await matchedIds({
-      tags: [marker],
-      type: "system.device",
-      filter: 'state eq "revoked"',
-    });
-    expect(named).toContain(item.id);
+    const named = await matchedIds(
+      {
+        tags: [tag],
+        type: "system.activity",
+        filter: 'state eq "revoked"',
+      },
+      runtimeKey,
+    );
+    expect(named).toContain(revoked.id);
   });
 
   it("matches one when the filter names the namespace", async () => {
     const marker = Math.random().toString(36).slice(2, 8);
-    const { deviceId } = await seedPair(marker);
+    const { activityId } = await seedPair(marker);
 
     // The opt-in, and the reason the exclusion is not simply unconditional:
-    // a caller naming `system.device` has said what it wants, and refusing
-    // it would answer a different question. This is also the control that
-    // says the two cases above fail for the right reason — if the door
-    // excluded the namespace unconditionally they would pass anyway.
-    const ids = await matchedIds({ type: "system.device", tags: [marker] });
-    expect(ids).toContain(deviceId);
+    // a caller the fence admits, naming `system.activity`, has said what it
+    // wants and refusing it would answer a different question. This is also
+    // the control that says the two cases above fail for the right reason —
+    // if the door excluded the namespace unconditionally they would pass
+    // anyway.
+    const ids = await matchedIds(
+      { type: "system.activity", tags: [marker] },
+      runtimeKey,
+    );
+    expect(ids).toContain(activityId);
   });
 
-  it("refuses the opt-in to a credential that is not the operator", async () => {
-    // The opt-in is an operator credential naming a reserved type, and this
-    // is the half that is easy to leave out.
+  it("refuses the opt-in to a credential the fence does not admit", async () => {
+    // The opt-in is a credential the reserved fence admits naming a reserved
+    // type, and this is the half that is easy to leave out.
     //
     // This door runs no per-row `requireTypeAccess`, so a credential that
     // reaches the match query never meets the operator fence that
@@ -181,66 +236,33 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // query that returned zero rows. A write grant is what puts the fence
     // back in the path as the only thing standing between this key and a
     // reserved row.
-    // **Bound to a space, and that is now the whole of what "not platform"
-    // means.** A space-less credential is an operator credential — the row
-    // constraint states the two as one fact — so the only credential that can
-    // stand on the wrong side of the reserved fence is one confined to a
-    // space. Its rows are seeded into that space directly, because a
-    // space-bound caller cannot see what the space-less operator key writes.
-    const space = await ctx.storage.spaces!.create(
-      `reader-space-${Math.random().toString(36).slice(2, 8)}`,
-    );
-    const raw = `marfa_k1_reader_${Math.random().toString(36).slice(2)}`;
-    await ctx.storage.keys.create(
-      {
-        label: "reads-everything",
-        source: `reader-${raw.slice(-6)}`,
-        space_permissions: [],
-        type_permissions: { "*": "write" },
-        is_operator: false,
-      },
-      hashApiKey(raw, "test-salt"),
-      space.id,
-    );
+    const raw = await mintSpaceKey(ctx, ctx.spaceId, {
+      label: "reads-everything",
+      space_permissions: [],
+      type_permissions: { "*": "write" },
+    });
 
     const marker = Math.random().toString(36).slice(2, 8);
-    const note = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: `ba-${marker}` },
-        tags: [marker],
-      },
-      space.id,
-    );
-    const device = await ctx.storage.items.create(
-      {
-        type: "system.device",
-        properties: { name: `ba-${marker}`, kind: "laptop" },
-        tags: [marker],
-      },
-      space.id,
-    );
-    const noteId = note.id;
-    const deviceId = device.id;
+    const { noteId, activityId } = await seedPair(marker);
 
     const { initialStatus, result } = await runBulkActionAsync(
       ctx,
       {
         action: "update_tags",
         add: ["reader-probe"],
-        filter: { type: "system.device", tags: [marker] },
+        filter: { type: "system.activity", tags: [marker] },
         dry_run: true,
       },
       raw,
     );
     expect(initialStatus).toBe(200);
-    expect(result?.ids ?? []).not.toContain(deviceId);
+    expect(result?.ids ?? []).not.toContain(activityId);
 
     // Not vacuous, on the same credential: this key reaches the door and
     // matches an ordinary row, so the reserved row is absent because the
     // fence refused it rather than because the query found nothing. The
-    // control has to run as *this* key — the platform check below says
-    // something about the operator key and nothing about this one.
+    // control has to run as *this* key — the runtime check below says
+    // something about that credential and nothing about this one.
     const { result: ownReach } = await runBulkActionAsync(
       ctx,
       {
@@ -253,13 +275,16 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     );
     expect(ownReach?.ids ?? []).toContain(noteId);
 
-    // And the operator key naming the same reserved type finds it, so the
-    // refusal is about the credential rather than about the filter.
-    const asPlatform = await matchedIds({
-      type: "system.device",
-      tags: [marker],
-    });
-    expect(asPlatform).toContain(deviceId);
+    // And the runtime credential naming the same reserved type finds it, so
+    // the refusal is about the credential rather than about the filter.
+    const admitted = await matchedIds(
+      {
+        type: "system.activity",
+        tags: [marker],
+      },
+      runtimeKey,
+    );
+    expect(admitted).toContain(activityId);
   });
 });
 

@@ -33,8 +33,13 @@ import { createGzip } from "node:zlib";
 import { describe, expect, it, afterEach } from "vitest";
 import * as tar from "tar-stream";
 import { generateId } from "@withmarfa/shared";
-import { createTestContext, request } from "../test-utils.js";
+import {
+  createTestContext,
+  request,
+  TEST_API_KEY_SALT,
+} from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
+import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext | undefined;
 
@@ -43,12 +48,57 @@ afterEach(async () => {
   ctx = undefined;
 });
 
-/** `system.device` is the smallest bounded-lifecycle type: two required
- *  properties and none of the connection machinery. What is under test is
- *  the graph the `system.*` classification selects, not anything specific
- *  to a grant. */
-const SYSTEM_TYPE = "system.device";
-const SYSTEM_PROPERTIES = { name: "Test laptop", kind: "laptop" };
+/** The bounded lifecycle belongs to the `system.*` classification rather
+ *  than to any one type, so any system type states the same graph. This one
+ *  is used because it is the only one a credential can still write: the
+ *  reserved-namespace fence refuses every other `system.*` write at every
+ *  door, and a lifecycle door that cannot be reached says nothing about the
+ *  lifecycle. Its carve-out costs a Connection and the runtime credential
+ *  bound to it, which `systemWriter` below builds. */
+const SYSTEM_TYPE = "system.activity";
+
+/** The Connection a system row belongs to, and the credential that speaks
+ *  for it. A runtime credential may write activity for its own connection
+ *  and no other, so both halves travel together. */
+async function systemWriter(c: TestContext): Promise<{
+  key: string;
+  properties: () => Record<string, unknown>;
+}> {
+  const connection = await c.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+      },
+      source: "test/lifecycle-graph",
+    },
+    c.spaceId,
+  );
+  const suffix = Math.random().toString(36).slice(2, 10);
+  const key = `marfa_k1_lifecycle_${suffix}`;
+  await c.storage.keys.createRuntimeCredential(
+    {
+      label: `lifecycle-${suffix}`,
+      source: `lifecycle-${suffix}`,
+      type_permissions: { [SYSTEM_TYPE]: "write" },
+      connection_id: connection.id,
+      expires_at: new Date(Date.now() + 600_000).toISOString(),
+      item_source: `integration:acme.lifecycle.${suffix}`,
+    },
+    hashApiKey(key, TEST_API_KEY_SALT),
+    c.spaceId,
+  );
+  return {
+    key,
+    properties: () => ({
+      connection_id: connection.id,
+      severity: "info",
+      summary: "Lifecycle fixture",
+    }),
+  };
+}
 
 async function errorOf(
   res: Response,
@@ -64,20 +114,26 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     ctx = await createTestContext();
     const c = ctx;
 
+    const writer = await systemWriter(c);
+
     // Built through the store rather than the API, and it has to be: the
     // create route now refuses this exact state for this exact type, which
     // is the other half of this ticket. The store stays permissive so the
     // archive restore can replay it, so it is the only way to reach the row
     // shape the restore gate exists for.
-    const trashed = await c.storage.items.create({
-      type: SYSTEM_TYPE,
-      state: "trashed",
-      properties: SYSTEM_PROPERTIES,
-    });
+    const trashed = await c.storage.items.create(
+      {
+        type: SYSTEM_TYPE,
+        state: "trashed",
+        properties: writer.properties(),
+        source: "test/lifecycle-graph",
+      },
+      c.spaceId,
+    );
     expect(trashed.state).toBe("trashed");
 
     const res = await request(c.app, "POST", `/items/${trashed.id}/restore`, {
-      key: c.spaceKey,
+      key: writer.key,
     });
     expect(res.status).toBe(400);
 
@@ -127,12 +183,13 @@ describe("POST /items — a create names a state the type's lifecycle contains",
     ctx = await createTestContext();
     const c = ctx;
 
+    const writer = await systemWriter(c);
     const res = await request(c.app, "POST", "/items", {
-      key: c.spaceKey,
+      key: writer.key,
       body: {
         type: SYSTEM_TYPE,
         state: "trashed",
-        properties: SYSTEM_PROPERTIES,
+        properties: writer.properties(),
       },
     });
     expect(res.status).toBe(400);
@@ -150,16 +207,18 @@ describe("POST /items — a create names a state the type's lifecycle contains",
     ctx = await createTestContext();
     const c = ctx;
 
+    const writer = await systemWriter(c);
+
     // `revoked` is where a `system.*` type's lifecycle actually ends, and
     // `active` is where it starts. Both have to keep working, or the gate is
     // refusing the graph rather than enforcing it.
     for (const state of ["active", "revoked"]) {
       const res = await request(c.app, "POST", "/items", {
-        key: c.spaceKey,
+        key: writer.key,
         body: {
           type: SYSTEM_TYPE,
           state,
-          properties: { ...SYSTEM_PROPERTIES, name: `Device ${state}` },
+          properties: { ...writer.properties(), summary: `Activity ${state}` },
         },
       });
       expect(res.status).toBe(201);
@@ -235,6 +294,7 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
     // because nothing refused them at the time. Tightening
     // `storage.items.create` alongside the route would make those archives
     // unrestorable, which is why the two gates sit at different layers.
+    const writer = await systemWriter(c);
     const archiveId = generateId();
     const archive = await buildArchive(
       {
@@ -251,20 +311,27 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
             id: archiveId,
             type: SYSTEM_TYPE,
             state: "trashed",
-            properties: SYSTEM_PROPERTIES,
+            properties: writer.properties(),
           },
         }),
       ],
     );
 
-    const res = await c.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${c.spaceKey}`,
-        "Content-Type": "application/gzip",
+    // The operator key, which is what this route takes, and the space named
+    // in the query, which is how a caller carrying no space of its own says
+    // where the rows land — the restore has to reach the same space the
+    // credential below reads from.
+    const res = await c.app.request(
+      `/admin/restore-archive?target_space_id=${c.spaceId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${c.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
       },
-      body: archive,
-    });
+    );
     expect(res.status).toBe(200);
     const data = (await res.json()) as { imported: number };
     expect(data.imported).toBe(1);
@@ -281,7 +348,7 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
       "POST",
       `/items/${archiveId}/restore`,
       {
-        key: c.spaceKey,
+        key: writer.key,
       },
     );
     expect(restore.status).toBe(400);

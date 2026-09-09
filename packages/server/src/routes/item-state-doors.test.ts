@@ -16,12 +16,19 @@
  * and none can leave — through the bulk door while the single door beside it
  * refused.
  *
- * **Two credential shapes, deliberately.** The bulk door is reachable by a
- * the operator key for any `system.*` type, and by an integration runtime
- * credential for `system.activity` alone, through the carve-out in
- * `checkTypeAccess`. A suite written entirely with one shape pins the check for
- * that shape and is blind to the other, which is how a guard goes missing on a
- * door somebody believed was covered.
+ * **Two credential shapes, deliberately.** The doors are reachable by an
+ * ordinary space credential for the types its maps admit, and by an
+ * integration runtime credential for `system.activity`, through the carve-out
+ * in `checkTypeAccess`. A suite written entirely with one shape pins the check
+ * for that shape and is blind to the other, which is how a guard goes missing
+ * on a door somebody believed was covered.
+ *
+ * **The refusals name a `system.*` type and the admission does not.** The
+ * lifecycle gate sits ahead of the reserved-namespace fence, so a declared
+ * state is judged before the door asks whether the caller may write that type
+ * at all — which is what keeps `system.connection` usable here for the narrow
+ * lifecycle. Showing the gate admits rather than refuses everything needs a
+ * type a credential can actually write, because nothing writes a reserved one.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type { IntegrationManifest } from "@withmarfa/shared";
@@ -105,64 +112,52 @@ afterAll(async () => {
 interface StateDoor {
   name: string;
   route: string;
-  /** Create a `system.connection` declaring `state`, and answer the status. */
-  create: (key: string, state: string) => Promise<number>;
+  /** Create `item` through this door, and answer the status. */
+  create: (key: string, item: Record<string, unknown>) => Promise<number>;
 }
 
 const DOORS: StateDoor[] = [
   {
     name: "POST /items — create declaring a state",
     route: "POST /items",
-    create: async (key, state) =>
-      (
-        await request(ctx.app, "POST", "/items", {
-          key,
-          body: {
-            type: "system.connection",
-            state,
-            properties: {
-              kind: "app",
-              status: "active",
-              granted_at: new Date().toISOString(),
-            },
-          },
-        })
-      ).status,
+    create: async (key, item) =>
+      (await request(ctx.app, "POST", "/items", { key, body: item })).status,
   },
   {
     name: "POST /items/bulk — create declaring a state",
     route: "POST /items/bulk",
-    create: async (key, state) =>
+    create: async (key, item) =>
       (
         await request(ctx.app, "POST", "/items/bulk", {
           key,
-          body: {
-            items: [
-              {
-                type: "system.connection",
-                state,
-                properties: {
-                  kind: "app",
-                  status: "active",
-                  granted_at: new Date().toISOString(),
-                },
-              },
-            ],
-          },
+          body: { items: [item] },
         })
       ).status,
   },
 ];
 
+/** A `system.connection` declaring `state` — the narrow lifecycle. */
+function connection(state: string): Record<string, unknown> {
+  return {
+    type: "system.connection",
+    state,
+    properties: {
+      kind: "app",
+      status: "active",
+      granted_at: new Date().toISOString(),
+    },
+  };
+}
+
 describe.each(DOORS)("$name", (door) => {
   it("refuses a state the type's lifecycle does not contain", async () => {
     // `system.*` admits `active | revoked`. `trashed` is a real state and is
     // not in that graph, so nothing can produce it and nothing can leave it.
-    expect(await door.create(ctx.spaceKey, "trashed")).toBe(400);
+    expect(await door.create(ctx.spaceKey, connection("trashed"))).toBe(400);
   });
 
   it("refuses `archived` on the same grounds, so the rule is the graph and not one word", async () => {
-    expect(await door.create(ctx.spaceKey, "archived")).toBe(400);
+    expect(await door.create(ctx.spaceKey, connection("archived"))).toBe(400);
   });
 
   it("still admits a state the lifecycle does contain", async () => {
@@ -174,7 +169,18 @@ describe.each(DOORS)("$name", (door) => {
     // doors legitimately differ — the single create answers 201 and the bulk
     // endpoint answers 200 for a batch it accepted. Pinning either number
     // here would be asserting the other door's contract by accident.
-    expect(await door.create(ctx.spaceKey, "active")).toBeLessThan(300);
+    //
+    // An ordinary type, and a state that is not the default. `active` is the
+    // start state and the gate skips it, so a case built on it measures
+    // nothing; `archived` is in this type's graph and not in `system.*`'s,
+    // which is the pair the refusals above turn on.
+    expect(
+      await door.create(ctx.spaceKey, {
+        type: "core.note",
+        state: "archived",
+        properties: { body: "state-door fixture" },
+      }),
+    ).toBeLessThan(300);
   });
 });
 
@@ -182,8 +188,8 @@ describe("the second credential shape reaches the same doors", () => {
   /**
    * An integration runtime credential may write `system.activity` and nothing
    * else in the system family, through the carve-out in `checkTypeAccess`. So
-   * it reaches these doors on one type, and a suite that only ever used a
-   * the operator key would never exercise that path.
+   * it reaches these doors on one type, and a suite written entirely with the
+   * space credential would never exercise that path.
    */
   async function createActivity(
     route: "/items" | "/items/bulk",

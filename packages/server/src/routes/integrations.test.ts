@@ -568,15 +568,19 @@ describe("GET /integrations/:id/install (consent HTML)", () => {
       const regBody = (await reg.json()) as RegisterResponse;
 
       // Create a system.credential of a different kind (api_key) directly
-      // via the items store; the route should reject it as wrong kind.
-      const wrongKindCred = await ctx.storage.items.create({
-        type: "system.credential",
-        properties: {
-          label: "wrong-kind test",
-          kind: "api_key",
-          secret_encrypted: "irrelevant",
+      // via the items store, in the caller's space so the route's fenced
+      // lookup resolves it; the route should reject it as wrong kind.
+      const wrongKindCred = await ctx.storage.items.create(
+        {
+          type: "system.credential",
+          properties: {
+            label: "wrong-kind test",
+            kind: "api_key",
+            secret_encrypted: "irrelevant",
+          },
         },
-      });
+        ctx.spaceId,
+      );
 
       const res = await request(
         ctx.app,

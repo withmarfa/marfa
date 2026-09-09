@@ -161,9 +161,9 @@ describe("GET /spaces/me/config — keys-mode fallback", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns {} for a non-space-scoped admin (no space store)", async () => {
-    // The bootstrap test admin has no space_id, and authMode is "keys"
-    // so storage.spaces is undefined. The handler short-circuits to {}.
+  it("returns {} for a space whose config was never set", async () => {
+    // An unset config reads as an empty object rather than as null, so a
+    // client can merge into what it gets back without a null check.
     const res = await request(ctx.app, "GET", "/spaces/me/config", {
       key: ctx.spaceKey,
     });
@@ -181,14 +181,22 @@ describe("PUT /spaces/me/config — keys-mode fallback", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects a non-space-scoped credential with 400 VALIDATION_ERROR", async () => {
+  it("rejects a credential with no space to configure", async () => {
+    // The operator key is the one credential that carries no space, and
+    // `/me/config` addresses the caller's own space. It is refused at the
+    // permission gate rather than at the space check, because the instance
+    // tier holds no space permissions at all — running the instance sits
+    // outside the permission model rather than above it.
     const res = await request(ctx.app, "PUT", "/spaces/me/config", {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: {},
     });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("validation_error");
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as {
+      error: { code: string; details?: { required_scope?: string } };
+    };
+    expect(body.error.code).toBe("forbidden");
+    expect(body.error.details?.required_scope).toBe("space.settings");
   });
 });
 

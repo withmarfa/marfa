@@ -138,14 +138,23 @@ describe("space-scoped export — the operator key", () => {
   });
 
   it("scopes to target_space_id when supplied", async () => {
+    // The operator key is the only credential that may name a space other
+    // than its own here, and it is also the one credential that reads no
+    // content: its type map is empty, so the read narrowing every export
+    // runs through resolves to nothing whatever space it lands in. The
+    // resolved scope is therefore asserted on the record the route writes
+    // before it streams, which is where the resolution is observable — and
+    // the emptiness is asserted beside it rather than left to be discovered,
+    // since an assertion that a foreign space's rows are absent would
+    // otherwise pass on a body that is empty for an unrelated reason.
     ctx = await createTestContext();
     const spaceA = `t-platform-${Math.random().toString(36).slice(2, 10)}`;
     const spaceB = `t-platform-b-${Math.random().toString(36).slice(2, 10)}`;
-    const itemA = await ctx.storage.items.create(
+    await ctx.storage.items.create(
       { type: "core.note", properties: { body: "A" } },
       spaceA,
     );
-    const itemB = await ctx.storage.items.create(
+    await ctx.storage.items.create(
       { type: "core.note", properties: { body: "B" } },
       spaceB,
     );
@@ -154,18 +163,32 @@ describe("space-scoped export — the operator key", () => {
       ctx.app,
       "GET",
       `/export?target_space_id=${spaceA}`,
-      { key: ctx.spaceKey },
+      { key: ctx.operatorKey },
     );
     expect(res.status).toBe(200);
-    const ids = await readNdjsonItems(res);
-    expect(ids).toContain(itemA.id);
-    expect(ids).not.toContain(itemB.id);
+    expect(await readNdjsonItems(res)).toEqual([]);
+
+    const audit = await waitForAudit(
+      () => ctx.storage.audit.list({ action: "export.space" }),
+      (result) => result.data.length > 0,
+    );
+    const row = audit.data[0];
+    const details = row?.details as {
+      scope: string;
+      target_space_id?: string;
+    };
+    expect(details.scope).toBe("space");
+    expect(details.target_space_id).toBe(spaceA);
+    // The row is stamped with the space that was resolved, not with the
+    // caller's absent one, which is the half a fallback to unscoped would
+    // get wrong.
+    expect(row?.space_id).toBe(spaceA);
   });
 
   it("falls through to unscoped (self-host compat) without target_space_id and audits as platform_unscoped", async () => {
     ctx = await createTestContext();
     const res = await request(ctx.app, "GET", "/export", {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
     });
     expect(res.status).toBe(200);
 
@@ -225,7 +248,7 @@ describe("archive — manifest space_id round-trip", () => {
       {
         method: "POST",
         headers: {
-          authorization: `Bearer ${ctx.spaceKey}`,
+          authorization: `Bearer ${ctx.operatorKey}`,
           "content-type": "application/gzip",
         },
         body: archive,

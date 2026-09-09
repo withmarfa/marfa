@@ -348,11 +348,20 @@ describe("POST /blobs/cleanup", () => {
       });
       const { hash } = (await uploadRes.json()) as { hash: string };
 
-      const createRes = await request(ctx.app, "POST", "/items", {
-        key: ctx.spaceKey,
-        body: { type, state, properties: { ...properties, blob_ref: hash } },
-      });
-      expect(createRes.status).toBe(201);
+      // Written through the storage layer rather than `POST /items`, because
+      // one of these rows is a `system.*` type and the reserved namespace is
+      // closed to every credential a space holds. The claim here is about what
+      // the cleanup scan keeps, not about which door wrote the row.
+      await ctx.storage.items.create(
+        {
+          type,
+          tier: "library",
+          state,
+          properties: { ...properties, blob_ref: hash },
+          source: "test/blob-cleanup",
+        },
+        ctx.spaceId,
+      );
 
       const cleanupRes = await request(
         ctx.app,

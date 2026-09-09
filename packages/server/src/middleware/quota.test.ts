@@ -208,7 +208,7 @@ describe("per-space quota enforcement", () => {
       "GET",
       `/spaces/${space.id}/quotas`,
       {
-        key: ctx.spaceKey,
+        key: ctx.operatorKey,
       },
     );
     expect(initial.status).toBe(200);
@@ -219,7 +219,7 @@ describe("per-space quota enforcement", () => {
 
     // PUT a quota
     const put = await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: { items_limit: 100, webhooks_limit: 5 },
     });
     expect(put.status).toBe(200);
@@ -232,7 +232,7 @@ describe("per-space quota enforcement", () => {
 
     // GET reflects
     const after = await request(ctx.app, "GET", `/spaces/${space.id}/quotas`, {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
     });
     expect(after.status).toBe(200);
     const afterBody = (await after.json()) as { items_limit: number };

@@ -118,14 +118,17 @@ describe("POST /admin/restore-archive", () => {
       [blob],
     );
 
-    const res = await ctx.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
-        "Content-Type": "application/gzip",
+    const res = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
       },
-      body: archive,
-    });
+    );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       imported: number;
@@ -153,7 +156,7 @@ describe("POST /admin/restore-archive", () => {
     const res = await ctx.app.request("/admin/restore-archive", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.operatorKey}`,
         "Content-Type": "application/gzip",
       },
       body: archive,
@@ -165,7 +168,7 @@ describe("POST /admin/restore-archive", () => {
     const res = await ctx.app.request("/admin/restore-archive", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
+        Authorization: `Bearer ${ctx.operatorKey}`,
         "Content-Type": "application/gzip",
       },
       body: new Uint8Array(0),
@@ -247,14 +250,17 @@ describe("POST /admin/restore-archive", () => {
     expect(exportRes.status).toBe(200);
     const archiveData = Buffer.from(await exportRes.arrayBuffer());
 
-    const restoreRes = await ctx.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
-        "Content-Type": "application/gzip",
+    const restoreRes = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archiveData,
       },
-      body: archiveData,
-    });
+    );
     expect(restoreRes.status).toBe(200);
     const data = (await restoreRes.json()) as {
       imported: number;
@@ -315,7 +321,7 @@ describe("POST /admin/restore-archive — quota", () => {
       "PUT",
       `/spaces/${space.id}/quotas`,
       {
-        key: ctx.spaceKey,
+        key: ctx.operatorKey,
         body: { blobs_limit: 1 },
       },
     );
@@ -327,7 +333,7 @@ describe("POST /admin/restore-archive — quota", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.spaceKey}`,
+          Authorization: `Bearer ${ctx.operatorKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -351,7 +357,7 @@ describe("POST /admin/restore-archive — quota", () => {
 
     // Room made, the same archive lands.
     await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: { blobs_limit: 10 },
     });
     const retry = await ctx.app.request(
@@ -359,7 +365,7 @@ describe("POST /admin/restore-archive — quota", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.spaceKey}`,
+          Authorization: `Bearer ${ctx.operatorKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -375,7 +381,7 @@ describe("POST /admin/restore-archive — quota", () => {
     if (!ctx.storage.spaces) throw new Error("space store expected");
     const space = await ctx.storage.spaces.create("quota-restore-bytes");
     await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: { storage_bytes_limit: 8 },
     });
 
@@ -385,7 +391,7 @@ describe("POST /admin/restore-archive — quota", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.spaceKey}`,
+          Authorization: `Bearer ${ctx.operatorKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -462,14 +468,17 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
     const { events, done } = collectEdgeEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
-        "Content-Type": "application/gzip",
+    const res = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: new Uint8Array(archive),
       },
-      body: new Uint8Array(archive),
-    });
+    );
     expect(res.status).toBe(200);
     await settle();
     controller.abort();
@@ -565,14 +574,17 @@ describe("POST /admin/restore-archive — the edges it writes", () => {
     };
     let res: Response;
     try {
-      res = await ctx.app.request("/admin/restore-archive", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.spaceKey}`,
-          "Content-Type": "application/gzip",
+      res = await ctx.app.request(
+        `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ctx.operatorKey}`,
+            "Content-Type": "application/gzip",
+          },
+          body: new Uint8Array(archive),
         },
-        body: new Uint8Array(archive),
-      });
+      );
     } finally {
       store.createRaw = realCreate;
     }
@@ -668,14 +680,17 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     const { events, done } = collectItemEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
-        "Content-Type": "application/gzip",
+    const res = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: new Uint8Array(archive),
       },
-      body: new Uint8Array(archive),
-    });
+    );
     expect(res.status).toBe(200);
     // Waits for the frames rather than for a duration. `settle` is a fixed
     // sleep, and a positive assertion resting on one reports a busy machine
@@ -794,14 +809,17 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     };
     let res: Response;
     try {
-      res = await ctx.app.request("/admin/restore-archive", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.spaceKey}`,
-          "Content-Type": "application/gzip",
+      res = await ctx.app.request(
+        `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${ctx.operatorKey}`,
+            "Content-Type": "application/gzip",
+          },
+          body: new Uint8Array(archive),
         },
-        body: new Uint8Array(archive),
-      });
+      );
     } finally {
       store.createRaw = realCreate;
     }
@@ -880,14 +898,17 @@ describe("POST /admin/restore-archive — the items it writes", () => {
       [],
     );
 
-    const res = await ctx.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
-        "Content-Type": "application/gzip",
+    const res = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: new Uint8Array(archive),
       },
-      body: new Uint8Array(archive),
-    });
+    );
     expect(res.status).toBe(200);
 
     const stored = await ctx.storage.metadata.getExtensions(itemId);
@@ -932,14 +953,17 @@ describe("POST /admin/restore-archive — the items it writes", () => {
     const { events, done } = collectItemEvents(controller.signal);
     await settle();
 
-    const res = await ctx.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.spaceKey}`,
-        "Content-Type": "application/gzip",
+    const res = await ctx.app.request(
+      `/admin/restore-archive?target_space_id=${ctx.spaceId}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${ctx.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: new Uint8Array(archive),
       },
-      body: new Uint8Array(archive),
-    });
+    );
     expect(res.status).toBe(200);
     // A condition rather than a sleep, for the reason given above.
     await vi.waitFor(async () => {

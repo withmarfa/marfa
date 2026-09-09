@@ -330,7 +330,9 @@ describe("/keys — the space fence keys on the binding, not on the permission",
       label: "control-visible",
     });
 
-    const res = await request(ctx.app, "GET", "/keys", { key: ctx.spaceKey });
+    const res = await request(ctx.app, "GET", "/keys", {
+      key: ctx.operatorKey,
+    });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { keys: { label: string }[] };
     expect(body.keys.some((k) => k.label === "control-visible")).toBe(true);
@@ -413,11 +415,27 @@ describe("extensions — the reserved namespaces are the operator's", () => {
       { type: "core.note", properties: { body: "reserved-control" } },
       undefined,
     );
+    // The gate is the operator tier, and the namespace map is asked after it,
+    // so the control needs a credential holding both. An operator caller mints
+    // one: the creator ceiling does not bind it, so the map it names is
+    // honored, and what it mints is space-less and operator like itself.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const minted = await request(ctx.app, "POST", "/keys", {
+      key: ctx.operatorKey,
+      body: {
+        label: `reserved-ext-${suffix}`,
+        source: `reserved-ext-${suffix}`,
+        extension_permissions: { "*": "write" },
+      },
+    });
+    expect(minted.status).toBe(201);
+    const { key } = (await minted.json()) as { key: string };
+
     const res = await request(
       ctx.app,
       "PUT",
       `/items/${item.id}/extensions/system`,
-      { key: ctx.spaceKey, body: { ok: true } },
+      { key, body: { ok: true } },
     );
     expect(res.status).toBe(200);
   });

@@ -60,12 +60,17 @@ async function promoteAMirror(): Promise<{
   mirrorId: string;
   promotedId: string;
 }> {
-  const mirror = await ctx.storage.items.create({
-    type: "core.note",
-    properties: { body: "upstream copy" },
-    source: "integration:promote-announcement",
-    source_id: `mirror-${String(Date.now())}-${String(Math.random())}`,
-  });
+  const mirror = await ctx.storage.items.create(
+    {
+      type: "core.note",
+      properties: { body: "upstream copy" },
+      source: "integration:promote-announcement",
+      source_id: `mirror-${String(Date.now())}-${String(Math.random())}`,
+    },
+    // The space the promoting credential works in. A mirror written with no
+    // space lands in the space-less bucket, where the door cannot resolve it.
+    ctx.spaceId,
+  );
   const cursor = await logCursor();
   const res = await request(ctx.app, "POST", `/items/${mirror.id}/promote`, {
     key: ctx.spaceKey,

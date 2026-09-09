@@ -15,13 +15,12 @@
  * authorize URL. The fence ensures cross-space references resolve to null
  * and the route returns OAUTH_PROXY_UPSTREAM_INVALID instead.
  *
- * The route's own connection lookup passes the caller's `space_id`, so it is
- * already fenced for any credential bound to a space; the door itself is
- * `space.credentials`. This test calls it with the operator key, which is
- * bound to no space at all, so that lookup narrows nothing and the
- * cross-space shape reaches the credential fence this file is about. The
- * shape is seeded through the storage layer because the install pipeline
- * would refuse it.
+ * The route's own connection lookup passes the caller's `space_id` and the
+ * door itself is `space.credentials`, which only a space-bound credential
+ * holds. So the connection sits in the caller's own space and the credential
+ * is the half that sits elsewhere: that is the only arrangement that gets as
+ * far as the fence this file is about. The shape is seeded through the
+ * storage layer because the install pipeline would refuse it.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -41,9 +40,8 @@ afterAll(async () => {
 });
 
 describe("POST /connections/:id/oauth/start — cross-space credential guard", () => {
-  it("refuses to resolve a cross-space credential_ref even for the operator key", async () => {
+  it("refuses to resolve a credential_ref that points out of the connection's space", async () => {
     if (!ctx.storage.spaces) return;
-    const spaceA = await ctx.storage.spaces.create("t235-oauth-start-A");
     const spaceB = await ctx.storage.spaces.create("t235-oauth-start-B");
 
     // Credential lives in space B. Carries a distinctive client_id
@@ -70,8 +68,8 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
       spaceB.id,
     );
 
-    // Connection lives in space A, pointing at space-B's credential.
-    // Built through storage to bypass the install pipeline (which
+    // Connection lives in the caller's own space, pointing at space-B's
+    // credential. Built through storage to bypass the install pipeline (which
     // would normally reject this shape) — this IS the scenario the
     // belt guards against.
     const crossConn = await ctx.storage.items.create(
@@ -85,7 +83,7 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
           credential_ref: crossCred.id,
         },
       },
-      spaceA.id,
+      ctx.spaceId,
     );
 
     const res = await request(
@@ -93,24 +91,22 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
       "POST",
       `/connections/${crossConn.id}/oauth/start`,
       {
-        // Bound to no space, so the route's own lookup narrows nothing. The
-        // door is `space.credentials`, which this key holds.
+        // The connection is this key's own, so the route's lookup finds it
+        // and the request reaches the credential fence. The door is
+        // `space.credentials`, which this key holds.
         key: ctx.spaceKey,
         body: {},
       },
     );
 
-    // Fence holds: credential lookup misses (space A scope, cred in
-    // B), readAuthorizeConfig throws OAUTH_PROXY_UPSTREAM_INVALID.
+    // Fence holds: the credential lookup misses (the caller's space, cred in
+    // B), so readAuthorizeConfig throws OAUTH_PROXY_UPSTREAM_INVALID.
     expect(res.status).toBe(422);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("oauth_proxy_upstream_invalid");
   });
 
   it("same-space credential_ref resolves cleanly (control case)", async () => {
-    if (!ctx.storage.spaces) return;
-    const space = await ctx.storage.spaces.create("t235-oauth-start-control");
-
     const cred = await ctx.storage.items.create(
       {
         type: "system.credential",
@@ -129,7 +125,7 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
           ),
         },
       },
-      space.id,
+      ctx.spaceId,
     );
     const conn = await ctx.storage.items.create(
       {
@@ -142,7 +138,7 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
           credential_ref: cred.id,
         },
       },
-      space.id,
+      ctx.spaceId,
     );
 
     const res = await request(
@@ -163,11 +159,8 @@ describe("POST /connections/:id/oauth/start — cross-space credential guard", (
 
 describe("POST /connections/:id/oauth/start — credential authorize_extra_params", () => {
   async function seedConnection(opts: {
-    space_label: string;
     authorize_extra_params?: Record<string, string>;
   }): Promise<string> {
-    if (!ctx.storage.spaces) throw new Error("spaces store required");
-    const space = await ctx.storage.spaces.create(opts.space_label);
     const cred = await ctx.storage.items.create(
       {
         type: "system.credential",
@@ -189,7 +182,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           ),
         },
       },
-      space.id,
+      ctx.spaceId,
     );
     const conn = await ctx.storage.items.create(
       {
@@ -202,14 +195,13 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           credential_ref: cred.id,
         },
       },
-      space.id,
+      ctx.spaceId,
     );
     return conn.id;
   }
 
   it("merges credential.authorize_extra_params into the authorize URL when caller passes no extra_params", async () => {
     const connId = await seedConnection({
-      space_label: "t259-merge-defaults",
       authorize_extra_params: {
         access_type: "offline",
         prompt: "consent",
@@ -232,7 +224,6 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
 
   it("caller's extra_params overrides credential defaults per-key", async () => {
     const connId = await seedConnection({
-      space_label: "t259-caller-overrides",
       authorize_extra_params: {
         access_type: "offline",
         prompt: "consent",
@@ -258,9 +249,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
   });
 
   it("absent authorize_extra_params on the credential leaves the URL clean", async () => {
-    const connId = await seedConnection({
-      space_label: "t259-no-defaults",
-    });
+    const connId = await seedConnection({});
     const res = await request(
       ctx.app,
       "POST",
@@ -277,8 +266,6 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
   });
 
   it("malformed authorize_extra_params on the credential is ignored (not echoed verbatim)", async () => {
-    if (!ctx.storage.spaces) return;
-    const space = await ctx.storage.spaces.create("t259-malformed");
     const cred = await ctx.storage.items.create(
       {
         type: "system.credential",
@@ -303,7 +290,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           ),
         },
       },
-      space.id,
+      ctx.spaceId,
     );
     const conn = await ctx.storage.items.create(
       {
@@ -316,7 +303,7 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
           credential_ref: cred.id,
         },
       },
-      space.id,
+      ctx.spaceId,
     );
     const res = await request(
       ctx.app,
@@ -343,33 +330,41 @@ describe("POST /connections/:id/oauth/start — credential authorize_extra_param
 
 describe("POST /connections/:id/oauth/start — the redirect URI is derived", () => {
   async function seedConnection(): Promise<string> {
-    const cred = await ctx.storage.items.create({
-      type: "system.credential",
-      properties: {
-        label: "Acme",
-        kind: "oauth_token",
-        oauth_provider_config: {
-          oauth_authorize_url: "https://accounts.test/oauth/authorize",
-          oauth_token_url: "https://accounts.test/oauth/token",
-          oauth_client_id: "CLIENT",
-          oauth_default_scope: "openid",
+    // Both halves in the caller's space: the route resolves the connection
+    // under the caller's fence, and the credential under the connection's.
+    const cred = await ctx.storage.items.create(
+      {
+        type: "system.credential",
+        properties: {
+          label: "Acme",
+          kind: "oauth_token",
+          oauth_provider_config: {
+            oauth_authorize_url: "https://accounts.test/oauth/authorize",
+            oauth_token_url: "https://accounts.test/oauth/token",
+            oauth_client_id: "CLIENT",
+            oauth_default_scope: "openid",
+          },
+          secret_encrypted: encryptSecret(
+            "secret",
+            SECRET_INFO.connectionOauthToken,
+          ),
         },
-        secret_encrypted: encryptSecret(
-          "secret",
-          SECRET_INFO.connectionOauthToken,
-        ),
       },
-    });
-    const conn = await ctx.storage.items.create({
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        integration_ref: "acme.demo",
-        credential_ref: cred.id,
+      ctx.spaceId,
+    );
+    const conn = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          integration_ref: "acme.demo",
+          credential_ref: cred.id,
+        },
       },
-    });
+      ctx.spaceId,
+    );
     return conn.id;
   }
 

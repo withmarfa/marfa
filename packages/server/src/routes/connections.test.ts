@@ -429,9 +429,10 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
           granted_at: new Date().toISOString(),
         },
       },
-      // No space: an app grant is an OAuth projection, and keys mode has no
-      // user store to resolve one from.
-      undefined,
+      // The claim is about `kind`, so the row goes in the caller's space:
+      // uninstall resolves the connection fenced to it, and a space-less row
+      // answers 404 before the kind is ever read.
+      ctx.spaceId,
     );
     const res = await request(
       ctx.app,

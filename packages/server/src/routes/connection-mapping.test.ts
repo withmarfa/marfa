@@ -9,7 +9,8 @@ let familiesOnlyConnectionId: string;
 /**
  * Register a minimal integration + connection pair directly through
  * storage, mirroring what the install pipeline persists: the manifest on a
- * `system.integration` item and an `integration_ref` on the connection.
+ * `system.integration` item and an `integration_ref` on the connection, both
+ * in the space the caller below is bound to.
  */
 async function seedConnection(
   name: string,
@@ -34,30 +35,36 @@ async function seedConnection(
     webhook_verification: { method: "hmac-sha256" },
     ...(supportsMappings ? { supports_user_mappings: true } : {}),
   };
-  const integration = await ctx.storage.items.create({
-    type: "system.integration",
-    properties: {
-      manifest,
-      manifest_name: name,
-      manifest_version: "0.1.0",
-      publisher: "demo",
-      summary: manifest.description,
-      direction: "read",
-      registered_at: new Date().toISOString(),
+  const integration = await ctx.storage.items.create(
+    {
+      type: "system.integration",
+      properties: {
+        manifest,
+        manifest_name: name,
+        manifest_version: "0.1.0",
+        publisher: "demo",
+        summary: manifest.description,
+        direction: "read",
+        registered_at: new Date().toISOString(),
+      },
     },
-  });
-  const connection = await ctx.storage.items.create({
-    type: "system.connection",
-    properties: {
-      kind: "integration",
-      status: "active",
-      granted_at: new Date().toISOString(),
-      integration_ref: integration.id,
-      configuration: {},
-      direction: "read",
-      triggers: [{ type: "manual" }],
+    ctx.spaceId,
+  );
+  const connection = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
+        integration_ref: integration.id,
+        configuration: {},
+        direction: "read",
+        triggers: [{ type: "manual" }],
+      },
     },
-  });
+    ctx.spaceId,
+  );
   return connection.id;
 }
 
@@ -183,7 +190,7 @@ describe("bringing the items already there", () => {
   const readConnection = async (
     id: string,
   ): Promise<Record<string, unknown>> => {
-    const item = await ctx.storage.items.get(id);
+    const item = await ctx.storage.items.get(id, ctx.spaceId);
     return item?.properties ?? {};
   };
 

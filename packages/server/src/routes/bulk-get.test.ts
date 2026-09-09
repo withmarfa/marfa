@@ -262,18 +262,21 @@ describe("POST /items/bulk-get and the system token", () => {
       key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: `bulk-sys-${marker}` } },
     });
-    const device = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
+    expect(note.status).toBe(201);
+    const { item: n } = (await note.json()) as { item: { id: string } };
+    // The system row goes in through storage: a reserved namespace is fenced
+    // to the operator key, whose own type permissions are empty, so no
+    // credential writes one. What this door does with the row afterwards is
+    // the same either way.
+    const device = await ctx.storage.items.create(
+      {
         type: "system.device",
         properties: { name: `bulk-sys-${marker}`, kind: "laptop" },
+        source: `bulk-get-system-${marker}`,
       },
-    });
-    expect(note.status).toBe(201);
-    expect(device.status).toBe(201);
-    const { item: n } = (await note.json()) as { item: { id: string } };
-    const { item: d } = (await device.json()) as { item: { id: string } };
-    return { noteId: n.id, deviceId: d.id };
+      ctx.spaceId,
+    );
+    return { noteId: n.id, deviceId: device.id };
   }
 
   async function fetched(ids: string[], include?: string[]): Promise<string[]> {

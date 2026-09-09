@@ -74,7 +74,7 @@ async function spaceWithItemLimit(
     `quota-${Math.random().toString(36).slice(2, 8)}`,
   );
   const quotaRes = await request(ctx.app, "PUT", `/spaces/${space.id}/quotas`, {
-    key: ctx.spaceKey,
+    key: ctx.operatorKey,
     body: { items_limit: limit },
   });
   expect(quotaRes.status).toBeLessThan(400);
@@ -123,7 +123,7 @@ describe("a refused blob upload leaves nothing on disk", () => {
   ): Promise<{ spaceId: string; key: string }> {
     const t = await spaceWithItemLimit(500);
     const res = await request(ctx.app, "PUT", `/spaces/${t.spaceId}/quotas`, {
-      key: ctx.spaceKey,
+      key: ctx.operatorKey,
       body: { items_limit: 500, blobs_limit: limit },
     });
     expect(res.status).toBeLessThan(400);

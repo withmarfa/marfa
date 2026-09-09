@@ -94,11 +94,17 @@ let seq = 0;
 const uniq = (p: string): string =>
   `${p}-${String(++seq)}-${String(Date.now())}`;
 
+/** Seeded straight into the context's space, because every door below is
+ *  reached with a space-bound credential and a row with no space of its own
+ *  is outside what that credential can see. */
 async function makeNote(body: string): Promise<string> {
-  const item = await ctx.storage.items.create({
-    type: "core.note",
-    properties: { body },
-  });
+  const item = await ctx.storage.items.create(
+    {
+      type: "core.note",
+      properties: { body },
+    },
+    ctx.spaceId,
+  );
   return item.id;
 }
 
@@ -108,12 +114,15 @@ async function makeNote(body: string): Promise<string> {
  * body counts the mirror plus every copy of it that survived.
  */
 async function plantMirror(body: string): Promise<string> {
-  const mirror = await ctx.storage.items.create({
-    type: "core.note",
-    properties: { body },
-    source: "integration:promote-atomicity",
-    source_id: uniq("mirror"),
-  });
+  const mirror = await ctx.storage.items.create(
+    {
+      type: "core.note",
+      properties: { body },
+      source: "integration:promote-atomicity",
+      source_id: uniq("mirror"),
+    },
+    ctx.spaceId,
+  );
   return mirror.id;
 }
 

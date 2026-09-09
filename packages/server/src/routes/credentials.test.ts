@@ -55,11 +55,10 @@ async function mintUnprivilegedKey(): Promise<string> {
   return body.key;
 }
 
-// Built through the storage layer rather than `POST /keys`, because the
-// minting caller here carries no space and so mints only space-less keys.
-// What these cases need is the opposite shape — a credential bound to a
-// space and holding `space.credentials` — so the fixture stamps the space
-// directly instead of routing around the rule.
+// Built through the storage layer rather than `POST /keys`, because these
+// cases need a credential in a space of its own rather than in the context's,
+// so that the row it creates cannot be reached by any other case here. The
+// fixture stamps that space directly.
 async function mintSpaceCredentialsKey(): Promise<string> {
   const suffix = uniqueSuffix();
   const raw = `marfa_k1_space_credentials_${suffix}`;
@@ -461,15 +460,20 @@ describe("DELETE /credentials/{id}", () => {
 
   it("refuses while a connection that is not revoked references it", async () => {
     const id = await makeCredential("delete-in-use");
-    const connection = await ctx.storage.items.create({
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        credential_ref: id,
+    // The door looks for referencing connections inside the caller's space,
+    // so a connection seeded anywhere else is one it cannot see.
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          credential_ref: id,
+        },
       },
-    });
+      ctx.spaceId,
+    );
 
     const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
       key: ctx.spaceKey,
@@ -487,16 +491,21 @@ describe("DELETE /credentials/{id}", () => {
 
   it("allows removal once the referencing connection is revoked", async () => {
     const id = await makeCredential("delete-after-revoke");
-    const connection = await ctx.storage.items.create({
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        credential_ref: id,
+    // In the caller's space, so the door genuinely finds this connection and
+    // the revoked lifecycle is what lets the delete through.
+    const connection = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          granted_at: new Date().toISOString(),
+          credential_ref: id,
+        },
       },
-    });
-    await ctx.storage.items.transition(connection.id, "revoked");
+      ctx.spaceId,
+    );
+    await ctx.storage.items.transition(connection.id, "revoked", ctx.spaceId);
 
     const res = await request(ctx.app, "DELETE", `/credentials/${id}`, {
       key: ctx.spaceKey,
@@ -514,10 +523,12 @@ describe("DELETE /credentials/{id}", () => {
     );
     expect(missing.status).toBe(404);
 
-    const note = await ctx.storage.items.create({
-      type: "core.note",
-      properties: { body: "not a credential" },
-    });
+    // In the caller's space, so the 404 comes from the type check rather than
+    // from the row being out of reach — which is the claim.
+    const note = await ctx.storage.items.create(
+      { type: "core.note", properties: { body: "not a credential" } },
+      ctx.spaceId,
+    );
     const wrongType = await request(
       ctx.app,
       "DELETE",

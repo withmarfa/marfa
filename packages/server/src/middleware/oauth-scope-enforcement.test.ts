@@ -396,6 +396,11 @@ describe("OAuth scope grammar enforcement on the data plane", () => {
 // ---------------------------------------------------------------------------
 
 describe("wildcard scope reaches runtime user.* types (keystone)", () => {
+  // A runtime type is registered into the space that registered it, so a
+  // token has to be bound to that space to see the type at all. Bound
+  // elsewhere, the write is refused for a missing schema rather than for a
+  // scope, and the read is a fence miss rather than a projection.
+  //
   // The in-memory custom-type registry is a module singleton, so each test
   // registers a distinct `user.*` id to avoid a cross-test 409.
   async function registerUserType(typeId: string): Promise<void> {
@@ -412,7 +417,10 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
 
   it("global *:write lets an OAuth token write a runtime user.* item", async () => {
     await registerUserType("user.ks_write");
-    const { rawToken } = await mintOAuthToken({ scopes: ["*:write"] });
+    const { rawToken } = await mintOAuthToken({
+      scopes: ["*:write"],
+      spaceId: ctx.spaceId,
+    });
     const created = await request(ctx.app, "POST", "/items", {
       key: rawToken,
       body: { type: "user.ks_write", properties: { title: "via wildcard" } },
@@ -427,7 +435,10 @@ describe("wildcard scope reaches runtime user.* types (keystone)", () => {
       body: { type: "user.ks_read", properties: { title: "seed" } },
     });
 
-    const { rawToken } = await mintOAuthToken({ scopes: ["user.*:read"] });
+    const { rawToken } = await mintOAuthToken({
+      scopes: ["user.*:read"],
+      spaceId: ctx.spaceId,
+    });
     const list = await request(ctx.app, "GET", "/items?type=user.ks_read", {
       key: rawToken,
     });

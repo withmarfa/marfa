@@ -57,11 +57,20 @@ function sweeper(
   });
 }
 
-/** Puts bytes in the backend and registers them, the way an upload would. */
+/** Puts bytes in the backend and registers them, the way an upload would.
+ *  Registered in the context's space, because blob metadata is keyed on
+ *  `(space_id, hash)` and the items below live in that space: a row filed
+ *  anywhere else is invisible to the sweeper reading the item's own space. */
 async function seedBlob(bytes: Buffer, mimeType: string): Promise<string> {
   const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   await ctx.blobBackend.put(ref, bytes, mimeType);
-  await ctx.storage.blobs.register(ref, mimeType, bytes.length, ref, "");
+  await ctx.storage.blobs.register(
+    ref,
+    mimeType,
+    bytes.length,
+    ref,
+    ctx.spaceId,
+  );
   return ref;
 }
 

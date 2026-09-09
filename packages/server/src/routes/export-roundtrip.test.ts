@@ -95,7 +95,11 @@ describe("export → restore round trip", () => {
   it("reproduces items, ids, tags, extensions, and edges on a fresh database", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = `t-rt-${Math.random().toString(36).slice(2, 10)}`;
+    // The exporting credential's own space. An export is a list read, so it
+    // is fenced to the caller's space and narrowed by the caller's type
+    // permissions; content anywhere else is content the archive would not
+    // carry.
+    const space = source.spaceId;
 
     const note1 = await source.storage.items.create(
       {
@@ -164,12 +168,14 @@ describe("export → restore round trip", () => {
     expect(manifest.edge_count).toBe(2);
     expect(entries.has("edges.ndjson")).toBe(true);
 
+    // Restore is an operator route, and the operator key is space-less, so
+    // the space the archive came from is named rather than inferred.
     const restoreRes = await destination.app.request(
       `/admin/restore-archive?target_space_id=${space}`,
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${destination.spaceKey}`,
+          Authorization: `Bearer ${destination.operatorKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -224,7 +230,7 @@ describe("export → restore round trip", () => {
 
   it("re-restoring the same archive changes nothing and counts duplicates", async () => {
     const source = await newContext();
-    const space = `t-rt2-${Math.random().toString(36).slice(2, 10)}`;
+    const space = source.spaceId;
 
     const a = await source.storage.items.create(
       {
@@ -262,7 +268,7 @@ describe("export → restore round trip", () => {
       source.app.request(`/admin/restore-archive?target_space_id=${space}`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${source.spaceKey}`,
+          Authorization: `Bearer ${source.operatorKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -330,7 +336,7 @@ describe("export → restore round trip", () => {
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${ctx.spaceKey}`,
+          Authorization: `Bearer ${ctx.operatorKey}`,
           "Content-Type": "application/gzip",
         },
         body: archive,
@@ -348,7 +354,7 @@ describe("export → restore round trip", () => {
 
   it("emits only edges whose endpoints are both inside a filtered export", async () => {
     const ctx = await newContext();
-    const space = `t-rt4-${Math.random().toString(36).slice(2, 10)}`;
+    const space = ctx.spaceId;
 
     const note = await ctx.storage.items.create(
       {
@@ -411,6 +417,15 @@ describe("export → restore round trip", () => {
 // Driven by restoring into an empty space and reading the bytes back,
 // because reading the manifest is what let this survive: the count agreed
 // with the (empty) blob set it was counting.
+//
+// The case is red, and the fixture is not what is wrong with it. An export
+// spanning every space needs a space-less caller, the operator key is the
+// only space-less credential there is, and an export is a list read narrowed
+// by `getTypeFilter` — whose contract is that an empty `allowed` means no
+// items visible. The operator key's type map is empty, so its export carries
+// no items, and blob hashes are collected from the items an export carries.
+// Nothing the test can mint reaches this shape; giving the instance tier a
+// read of its own would be a change to the product.
 // ---------------------------------------------------------------------------
 
 describe("a platform-level export", () => {
@@ -457,7 +472,7 @@ describe("a platform-level export", () => {
       source.app,
       "GET",
       "/export?format=archive",
-      { key: source.spaceKey },
+      { key: source.operatorKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
@@ -490,7 +505,7 @@ describe("a platform-level export", () => {
     const restoreRes = await destination.app.request("/admin/restore-archive", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${destination.spaceKey}`,
+        Authorization: `Bearer ${destination.operatorKey}`,
         "Content-Type": "application/gzip",
       },
       body: archive,

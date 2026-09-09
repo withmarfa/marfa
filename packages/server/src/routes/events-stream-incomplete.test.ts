@@ -150,24 +150,24 @@ describe("a catch-up that throws partway through", () => {
    * same throw already ends the stream where the client can see it, and
    * the replay swallowed it.
    *
-   * Registered into the null-space overlay, which is what a credential
-   * carrying no space resolves against.
+   * Registered into the context space's overlay, which is what the
+   * credential opening the stream below resolves against.
    */
   const CYCLE = ["cyc.alpha", "cyc.beta"] as const;
 
   beforeAll(() => {
     registerTypeSchema(
       { id: CYCLE[0], version: 1, parent: CYCLE[1], fields: {} },
-      null,
+      ctx.spaceId,
     );
     registerTypeSchema(
       { id: CYCLE[1], version: 1, parent: CYCLE[0], fields: {} },
-      null,
+      ctx.spaceId,
     );
   });
 
   afterAll(() => {
-    for (const id of CYCLE) unregisterTypeSchema(id, null);
+    for (const id of CYCLE) unregisterTypeSchema(id, ctx.spaceId);
   });
 
   it("tells the client and closes, instead of ending quietly", async () => {
@@ -182,9 +182,14 @@ describe("a catch-up that throws partway through", () => {
     // position when the failure happens and the frame below has
     // something to name. Without it the frame would truthfully carry
     // null and the test would prove nothing about where it stopped.
+    //
+    // Every row here carries the space the stream is opened in, because the
+    // catch-up read is fenced to the subscriber's space and an unstamped row
+    // is one it never sees.
     const beforeId = await ctx.storage.eventLog.append({
       event_type: "created",
       item_id: "ZZbeforethrowZZ",
+      space_id: ctx.spaceId,
       payload: JSON.stringify({
         type: "item.created",
         item: { id: "ZZbeforethrowZZ", type: "core.note", properties: {} },
@@ -197,6 +202,7 @@ describe("a catch-up that throws partway through", () => {
     await ctx.storage.eventLog.append({
       event_type: "created",
       item_id: "ZZcyclicZZ",
+      space_id: ctx.spaceId,
       payload: JSON.stringify({
         type: "item.created",
         item: { id: "ZZcyclicZZ", type: CYCLE[0], properties: {} },
@@ -209,6 +215,7 @@ describe("a catch-up that throws partway through", () => {
     await ctx.storage.eventLog.append({
       event_type: "created",
       item_id: "ZZafterthrowZZ",
+      space_id: ctx.spaceId,
       payload: JSON.stringify({
         type: "item.created",
         item: { id: "ZZafterthrowZZ", type: "core.note", properties: {} },

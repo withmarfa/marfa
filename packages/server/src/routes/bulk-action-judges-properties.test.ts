@@ -129,13 +129,13 @@ describe("the bulk-action door judges a property patch", () => {
     const loose = "user.unjudged_in_a_mixed_chunk";
     registerTypeSchema(
       { id: loose, version: 1, fields: { body: { type: "string" } } },
-      undefined,
+      ctx.spaceId,
     );
     try {
       const marker = `bapmix-${Math.random().toString(36).slice(2, 8)}`;
       const note = await seed(marker);
       const other = await seedOfType(marker, loose, { body: "before" });
-      unregisterTypeSchema(loose, undefined);
+      unregisterTypeSchema(loose, ctx.spaceId);
 
       const outcome = await patchByTag(marker, REFUSED_BY_THE_TYPE);
 
@@ -151,7 +151,7 @@ describe("the bulk-action door judges a property patch", () => {
       expect(await bodyOf(note)).toBe(`bap-${marker}`);
       expect(await bodyOf(other)).toBe(12345);
     } finally {
-      unregisterTypeSchema(loose, undefined);
+      unregisterTypeSchema(loose, ctx.spaceId);
     }
   });
 
@@ -163,7 +163,7 @@ describe("the bulk-action door judges a property patch", () => {
     const orphan = "user.orphaned_by_the_bulk_action_test";
     registerTypeSchema(
       { id: orphan, version: 1, fields: { note: { type: "string" } } },
-      undefined,
+      ctx.spaceId,
     );
     // Unregistered in a `finally` as well, so a throwing seed does not leave
     // the type in the process-global registry for every later test.
@@ -173,7 +173,7 @@ describe("the bulk-action door judges a property patch", () => {
       id = await seed(marker, orphan);
     } finally {
       // The row outlives its type, which is the state the guard is for.
-      unregisterTypeSchema(orphan, undefined);
+      unregisterTypeSchema(orphan, ctx.spaceId);
     }
 
     const outcome = await patchByTag(marker, { note: "still fine" });

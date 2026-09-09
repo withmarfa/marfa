@@ -37,10 +37,6 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-interface ItemResponse {
-  item: { id: string; type: string };
-}
-
 const VALID_MANIFEST = {
   name: "acme/integration",
   version: "1.0.0",
@@ -67,7 +63,9 @@ const VALID_MANIFEST = {
 // credential can do this over the wire: the reserved namespace admits only a
 // platform credential, and that one holds no space to put the row in. A
 // connection is the install pipeline's to create, and it names the space.
-async function createConnection(): Promise<string> {
+async function createConnection(
+  integrationRef: string = integrationId,
+): Promise<string> {
   const item = await ctx.storage.items.create(
     {
       type: "system.connection",
@@ -75,7 +73,24 @@ async function createConnection(): Promise<string> {
         kind: "integration",
         status: "active",
         granted_at: new Date().toISOString(),
-        integration_ref: integrationId,
+        integration_ref: integrationRef,
+      },
+    },
+    ctx.spaceId,
+  );
+  return item.id;
+}
+
+/** A connection naming no integration at all. The key is absent rather than
+ *  null, which is the shape the resolver meets when nothing was named. */
+async function createOrphanConnection(): Promise<string> {
+  const item = await ctx.storage.items.create(
+    {
+      type: "system.connection",
+      properties: {
+        kind: "integration",
+        status: "active",
+        granted_at: new Date().toISOString(),
       },
     },
     ctx.spaceId,
@@ -177,19 +192,8 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
   });
 
   it("rejects when the connection has no integration_ref", async () => {
-    const orphanRes = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-    });
-    const orphan = (await orphanRes.json()) as ItemResponse;
-    const res = await issueLease(orphan.item.id);
+    const orphan = await createOrphanConnection();
+    const res = await issueLease(orphan);
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("missing_required_field");
@@ -205,25 +209,13 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
     const reg = (await regRes.json()) as { id: string };
 
     // 2. Connection bound to the registered integration.
-    const conn = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-          integration_ref: reg.id,
-        },
-      },
-    });
-    const connBody = (await conn.json()) as ItemResponse;
+    const connectionId = await createConnection(reg.id);
 
     // 3. Issue lease with NO manifest in body — resolved server-side.
     const ok = await request(
       ctx.app,
       "POST",
-      `/connections/${connBody.item.id}/lease-tokens`,
+      `/connections/${connectionId}/lease-tokens`,
       {
         key: ctx.spaceKey,
         body: { capability_id: "drive.upload" },
@@ -235,7 +227,7 @@ describe("POST /connections/:id/lease-tokens — capability gating", () => {
     const denied = await request(
       ctx.app,
       "POST",
-      `/connections/${connBody.item.id}/lease-tokens`,
+      `/connections/${connectionId}/lease-tokens`,
       {
         key: ctx.spaceKey,
         body: { capability_id: "not.declared" },
@@ -590,7 +582,7 @@ describe("POST /connections/:id/lease-tokens — space scoping", () => {
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens`,
-      { key: ctx.spaceKey, body: { capability_id: "drive.upload" } },
+      { key: ctx.operatorKey, body: { capability_id: "drive.upload" } },
     );
     expect(res.status).toBe(201);
     const created = (await res.json()) as CreatedConnectionLeasedToken;

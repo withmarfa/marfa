@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { hashApiKey } from "../middleware/auth.js";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 /**
@@ -181,19 +180,15 @@ describe("moving a corpus through the bulk door", () => {
     // entered, and a re-type is an entry into one. Non-atomic on purpose:
     // atomic mode's own pre-check authorizes every declared type up
     // front, so it would answer this whether or not the re-type arm did.
-    const rawKey = `marfa_k1_scoped_${Math.random().toString(36).slice(2)}`;
-    await ctx.storage.keys.create(
-      {
-        label: "retype-scoped",
-        source: `retype-scoped-${rawKey.slice(-6)}`,
-        type_permissions: { "user.origin_log": "write" },
-        // Keys mode carries no space, and the schema requires a space-less
-        // key to be an operator key. `user.*` is outside the reserved
-        // namespaces, so the type map is still what refuses the move.
-        is_operator: true,
-      },
-      hashApiKey(rawKey, "test-salt"),
-    );
+    //
+    // An ordinary working key in the context's space, narrowed to write on
+    // the type being left and nothing else. It has to be bound to that space
+    // to see the types registered there at all, and the type map is then the
+    // only thing left that can refuse the move.
+    const rawKey = await mintSpaceKey(ctx, ctx.spaceId, {
+      label: "retype-scoped",
+      type_permissions: { "user.origin_log": "write" },
+    });
     const sid = `retype-${suffix()}`;
 
     // Seeded through that credential itself: `source` is stamped
