@@ -253,10 +253,15 @@ jobs:
       # them, and one server image per merge batch filled staging's disk in
       # weeks, so a pull failed with "no space left on device" and read as a
       # build fault. Prune only after both gates pass: a failed roll keeps
-      # the previous image on the box for the next attempt.
+      # the previous image on the box for the next attempt. Stopped containers
+      # go first: a migrate run that was not removed keeps its image
+      # referenced, and an image prune then skips it for good. After both
+      # gates every container that matters is running, so a stopped one here
+      # is a leftover by definition.
       - name: Prune images the box no longer serves
         env:
           TARGET: ${{ steps.target.outputs.ssh }}
         run: |
           ssh -i ~/.ssh/marfa-droplets -o StrictHostKeyChecking=accept-new "$TARGET" \
-            "docker image prune -af >/dev/null && df -h / | tail -1"
+            "docker container prune -f >/dev/null \
+             && docker image prune -af >/dev/null && df -h / | tail -1"
