@@ -2,17 +2,17 @@
  * An event is addressed to the space its row belongs to, at every door.
  *
  * Doors take the space from the calling credential, and a caller's space is
- * its rows' space right up until it is not. A platform admin is not
- * space-bound, so every door published unscoped whenever an admin wrote to
+ * its rows' space right up until it is not. The operator key is not
+ * space-bound, so every door published unscoped whenever it wrote to
  * another account's rows — the bulk runner, `DELETE /items/{id}/purge`,
  * restore, transition, all of them.
  *
  * An unscoped event is not a broadly-delivered one. `subscribe` drops an
  * event whose space does not match a space-bound subscriber's, so the account
  * whose rows were written was the one account not told, while the unscoped
- * admin received everything. Proven live before the fix: purging two rows as
- * an admin put both `item.purged` frames on the admin's stream and none on the
- * owner's.
+ * caller received everything. Proven live before the fix: purging two rows as
+ * the operator key put both `item.purged` frames on its own stream and none
+ * on the owner's.
  *
  * **A test that publishes as the space's own owner passes either way**, which
  * is why the door was believed correct for as long as it was: the two spaces

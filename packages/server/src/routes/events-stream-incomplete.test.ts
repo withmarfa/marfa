@@ -236,10 +236,15 @@ describe("a catch-up that throws partway through", () => {
 
 describe("live frames held past the limit while the catch-up runs", () => {
   /**
-   * One more than the buffer holds. The cap is one replay batch, derived
-   * from the dedupe window that bounds the same population from the other
-   * side; raising either means raising this, and the test failing is the
-   * intended way to be told so.
+   * One more than the buffer holds.
+   *
+   * **Deliberately not an account of where the cap comes from.** It used to
+   * say the cap was derived from the dedupe window, which the constant's own
+   * comment in `routes/events.ts` refutes in as many words: the two bound
+   * different populations from different sides and neither is a function of
+   * the other. Read that comment before moving either number. What this one
+   * is for is the reminder that raising the cap means raising this, and a red
+   * here is the intended way to be told so.
    */
   const OVER_THE_CAP = 501;
 

@@ -17,7 +17,7 @@ export const spaces = sqliteTable("spaces", {
   created_at: text("created_at").notNull(),
   // Operator-controlled space status. `'active'` (default) allows writes;
   // `'suspended'` blocks them at the auth middleware. Reads pass through
-  // regardless. Platform-admin keys bypass the gate so operators can
+  // regardless. The operator key bypasses the gate so operators can
   // inspect a suspended space.
   status: text("status").notNull().default("active"),
 });
@@ -328,7 +328,7 @@ export const apiKeys = sqliteTable(
 // `space_id` is `NOT NULL DEFAULT ''` rather than nullable to keep the
 // composite PK simple. Empty string `''` is the sentinel for
 // "instance-wide / no space" — used by single-space self-hosts and by
-// platform-admin uploads in hosted mode where the credential carries no
+// operator-key uploads in hosted mode where the credential carries no
 // space_id. The empty-string-as-sentinel asymmetry vs other tables (which
 // use nullable `space_id`) is intentional: composite PKs with nullable
 // columns behave inconsistently across SQLite and PG, and this table is
@@ -655,8 +655,8 @@ export const auditLog = sqliteTable(
      * Space scope. Stamped from the calling api key's `space_id`
      * (or `null` for system-initiated audits / bootstrap-admin keys with no
      * space). Reads filter by this column when the caller is space-scoped;
-     * keys without a space (bootstrap admin) see all rows. Indexed because
-     * `GET /audit` filters here on every hosted-mode request.
+     * keys without a space (the bootstrap credential) see all rows. Indexed
+     * because `GET /audit` filters here on every hosted-mode request.
      */
     space_id: text("space_id"),
     action: text("action").notNull(),
@@ -1196,7 +1196,7 @@ export const idempotencyRecords = sqliteTable(
     // mirroring `idx_items_source_dedup`: `space_id` is nullable and NULL
     // never equals NULL in a unique index, so the plain shape would stop
     // deduping the null-space bucket entirely — every request on a
-    // single-space self-host, and every platform-admin request anywhere.
+    // single-space self-host, and every operator-key request anywhere.
     // The same defect was found and repaired on `bulk_action_jobs`, which
     // reached for NULLS NOT DISTINCT instead; COALESCE says it once and is
     // the same expression in both dialects.

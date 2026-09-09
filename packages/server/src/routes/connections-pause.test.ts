@@ -59,7 +59,7 @@ function manifest(name: string): IntegrationManifest {
   };
 }
 
-/** A space-admin key with no platform flag: the shape a space owner holds. */
+/** A space-bound key with no operator flag: the shape a space owner holds. */
 async function ownerKey(spaceId: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await request(ctx.app, "POST", `/admin/spaces/${spaceId}/keys`, {
@@ -67,14 +67,13 @@ async function ownerKey(spaceId: string): Promise<string> {
     body: {
       label: `owner-${suffix}`,
       source: `owner-${suffix}`,
-      role: "space_admin",
       default_tier: "library",
       type_permissions: { "*": "write" },
     },
   });
   expect(res.status).toBe(201);
   const body = (await res.json()) as { key: string; is_operator?: boolean };
-  // The premise of the test: this key must NOT be a platform credential,
+  // The premise of the test: this key must NOT be the operator key,
   // or it would bypass the very gate that made pause unusable.
   expect(body.is_operator ?? false).toBe(false);
   return body.key;

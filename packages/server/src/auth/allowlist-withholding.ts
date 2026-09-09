@@ -17,7 +17,7 @@
  * itself, from the closed set, so the family is requestable and the drop here
  * no longer decides that. What it decides is that a *bundle* can never be the
  * reason one is publishable, and that is the half worth keeping: a
- * bundle-claimed capability leaves the consent screen's unclaimed-scope
+ * bundle-claimed space permission leaves the consent screen's unclaimed-scope
  * bucket and would inherit the bundle's `default_on` tick, which is grant by
  * silence — the thing the family exists to stop.
  *
@@ -49,16 +49,16 @@ import { log } from "../middleware/logger.js";
  * Whether this server refuses to publish a literal *because a bundle named
  * it*, even though the grammar recognizes it.
  *
- * Not "is this publishable at all": every capability is, from the closed set,
- * emitted by the allowlist directly. This answers the narrower question the
- * bundle doors ask, which is whether a configuration may be the thing that
- * publishes it.
+ * Not "is this publishable at all": every space permission is, from the
+ * closed set, emitted by the allowlist directly. This answers the narrower
+ * question the bundle doors ask, which is whether a configuration may be the
+ * thing that publishes it.
  *
  * Delegates to `isSpacePermission` rather than matching the root, so there is
- * one answer to "is this a capability" rather than two that can drift. It is
- * exact membership of the closed set, which also gives the property that
- * matters here: a literal added to `SPACE_PERMISSIONS` is withheld by having
- * been added, rather than by somebody remembering this file.
+ * one answer to "is this a space permission" rather than two that can drift.
+ * It is exact membership of the closed set, which also gives the property
+ * that matters here: a literal added to `SPACE_PERMISSIONS` is withheld by
+ * having been added, rather than by somebody remembering this file.
  *
  * A malformed literal under the root is not this function's problem — it never
  * reaches here, because `isValidScope` refuses it one step earlier.

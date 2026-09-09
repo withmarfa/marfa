@@ -9,7 +9,7 @@
  *     window — a noisy single credential is bounded by the
  *     credential cap, a space's collective fleet by the space cap.
  *
- *   - Space-less keys (platform admin, single-space self-hosts)
+ *   - Space-less keys (the operator key, single-space self-hosts)
  *     bypass per-space rate enforcement entirely.
  */
 
@@ -116,13 +116,14 @@ describe("quota wiring — POST /blobs", () => {
     expect(body.error.details?.resource).toBe("storage_bytes");
   });
 
-  it("platform-admin (no space_id) bypasses quota on POST /blobs", async () => {
+  it("the operator key (no space_id) bypasses quota on POST /blobs", async () => {
     ctx = await createTestContext();
     // Set a quota row for the empty-string sentinel — if the bypass
     // weren't in place, space-less keys would hit it.
     await ctx.storage.spaceQuotas.set("", { blobs_limit: 0 });
 
-    // ctx.adminKey has no space_id (bootstrap admin) — bypass kicks in.
+    // ctx.adminKey has no space_id (the bootstrap credential) — bypass kicks
+    // in.
     const r = await uploadBlob(ctx, ctx.adminKey, "any-content");
     expect(r.status).toBe(201);
   });
@@ -165,7 +166,7 @@ describe("quota wiring — per-space rate ceiling", () => {
     expect(body.error.code).toBe("rate_limited");
   });
 
-  it("space-less platform admin bypasses space rate ceiling", async () => {
+  it("the space-less operator key bypasses space rate ceiling", async () => {
     ctx = await createTestContext({
       rateLimitEnabled: true,
       rateLimitDefaultLimit: 1000,

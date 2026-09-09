@@ -1,5 +1,5 @@
 /**
- * POST /admin/restore-archive — admin-only, tar.gz body.
+ * POST /admin/restore-archive — operator key only, tar.gz body.
  *
  * Dedicated archive-import endpoint. Content-type is
  * `application/gzip` (not JSON); response is `{imported, duplicates,
@@ -108,15 +108,14 @@ const restoreArchiveRoute = createRoute({
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
-      // Platform admins targeting a specific space pass an explicit
-      // `?target_space_id=<id>`. Space-bound admins (space_admin /
-      // admin with space_id) may not override — the manifest
-      // space_id must match their own space.
+      // This route takes the operator key, which carries no space, so the
+      // space to restore into is named here or the space-less bucket is used.
+      // A space-bound caller cannot reach the route at all.
       target_space_id: z
         .string()
         .optional()
         .describe(
-          "Platform admins set the space to restore into; space-bound admins must match their own space.",
+          "The space to restore into. This route takes the operator key, which carries no space of its own, so naming one here is how a space is chosen.",
         ),
     }),
     body: {
@@ -248,8 +247,8 @@ async function restoreArchiveBlobs(
   // Rows and their quota reservation are one transaction: the reservation
   // has to count under the same lock the rows commit under, and a refusal
   // then rolls every row back at once. The caller with no space of their
-  // own is exactly why the explicit-space form exists — the platform-admin
-  // context form reserved nothing here, silently, and a restore could
+  // own is exactly why the explicit-space form exists — the context form
+  // reserved nothing for the operator key, silently, and a restore could
   // carry the space past ceilings every other blob write enforces.
   try {
     await storage.runInTransaction(async () => {
@@ -315,7 +314,7 @@ export function adminArchiveRoutes(
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
-    const callerKey = requireOperatorKey(c);
+    requireOperatorKey(c);
     const { target_space_id: targetSpaceParam } = c.req.valid("query");
 
     const rawBody = await c.req.arrayBuffer();
@@ -329,27 +328,20 @@ export function adminArchiveRoutes(
     const typeLines: string[] = [];
     const pendingBlobs: { hash: string; mimeType: string; data: Buffer }[] = [];
     let blobCount = 0;
-    // Resolve the space under which the archive will be restored.
-    // Space-bound admins use their own space; platform admins (no
-    // space_id on the key) MUST pass `target_space_id` explicitly.
-    // The empty-string sentinel still applies for single-space
-    // self-hosts (platform admin without a target param on a
-    // deployment whose archive has space_id = null).
-    const callerSpace = callerKey.space_id;
-    let restoreSpaceId: string;
-    if (callerSpace) {
-      if (targetSpaceParam !== undefined && targetSpaceParam !== callerSpace) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          "Cannot restore into another space — target_space_id must match caller's space_id (or be omitted).",
-        );
-      }
-      restoreSpaceId = callerSpace;
-    } else {
-      // Platform admin. target_space_id present → scope to it.
-      // Absent → empty-string sentinel (single-space self-host).
-      restoreSpaceId = targetSpaceParam ?? "";
-    }
+    // Resolve the space the archive restores into. The caller is the operator
+    // key and nothing else — `requireOperatorKey` above admits only a
+    // credential with the operator flag and no space, which the row constraint
+    // holds together — so there is no caller space to fall back on and
+    // `target_space_id` is how a space is named.
+    //
+    // **A branch reading the caller's own space used to stand here**, refusing
+    // a target that disagreed with it. It described a space-bound admin, which
+    // is not a shape any credential can now have on this route: the space-less
+    // half of the operator gate makes it unreachable rather than merely rare.
+    //
+    // Absent → the empty-string sentinel, which is what a deployment whose
+    // archive rows carry no space wrote them under.
+    const restoreSpaceId: string = targetSpaceParam ?? "";
 
     const extract = tar.extract();
     const gunzip = createGunzip();
@@ -438,8 +430,8 @@ export function adminArchiveRoutes(
     //     on items, matching the source shape).
     //   - manifest.space_id matches restoreSpaceId → expected
     //     same-space round-trip.
-    //   - mismatch → reject. Platform admins bypass via the explicit
-    //     `target_space_id` query param: their resolved
+    //   - mismatch → reject. The operator key gets past this via the
+    //     explicit `target_space_id` query param: its resolved
     //     restoreSpaceId then equals the manifest, landing in the
     //     matching branch above.
     // Closure-modified `manifest` — TS doesn't narrow through the
@@ -451,7 +443,7 @@ export function adminArchiveRoutes(
     if (manifestSpaceId !== null && manifestSpaceId !== restoreSpaceId) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        `Archive manifest.space_id "${manifestSpaceId}" does not match restore space "${restoreSpaceId}". Platform admins must pass target_space_id matching the source.`,
+        `Archive manifest.space_id "${manifestSpaceId}" does not match restore space "${restoreSpaceId}". The operator key must pass target_space_id matching the source.`,
       );
     }
 

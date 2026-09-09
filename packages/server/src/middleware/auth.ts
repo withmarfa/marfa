@@ -39,7 +39,7 @@ export interface AppEnv extends Record<string, unknown> {
      * three projections beside them translate a token's scopes into
      * `type_permissions`, `edge_permissions` and `metadata_permissions`
      * and drop every literal they do not recognize — deliberately, since a
-     * capability names authority over an administrative surface rather
+     * space permission names authority over an administrative surface rather
      * than over a resource, and admitting one into a projection would put
      * it on the data plane where a wildcard could reach it. So the granted
      * set has to travel beside the projections rather than through them,
@@ -596,8 +596,8 @@ export function hasOperatorAuthority(key: ApiKey): boolean {
  * exception. Restating it there would have been a second copy of the one
  * rule that decides who reaches the platform's own rows.
  *
- * Three ways through, and the third is narrower than it looks. A platform
- * credential passes outright. A runtime credential writing `system.activity`
+ * Three ways through, and the third is narrower than it looks. The operator
+ * key passes outright. A runtime credential writing `system.activity`
  * passes, because that is the channel an integration reports its own
  * progress through and without it a legitimate one cannot emit anything —
  * whose rows it may touch is then decided per row by the attribution rule
@@ -658,7 +658,7 @@ export function checkTypeAccess(
     ) {
       throw new MarfaError(
         ErrorCode.TYPE_NOT_PERMITTED,
-        `Reserved namespace: only platform credentials may write ${tier}.* items`,
+        `Reserved namespace: only the operator key may write ${tier}.* items`,
       );
     }
   }
@@ -909,8 +909,8 @@ export function writerConnectionOf(key: ApiKey | undefined): string | null {
  *
  * The `system.activity` carve-out in `checkTypeAccess` lets a runtime
  * credential write into the reserved `system.*` namespace without being
- * a platform credential, because status reporting is how an integration
- * says anything at all. That carve-out is about the type; it says
+ * the operator key, because status reporting is how an integration says
+ * anything at all. That carve-out is about the type; it says
  * nothing about whose activity the row claims to be.
  * `properties.connection_id` is the field every operator surface groups,
  * filters and alerts on, and it arrives in the request body.
@@ -923,9 +923,9 @@ export function writerConnectionOf(key: ApiKey | undefined): string | null {
  *
  * A runtime credential is bound to exactly one Connection, so the rule
  * is equality with that binding. Every other credential is unaffected:
- * writing `system.*` at all already requires a platform credential,
- * which is an operator acting deliberately rather than an integration
- * acting on its own.
+ * writing `system.*` at all already requires the operator key, which is an
+ * operator acting deliberately rather than an integration acting on its
+ * own.
  *
  * Called from each door that can write an item rather than folded into
  * `checkTypeAccess`, which sees a type but never a body. A door that

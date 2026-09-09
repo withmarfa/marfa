@@ -72,7 +72,8 @@ function rowToWire(
  * Validates that the caller can mutate inbound webhook subscriptions
  * for the given connection. The caller must be authenticated AND match
  * either:
- *   1. An admin credential whose space scope covers the connection.
+ *   1. A credential holding `space.connections` whose space scope covers
+ *      the connection.
  *   2. The Connection's own credential, as `actsAsConnection` in
  *      `middleware/auth.ts` defines it: an OAuth-token synthetic
  *      credential sourced `oauth:${connectionId}`, or a runtime
@@ -88,8 +89,8 @@ async function requireConnectionAccess(
   connectionId: string,
 ): Promise<{
   spaceId: string | undefined;
-  /** The connection's own space, distinct from the caller's: a platform
-   *  admin carries no space, but a subscription row must live in the
+  /** The connection's own space, distinct from the caller's: the operator
+   *  key carries no space, but a subscription row must live in the
    *  connection's space or the webhook receipt route's space-fenced
    *  lookup will never find it. */
   connectionSpaceId: string | undefined;
@@ -122,23 +123,23 @@ async function requireConnectionAccess(
   }
   // Space-bounded admin authority, matching
   // `requireConnectionProxyAccess`: the connection lookup above is fenced
-  // on `key.space_id`, so rank decides what the caller may do and the
-  // fence decides which connections it can see.
-  const isAdmin = holdsSpacePermission(c, "space.connections");
-  if (!isAdmin && !isIntegration) {
+  // on `key.space_id`, so the permission decides what the caller may do and
+  // the fence decides which connections it can see.
+  const holdsConnections = holdsSpacePermission(c, "space.connections");
+  if (!holdsConnections && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot manage inbound webhooks on this connection",
     );
   }
 
-  // **Only the rank arm needs the capability, and the distinction is the whole
-  // point.** A connection acting as itself is not an app inheriting somebody's
-  // role — it is the credential the connection was installed with, so there is
-  // no consent screen behind it and nothing for a capability to have been
-  // ticked on. Requiring one unconditionally here would 403 an integration's
-  // own dispatch. Reached only once admission is settled above, so a caller
-  // that is not the connection got in on rank.
+  // **Only the non-integration arm needs the permission, and the distinction
+  // is the whole point.** A connection acting as itself is the credential the
+  // connection was installed with, so there is no consent screen behind it and
+  // nothing for a permission to have been ticked on. Requiring one
+  // unconditionally here would 403 an integration's own dispatch. Reached only
+  // once admission is settled above, so a caller that is not the connection is
+  // holding `space.connections` or is not here.
   if (!isIntegration) requireSpacePermission(c, "space.connections");
   return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
 }
@@ -470,7 +471,7 @@ export function inboundWebhookSubscriptionRoutes(storage: Storage) {
     const id = generateId();
     const row = await storage.inboundWebhooks.create({
       id,
-      // The connection's space, not the caller's: a platform admin has no
+      // The connection's space, not the caller's: the operator key has no
       // space, and a space-less row is invisible to the receipt route's
       // space-fenced subscription lookup, so the webhook it subscribes
       // would never deliver.

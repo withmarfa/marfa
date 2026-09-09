@@ -148,8 +148,8 @@ describe("POST /items/bulk-get", () => {
   });
 
   // The critical security test: ids belonging to another space must never
-  // surface, even to a space_admin requesting them by exact id. `getMany`
-  // filters by space_id, so the cross-space rows are simply absent.
+  // surface, even to a space-bound credential requesting them by exact id.
+  // `getMany` filters by space_id, so the cross-space rows are simply absent.
   it("never returns items from another space (cross-space isolation)", async () => {
     if (!ctx.storage.spaces) return;
 

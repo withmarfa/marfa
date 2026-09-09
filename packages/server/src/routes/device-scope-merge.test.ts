@@ -371,9 +371,9 @@ describe("mergeDeviceApprovalScopes, the axes beyond item types", () => {
   });
 
   // Membership is the whole algebra for the two verb-less families. A
-  // capability is granted by naming it and by nothing else, so the merge must
-  // carry it and must not invent one.
-  it("unions capability and OIDC literals and invents neither", () => {
+  // space permission is granted by naming it and by nothing else, so the
+  // merge must carry it and must not invent one.
+  it("unions space permissions and OIDC literals and invents neither", () => {
     const merged = mergeDeviceApprovalScopes(
       ["space.webhooks", "offline_access"],
       ["space.keys", "openid"],
@@ -386,14 +386,15 @@ describe("mergeDeviceApprovalScopes, the axes beyond item types", () => {
   });
 
   // A wildcard reaching an administrative surface is the fail-open the
-  // capability kind exists to remove, and a merge is a place it could be
-  // reintroduced: `space.webhooks` parses with a `typePattern`, so
+  // space permission kind exists to remove, and a merge is a place it could
+  // be reintroduced: `space.webhooks` parses with a `typePattern`, so
   // classifying it onto the item-type axis compiles, and the global wildcard
-  // on the other side then resolves it. The capability is destroyed either
-  // way, since what gets emitted is `space.webhooks:write`, which is not
-  // a literal the grammar admits. The pairing is what this asserts: the
-  // capability survives the merge, and nothing beside it reaches another one.
-  it("does not project a capability onto the item-type axis", () => {
+  // on the other side then resolves it. The space permission is destroyed
+  // either way, since what gets emitted is `space.webhooks:write`, which is
+  // not a literal the grammar admits. The pairing is what this asserts: the
+  // space permission survives the merge, and nothing beside it reaches
+  // another one.
+  it("does not project a space permission onto the item-type axis", () => {
     const merged = mergeDeviceApprovalScopes(["space.webhooks"], ["*:write"]);
     expect(merged).toContain("space.webhooks");
     expect(merged).not.toContain("space.webhooks:write");
@@ -882,8 +883,8 @@ describe("mergeDeviceApprovalScopes, the prune against a malformed key", () => {
 
   /**
    * The one verb-less family this vocabulary carries. Without it the
-   * minimality clause below reads a capability literal as redundant, because
-   * no concrete point can see it go.
+   * minimality clause below reads a space permission literal as redundant,
+   * because no concrete point can see it go.
    */
   const MEMBERSHIP = ["space.webhooks"];
 
@@ -1134,7 +1135,7 @@ describe("intersectDeviceScopes, the verb-less families", () => {
     ).not.toContain("offline_access");
   });
 
-  it("intersects capability and OIDC literals by membership", () => {
+  it("intersects space permissions and OIDC literals by membership", () => {
     const issued = intersectDeviceScopes(
       ["space.webhooks", "space.keys", "openid"],
       ["space.webhooks", "openid", "profile"],
@@ -1149,7 +1150,7 @@ describe("intersectDeviceScopes, the verb-less families", () => {
   // merge: `space.webhooks` parses with a `typePattern`, so classifying
   // it onto the item-type axis compiles and the global wildcard would then
   // resolve it.
-  it("does not let a wildcard reach a capability the grant never named", () => {
+  it("does not let a wildcard reach a space permission the grant never named", () => {
     expect(
       intersectDeviceScopes(["*:write"], ["space.webhooks", "*:write"]),
     ).not.toContain("space.webhooks");

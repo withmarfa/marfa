@@ -168,7 +168,7 @@ describe("renderDeviceConsentScreen", () => {
     // who you are" and "See your email address" from a map of its own.
     expect(html).toContain("Confirm your identity");
     expect(html).toContain("Your email address");
-    // The raw OIDC literal must not surface as a capability row.
+    // The raw OIDC literal must not surface as a space permission row.
     expect(html).not.toContain(">openid<");
     expect(html).not.toContain("openid:none");
   });

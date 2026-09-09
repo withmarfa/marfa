@@ -12,10 +12,13 @@
  * The invariant is stated in `auth/mint-ceiling.ts`: no minting path may
  * issue a credential whose authority exceeds, on any axis, the authority
  * of the principal or governing declaration that authorized the mint —
- * role lattice, platform flag, space binding, scope or permission
- * breadth. Each door below asserts one over-ceiling ask refused AND one
- * at-ceiling mint permitted, because a gate that refuses everyone is as
- * wrong as one that refuses no one.
+ * the space permissions it holds, the operator flag, its space binding,
+ * and the breadth of its content maps. Quoted from that file rather than
+ * paraphrased, because this comment named a role lattice long after the
+ * lattice had gone and the file it cites had stopped listing one. Each door
+ * below asserts one over-ceiling ask refused AND one at-ceiling mint
+ * permitted, because a gate that refuses everyone is as wrong as one that
+ * refuses no one.
  *
  * The coverage check at the bottom has three legs, because the surface
  * is only half route-table: the published OpenAPI document is reflected
@@ -117,8 +120,8 @@ interface MintDoor {
    *
    * `source` is not a description. `oauth:<connection-id>` is read as
    * proof that a caller IS that connection, by the connection proxy and
-   * by the inbound-webhook routes, both as an alternative to
-   * space-admin rank. A member who could name one was handed the
+   * by the inbound-webhook routes, both as an alternative to holding
+   * `space.connections`. A credential that could name one was handed the
    * connection's upstream token and its webhook secrets.
    *
    * `undefined` where a door takes no caller-supplied source at all, and
@@ -197,8 +200,9 @@ const DOORS: MintDoor[] = [
   },
   {
     // The same spec route as the row above, and a second row rather than a
-    // longer one: this is a different principal reaching the same door, with a
-    // ceiling made of scopes instead of a role lattice. `specRoute` repeats
+    // longer one: this is a different principal reaching the same door, and it
+    // carries its permissions as scope literals rather than as stored maps.
+    // `specRoute` repeats
     // deliberately — the coverage check reads a Set, so a door reachable two
     // ways is named twice and counted once.
     //
@@ -214,7 +218,7 @@ const DOORS: MintDoor[] = [
       const { token } = await seedOauthBearer(
         ctx.storage,
         ["openid", "space.keys"],
-        { userRole: "space_admin", spaceId: space.id },
+        { seedUserRow: true, spaceId: space.id },
       );
       const res = await request(ctx.app, "POST", "/keys", {
         key: token,
@@ -231,9 +235,10 @@ const DOORS: MintDoor[] = [
       );
       const scopes = ["openid", "space.keys", "core.note:read"];
 
-      // Over the ceiling: no capability, so the door does not open at all.
+      // Over the ceiling: no space permission, so the door does not open at
+      // all.
       const ungranted = await seedOauthBearer(ctx.storage, ["openid"], {
-        userRole: "space_admin",
+        seedUserRow: true,
         spaceId: space.id,
       });
       const refused = await request(ctx.app, "POST", "/keys", {
@@ -245,7 +250,7 @@ const DOORS: MintDoor[] = [
       // Over the ceiling: reach the grant does not cover. `core.note:read`
       // does not cover `core.note:write` — the verb ranks.
       const granted = await seedOauthBearer(ctx.storage, scopes, {
-        userRole: "space_admin",
+        seedUserRow: true,
         spaceId: space.id,
       });
       const wider = await request(ctx.app, "POST", "/keys", {

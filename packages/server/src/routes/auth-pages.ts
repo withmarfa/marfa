@@ -258,11 +258,12 @@ async function createUserAppGrant(
       // raced. Fall through to insert.
     } else {
       // Merge rather than overwrite. `device-scope-merge.ts` carries the
-      // reasoning; the short version is that this screen confirms a scope
-      // list instead of offering one to edit, so a narrower request is the
-      // client's doing and not the user's, and writing it straight in would
-      // shrink what the browser already granted while leaving the tokens
-      // carrying the removed scopes alive.
+      // reasoning, and it moved: this screen once confirmed a list rather
+      // than offering one to edit, and now offers per-scope toggles, so a
+      // narrower set arriving here may be the client asking for less or the
+      // person unticking a row and nothing at this call site can tell them
+      // apart. The record keeps the standing grant either way, deliberately;
+      // what the untick reaches is the token this device is issued.
       //
       // **A revoked grant contributes nothing to that merge, because the
       // rule is about a STANDING grant and a revoked one is not standing.**
@@ -445,12 +446,11 @@ export function authRoutes(
   });
 
   /**
-   * Gate `/auth/authorize` on a Better Auth cookie session. End users
-   * (not just admins) must be signed in before the consent screen
-   * renders or processes a decision. Unauthenticated requests are
-   * redirected to `/auth/sign-in` with the original URL preserved as
-   * `return_to` so the sign-in flow can pick up where the OAuth flow
-   * left off.
+   * Gate `/auth/authorize` on a Better Auth cookie session. Every caller must
+   * be signed in before the consent screen renders or processes a decision.
+   * Unauthenticated requests are redirected to `/auth/sign-in` with the
+   * original URL preserved as `return_to` so the sign-in flow can pick up
+   * where the OAuth flow left off.
    *
    * Returns the active session on success; the caller responds to a
    * `null` return by issuing the redirect (no further work to do).
@@ -498,20 +498,18 @@ export function authRoutes(
 
   router.get("/grants", async (c) => {
     // Listing every app a space authorized, and revoking one, are
-    // operations on other principals' access — the same tier as the key
-    // management routes beside them, not something a narrow member
-    // credential does. The space fence below is the second axis: rank
-    // says who may act, the space says where.
+    // operations on other principals' access — the same standing as the key
+    // management routes beside them. Two axes: the permission says who may
+    // act, the space fence below says where.
     const key = requireAuth(c);
-    // Rank alone is reachable by an app, because the bearer middleware
-    // projects the signed-in person's role onto it — and revoking another
-    // app's access is exactly the authority a person would want to have been
-    // asked about. So the grant has to name it too.
+    // Revoking another app's access is exactly the authority a person would
+    // want to have been asked about, and `space.app_grants` is the row they
+    // tick to grant it. There is nothing else to reach this on: no door admits
+    // on rank, and a signed-in app holds what its grant carries.
     requireSpacePermission(c, "space.app_grants");
     // A credential carrying a space_id is fenced by the `spaceId`
     // argument below; one without a space would fall through to every
-    // space's grants, so that shape needs platform authority (or an
-    // explicit platform credential) to reach here.
+    // space's grants, so only the operator key reaches here in that shape.
     if (!key.space_id && !hasOperatorAuthority(key) && !key.is_operator) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
@@ -552,10 +550,9 @@ export function authRoutes(
   });
 
   router.delete("/grants/:id", async (c) => {
-    // Same two axes as `GET /grants`: space-admin rank to act at all,
-    // and the space fence below so only an unbound credential with
-    // platform authority may resolve `spaceId` to undefined and address
-    // a grant in any space.
+    // Same two axes as `GET /grants`: `space.app_grants` to act at all, and
+    // the space fence below, so only the operator key may resolve `spaceId`
+    // to undefined and address a grant in any space.
     const key = requireAuth(c);
     requireSpacePermission(c, "space.app_grants");
     if (!key.space_id && !hasOperatorAuthority(key) && !key.is_operator) {
@@ -1382,8 +1379,9 @@ export function authRoutes(
     // `oauth:<connection-id>` is read as proof that a caller IS that
     // connection's own credential, by the connection proxy, the
     // inbound-webhook and the leased-token routes alike. All three treat
-    // it as an alternative to space-admin rank, so a member who could
-    // name one here would be handed the connection's upstream access
+    // it as an alternative to holding the space permission those doors ask
+    // for, so a credential that could name one here would be handed the
+    // connection's upstream access
     // token to proxy through, the ability to mint its webhook secrets and
     // the ability to issue leases on it, for any connection in their own
     // space.
@@ -1432,12 +1430,12 @@ export function authRoutes(
       .filter((v): v is string => typeof v === "string")
       // The content drop is a standing limitation recorded elsewhere. The
       // withheld drop is what stops a hand-crafted post to this form from
-      // naming a capability, and the reason has changed rather than gone: it
-      // used to be that such a literal granted nothing, so admitting one was
-      // merely untidy. `space.keys` now opens all four keys doors, so a
-      // form post that slipped one through would be a grant nobody ticked on
-      // a consent screen — which is the one thing the capability family exists
-      // to prevent.
+      // naming a space permission, and the reason has changed rather than
+      // gone: it used to be that such a literal granted nothing, so admitting
+      // one was merely untidy. `space.keys` now opens all four keys doors, so
+      // a form post that slipped one through would be a grant nobody ticked
+      // on a consent screen — which is the one thing the space permission
+      // family exists to prevent.
       .filter(
         (s) =>
           isValidScope(s) && !isContentScope(s) && !isWithheldFromAllowlist(s),
@@ -1475,8 +1473,14 @@ export function authRoutes(
       : scopesToTypePermissions(scopes);
 
     const edgePermissions = selfServeEdgePermissions(scopes, contentLevel);
+    // **What the toggle actually grants, in the words the form now uses.** It
+    // said "read and write everything in your space", which names the content
+    // and stops — and this mint hands down all eleven space permissions
+    // beside it. The line it replaced was `fullAccess ? userRow.role :
+    // "member"`, and a key had no column for those eleven, so the summary was
+    // true when it was written and became false the day one did.
     const accessSummary = fullAccess
-      ? "read and write everything in your space"
+      ? "do everything you can do in your space, including managing its keys, webhooks, connections and settings"
       : contentLevel === "write"
         ? "read and write your content"
         : contentLevel === "read"
@@ -2397,8 +2401,8 @@ export function authRoutes(
     // keeping it would be the harm rather than the guard: the CLI signs in
     // through this flow and nothing else, and the MCP server has no consent
     // surface at all — it reads the token the CLI stored. Refusing here
-    // would leave both permanently unable to hold a capability, which is a
-    // lockout dressed as least privilege.
+    // would leave both permanently unable to hold a space permission, which
+    // is a lockout dressed as least privilege.
     //
     // Withholding now happens where a person can act on it: the scope
     // arrives unticked, and `POST /auth/device/consent` grants the ticked

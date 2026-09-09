@@ -543,7 +543,7 @@ describe("local-runtime supervisor", () => {
 
   it("writes the row for a hosted connection whose message carries no space", async () => {
     // The space comes from the connection, not the message. A manual run
-    // carries the caller's space, and a platform admin has none, so keying
+    // carries the caller's space, and the operator key has none, so keying
     // the hosted guard on the message would drop the row for an in-space
     // connection somebody ran by hand. The mint this replaced read the
     // connection.

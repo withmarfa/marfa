@@ -255,8 +255,8 @@ export const ItemDetailSchema = z.object({
 /**
  * An API key as a create route answers it.
  *
- * Two doors mint a key — the space caller's own and the platform-admin one
- * that binds a key to a space — and they answered with two declarations that
+ * Two doors mint a key — the space caller's own and the operator one that
+ * binds a key to a space — and they answered with two declarations that
  * had drifted apart. One carried `expires_at` and the other did not.
  *
  * **The one without it was right.** An expiry is settable only through

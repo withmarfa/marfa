@@ -23,7 +23,7 @@ import type { DrizzleDb } from "./connection.js";
  * scoped by space_id.
  *
  * The blobs table uses an empty-string sentinel for instance-wide rows;
- * count() for `blobs` filters by exact space_id, so platform-admin
+ * count() for `blobs` filters by exact space_id, so operator-key
  * uploads (under '') don't count against any specific space — the
  * empty-string sentinel acts as a separate "space" for quota purposes,
  * which is the correct behavior for hosted multi-space.

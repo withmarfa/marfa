@@ -172,7 +172,7 @@ export function bulkGetRoutes(storage: Storage) {
     // Space fence: `items.getMany` filters by `space_id` (the same scope
     // the single-item GET threads via `items.get(id, space_id)`) and drops
     // trashed rows. A caller with a space scope therefore never sees rows
-    // outside it; for space-less keys (platform admin / single-space
+    // outside it; for space-less keys (the operator key / single-space
     // self-host) the scope is the whole instance, matching the single GET.
     const spaceId = apiKey.space_id;
     const found = await storage.items.getMany(ids, spaceId);

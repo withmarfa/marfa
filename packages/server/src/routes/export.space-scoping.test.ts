@@ -1,19 +1,20 @@
 /**
  * Space-scoped data export coverage:
  *
- *   - space_admin's self-export returns only the calling space's
- *     rows. Other spaces' items, even when present in the same DB,
- *     are filtered out at the storage layer.
+ *   - a space-bound credential's self-export returns only the calling
+ *     space's rows. Other spaces' items, even when present in the same
+ *     DB, are filtered out at the storage layer.
  *
- *   - space_admin with `target_space_id` matching own succeeds.
+ *   - a space-bound credential with `target_space_id` matching its own
+ *     succeeds.
  *
- *   - space_admin with mismatching `target_space_id` is rejected
- *     with 403 (cross-space authority not granted).
+ *   - a space-bound credential with a mismatching `target_space_id` is
+ *     rejected with 403 (cross-space authority not granted).
  *
- *   - platform admin with explicit `target_space_id` scopes to that
+ *   - the operator key with an explicit `target_space_id` scopes to that
  *     space.
  *
- *   - platform admin without target_space_id falls through to the
+ *   - the operator key without target_space_id falls through to the
  *     unscoped path (self-host compat) and is audited as
  *     `details.scope: "platform_unscoped"` so operators can alert.
  *
@@ -65,7 +66,7 @@ async function readNdjsonItems(res: Response): Promise<string[]> {
     .map((parsed) => parsed.item!.id);
 }
 
-describe("space-scoped export — space_admin self-export", () => {
+describe("space-scoped export — a space-bound credential's self-export", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();
@@ -130,7 +131,7 @@ describe("space-scoped export — space_admin self-export", () => {
   });
 });
 
-describe("space-scoped export — platform admin", () => {
+describe("space-scoped export — the operator key", () => {
   let ctx: TestContext;
   afterEach(async () => {
     await ctx.cleanup();

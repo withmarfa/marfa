@@ -39,11 +39,11 @@ import type { AppEnv } from "./auth.js";
  * orders would deadlock against each other; a deterministic order is what
  * makes the second reservation safe to add.
  *
- * No-op for a caller with no space: platform-admin keys, single-space
- * self-hosts and the bootstrap admin have no space to constrain. Also a no-op
- * when nothing is limited, so an unlimited space is never serialised against
- * a ceiling that does not exist — a NULL `<resource>_limit` on the
- * space_quotas row with no env default means unlimited.
+ * No-op for a caller with no space: the operator key, single-space self-hosts
+ * and the bootstrap credential have no space to constrain. Also a no-op when
+ * nothing is limited, so an unlimited space is never serialised against a
+ * ceiling that does not exist — a NULL `<resource>_limit` on the space_quotas
+ * row with no env default means unlimited.
  *
  * Counts stay computed on demand rather than eagerly incremented. The lock is
  * what makes an on-demand count correct, which is what an eager counter would
@@ -65,8 +65,8 @@ export async function reserveQuota(
 /**
  * The explicit-space form, for writes performed on a space's behalf by a
  * caller who has no space of their own. The context form above reads the
- * caller's `space_id`, which for a platform admin is `undefined` — so a
- * platform-gated route calling it reserved nothing, silently, and archive
+ * caller's `space_id`, which for the operator key is `undefined` — so an
+ * operator-gated route calling it reserved nothing, silently, and archive
  * restore wrote whatever the archive contained. A route writing INTO a
  * space names that space here regardless of who is asking.
  */

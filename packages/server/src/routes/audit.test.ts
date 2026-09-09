@@ -310,7 +310,7 @@ describe("GET /audit", () => {
     expect(spaceBResourceIds).not.toContain("row-a");
     expect(spaceBResourceIds).not.toContain("row-bootstrap");
 
-    // Route-layer end-to-end: mint a space-scoped admin key, hit
+    // Route-layer end-to-end: mint a space-scoped key, hit
     // GET /audit, assert it sees only space-A rows. Verifies the
     // `space_id: callerSpaceId` line in the route handler hasn't
     // regressed back to an unfiltered shape.

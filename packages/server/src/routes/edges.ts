@@ -426,8 +426,12 @@ export function edgeRoutes(storage: Storage) {
     }
     const spaceId = c.get("apiKey")?.space_id;
 
-    // Dual gate: source item's type permission + edge type permission.
-    // Admin keys bypass both via the helpers.
+    // Dual gate: the source item's type permission and the edge type's, and
+    // nothing bypasses either. There is no rank left to bypass on, and the
+    // operator key is not an exception here — it carries empty maps, so it is
+    // refused on an ordinary edge like any other credential holding none.
+    // The one carve-out either helper makes is for a reserved namespace, and
+    // that does not fire for an ordinary type.
     const sourceItem = await storage.items.get(body.source_id, spaceId);
     if (!sourceItem) {
       throw new MarfaError(
@@ -545,7 +549,7 @@ export function edgeRoutes(storage: Storage) {
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
     // space: a space-scoped caller must never learn another space's edge
-    // exists. Platform-admin / single-space keys carry no space_id and skip
+    // exists. The operator key and single-space keys carry no space_id and skip
     // the check.
     if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
@@ -576,7 +580,7 @@ export function edgeRoutes(storage: Storage) {
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
     // space: a space-scoped caller must never learn another space's edge
-    // exists, let alone mutate it. Platform-admin / single-space keys carry
+    // exists, let alone mutate it. The operator key and single-space keys carry
     // no space_id and skip the check.
     if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
@@ -668,7 +672,7 @@ export function edgeRoutes(storage: Storage) {
     const existing = await storage.edges.get(id);
     // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
     // space: a space-scoped caller must never learn another space's edge
-    // exists, let alone delete it. Platform-admin / single-space keys carry
+    // exists, let alone delete it. The operator key and single-space keys carry
     // no space_id and skip the check.
     if (!existing || (spaceId && existing.space_id !== spaceId)) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);

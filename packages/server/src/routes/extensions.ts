@@ -6,7 +6,10 @@
  * This coupling is intentional — the key label IS the namespace identity.
  * Additional access can be granted via extension_permissions on the key.
  *
- * Reserved namespaces (core, marfa, system) cannot be written to by non-admin keys.
+ * Reserved namespaces (core, marfa, system) take the operator key, and for
+ * `system.*` nothing can write through the API at all: the namespace gate
+ * wants the operator flag and the permission-map check then refuses its empty
+ * maps. Every real writer goes through the storage layer instead.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -390,10 +393,17 @@ export function extensionRoutes(storage: Storage) {
     requireRowWritable(apiKey, item);
 
     // connection.runtime is the runtime credential's hot-state subtree.
-    // Only the connection's own runtime credential may write it, and
-    // only to the matching connection's item. Admin keys can read but
-    // not write so operators can inspect runtime state without
-    // corrupting it.
+    // Only the connection's own runtime credential may write it, and only to
+    // the matching connection's item.
+    //
+    // **The reason this used to give was that operators could still read it,
+    // and no code path grants that read.** Every call site of
+    // `filterExtensionsByPermission` passes its privileged argument as a
+    // hardcoded `false`, and the read handler carries no carve-out for this
+    // namespace at all. The write refusal stands on its own: hot state a
+    // runtime writes about itself is not something another credential should
+    // be able to forge.
+
     if (namespace === RUNTIME_NAMESPACE) {
       if (!apiKey?.is_runtime_credential) {
         throw new MarfaError(

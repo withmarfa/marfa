@@ -108,13 +108,13 @@ describe("per-space quota enforcement", () => {
     expect(body.error.details.limit).toBe(3);
   });
 
-  it("space-less platform admin bypasses quota enforcement entirely", async () => {
+  it("the space-less operator key bypasses quota enforcement entirely", async () => {
     ctx = await createTestContext();
     // Set a quota for an arbitrary space — irrelevant here because the
-    // bootstrap admin (ctx.adminKey) has no space_id.
+    // bootstrap credential (ctx.adminKey) has no space_id.
     await ctx.storage.spaceQuotas.set("phantom-space", { webhooks_limit: 0 });
 
-    // Platform admin can create webhooks freely; they don't have a
+    // The operator key can create webhooks freely; it does not have a
     // space_id, so enforceQuota is a no-op.
     for (let i = 0; i < 3; i++) {
       const res = await request(ctx.app, "POST", "/webhooks", {

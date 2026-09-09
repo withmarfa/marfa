@@ -1,11 +1,10 @@
 /**
- * D32's one rule at the wire: nothing writes to an item an integration
- * owns. The owning integration re-syncs its mirror (with faithful-mirror
- * null semantics); everyone else — member and platform admin alike — is
- * refused toward promotion, which mints a user-owned copy joined by
- * derived-from. Items outside integration provenance are untouched by
- * the rule, which is also what keeps sync (a client, not an integration)
- * unaffected.
+ * D32's one rule at the wire: nothing writes to an item an integration owns.
+ * The owning integration re-syncs its mirror (with faithful-mirror null
+ * semantics); everyone else, the operator key included, is refused toward
+ * promotion, which mints a user-owned copy joined by derived-from. Items
+ * outside integration provenance are untouched by the rule, which is also
+ * what keeps sync (a client, not an integration) unaffected.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -43,7 +42,6 @@ beforeAll(async () => {
     body: {
       label: "mirror-member",
       source: "mirror-member-src",
-      role: "member",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
     },
@@ -84,7 +82,7 @@ describe("the mirror rule", () => {
     expect(body.error.code).toBe("integration_owned");
   });
 
-  it("refuses a platform admin too — one rule, not two", async () => {
+  it("refuses the operator key too — one rule, not two", async () => {
     const id = await createMirror(`m-${String(Math.random()).slice(2)}`);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.adminKey,

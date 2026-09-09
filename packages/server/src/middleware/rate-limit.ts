@@ -75,15 +75,14 @@ export function rateLimitMiddleware(
 ): MiddlewareHandler<AppEnv> {
   const spaceLimits = new Map<string, SpaceLimitCacheEntry>();
 
-  // Aggregate per-identifier cap = defaultLimit * multiplier. The
-  // per-path window below is keyed on `(identifier, pathPrefix)`, so an
-  // identifier's effective budget multiplies across every path group it
-  // touches — and space-less keys (IP/anon callers, platform-admin
-  // keys) have no per-space aggregate cap to fall back on. The
-  // aggregate window keys on the identifier ALONE (no path split) to
-  // bound that total. The multiplier keeps the per-path window the
-  // primary cap most callers hit, with the aggregate as a backstop. `0`
-  // disables it (legacy per-path-only behavior).
+  // Aggregate per-identifier cap = defaultLimit * multiplier. The per-path
+  // window below is keyed on `(identifier, pathPrefix)`, so an identifier's
+  // effective budget multiplies across every path group it touches — and
+  // space-less keys (IP/anon callers, the operator key) have no per-space
+  // aggregate cap to fall back on. The aggregate window keys on the
+  // identifier ALONE (no path split) to bound that total. The multiplier
+  // keeps the per-path window the primary cap most callers hit, with the
+  // aggregate as a backstop. `0` disables it (legacy per-path-only behavior).
   const aggregateMultiplier =
     config.aggregateMultiplier ?? DEFAULT_AGGREGATE_MULTIPLIER;
   const aggregateLimit =
@@ -236,7 +235,7 @@ export function rateLimitMiddleware(
     // Aggregate per-identifier window — keyed on the identifier with NO
     // path split — so a caller can't multiply its budget by spreading
     // traffic across path groups, and space-less identifiers (IP/anon,
-    // platform admin) still hit a ceiling.
+    // the operator key) still hit a ceiling.
     if (aggregateLimit > 0) {
       rejectOver(
         windows.get(aggregateWindowKey),
@@ -248,7 +247,7 @@ export function rateLimitMiddleware(
     // Per-space ceiling on top of the per-credential window. A noisy
     // single credential is bounded by the cap above; a space's
     // collective fleet is bounded here. Skipped for space-less keys
-    // (single-space self-hosts, platform admin).
+    // (single-space self-hosts, the operator key).
     if (spaceWindowKey && spaceLimitValue !== null) {
       rejectOver(
         windows.get(spaceWindowKey),

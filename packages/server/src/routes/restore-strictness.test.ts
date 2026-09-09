@@ -1,7 +1,7 @@
 /**
  * What an archive may write, and what a refused restore may leave behind.
  *
- * An archive is a file somebody can hand you. Restore is platform-admin
+ * An archive is a file somebody can hand you. Restore is operator-key
  * gated, so this is trust-boundary erosion rather than an open door, but the
  * replay used to go through the raw edge insert: no registry lookup, no
  * endpoint-type constraints, no cardinality, no cycle check, no self-edge

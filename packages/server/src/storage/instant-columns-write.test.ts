@@ -75,7 +75,6 @@ beforeAll(async () => {
     body: {
       label: "instant-columns-write",
       source: "instant-columns-src",
-      role: "member",
       type_permissions: { "*": "write" },
     },
   });

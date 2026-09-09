@@ -119,7 +119,7 @@ export function createApp(
    * answer on its own: whether this deployment can dispatch the named
    * integration at all, and the queue to put the run on. It belongs here
    * rather than on `localRuntimeApp` because that sub-app mounts before
-   * the auth middleware, and asking for a run is a space-admin action.
+   * the auth middleware, and asking for a run needs `space.connections`.
    */
   localRuntime?:
     import("./integrations/local-runtime/types.js").LocalRuntime | null,
@@ -354,9 +354,9 @@ export function createApp(
 
   // Space-suspension write-guard. Sits AFTER `authMiddleware` so the
   // credential is resolved when this runs. Rejects every non-GET request
-  // from a non-platform credential whose space is suspended with HTTP 403
-  // `space_suspended`. Reads pass through; platform-admin keys bypass so
-  // operators can manage a suspended space.
+  // whose space is suspended with HTTP 403 `space_suspended`. Reads pass
+  // through; the operator key is let through so operators can manage a
+  // suspended space.
   app.use("*", spaceSuspensionMiddleware(storage));
 
   // Block sign-ins on accounts in `pending_deletion`. Mounted AFTER the
@@ -488,7 +488,7 @@ export function createApp(
   // `set_config('marfa.space_id', $space, true)` so the per-table RLS
   // policies actually filter queries. Pass-through when
   // `MARFA_RLS_ENFORCE=false`, when storage is SQLite (`pgDb` undefined),
-  // or when the request has no space on its api key (platform admin /
+  // or when the request has no space on its api key (the operator key /
   // public routes). See `middleware/rls-space-context.ts` for the full
   // contract — including the streaming-response exemption.
   app.use(

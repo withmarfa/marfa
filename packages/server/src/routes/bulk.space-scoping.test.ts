@@ -1,17 +1,17 @@
 /**
  * Bulk item operations — space scoping.
  *
- * `POST /items/bulk` is space-admin capable (widened from platform-admin):
- * a space_admin can bulk-upsert within their own space but never reaches
- * another space's rows. This proves the isolation end to end:
+ * `POST /items/bulk` is reachable by a space-bound credential (widened from
+ * the operator key): one can bulk-upsert within its own space but never
+ * reaches another space's rows. This proves the isolation end to end:
  *
- *   - space_admin A bulk-creates inside space A;
+ *   - a credential bound to space A bulk-creates inside space A;
  *   - a cross-space id collision does NOT update space B's row — it
  *     creates a fresh row in space A (the id lookup is space-fenced, so
  *     the upsert-by-id branch never matches across spaces);
  *   - a cross-space (source, source_id) collision likewise creates rather
  *     than updates;
- *   - platform-admin remains unaffected (cross-space authority).
+ *   - the operator key remains unaffected (cross-space authority).
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -70,8 +70,8 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("POST /items/bulk — space_admin within own space", () => {
-  it("space_admin bulk-creates items in their own space", async () => {
+describe("POST /items/bulk — a space-bound credential within its own space", () => {
+  it("bulk-creates items in its own space", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: adminA,
@@ -107,7 +107,7 @@ describe("POST /items/bulk — space_admin within own space", () => {
     }
   });
 
-  it("space_admin upsert updates only its own row, never another space's", async () => {
+  it("upsert updates only its own row, never another space's", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const sourceId = `shared-srcid-${suffix}`;
 
@@ -218,8 +218,8 @@ describe("POST /items/bulk — space_admin within own space", () => {
   });
 });
 
-describe("POST /items/bulk — platform-admin unaffected", () => {
-  it("platform-admin bulk-creates cross-space (no space scope)", async () => {
+describe("POST /items/bulk — the operator key unaffected", () => {
+  it("the operator key bulk-creates cross-space (no space scope)", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: ctx.adminKey,

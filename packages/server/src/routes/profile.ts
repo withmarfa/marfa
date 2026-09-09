@@ -408,7 +408,7 @@ export function profileRoutes(
   // Resolve the calling user's `users` row + email pair, or throw a
   // typed error if the auth path isn't bound to a profile. The 404 here
   // is the "you authenticated but I have no profile for you" shape —
-  // most likely a bootstrap admin key created before the user was
+  // most likely a bootstrap credential created before the user was
   // provisioned.
   async function resolveOwnProfile(c: Parameters<typeof requireAuth>[0]) {
     const apiKey = requireAuth(c);

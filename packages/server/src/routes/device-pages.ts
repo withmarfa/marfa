@@ -71,7 +71,7 @@ function openEndedSuffixed(scope: ParsedScope, base: string): string {
 
 /**
  * Resolve the human-readable description for one parsed scope. OIDC literals
- * and capability scopes map to friendly labels; everything else uses the
+ * and space permissions map to friendly labels; everything else uses the
  * caller-supplied description, falling back to the scope literal.
  *
  * **Per scope rather than per set, because the rows carry checkboxes now.**
@@ -120,7 +120,7 @@ function openEndedSuffixed(scope: ParsedScope, base: string): string {
  *
  * The verb-less families are named rather than defaulted, because the
  * fallback is a literal this function rebuilds and the naive rebuild is
- * wrong for them. Appending `:${operation}` to a capability produces
+ * wrong for them. Appending `:${operation}` to a space permission produces
  * `space.webhooks:none`, which no parser accepts and nobody signed, and
  * this string is what a person reads on the device-approval screen when no
  * description resolves. Nothing is granted from it, so the failure is
@@ -287,8 +287,8 @@ export function renderDevicePage(params: DevicePageParams): string {
  * than editable, so the only decisions this screen offered were approve
  * everything and deny. That was survivable while every scope reaching it was
  * one an on-by-default bundle offered, and it stopped being survivable the
- * moment a capability could be requested: the authorize screen unticks one
- * deliberately, and a person meeting this screen instead granted it on a
+ * moment a space permission could be requested: the authorize screen unticks
+ * one deliberately, and a person meeting this screen instead granted it on a
  * single click. Two surfaces cannot hold opposite opinions about
  * administrative authority.
  *
@@ -297,7 +297,7 @@ export function renderDevicePage(params: DevicePageParams): string {
  * nothing else, and the MCP server has no consent surface at all — it reads
  * the token the CLI stored. So this screen is the only door either will ever
  * reach, and refusing here would leave them permanently unable to hold a
- * capability. The refusal existed because the screen could not express
+ * space permission. The refusal existed because the screen could not express
  * withholding; giving it a tick removes the premise, so the refusal is
  * retired rather than weakened.
  *

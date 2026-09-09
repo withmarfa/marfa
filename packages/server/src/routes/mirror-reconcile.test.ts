@@ -82,7 +82,6 @@ beforeAll(async () => {
     body: {
       label: "reconcile-member",
       source: "reconcile-member-src",
-      role: "member",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
     },

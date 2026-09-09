@@ -1,6 +1,6 @@
 /**
- * Credential-management routes — admin surface for creating the
- * `system.credential` rows that integrations reference.
+ * Credential-management routes — the `space.credentials` surface for
+ * creating the `system.credential` rows that integrations reference.
  *
  * Two routes, one per non-runtime credential kind:
  *

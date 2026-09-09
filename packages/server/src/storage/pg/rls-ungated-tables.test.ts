@@ -11,10 +11,10 @@
  * events) carry no `space_id` column; their policies join to the parent
  * webhook, so the test also proves the join predicate filters correctly.
  *
- * Plus the load-bearing NO-FORCE invariant: with RLS enabled on `users`,
- * an owner-connection sign-up still provisions a `users` row, and the
- * bearer-middleware role projection (also an owner-connection read) still
- * resolves the user's role. A `FORCE ROW LEVEL SECURITY` on `users` would
+ * Plus the load-bearing NO-FORCE invariant: with RLS enabled on `users`, an
+ * owner-connection sign-up still provisions a `users` row, and the bearer
+ * middleware's lookup of that row (also an owner-connection read) still
+ * resolves the caller's space. A `FORCE ROW LEVEL SECURITY` on `users` would
  * break both — this suite is the regression guard that keeps the migration
  * on plain `ENABLE`.
  *
@@ -252,7 +252,7 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
       }
     });
 
-    it("bearer-middleware role projection still resolves users.role with RLS enabled", async () => {
+    it("the bearer middleware still resolves a signed-in caller's space with RLS enabled", async () => {
       const ctx = await createTestContext({
         rlsEnforce: true,
         authMode: "hosted",
@@ -262,18 +262,18 @@ describe.skipIf(!isPg)("Postgres RLS — ungated tables (0067)", () => {
         const space = await ctx.storage.spaces.create("proj-space");
         const { token } = await seedOauthBearer(
           ctx.storage,
-          // The door reads a capability as well as the role now, and the
-          // capability is checked first. Without it the request is refused
-          // before the projection is consulted, and this test would pass or
-          // fail on something other than what it is named for.
+          // The door reads the grant's space permissions and nothing else.
+          // Without this the request is refused before the `users` lookup
+          // happens at all, and the test would pass or fail on something
+          // other than what it is named for.
           ["space.keys"],
-          { spaceId: space.id, userRole: "instance_admin" },
+          { spaceId: space.id, seedUserRow: true },
         );
 
-        // GET /keys is admin-role-gated. It resolves only if the bearer
-        // middleware's `users.getByAuthUserId` lookup (owner connection,
-        // no GUC) projected the role — which a FORCE on `users` would
-        // have broken.
+        // `GET /keys` is gated on `space.keys` and fenced on the caller's
+        // space, so it answers 200 only if the bearer middleware's
+        // `users.getByAuthUserId` lookup (owner connection, no GUC) resolved
+        // that space — which a FORCE on `users` would have broken.
         const res = await request(ctx.app, "GET", "/keys", { key: token });
         expect(res.status).toBe(200);
       } finally {

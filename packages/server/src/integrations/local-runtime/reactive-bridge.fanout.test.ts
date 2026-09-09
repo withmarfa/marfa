@@ -99,7 +99,6 @@ describe("a replicated event carries the writer's fan-out decision", () => {
         body: {
           label: "bridge-fanout-probe",
           source: "bridge-fanout-probe",
-          role: "space_admin",
           default_tier: "library",
           type_permissions: { "*": "write" },
         },

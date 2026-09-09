@@ -13,7 +13,7 @@ export interface ResolvedBlob {
  *
  * The `blobs` table is keyed `(space_id, hash)`, with `""` standing for the
  * instance-wide bucket a single-space self-host writes into. A reader with no
- * space is either a platform admin, whose reach is every space, or that
+ * space is either the operator key, whose reach is every space, or that
  * self-host, whose only rows are the `""` ones. Looking `""` up in the first
  * case reports absence for bytes that are plainly there, and **absence is the
  * dangerous direction**: absence is what a repair, a purge, or an archive

@@ -61,7 +61,7 @@ export function isOpenEnded(scope: ParsedScope): boolean {
     case "oidc":
     case "space":
       // No pattern and no verb between them. An OIDC literal names a claim
-      // set and a capability names one administrative surface; neither
+      // set and a space permission names one administrative surface; neither
       // reaches anything registered later, because neither reaches anything
       // registered at all.
       return false;
@@ -123,8 +123,8 @@ export const OPEN_ENDED_LINE =
   "Covers what exists today plus anything added later";
 
 /**
- * The device screen's form. That screen has no second line and no toggles:
- * it prints one sentence per grant and stops, so this is appended to the
+ * The device screen's form. That screen has no second line: it prints one
+ * sentence per grant beside its toggle and stops, so this is appended to the
  * description and has to end like a sentence.
  */
 export const OPEN_ENDED_SENTENCE = "Also covers anything added later.";

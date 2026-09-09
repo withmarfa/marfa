@@ -233,12 +233,12 @@ describe("self-serve API keys at /auth/keys (T-326)", () => {
  * `type_permissions` and never set `edge_permissions`, so a self-serve key
  * writing an edge got `403 edge_permission_denied`. Edges are the substance of
  * the data model, so that key could not seed, migrate or restore a space, and
- * every seeding job had to be done for the owner by an operator holding a
- * platform credential — the exact dependency the space_admin role exists to
- * remove.
+ * every seeding job had to be done for the owner by the operator key — the
+ * exact dependency a space-bound working credential exists to remove.
  *
  * The ceiling is the other half and is not optional: a self-serve credential
- * must never exceed the owner's own role, so both directions are pinned here.
+ * must never exceed the permission set of whoever made it, so both directions
+ * are pinned here.
  */
 describe("self-serve keys can fill their own space", () => {
   async function ownerCookie(tc: TestContext, email: string): Promise<string> {

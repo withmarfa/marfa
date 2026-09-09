@@ -6,9 +6,9 @@
  * Connection that had a perfectly good space. Only the runtime execution
  * path was affected: the install and uninstall pipelines pass a space
  * explicitly, while an integration's own writes are stamped from the credential
- * it presents. `POST /keys` minted space-less credentials from a platform
- * admin, so a credential that read as scoped carried the platform tier, and
- * every row it wrote landed unowned.
+ * it presents. `POST /keys` minted space-less credentials from the operator
+ * key, so a credential that read as scoped reached every space, and every
+ * row it wrote landed unowned.
  *
  * A null space is not a missing label. It is the signal the RLS policies and
  * the storage layer's space predicate both read as "every space", so an

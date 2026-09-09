@@ -422,7 +422,7 @@ export function oauthStartRoutes(
     requireSpacePermission(c, "space.credentials");
     // No integration arm on this door: it starts the upstream OAuth dance and
     // takes a caller-supplied scope override into the authorize URL, so it is
-    // a credentials surface reached on rank and nothing else.
+    // a credentials surface, reached on `space.credentials` and nothing else.
     requireSpacePermission(c, "space.credentials");
     const connectionId = c.req.param("id");
     // Fenced on the caller's space. Holding `space.credentials` confers no

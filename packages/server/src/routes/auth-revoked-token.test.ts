@@ -69,7 +69,7 @@ describe("a revoked OAuth access token", () => {
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
       ["space.keys"],
-      { spaceId: space.id, userRole: "instance_admin" },
+      { spaceId: space.id, seedUserRow: true },
     );
 
     // The token is live: an hour of expiry left, and it authenticates.
@@ -93,7 +93,7 @@ describe("a revoked OAuth access token", () => {
     const { token, clientId } = await seedOauthBearer(
       ctx.storage,
       ["space.keys"],
-      { spaceId: space.id, userRole: "instance_admin" },
+      { spaceId: space.id, seedUserRow: true },
     );
 
     const { hashApiKey } = await import("../middleware/auth.js");

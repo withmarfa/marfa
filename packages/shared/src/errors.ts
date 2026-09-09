@@ -81,9 +81,9 @@ export enum ErrorCode {
    */
   QUOTA_EXCEEDED = "quota_exceeded",
   /**
-   * Platform operator has suspended this space. The auth middleware rejects
-   * every non-GET request with this code; reads pass through. Platform-admin
-   * keys bypass the gate so operators can inspect a suspended space.
+   * The operator has suspended this space. The auth middleware rejects every
+   * non-GET request with this code; reads pass through. The operator key
+   * bypasses the gate, so a suspended space can still be inspected.
    */
   SPACE_SUSPENDED = "space_suspended",
   CONFLICT = "conflict",

@@ -472,7 +472,7 @@ describe("performUpgrade — a connection inside a space", () => {
       `upgrade-${Math.random().toString(36).slice(2, 8)}`,
     );
     // The catalog rows carry no space, as they do on a live deployment:
-    // they are registered by a platform credential and read through the
+    // they are registered by the operator key and read through the
     // widening.
     const v1 = await registerIntegrationManifest(
       hosted.storage,
@@ -538,8 +538,8 @@ describe("performUpgrade — a connection inside a space", () => {
     ).toBeUndefined();
   });
 
-  it("revokes it when a platform admin drives the upgrade", async () => {
-    // Same mismatch the uninstall path has: a platform admin carries no
+  it("revokes it when the operator key drives the upgrade", async () => {
+    // Same mismatch the uninstall path has: the operator key carries no
     // space, so the pipeline resolves the connection unfenced and then has
     // to find credentials that all carry the connection's space. Leaving
     // them live is worse here than on uninstall, because they keep working

@@ -9,12 +9,12 @@
  * is how the second one drifts.
  */
 
-/** The `connection.runtime` namespace is reserved for the
- *  per-Connection runtime credential's hot state. Only runtime
- *  credentials (is_runtime_credential + connection_id
- *  stamped at mint) can write it; admin keys can read but not write so
- *  operators can inspect runtime state in the UI without corrupting
- *  it. */
+/** The `connection.runtime` namespace is reserved for the per-Connection
+ *  runtime credential's hot state. Only a runtime credential
+ *  (`is_runtime_credential` plus a `connection_id` stamped at mint) can write
+ *  it, and only to its own connection's item. Reading it carries no privilege
+ *  of its own — a claim that operators could read but not write was here for
+ *  a long time and no code path ever granted it. */
 export const RUNTIME_NAMESPACE = "connection.runtime";
 
 /**

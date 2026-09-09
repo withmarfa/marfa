@@ -4,7 +4,7 @@
  * Cross-space probes for the same hash bytes return 404 even though the
  * underlying file is shared via content-addressed deduplication. Each
  * space's metadata row is private; the empty-string sentinel covers
- * platform-admin / single-space uploads so existing self-hosts continue
+ * operator-key / single-space uploads so existing self-hosts continue
  * to work unchanged.
  */
 
@@ -120,35 +120,35 @@ describe("blobs — space scoping", () => {
     expect(getB.status).toBe(200);
   });
 
-  it("platform-admin upload (no space_id) goes to instance-wide sentinel; space probes still 404", async () => {
-    // The default test admin has no space_id — its upload goes to the
+  it("an operator-key upload (no space_id) goes to instance-wide sentinel; space probes still 404", async () => {
+    // The default test key has no space_id — its upload goes to the
     // empty-string sentinel row.
     ctx = await createTestContext();
     const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const adminA = await mintSpaceAdmin(ctx, "blob-admin-iso", spaceA);
 
     const upload = await request(ctx.app, "POST", "/blobs", {
-      key: ctx.adminKey, // platform admin (no space)
+      key: ctx.adminKey, // the operator key (no space)
       headers: { "Content-Type": "application/octet-stream" },
       body: "platform-admin-content",
     });
     expect(upload.status).toBe(201);
     const { hash } = (await upload.json()) as { hash: string };
 
-    // Platform admin can fetch
+    // The operator key can fetch
     const getPlatform = await request(ctx.app, "GET", `/blobs/${hash}`, {
       key: ctx.adminKey,
     });
     expect(getPlatform.status).toBe(200);
 
-    // Space-bound caller cannot fetch the platform-admin's blob
+    // Space-bound caller cannot fetch the operator key's blob
     // (different space scopes — empty-string sentinel ≠ space A)
     const getA = await request(ctx.app, "GET", `/blobs/${hash}`, {
       key: adminA,
     });
     expect(getA.status).toBe(404);
   });
-  it("platform authority reads a blob that lives in a space", async () => {
+  it("the operator key reads a blob that lives in a space", async () => {
     ctx = await createTestContext();
     const spaceA = `space-a-${Math.random().toString(36).slice(2, 10)}`;
     const adminA = await mintSpaceAdmin(ctx, "blob-admin-platform", spaceA);
@@ -162,7 +162,7 @@ describe("blobs — space scoping", () => {
     expect(upload.status).toBe(201);
     const { hash } = (await upload.json()) as { hash: string };
 
-    // The platform credential reads every space's items, so being told this
+    // The operator key reads every space's items, so being told this
     // blob is absent is both wrong and the dangerous direction: absence is
     // what a repair or a purge acts on.
     const headPlatform = await request(ctx.app, "HEAD", `/blobs/${hash}`, {

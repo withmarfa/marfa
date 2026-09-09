@@ -1305,9 +1305,9 @@ export interface BlobStore {
    * Resolve a hash without a space, for a caller whose authority is not
    * confined to one. Content addressing makes this well defined: every row
    * for a hash describes the same bytes, so any of them answers the
-   * question a platform credential is asking.
+   * question the operator key is asking.
    *
-   * Only the platform-authority read path calls this. A space-bound caller
+   * Only the operator read path calls this. A space-bound caller
    * MUST go through `get(hash, spaceId)`, which is what keeps a cross-space
    * probe answering 404.
    */
@@ -3357,8 +3357,9 @@ export interface BulkActionJobStore {
    */
   create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
   /** Fetch by id. Space scoping is the caller's responsibility — the
-   *  store returns the row regardless. The route handler enforces auth
-   *  (`api_key_id` match or admin). */
+   *  store returns the row regardless. The route handler enforces auth: the
+   *  credential that created the job, or the operator key, and nothing else.
+   *  No space permission says "read another credential's bulk jobs". */
   getById(id: string): Promise<BulkActionJobRow | null>;
   /**
    * Atomically claim the next queued job. On Postgres, wraps a single
@@ -3569,7 +3570,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    * search-index cleanup, so it does not sit inside `SpaceStore`.
    *
    * This is the counterpart the cascade cannot serve — a space
-   * provisioned by a platform credential has no `auth_user` behind it,
+   * provisioned by the operator key has no `auth_user` behind it,
    * and until this existed there was no way to remove one. Conformance
    * creating a space per run is the standing case.
    *

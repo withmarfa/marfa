@@ -144,9 +144,9 @@ const DEVICE_SCOPES: ParsedScope[] = [
  *
  * Through the parser rather than as object literals because the fixture is the
  * only caller of these renderers that is not the app, which makes it the one
- * place a wrong scope shape hides. A capability carries a second field the
- * consent screen reads, and a hand-written literal that omits it renders a row
- * the real flow never would.
+ * place a wrong scope shape hides. A space permission carries a second field
+ * the consent screen reads, and a hand-written literal that omits it renders
+ * a row the real flow never would.
  */
 const scopeSet = (...literals: string[]): ParsedScope[] =>
   literals.map((literal) => {
@@ -172,12 +172,11 @@ const scopeSet = (...literals: string[]): ParsedScope[] =>
  * label, which is exactly what makes this the only place their copy renders:
  * the description is the row.
  *
- * `space.webhooks` cannot arrive here through a real request. Nothing in
- * the scope allowlist emits a capability literal, so the only way one reaches a
- * consent screen today is an operator naming it in a permission bundle. It is
- * previewed anyway, because the screen already renders one, unticked and under
- * a heading of its own, and a grant nobody has looked at is what this gallery
- * is for.
+ * `space.webhooks` reaches a consent screen through an ordinary request: the
+ * allowlist spreads all eleven space permissions in, and a test pins that it
+ * emits every one. It used to be unreachable, which is why this fixture exists
+ * — the screen rendered a row nobody could see. It renders it unticked and
+ * under a heading of its own, and previewing that is still worth doing.
  *
  * The two content-category literals are here on the same footing and for a
  * sharper reason: they are withheld from the allowlist precisely BECAUSE of
@@ -228,11 +227,11 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   // Wildcards, the widest line on the screen and the custom-namespace one.
   "*:read",
   "user.*:read",
-  // A capability, which no request can carry today. See above.
+  // A space permission, which a request can carry and a person can tick.
   "space.webhooks",
   // The content category, both levels, which no request can carry today
   // either — `buildAllowedScopes` withholds the pair until copy exists that
-  // tells the two apart. Previewed for the same reason the capability above
+  // tells the two apart. Previewed for the same reason the permission above
   // is: the screens already render it, and the gallery is where a grant
   // nobody has looked at gets looked at.
   //
@@ -254,9 +253,11 @@ const ALL_SCOPE_KINDS: ParsedScope[] = scopeSet(
   // **That device row is the pre-copy state, and it is the only state a
   // snapshot here can hold.** These fixtures render what ships, and what
   // ships has no `content` entry in the description map. Add one and the
-  // device screen renders ONE row rather than two: `describeCapabilities`
-  // dedupes on the resolved string, both literals resolve the same one, and
-  // a level disappears from the screen rather than merely going undescribed.
+  // device screen would once have rendered ONE row rather than two, because
+  // its describer deduped on the resolved string. It no longer does —
+  // `describeScope` in `routes/device-pages.ts` says why: the rows carry
+  // checkboxes now, so each scope needs its own. What remains true is that
+  // both literals resolve one sentence, so a level would go undescribed.
   // So writing copy would make the device screen worse than these snapshots
   // show, not better, and a reader taking "same word on both rows" as the
   // whole of the case is reading the milder half of it.
@@ -578,9 +579,12 @@ const AUTH_SCREENS: GalleryScreen[] = [
         // The four variants beside this one all request content types, and
         // every content type carries a short toggle label, so the description
         // map this screen reads never reaches any of them. A metadata row, a
-        // wildcard, an edge and a capability have no label at all: the
-        // description is the row, and until this variant existed none of that
-        // copy had ever rendered anywhere a person looks.
+        // wildcard and an edge have no label at all: the description is the
+        // row, and until this variant existed none of that copy had ever
+        // rendered anywhere a person looks. A space permission is not in that
+        // list — it resolves through `SPACE_PERMISSION_LABELS` before the
+        // description map is read, and `buildScopeDescriptions` returns
+        // nothing for the family at all.
         id: "all-scope-kinds",
         label: "Every kind of scope",
         render: () =>

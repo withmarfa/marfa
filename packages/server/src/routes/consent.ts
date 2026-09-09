@@ -37,9 +37,9 @@
  * That screen has toggles, so the refusal is retired and both surfaces
  * withhold by rendering a row unticked.
  *
- * **One rule spans both, and it is `requiresExplicitConsent`.** A capability
- * is granted by being named and never by silence, so it renders unticked
- * whatever a bundle says about it — asked before the bundle, or a
+ * **One rule spans both, and it is `requiresExplicitConsent`.** A space
+ * permission is granted by being named and never by silence, so it renders
+ * unticked whatever a bundle says about it — asked before the bundle, or a
  * configuration naming one would put administrative authority behind a
  * content heading and inherit that heading's tick.
  *
@@ -278,22 +278,22 @@ function buildGroups(
     desc: "Additional things this app asked to change.",
     rows: [],
   };
-  // A capability needs a bucket of its own, and the reason is the heading
-  // rather than the tidiness. The read/write split is decided on
-  // `operation`, which a capability sets to `"none"`, so without this arm
-  // every one of them fell through to the read bucket and a grant to
+  // A space permission needs a bucket of its own, and the reason is the
+  // heading rather than the tidiness. The read/write split is decided on
+  // `operation`, which a space permission sets to `"none"`, so without this
+  // arm every one of them fell through to the read bucket and a grant to
   // register webhooks or revoke keys was filed under "Additional things this
-  // app asked to read". A heading that states the opposite of what the
-  // toggle does is worse than no heading.
+  // app asked to read". A heading that states the opposite of what the toggle
+  // does is worse than no heading.
   //
   // Unticked, and this is the one bucket where that is right. The other two
   // start ticked because a scope the app asked for and no bundle claimed is
   // still ordinary access to content, and unticking it by default would have
-  // this screen invent a policy. A capability is the opposite case: it is
-  // authority the platform would otherwise let a token inherit from a role
-  // without anybody naming it, and the whole reason it became a scope is so
-  // somebody has to say yes. Arriving pre-ticked would grant it by silence,
-  // which is what it exists to stop.
+  // this screen invent a policy. A space permission is the opposite case: it
+  // is authority over the space itself rather than over what it holds, and
+  // the whole reason it became a scope is so somebody has to say yes.
+  // Arriving pre-ticked would grant it by silence, which is what it exists
+  // to stop.
   const otherSpacePermission: ScopeGroup = {
     label: "Administrative access",
     desc: "Parts of your space this app asked to manage.",
@@ -468,15 +468,15 @@ function summarize(group: ScopeGroup): string {
     // about, so the fix is a short form rather than the map — the shape
     // `spacePermissionShort` and `oidcShort` already take.
     //
-    // Capabilities and the profile scopes resolve through their inline-list
-    // forms rather than their toggle labels. A toggle label sits alone above
-    // a switch, so it is capitalized and free to carry a comma; joined into
-    // a sentence, the capital lands mid-clause and the comma turns one item
-    // into two. `SPACE_PERMISSION_SHORT` exists for precisely this and says so.
-    // The OIDC lookup is asked only of an OIDC literal. The profile
-    // category's pattern is the bare word `profile`, the same string as the
-    // OIDC scope, and asked by pattern alone the lookup answered "your name"
-    // for a grant over the whole profile surface.
+    // Space permissions and the profile scopes resolve through their
+    // inline-list forms rather than their toggle labels. A toggle label sits
+    // alone above a switch, so it is capitalized and free to carry a comma;
+    // joined into a sentence, the capital lands mid-clause and the comma
+    // turns one item into two. `SPACE_PERMISSION_SHORT` exists for precisely
+    // this and says so. The OIDC lookup is asked only of an OIDC literal. The
+    // profile category's pattern is the bare word `profile`, the same string
+    // as the OIDC scope, and asked by pattern alone the lookup answered "your
+    // name" for a grant over the whole profile surface.
     const label =
       spacePermissionShort(scope.typePattern) ??
       (scope.kind === "oidc"
@@ -545,7 +545,7 @@ function summarize(group: ScopeGroup): string {
  * **A label may be shorter than its description. It may never be narrower
  * than its scope.** An entry here wins over the description, so it is the
  * whole of what this screen says about that grant, while the device screen
- * has no toggles and reads the description out in full. A label naming a
+ * has no label field and reads the description out in full. A label naming a
  * proper subset of what its pattern reaches therefore puts the smaller
  * answer on the screen where somebody is ticking boxes, and the direction is
  * what makes that a defect rather than a matter of taste: a grant that
@@ -770,7 +770,7 @@ export function humanizeType(typePattern: string): string {
  * **Which of the two forms carries it is decided by what the name half
  * turned out to be, rather than by the scope.** The parenthesis
  * {@link withOperation} appends is written for a name, and `SCOPE_LABELS`,
- * the OIDC and capability maps and the humanized floor all answer one:
+ * the OIDC and space permission maps and the humanized floor all answer one:
  * "Notes (read and write)" is what that form is for. The description map
  * answers a sentence instead, so a row resolved through it read "Everything
  * in your space. (read only)", with the bracket stranded past the period.
@@ -1063,10 +1063,10 @@ export function renderConsentScreen(params: ConsentParams): string {
     // Removed scopes are being dropped, not re-granted, so their group names
     // render as a quiet line with no toggles.
     //
-    // Joined into that line, so a capability resolves through its inline-list
-    // form for the same reason the summaries do: the toggle labels are
-    // capitalized and two of them carry a comma, which turns one item in this
-    // list into two fragments.
+    // Joined into that line, so a space permission resolves through its
+    // inline-list form for the same reason the summaries do: the toggle
+    // labels are capitalized and two of them carry a comma, which turns one
+    // item in this list into two fragments.
     //
     // Carrying what each dropped grant permitted, for the reason every other
     // row on this screen does. Giving up the write half of a type while

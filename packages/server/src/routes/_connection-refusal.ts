@@ -49,7 +49,7 @@ import type { Item } from "@withmarfa/shared";
  * `active` to `revoked` for a `system.*` type and neither door can name
  * `revoked`, so the store refuses them anyway; the refusal here decides
  * which answer the caller reads. The properties door is not covered:
- * `status` is an ordinary property a space admin can patch, which is the
+ * `status` is an ordinary property a space credential can patch, which is the
  * remaining way to make a live grant read as revoked, tracked separately.
  */
 export function liveConnectionRefusal(

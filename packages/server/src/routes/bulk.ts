@@ -311,7 +311,7 @@ const bulkActionRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Admin required (purge only)",
+      description: "`space.item_purge` required (purge only)",
     },
   },
 });
@@ -327,7 +327,7 @@ const bulkActionStatusRoute = createRoute({
   tags: ["Items"],
   summary: "Get a bulk-action job",
   description:
-    "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it, by an admin within the same space, and by a platform credential. A job in another space reads as absent.",
+    'Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it and by the operator key, and by nothing else: no space permission says "read another credential\'s bulk jobs". A job in another space reads as absent.',
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -353,8 +353,7 @@ const bulkActionStatusRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "Not the originating credential, and not an admin for this space",
+      description: "Not the originating credential, and not the operator key",
     },
     404: {
       content: {
@@ -405,8 +404,7 @@ const bulkActionCancelRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description:
-        "Not the originating credential, and not an admin for this space",
+      description: "Not the originating credential, and not the operator key",
     },
     404: {
       content: {
@@ -938,7 +936,7 @@ async function processBulkItem(
     // the same reason: a create is not a transition, so it reaches none of
     // the graph, and a membership test against the universal state list is
     // weaker than the one that matters. `trashed` is a valid state and is not
-    // in the `system.*` lifecycle at all, so a platform credential could
+    // in the `system.*` lifecycle at all, so the operator key could
     // create a `system.connection` directly in `trashed` — a state no
     // transition can produce and none can leave — through this door while the
     // single-item door beside it refused.
@@ -1385,7 +1383,7 @@ export function bulkRoutes(storage: Storage) {
     // The cost is real and worth knowing: an action aimed at a source the
     // filter excludes now matches nothing and reports `matched: 0` rather
     // than refusing, which is the shape of a filter that found nothing. A
-    // space admin reaching those rows lifts the lever, acts, and restores it.
+    // Whoever needs those rows lifts the lever, acts, and restores it.
     const spaceConfigForAction =
       spaceId && storage.spaces
         ? await storage.spaces.getConfig(spaceId)
@@ -1678,7 +1676,7 @@ function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   if (!apiKey) {
     throw new MarfaError(ErrorCode.UNAUTHORIZED, "Missing credential");
   }
-  // Platform authority reaches every job: `bulkActionJobs.getById` is
+  // Operator authority reaches every job: `bulkActionJobs.getById` is
   // deliberately unscoped, so this is the only fence, and a purge job
   // carries no space at all.
   if (hasOperatorAuthority(apiKey)) return;

@@ -31,7 +31,7 @@ describe("authentication", () => {
     expect(res.status).toBe(401);
   });
 
-  it("returns 200 with valid admin key", async () => {
+  it("returns 200 with a valid key", async () => {
     const res = await request(ctx.app, "GET", "/items", {
       key: ctx.adminKey,
     });

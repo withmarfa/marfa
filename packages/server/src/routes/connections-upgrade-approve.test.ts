@@ -435,7 +435,7 @@ describe("a move that would strand a mapping is not a decision to offer", () => 
 
 describe("the list is scoped to the caller's space", () => {
   it("refuses to approve another space's connection", async () => {
-    // The approve route's only fence. Nothing else stops a space admin
+    // The approve route's only fence. Nothing else stops a caller
     // naming an id they read somewhere, and the list test below covers
     // the read side rather than this one.
     const mine = await ctx.storage.spaces!.create("approve-fence-mine");

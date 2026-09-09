@@ -76,18 +76,18 @@ async function requireConnectionAccess(
   connectionId: string,
 ): Promise<{
   spaceId: string | undefined;
-  /** The connection's own space, distinct from the caller's: a platform
-   *  admin carries no space, but a lease row must live in the
+  /** The connection's own space, distinct from the caller's: the operator
+   *  key carries no space, but a lease row must live in the
    *  connection's space or the space-fenced list and revoke lookups —
    *  and the uninstall pipeline's revocation sweep — can never reach
    *  it. */
   connectionSpaceId: string | undefined;
 }> {
   const key = requireAuth(c);
-  // Space-bounded admin authority, matching the sibling connection
-  // routes: leased tokens belong to a connection, and a connection
-  // belongs to a space.
-  const isAdmin = holdsSpacePermission(c, "space.connections");
+  // Space-bounded authority, matching the sibling connection routes:
+  // leased tokens belong to a connection, and a connection belongs to a
+  // space.
+  const holdsConnections = holdsSpacePermission(c, "space.connections");
   // Shared with the connection-proxy and inbound-webhook routes: the
   // caller is the Connection itself, either as an OAuth grant or as a
   // runtime credential stamped with this `connection_id`.
@@ -95,13 +95,11 @@ async function requireConnectionAccess(
   // Defense-in-depth: any credential that would resolve to an undefined
   // spaceId below must be entitled to cross-space reach, because the
   // storage call sites treat `undefined` as "any space". The test is
-  // platform authority (unbound admin) or an explicit platform
-  // credential — NOT space-admin rank, which says nothing about
-  // whether the credential is confined. Runtime credentials and OAuth
-  // bearers issued for this connection are exempt: their
-  // `connection_id` / source-prefix binding is its own scope, and
-  // self-hosted (single-space) deploys legitimately leave `space_id`
-  // unset on those.
+  // the operator key, which is what a space-less credential now is — and not
+  // a space permission, which says nothing about whether the credential is
+  // confined. Runtime credentials and OAuth bearers issued for this connection
+  // are exempt: their `connection_id` or source-prefix binding is its own
+  // scope.
   if (!key.space_id && !isIntegration && !hasOperatorAuthority(key)) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
@@ -113,20 +111,20 @@ async function requireConnectionAccess(
   if (connection?.type !== "system.connection") {
     throw new MarfaError(ErrorCode.NOT_FOUND, "Connection not found");
   }
-  if (!isAdmin && !isIntegration) {
+  if (!holdsConnections && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot manage leased tokens on this connection",
     );
   }
 
-  // **Only the rank arm needs the capability, and the distinction is the whole
-  // point.** A connection acting as itself is not an app inheriting somebody's
-  // role — it is the credential the connection was installed with, so there is
-  // no consent screen behind it and nothing for a capability to have been
-  // ticked on. Requiring one unconditionally here would 403 an integration's
-  // own dispatch. Reached only once admission is settled above, so a caller
-  // that is not the connection got in on rank.
+  // **Only the non-integration arm needs the permission, and the distinction
+  // is the whole point.** A connection acting as itself is the credential the
+  // connection was installed with, so there is no consent screen behind it and
+  // nothing for a permission to have been ticked on. Requiring one
+  // unconditionally here would 403 an integration's own dispatch. Reached only
+  // once admission is settled above, so a caller that is not the connection is
+  // holding `space.connections` or is not here.
   if (!isIntegration) requireSpacePermission(c, "space.connections");
   return { spaceId, connectionSpaceId: connection.space_id ?? undefined };
 }
@@ -426,7 +424,7 @@ export function connectionLeasedTokenRoutes(storage: Storage) {
     const row = await storage.connectionLeasedTokens.create({
       id,
       connection_id: connectionId,
-      // The connection's space, not the caller's: a platform admin has
+      // The connection's space, not the caller's: the operator key has
       // no space, and a space-less lease row is invisible to the fenced
       // list and revoke lookups and to the uninstall pipeline's sweep,
       // while validate keeps answering active until the TTL runs out.

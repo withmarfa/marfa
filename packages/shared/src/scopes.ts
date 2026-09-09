@@ -26,8 +26,8 @@ import {
  *   - metadata sub:     "metadata.types:write" → kind="metadata", subresource="types"
  *   - edge scope:       "edge.parent-of:write" or "edge.*:write"
  *                       → kind="edge", edgeType="parent-of" or "*"
- *   - capability:       "space.webhooks"
- *                       → kind="space", capability=<literal>, no operation suffix
+ *   - space permission: "space.webhooks"
+ *                       → kind="space", permission=<literal>, no operation suffix
  *   - OIDC literal:     "openid" / "profile" / "email"
  *                       → kind="oidc", oidcScope=<literal>, no operation suffix
  *
@@ -45,13 +45,13 @@ import {
 export type OidcScope = "openid" | "profile" | "email" | "offline_access";
 
 // ---------------------------------------------------------------------------
-// Capability scopes
+// Space permissions
 // ---------------------------------------------------------------------------
 
 /**
- * The reserved root every capability scope lives under. Reserved in
- * `RESERVED_ROOTS`, so `POST /types` refuses to register anything beneath
- * it and no publisher handle can claim the word — a capability literal and
+ * The reserved root every space permission lives under. Reserved in
+ * `RESERVED_ROOTS`, so `POST /types` refuses to register anything beneath it
+ * and no publisher handle can claim the word — a space-permission literal and
  * an item-type identifier can never name the same thing.
  *
  * Reserving a root that names no type tier is deliberate and is the whole
@@ -61,8 +61,8 @@ export type OidcScope = "openid" | "profile" | "email" | "offline_access";
 export { SPACE_ROOT } from "./scope-roots.js";
 
 /**
- * Authority over one administrative surface, named and consented to rather
- * than inherited from a role.
+ * Authority over one administrative surface, handed over by being named and
+ * consented to and by nothing else.
  *
  * **Why a family of its own.** The four existing kinds each grant on a
  * resource axis the data plane already fences — an item type, an edge type,
@@ -73,16 +73,16 @@ export { SPACE_ROOT } from "./scope-roots.js";
  * real type could appear under it and a grant there would be ambiguous
  * between the two readings. `system.*` is worse: `system.connection`
  * is a live type with a live scope in the default read bundle, so a
- * capability beside it is indistinguishable from a type grant by inspection.
+ * permission beside it is indistinguishable from a type grant by inspection.
  *
- * **Why no verb.** A capability is one authority, not a read/write axis over
- * a resource: `space.item_purge:read` names nothing, and admitting the
+ * **Why no verb.** A space permission is one authority, not a read/write axis
+ * over a resource: `space.item_purge:read` names nothing, and admitting the
  * suffix would mean inventing a rule to refuse the halves that have no
- * meaning. Where a surface genuinely splits, the split is in the surface
- * name — `audit_read` grants reading the audit log and nothing writes it.
- * The consequence to know is that a capability literal carries no colon, so
- * anything deriving a verb by splitting on one sees a capability as
- * verb-less rather than as a read.
+ * meaning. Where a surface genuinely splits, the split is in the surface name
+ * — `audit_read` grants reading the audit log and nothing writes it. The
+ * consequence to know is that such a literal carries no colon, so anything
+ * deriving a verb by splitting on one sees a space permission as verb-less
+ * rather than as a read.
  *
  * **One per coherent surface, not one per route.** The list is what a
  * consent screen has to read as sentences — "manage your webhooks", "read
@@ -117,9 +117,10 @@ export { SPACE_ROOT } from "./scope-roots.js";
  * - **`schema` is not registration.** Registering a type is already fenced
  *   by `metadata.types:write` and `metadata.edge_types:write`. This covers
  *   only what that grammar does not — changing and removing definitions that
- *   already exist — so the two never describe the same act. A capability
- *   duplicating an existing scope would put two names on one authority and
- *   leave a consent screen unable to tell a reader which one it is showing.
+ *   already exist — so the two never describe the same act. A space
+ *   permission duplicating an existing scope would put two names on one
+ *   authority and leave a consent screen unable to tell a reader which one it
+ *   is showing.
  * - **`space_usage` is not `space_settings`.** Reading how much room is left
  *   is what an app doing ordinary work wants; changing a space's enforcement
  *   policy is not, and one of the things that policy sets is how long the
@@ -131,11 +132,11 @@ export { SPACE_ROOT } from "./scope-roots.js";
  *
  * **Three things a gate must not infer from this set**, recorded here
  * because each is a boundary that already exists in the routes and would be
- * lost by wiring a capability check onto the shared authority helper:
+ * lost by wiring a space-permission check onto the shared authority helper:
  *
  * - **`keys` names who may manage keys, never who may escape the scope
  *   system.** A key is a durable credential and an app that could mint an
- *   unscoped one would no longer need its grant at all, so the capability is
+ *   unscoped one would no longer need its grant at all, so the permission is
  *   necessary for the mint and nowhere near sufficient. The route holds a
  *   session to the reach its own grant covers, refusing by name, and records
  *   the app that minted it, so the key is recognizable later as an app's
@@ -157,7 +158,7 @@ export { SPACE_ROOT } from "./scope-roots.js";
  * One site is deliberately uncovered. Listing a space's edge types is a read
  * whose item-type sibling is open to any authenticated caller, so the
  * consistent answer is relaxing that gate rather than inventing an
- * administrative capability to sit in front of a listing.
+ * administrative permission to sit in front of a listing.
  */
 export type SpacePermission =
   | "space.webhooks"
@@ -173,20 +174,20 @@ export type SpacePermission =
   | "space.audit_read";
 
 /**
- * Every capability scope, in the order a consent screen should offer them:
+ * Every space permission, in the order a consent screen should offer them:
  * the surfaces an app plausibly needs first, the ones that hand over the
  * space's own security last. Not alphabetical, and not incidentally
  * ordered — a reader deciding what to grant reads down the list, so the
  * order is part of what the screen says.
  *
  * Exported so the set has one home. The server's scope allowlist emits this
- * array directly, which is what makes a capability requestable at all, and
- * both consent surfaces read `requiresExplicitConsent` rather than each
+ * array directly, which is what makes a space permission requestable at all,
+ * and both consent surfaces read `requiresExplicitConsent` rather than each
  * growing a list that can drift from it.
  *
  * **Emitted from here rather than through a bundle, deliberately.** Putting
  * the family in an off-by-default bundle is the shape that suggests itself
- * and it fails twice: a bundle-claimed capability leaves the consent
+ * and it fails twice: a bundle-claimed permission leaves the consent
  * screen's unclaimed-scope bucket and inherits the bundle's tick, and it
  * makes reachability depend on a configuration, so an operator shipping no
  * bundles has an instance whose gates nobody can satisfy.
@@ -207,7 +208,7 @@ export const SPACE_PERMISSIONS: readonly SpacePermission[] = [
 
 const SPACE_PERMISSION_SET: ReadonlySet<string> = new Set(SPACE_PERMISSIONS);
 
-/** Returns true if the literal names a capability this build recognizes. */
+/** Returns true if the literal names a space permission this build recognizes. */
 export function isSpacePermission(scope: string): scope is SpacePermission {
   return SPACE_PERMISSION_SET.has(scope);
 }
@@ -218,12 +219,12 @@ export function isSpacePermission(scope: string): scope is SpacePermission {
  * else.
  *
  * **One predicate because two surfaces answer, and they disagreed.** The
- * code-flow consent screen gives a capability its own unticked row and says
- * why at the site: it is authority a token would otherwise inherit from a
- * role without anybody naming it, so arriving pre-ticked would grant it by
+ * code-flow consent screen gives a space permission its own unticked row and
+ * says why at the site: it is authority over the space itself rather than
+ * over a resource in it, so arriving pre-ticked would hand it over by
  * silence. The device-approval screen could not reach that reasoning at all —
  * its only withholding input was derived from the configured bundles, and a
- * capability no bundle names is offered by no bundle, so it was in no
+ * permission no bundle names is offered by no bundle, so it was in no
  * withheld set. The two screens therefore held opposite opinions about
  * administrative authority, and which one a person met decided what they
  * handed over. Stating the rule once, here, is what stops that recurring for
@@ -253,19 +254,19 @@ export function requiresExplicitConsent(scope: string): boolean {
 }
 
 /**
- * Whether a held scope set carries one specific capability.
+ * Whether a held scope set carries one specific space permission.
  *
- * The only correct way to ask. A capability is granted by naming it and by
- * nothing else: no wildcard reaches one, no breadth of data access implies
- * one, and holding every other member of the set implies nothing about the
- * one being asked about.
+ * The only correct way to ask. A space permission is granted by naming it and
+ * by nothing else: no wildcard reaches one, no breadth of data access implies
+ * one, and holding every other member of the set implies nothing about the one
+ * being asked about.
  *
  * This exists as its own function rather than as a note telling callers what
  * not to do, because the alternative is what a gate author reaches for.
  * `scopeCovers` is the neighboring helper and it answers about the item-type
- * axis, where `*:write` matches any pattern — so asked about a capability it
- * said yes to a token holding no capability at all. That function now refuses
- * a capability outright, and this one is what replaces it.
+ * axis, where `*:write` matches any pattern — so asked about a space
+ * permission it said yes to a token holding none at all. That function now
+ * refuses one outright, and this one is what replaces it.
  *
  * **Both kinds of credential reach it through one carrier.** A key holds its
  * set on `space_permissions`; a sign-in holds it on the grant the request
@@ -378,7 +379,7 @@ function heldContentLevel(
 export interface ParsedScope {
   typePattern: string;
   /** "read" / "write" for type / edge / metadata scopes; "none" for
-   *  capability and OIDC literals (neither of which has read/write
+   *  space permissions and OIDC literals (neither of which has read/write
    *  semantics on a Marfa resource). */
   operation: "read" | "write" | "none";
   /**
@@ -564,13 +565,13 @@ export function parseScope(scope: string): ParsedScope | null {
       oidcScope: scope as OidcScope,
     };
   }
-  // The capability root is claimed whole, not matched shape-first: anything
+  // The space root is claimed whole, not matched shape-first: anything
   // under it that is not a member of the closed set is refused here rather
   // than left to fall through. That matters for one literal in particular.
   // `space.*:read` satisfies `isValidTypePattern` — the subtree-wildcard
   // branch checks the prefix grammar and not the reserved roots, which is
   // why `core.*:read` is a scope the server issues — so without this claim it
-  // would parse as an item-type grant that reads like a capability grant and
+  // would parse as an item-type grant that reads like a space permission and
   // is neither. Refusing the whole namespace except its members is the only
   // reading with no second interpretation.
   if (scope === SPACE_ROOT || scope.startsWith(`${SPACE_ROOT}.`)) {
@@ -583,7 +584,7 @@ export function parseScope(scope: string): ParsedScope | null {
     };
   }
   // The content root is claimed whole, on the same reasoning as the
-  // capability root above: `content.*:read` clears `isValidTypePattern` for
+  // space root above: `content.*:read` clears `isValidTypePattern` for
   // exactly the reason `space.*:read` does, and would otherwise parse
   // as an item-type grant that reads like the category grant and is neither.
   // The claim is also what admits the two members, since `content` is one
@@ -693,9 +694,9 @@ export function isValidScope(scope: string): boolean {
  * Non-wildcard scopes pass through unchanged.
  *
  * Expansion keys on the pattern rather than on the kind, and stays that way:
- * what a wildcard covers is a question about the pattern. A capability needs
- * no arm of its own because the set is closed and holds no wildcard, so every
- * capability literal takes the pass-through branch and reaches consent as
+ * what a wildcard covers is a question about the pattern. A space permission
+ * needs no arm of its own because the set is closed and holds no wildcard, so
+ * every one of them takes the pass-through branch and reaches consent as
  * itself.
  */
 export function expandWildcardScopes(
@@ -909,17 +910,17 @@ export function scopeCovers(
   requiredType: string,
   requiredOp: "read" | "write",
 ): boolean {
-  // A capability is not a point on the item-type axis, so asking this
+  // A space permission is not a point on the item-type axis, so asking this
   // function about one is a category error, and the honest answer to a
   // category error is no.
   //
   // Answering at all was the hazard. `*:read` and `*:write` are the
   // full-access path the consent screen offers under "Customize", and a
-  // pattern match admits them against any string shaped like a type — so
-  // this returned true for a token that holds no capability, and false for
-  // one that holds exactly the capability being asked about. A gate reaching
+  // pattern match admits them against any string shaped like a type — so this
+  // returned true for a token that holds no space permission, and false for
+  // one that holds exactly the permission being asked about. A gate reaching
   // for the nearest helper would have inherited a fail-open one level above
-  // the one the capability kind exists to remove. Ask {@link hasSpacePermission}.
+  // the one the space kind exists to remove. Ask {@link hasSpacePermission}.
   if (
     requiredType === SPACE_ROOT ||
     requiredType.startsWith(`${SPACE_ROOT}.`)
@@ -1179,25 +1180,26 @@ export function edgePermissionCovers(
  * consulted, so a grant can cover `system.connection:write` here and be
  * refused there. That direction is harmless — a screen skipped for access
  * that then does not work — but it is the direction to check before adding an
- * arm. The two verb-less families have no middleware counterpart at all: no
- * route gates on a capability yet, and OIDC literals are read by the id_token
+ * arm.
+ * The two verb-less families have no middleware counterpart at all: no route
+ * gates on a space permission yet, and OIDC literals are read by the id_token
  * and userinfo callbacks rather than by the request principal.
  *
  * **That is a stricter requirement than "reuse a helper that looks right",
  * and the difference is not cosmetic.** {@link scopeCovers} sits beside this
- * function, refuses capabilities, is well tested, and answers a genuinely
+ * function, refuses space permissions, is well tested, and answers a genuinely
  * different question: first match wins rather than longest match wins. This
  * delegated to it and was fail-open for one shape of grant until a review
  * found it. The test is not whether a helper is correct, it is whether it is
  * the one the request path runs.
  *
- * **A capability is covered by naming it and by nothing else, and that is the
- * property to break first when testing this.** The capability kind exists
+ * **A space permission is covered by naming it and by nothing else, and that
+ * is the property to break first when testing this.** The space kind exists
  * because a wildcard must not reach an administrative surface; a coverage
- * helper answering otherwise would reinstate the fail-open one level above
- * the one that kind was added to remove. {@link scopeCovers} refuses to
- * answer about a capability at all, and this function never asks it — the
- * capability arm is the membership test at the top and nothing further.
+ * helper answering otherwise would reinstate the fail-open one level above the
+ * one that kind was added to remove. {@link scopeCovers} refuses to answer
+ * about a space permission at all, and this function never asks it — the
+ * space arm is the membership test at the top and nothing further.
  *
  * OIDC literals land in the same arm by different reasoning: they carry no
  * pattern and no verb, so exact membership is the only test that means
@@ -1227,11 +1229,11 @@ export function grantCoversScope(
   // grammar change.
   if (!need) return held.includes(required);
 
-  // The two families with no breadth. A capability names an administrative
-  // surface and is reached by naming it; an OIDC literal carries no pattern
-  // and no verb. Membership is the whole test for both, and letting either
-  // fall through to a pattern matcher is the hazard the capability kind
-  // exists to remove.
+  // The two families with no breadth. A space permission names an
+  // administrative surface and is reached by naming it; an OIDC literal
+  // carries no pattern and no verb. Membership is the whole test for both, and
+  // letting either fall through to a pattern matcher is the hazard the space
+  // kind exists to remove.
   if (need.kind === "oidc" || need.kind === "space") {
     return held.includes(required);
   }

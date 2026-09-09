@@ -286,7 +286,7 @@ async function memberKey(c: TestContext): Promise<string> {
 }
 
 describe("POST /admin/oauth-clients/{client_id}/delete", () => {
-  it("is platform-admin only and refuses a confirm that is not the client id", async () => {
+  it("is operator-key only and refuses a confirm that is not the client id", async () => {
     ctx = await createTestContext({ authAllowSignup: true });
     const clientId = await seedClient(ctx);
 

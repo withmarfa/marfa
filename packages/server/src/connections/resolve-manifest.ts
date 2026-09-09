@@ -59,7 +59,7 @@ export async function resolveConnectionManifest(
     );
   }
 
-  // `system.integration` items are registered by platform credentials and
+  // `system.integration` items are registered by the operator key and
   // live with no space, so a space-scoped caller's fenced lookup would never
   // find one. Widen to platform-scoped rows; the type check below stays the
   // authoritative gate on what the widened lookup may return.

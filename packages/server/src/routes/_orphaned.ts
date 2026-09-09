@@ -55,7 +55,7 @@
  * whole reason the resolver is shaped the way it is. `ItemFilters.spaceId`
  * reads an absent value as *no fence* rather than as the space-less bucket
  * (`storage/space-condition.ts` says so, and settled it deliberately), and
- * a platform-admin bearer legitimately carries no `space_id` while reading
+ * the operator key legitimately carries no `space_id` while reading
  * items from every space at once. Keyed on the caller, one tenant's live
  * `acme/calendar` connection answered for another tenant's orphaned
  * `acme/calendar` rows, which serialized them `orphaned: false` — dead data
@@ -237,7 +237,7 @@ export function createOrphanResolver(
       if (wanted.size === 0) return EMPTY_SCOPE;
 
       // Spaces are independent, and a batch spans more than one only on an
-      // unfenced platform-admin read — where walking them in sequence would
+      // unfenced operator-key read — where walking them in sequence would
       // add a round trip per space to a query that already spans the
       // instance.
       const resolved = await Promise.all(

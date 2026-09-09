@@ -14,7 +14,7 @@ afterAll(async () => {
 
 // system.connection shape tests. Exercises integration-specific fields via POST /items + GET /items:
 // schema acceptance, persistence, and enum rejection. Writes to system.* require is_operator: true;
-// the bootstrap admin key from createTestContext satisfies that gate.
+// the bootstrap key from createTestContext satisfies that gate.
 
 interface ItemResponse {
   item: {

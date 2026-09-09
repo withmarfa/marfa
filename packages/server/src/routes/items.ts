@@ -1139,7 +1139,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `space.item_purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1175,7 +1175,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "Admin required, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
+        "`space.item_purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
     },
   },
 });
@@ -1257,7 +1257,7 @@ export function itemRoutes(storage: Storage) {
     // A create is not a transition, so it reached none of the graph, and a
     // membership test against the universal state list is a weaker question
     // than the one that matters: `trashed` is a valid state and is not in
-    // the `system.*` lifecycle at all. A platform credential could therefore
+    // the `system.*` lifecycle at all. The operator key could therefore
     // create a `system.connection` directly in `trashed` — a state no
     // transition can produce and none can leave — and then restore it into
     // `active` having passed nothing the graph admits.
@@ -1501,7 +1501,7 @@ export function itemRoutes(storage: Storage) {
         //  - The extension namespaces are NOT, because that axis is not
         //    bounded by the natural key. `extension_permissions` are per
         //    credential, so a row can carry namespaces this caller holds
-        //    nothing on — written by a space admin, by another tool, or by a
+        //    nothing on — written by a person, by another tool, or by a
         //    sibling Connection sharing the `item_source` that resolved it.
         //    Hence the same filter the other eleven sites in this file use.
         //  - The type is NOT either, and that is a gate rather than a
@@ -3269,7 +3269,7 @@ export function itemRoutes(storage: Storage) {
     //
     // Purging is trash-then-purge, so a caller meets `DELETE /items/{id}`
     // first. For a reserved-namespace row a space-scoped credential is
-    // refused there, by name: "only platform credentials may write marfa.*
+    // refused there, by name: "only the operator key may write marfa.*
     // items". The row therefore never becomes trashed, and this door then
     // answers "Only trashed items can be purged" — which is true, and reads
     // as an ordering mistake the caller did not make. Somebody following it
@@ -3277,7 +3277,7 @@ export function itemRoutes(storage: Storage) {
     //
     // Asking the write rule on the not-trashed path names the real reason
     // and changes nothing else: a trashed row is purged exactly as before,
-    // so a reserved-namespace item a platform credential already trashed is
+    // so a reserved-namespace item the operator key already trashed is
     // still purgeable, and the caller who genuinely forgot to trash first
     // still gets the message about trashing. This runs only where the purge
     // was going to be refused anyway.

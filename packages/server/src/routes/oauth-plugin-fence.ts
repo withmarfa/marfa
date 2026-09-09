@@ -97,7 +97,7 @@ export const FENCED_PLUGIN_ENDPOINTS: readonly string[] = [
   "/oauth2/update-consent",
   "/oauth2/delete-consent",
   // Client management: registration is `POST /oauth2/register` and removal
-  // is the platform-admin route; nothing here has a reader or an audit row,
+  // is the operator route; nothing here has a reader or an audit row,
   // and the create gate admits any signed-in session.
   "/oauth2/create-client",
   "/oauth2/get-client",

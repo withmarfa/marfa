@@ -27,12 +27,12 @@
  *
  * **What this is not.** On the two read doors it shapes an unnarrowed query
  * and permissions decide the rest: a credential still has to hold the type,
- * and the platform-credential gate still decides who may write there. On
+ * and the operator gate still decides who may write there. On
  * `POST /items/bulk-actions` that is not true — it runs no per-row
  * `requireTypeAccess`, so nothing stands between a match set and the action
  * taken on it except what narrowed the query. The type filter beside this
  * cannot cover for that: a credential granted write across the board
- * satisfies it and is still not a platform credential. So on that door this
+ * satisfies it and is still not the operator key. So on that door this
  * is the whole of the reserved-namespace control rather than one layer of
  * it, which is the reason it takes no widening token: a read widened by one
  * answers a bigger question, an action widened by one acts on more rows.

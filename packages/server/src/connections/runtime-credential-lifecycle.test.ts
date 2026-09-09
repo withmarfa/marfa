@@ -150,7 +150,7 @@ describe("a runtime credential is fenced by a space", () => {
       spaceB.id,
     );
 
-    // A platform admin can install a Connection without naming a space.
+    // The operator key can install a Connection without naming a space.
     // Nothing downstream notices until the credential minted for it
     // starts reading, at which point it reads everything.
     const connectionId = await makeConnection(undefined);
@@ -163,7 +163,7 @@ describe("a runtime credential is fenced by a space", () => {
   });
 
   it("refuses to install a space-less Connection", async () => {
-    // The third door. A platform admin's credential carries no space, so
+    // The third door. The operator key carries no space, so
     // `POST /connections/install` stamps none on the Connection it
     // creates, and any credential later minted for it would come out at
     // the platform tier. Installing mints nothing, so the refusal is a
@@ -465,7 +465,7 @@ describe("a runtime credential speaks only for its own Connection", () => {
   it("refuses a bulk update against a type the credential cannot write", async () => {
     // Same claimed-type bypass, aimed at a row whose real type this
     // credential could never write directly. `system.connection` needs a
-    // platform credential; naming `core.note` in the batch entry is what
+    // operator key; naming `core.note` in the batch entry is what
     // used to get past that.
     const space = await ctx.storage.spaces!.create("connection-bulk-type");
     const mine = await credentialFor(space.id, "acme/conn-type-mine");

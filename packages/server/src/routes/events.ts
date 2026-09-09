@@ -230,7 +230,7 @@ const MAX_HELD_FRAMES = 500;
  * subscription's space filter and the caller's type projection already
  * fence, so a viewer costs the database nothing once it is caught up.
  * Without both set the replay runs on the owner connection — used for
- * SQLite, for space-less callers (platform admin / single-space
+ * SQLite, for space-less callers (the operator key / single-space
  * self-host), and when RLS enforcement is disabled instance-wide.
  */
 /** A live frame published while the stream was still holding delivery. */
@@ -271,8 +271,8 @@ export interface EventRoutesOptions {
  * The replay re-sends `event_log.payload` verbatim, so the live path's
  * filter never sees it. `parsed` is the row the replay loop already
  * decoded, or null when it decoded nothing — an edge frame carries no
- * metadata, and a credential that bypasses the permission maps has
- * nothing to narrow, so neither is worth a decode. The stored string is
+ * metadata, and a caller with no credential at all has no map to narrow
+ * against, so neither is worth a decode. The stored string is
  * returned as written in both cases, and in every case where the payload
  * turns out to carry no extensions to narrow.
  *
@@ -950,9 +950,11 @@ export function eventRoutes(
                   // Decoded once for the whole row, shared by the type
                   // checks and the narrowing below. An edge frame
                   // carries no item type and no metadata, and
-                  // `typeFilter.allowed` is undefined for exactly the
-                  // credentials that bypass the permission maps, so
-                  // neither needs the row decoded at all. Typed as
+                  // `typeFilter.allowed` is undefined for one caller
+                  // only — one presenting no credential, which
+                  // `requireAuth` has already refused before this route
+                  // reaches here — so neither needs the row decoded at
+                  // all. Nothing bypasses the maps. Typed as
                   // unknown-valued rather than as an event: this is a
                   // stored string, so its declared shape is a claim
                   // about it rather than a fact, and the checks that
@@ -1058,9 +1060,8 @@ export function eventRoutes(
                   // stored frame carrying metadata, which is four
                   // event types besides `metadata.changed`. Only a
                   // payload that actually carries a metadata block is
-                  // re-serialized, so replaying an edge event, or any
-                  // event for a credential that bypasses the maps,
-                  // pays nothing.
+                  // re-serialized, so replaying an edge event pays
+                  // nothing.
                   lastSentId = event.id;
                   send(
                     `id: ${String(event.id)}\nevent: ${replayWireType}\ndata: ${filterReplayPayload(event.payload, parsed, apiKey)}\n\n`,

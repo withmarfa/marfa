@@ -20,7 +20,7 @@
  *
  * 1. **Consent gates widening.** A newer manifest can declare more than the
  *    person approved. The upgrade computes a real permission diff and
- *    refuses anything wider, naming what is new, until a space admin
+ *    refuses anything wider, naming what is new, until a person
  *    approves it through the install consent surface. Equal or narrower
  *    proceeds: taking less needs no ceremony.
  *
@@ -57,7 +57,7 @@ export interface UpgradeInput {
   spaceId?: string;
   connectionId: string;
   clientIp?: string | null;
-  /** Set only by the consent surface, once a space admin has approved a
+  /** Set only by the consent surface, once a person has approved a
    *  widening delta. Never settable from the JSON route: the whole point is
    *  that a caller cannot wave its own consent through. */
   consentedToWidening?: boolean;
@@ -367,12 +367,12 @@ async function applyUpgrade(
 
   // The gate. A widening move needs a person, and a caller cannot approve
   // its own: `consentedToWidening` is set by the consent surface after a
-  // space admin has seen exactly these lines, and by nothing else.
+  // person has seen exactly these lines, and by nothing else.
   const delta = preview.delta;
   if (delta?.widens && input.consentedToWidening !== true) {
     throw new UpgradeError(
       "consent_required",
-      `Moving ${preview.current.manifest_name} to ${preview.candidate.manifest_version} would grant more than this connection was installed with. A space admin has to approve it.`,
+      `Moving ${preview.current.manifest_name} to ${preview.candidate.manifest_version} would grant more than this connection was installed with. It has to be approved on the install consent surface.`,
       {
         current_version: preview.current.manifest_version,
         candidate_version: preview.candidate.manifest_version,

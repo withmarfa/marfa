@@ -115,21 +115,22 @@ function formatDate(iso: string): string {
  * not recognize, and this one line is most of what a person acts on.
  *
  * **Every scope is counted before anything is said.** Two earlier versions
- * returned on first sight — one arm for a write, one for a capability — and
- * neither implied the other, so the sentence depended on the order the
- * scopes happened to arrive in. `["space.app_grants", "core.note:write"]`
- * and the same pair reversed produced different lines, each omitting what
- * the other named, and the page renders exactly one line, so the loser was
- * not merely unnamed but unmentioned. The default flow landed on the worse
- * of the two: the consent screen renders administrative access last and a
- * form submits in document order, so an app holding both read as content
- * access with its administrative reach invisible.
+ * returned on first sight — one arm for a write, one for a space
+ * permission — and neither implied the other, so the sentence depended on the
+ * order the
+ * scopes happened to arrive in. `["space.app_grants", "core.note:write"]` and
+ * the same pair reversed produced different lines, each omitting what the
+ * other named, and the page renders exactly one line, so the loser was not
+ * merely unnamed but unmentioned. The default flow landed on the worse of the
+ * two: the consent screen renders administrative access last and a form
+ * submits in document order, so an app holding both read as content access
+ * with its administrative reach invisible.
  *
- * **Capabilities are named, not summarized.** No single sentence covers this
- * set honestly. `upstream_access` reaches outside the space entirely, to the
- * person's account at the third-party service. `item_purge` is the contents
- * rather than anything around them. `app_grants` revokes other apps, which
- * is this page's own subject. And `audit_read` and `usage` are reads
+ * **Space permissions are named, not summarized.** No single sentence covers
+ * this set honestly. `upstream_access` reaches outside the space entirely, to
+ * the person's account at the third-party service. `item_purge` is the
+ * contents rather than anything around them. `app_grants` revokes other apps,
+ * which is this page's own subject. And `audit_read` and `usage` are reads
  * that any collective phrasing overstates. So the line lists what was
  * granted, from the same labels the consent screen used, and a person meets
  * the same words in both places.
@@ -153,7 +154,7 @@ function scopeSummary(scopes: readonly string[]): string {
   let readsData = false;
   let identifiesYou = false;
   let unknownFamily = false;
-  const capabilities: string[] = [];
+  const spacePermissions: string[] = [];
 
   for (const scope of scopes) {
     const parsed = parseScope(scope);
@@ -209,11 +210,12 @@ function scopeSummary(scopes: readonly string[]): string {
         break;
       case "space": {
         const named = spacePermissionShort(parsed.typePattern);
-        // An unnamed capability cannot be listed, but it must not vanish
+        // An unnamed space permission cannot be listed, but it must not vanish
         // either. The exhaustive label map makes this unreachable in a
         // build that compiles; it is here for one that did not.
         if (named === undefined) unknownFamily = true;
-        else if (!capabilities.includes(named)) capabilities.push(named);
+        else if (!spacePermissions.includes(named))
+          spacePermissions.push(named);
         break;
       }
       default: {
@@ -233,11 +235,11 @@ function scopeSummary(scopes: readonly string[]): string {
   if (unknownFamily) clauses.push("manage your space");
   if (writesData) clauses.push("read and write your data");
   else if (readsData) clauses.push("read your data");
-  // Two named, then a count. Four capabilities spelled out in full is a
+  // Two named, then a count. Four space permissions spelled out in full is a
   // paragraph in a table row, and the row is a glance rather than a reading.
-  if (capabilities.length > 0) {
-    const listed = capabilities.slice(0, 2);
-    const remainder = capabilities.length - listed.length;
+  if (spacePermissions.length > 0) {
+    const listed = spacePermissions.slice(0, 2);
+    const remainder = spacePermissions.length - listed.length;
     clauses.push(...listed);
     if (remainder > 0) {
       clauses.push(

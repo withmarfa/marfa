@@ -1,14 +1,15 @@
 /**
- * The rule that decides who may act on a space-admin HTML surface.
+ * The rule that decides who may act on an HTML surface a space permission
+ * gates.
  *
  * These routes accept either a bearer token or a browser session, and the two
- * branches answer different questions. A bearer is held to the capability the
- * surface names. A session is not: these pages are part of the consent surface
- * rather than something reached through it, so there is no grant behind them
- * for a capability to have been ticked on, and what the session has to resolve
- * to is a space. That is the refusal worth pinning — downstream,
- * `spaceId: undefined` is not "no space", it is "no space filter", so an
- * unresolved session would reach across spaces.
+ * branches answer different questions. A bearer is held to the space
+ * permission the surface names. A session is not: these pages are part of the
+ * consent surface rather than something reached through it, so there is no
+ * grant behind them for a space permission to have been ticked on, and what
+ * the session has to resolve to is a space. That is the refusal worth
+ * pinning — downstream, `spaceId: undefined` is not "no space", it is "no
+ * space filter", so an unresolved session would reach across spaces.
  *
  * Driven against the resolver directly. The route-level suites cover the
  * happy paths; what was missing is the refusals, which is the half a
@@ -147,7 +148,7 @@ describe("resolveSpaceCaller — the session branch", () => {
   });
 });
 
-describe("resolveSpaceCaller — the bearer branch asks the capability", () => {
+describe("resolveSpaceCaller — the bearer branch asks the space permission", () => {
   function bearerContext(key: ApiKey): Context<AppEnv> {
     return {
       get: (name: string) => (name === "apiKey" ? key : undefined),
@@ -178,7 +179,7 @@ describe("resolveSpaceCaller — the bearer branch asks the capability", () => {
     };
   }
 
-  it("admits a key holding the capability the surface names", async () => {
+  it("admits a key holding the space permission the surface names", async () => {
     const caller = await resolveSpaceCaller(
       bearerContext(fakeKey({})),
       storageWith(null),
@@ -208,7 +209,7 @@ describe("resolveSpaceCaller — the bearer branch asks the capability", () => {
     } as unknown as Context<AppEnv>;
   }
 
-  it("refuses a signed-in app that was not granted the capability", async () => {
+  it("refuses a signed-in app that was not granted the space permission", async () => {
     // The case the resolver exists to answer. The key this app signed in
     // through holds `space.connections` on its row; the grant does not, and
     // the grant is what an OAuth caller is held to. Without this, the
@@ -237,7 +238,7 @@ describe("resolveSpaceCaller — the bearer branch asks the capability", () => {
     expect(caller).toMatchObject({ apiKeyId: "k1", spaceId: "space-1" });
   });
 
-  it("asks for the capability it was handed, not a fixed one", async () => {
+  it("asks for the space permission it was handed, not a fixed one", async () => {
     // The parameter is what makes a new surface behind this resolver have to
     // answer the question. A hard-coded literal would let one be added under
     // the wrong authority and still look gated.

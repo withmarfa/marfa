@@ -15,7 +15,7 @@
 --     inbound_webhooks via inbound_webhook_id.
 --
 -- Same NULL-allowance as the existing policies: single-tenant self-hosts
--- (every row tenant_id IS NULL) and the platform-admin path (GUC '') keep
+-- (every row tenant_id IS NULL) and the operator path (GUC '') keep
 -- working transparently. The two child tables defer the NULL/'' allowance
 -- to the parent's own tenant_id, so the join predicate matches their
 -- parent policy exactly.
@@ -28,7 +28,7 @@
 --      (auth/instance.ts databaseHooks.user.create.after) inserts the new
 --      `users` row on the unwrapped owner connection (Better Auth manages
 --      its own connection context outside the data-plane RLS middleware).
---   2. The bearer middleware projects an OAuth principal's role via
+--   2. The bearer path resolves an OAuth principal's user row via
 --      `users.getByAuthUserId`, which runs before the per-request RLS
 --      transaction wrapper is installed — i.e. on the owner connection.
 -- A FORCE here would policy-check those owner inserts/reads against an

@@ -86,7 +86,7 @@ import type {
  * The split is not cosmetic.** `scopesToTypePermissions` admits item-type
  * scopes, plus the content category, which reaches that map as a complement
  * rather than as a key anything could resolve against. Edge, metadata, OIDC
- * and capability literals project into it not at all, so a merge built on
+ * and space permission literals project into it not at all, so a merge built on
  * that map alone would drop four families on the floor, and a dropped scope
  * is a narrowing, which is the one thing this function exists to prevent.
  *
@@ -103,8 +103,8 @@ import type {
  *   verb is worth more than a second rule justified by today's resolver, and
  *   the day `metadataPermissionCovers` grows precedence this is already
  *   right.
- * - **Capabilities and OIDC literals carry no pattern and no verb.** A
- *   capability is granted by naming it and by nothing else. Membership is
+ * - **Space permissions and OIDC literals carry no pattern and no verb.** A
+ *   space permission is granted by naming it and by nothing else. Membership is
  *   the whole of their algebra, so a literal union is exactly right for them
  *   and nothing can pin anything.
  * - **The content category is unioned beside them, and the reason differs.**
@@ -211,14 +211,14 @@ import type {
  * `/auth/security` reports, not the list a token is minted from.
  *
  * **The unioned families are never pruned**, and there are four of them, not
- * three. Capability, OIDC and unparseable literals have membership as their
- * whole algebra: there is no verb to resolve, so nothing among them can be
- * redundant, and a deletion rule that reached them would take away a grant
+ * three. Space permission, OIDC and unparseable literals have membership as
+ * their whole algebra: there is no verb to resolve, so nothing among them can
+ * be redundant, and a deletion rule that reached them would take away a grant
  * rather than a restatement of one. The content category reaches the same
- * place by a different road — it does carry a verb, but not on a key any
- * axis holds — and the conclusion is the same, so the rule needs no arm for
- * it. What differs is only why, which is why it is named here rather than
- * folded into the sentence above it.
+ * place by a different road — it does carry a verb, but not on a key any axis
+ * holds — and the conclusion is the same, so the rule needs no arm for it.
+ * What differs is only why, which is why it is named here rather than folded
+ * into the sentence above it.
  *
  * This is a third literal-level operation on a structure that has twice
  * proved not to be a set, so it is written as a removal that provably changes
@@ -623,8 +623,8 @@ export function mergeDeviceApprovalScopes(
     const breadth = parsed ? breadthKey(parsed) : null;
 
     if (!breadth) {
-      // Membership is the whole algebra here: a capability, an OIDC literal,
-      // or something this build cannot read. Union verbatim.
+      // Membership is the whole algebra here: a space permission, an OIDC
+      // literal, or something this build cannot read. Union verbatim.
       const id = `literal:${scope}`;
       if (emitted.has(id)) continue;
       emitted.add(id);
@@ -705,13 +705,14 @@ export function mergeDeviceApprovalScopes(
  * input rather than being unreachable, which is exactly how a request the
  * grant does not reach comes back empty.
  *
- * **The verb-less families intersect by plain membership.** A capability, an
- * OIDC literal and a literal this build cannot parse are each granted by
- * being named and by nothing else, so each appears in the result only if
- * both sides named it. `offline_access` is the load-bearing one: the route
- * reads it back off this list to decide whether a refresh token is minted at
- * all, so a browser's `offline_access` must not reach a CLI that never asked
- * for it, and a CLI's must not survive a grant that no longer carries it.
+ * **The verb-less families intersect by plain membership.** A space
+ * permission, an OIDC literal and a literal this build cannot parse are each
+ * granted by being named and by nothing else, so each appears in the result
+ * only if both sides named it. `offline_access` is the load-bearing one: the
+ * route reads it back off this list to decide whether a refresh token is
+ * minted at all, so a browser's `offline_access` must not reach a CLI that
+ * never asked for it, and a CLI's must not survive a grant that no longer
+ * carries it.
  *
  * **A key the prune may not reason about is not one this may resolve
  * through either.** {@link keyIsResolvable} describes the shape: a key whose

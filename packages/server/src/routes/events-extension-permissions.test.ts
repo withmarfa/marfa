@@ -203,7 +203,7 @@ describe("an OAuth-derived subscriber", () => {
     const { token } = await seedOauthBearer(
       hosted.storage,
       ["core.note:read"],
-      { spaceId: space.id, userRole: "space_admin" },
+      { spaceId: space.id, seedUserRow: true },
     );
 
     const item = await hosted.storage.items.create(
@@ -225,7 +225,7 @@ describe("an OAuth-derived subscriber", () => {
       until: (text) => text.includes("metadata.changed"),
     });
     await settle();
-    // Written by a credential inside the space, not by the platform admin:
+    // Written by a credential inside the space, not by the operator key:
     // the stream filters on the event's space, and a space-less writer
     // publishes a frame this subscriber never sees — which would make the
     // assertions below pass having read nothing.

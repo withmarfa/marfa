@@ -168,7 +168,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // is the half that is easy to leave out.
     //
     // This door runs no per-row `requireTypeAccess`, so a credential that
-    // reaches the match query never meets the platform-credential fence that
+    // reaches the match query never meets the operator fence that
     // guards `system.*` on every single-item write door. Gating only the
     // default and letting anyone widen by naming a type would therefore
     // publish a write path into the reserved namespace that
@@ -240,7 +240,7 @@ describe("the bulk-action door and the read doors agree about system rows", () =
     // matches an ordinary row, so the reserved row is absent because the
     // fence refused it rather than because the query found nothing. The
     // control has to run as *this* key — the platform check below says
-    // something about the platform credential and nothing about this one.
+    // something about the operator key and nothing about this one.
     const { result: ownReach } = await runBulkActionAsync(
       ctx,
       {

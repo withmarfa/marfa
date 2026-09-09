@@ -11,13 +11,13 @@
  * store.
  *
  * The consequence was narrow and sharp. `trashed` is a valid state and is not
- * in the `system.*` lifecycle at all, so a platform credential could create a
+ * in the `system.*` lifecycle at all, so the operator key could create a
  * `system.connection` directly in `trashed` — a state no transition can produce
  * and none can leave — through the bulk door while the single door beside it
  * refused.
  *
  * **Two credential shapes, deliberately.** The bulk door is reachable by a
- * platform credential for any `system.*` type, and by an integration runtime
+ * the operator key for any `system.*` type, and by an integration runtime
  * credential for `system.activity` alone, through the carve-out in
  * `checkTypeAccess`. A suite written entirely with one shape pins the check for
  * that shape and is blind to the other, which is how a guard goes missing on a
@@ -183,7 +183,7 @@ describe("the second credential shape reaches the same doors", () => {
    * An integration runtime credential may write `system.activity` and nothing
    * else in the system family, through the carve-out in `checkTypeAccess`. So
    * it reaches these doors on one type, and a suite that only ever used a
-   * platform credential would never exercise that path.
+   * the operator key would never exercise that path.
    */
   async function createActivity(
     route: "/items" | "/items/bulk",

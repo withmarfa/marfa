@@ -5,8 +5,8 @@
 -- `users` and was missed. `0052_t224_naming.sql` did both tables for the
 -- previous rename of this column, which is the shape this restores.
 --
--- The consequence was not cosmetic. `users.role` is projected onto OAuth
--- bearer principals, and `space_admin` is the value every gate compares
+-- The consequence was not cosmetic. `users.role` was projected onto OAuth
+-- bearer principals, and `space_admin` was the value every gate compared
 -- against, so an account holder carrying `tenant_admin` matched no branch
 -- and was refused on every admin-gated route while API-key callers were
 -- unaffected.

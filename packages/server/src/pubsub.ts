@@ -476,9 +476,9 @@ async function resolveFanout(
  * **A caller's space and its rows' space are the same thing right up until
  * they are not.** Storage is space-scoped at the SQL layer, so for an ordinary
  * space-bound credential a row it read is already in its own space and this
- * changes nothing. A platform admin is not space-bound: its `space_id` is
+ * changes nothing. The operator key is not space-bound: its `space_id` is
  * null, so every door that took the space from the credential published
- * unscoped whenever an admin wrote to somebody else's rows.
+ * unscoped whenever it wrote to somebody else's rows.
  *
  * An unscoped event is not a broadly-delivered one. `subscribeItems` drops an
  * event whose space does not match a space-bound subscriber's, so the account

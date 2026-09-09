@@ -489,8 +489,9 @@ async function resolveIntegrationManifest(
 
 /**
  * Pluggable calendar-list fetcher. In production, an outer wiring layer
- * implements this by calling the connection-proxy with admin credentials
- * (the picker UI itself is admin-gated). Tests inject a stub that returns
+ * implements this by calling the connection-proxy, which is gated on
+ * `space.upstream_access` (as the picker UI itself is). Tests inject a
+ * stub that returns
  * a fixed calendar list without touching the OAuth path. This keeps the
  * route deterministic under unit-test conditions and avoids re-entering
  * the request stack from inside a handler.

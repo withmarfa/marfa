@@ -52,10 +52,10 @@
  *
  * Internal-call bypass — the `system.connection` writes at step 6
  * use the storage layer directly rather than the HTTP route,
- * sidestepping the platform-credential gate that route enforces. This
- * intentionally mirrors `performInstall`'s direct-storage create: at
- * uninstall time the caller is a space admin or platform admin acting
- * deliberately, not an arbitrary `system.*` writer.
+ * sidestepping the operator gate that route enforces. This intentionally
+ * mirrors `performInstall`'s direct-storage create: at uninstall time the
+ * caller has already been held to `space.connections` at the route layer
+ * and is acting deliberately, not as an arbitrary `system.*` writer.
  */
 import type { Storage } from "../storage/interface.js";
 import { withConnectionLifecycleLock } from "./lifecycle-lock.js";

@@ -55,11 +55,11 @@ type Operation = "read" | "write";
  * What a scope permits, or `undefined` where the question does not arise.
  *
  * Asked of `kind` in an exhaustive switch rather than of the spelling, so a
- * family added to the grammar stops this package compiling until somebody
- * has decided whether a person reading its row is being told about a read or
- * a change. Spelling is what got this wrong elsewhere: the verb-less
- * families are exactly the ones whose literal carries no colon, and a rule
- * derived from the text would attach an operation to a capability by reading
+ * family added to the grammar stops this package compiling until somebody has
+ * decided whether a person reading its row is being told about a read or a
+ * change. Spelling is what got this wrong elsewhere: the verb-less families
+ * are exactly the ones whose literal carries no colon, and a rule derived
+ * from the text would attach an operation to a space permission by reading
  * the `operation` field that parsing gives every scope.
  */
 export function scopeOperation(scope: ParsedScope): Operation | undefined {

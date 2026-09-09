@@ -46,7 +46,7 @@ async function seedAccount(
 }
 
 describe("POST /admin/accounts/:id/delete", () => {
-  it("requires a platform admin", async () => {
+  it("requires the operator key", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
     const res = await request(ctx.app, "POST", "/admin/accounts/x/delete", {
       body: { confirm: "a@test.marfa.so" },

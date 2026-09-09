@@ -179,7 +179,7 @@ describe("a consent row states the operation, not only the type", () => {
   });
 
   it("says the same thing about one grant on the device screen", () => {
-    // That screen has no toggles, no sections and no second line: one
+    // That screen has no sections and no second line: one
     // sentence per grant is the whole of what it says, and it de-duplicated
     // on that sentence, so a read and a change over one type arrived as a
     // single row saying neither.
@@ -291,7 +291,7 @@ describe("a consent row states the operation, not only the type", () => {
 });
 
 describe("a scope family with no read/write axis is given none", () => {
-  it("attaches nothing to an OIDC literal or a capability", () => {
+  it("attaches nothing to an OIDC literal or a space permission", () => {
     const scopes = [parse("profile"), parse("space.webhooks")];
     const rendered = [
       ...rowLabels(authorize(scopes)),
@@ -306,8 +306,8 @@ describe("a scope family with no read/write axis is given none", () => {
   it("answers on the kind rather than on the spelling", () => {
     // `operation` is typed across the whole union and parsing sets it to
     // "none" for the verb-less families, so a rule reading that field
-    // without asking the kind would attach an operation to a capability the
-    // moment the value moved. Asked here of the discriminant.
+    // without asking the kind would attach an operation to a space permission
+    // the moment the value moved. Asked here of the discriminant.
     expect(scopeOperation(parse("profile"))).toBeUndefined();
     expect(scopeOperation(parse("space.webhooks"))).toBeUndefined();
     expect(scopeOperation(parse("core.note:read"))).toBe("read");

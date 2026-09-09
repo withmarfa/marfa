@@ -179,7 +179,7 @@ const getQuotasRoute = createRoute({
   tags: ["Spaces"],
   summary: "Get space quotas",
   description:
-    "Returns the per-space quota ceilings for a specific space. A `null` field means the env default applies, and an entirely-null payload means no per-space override is configured. Platform-admin only — a space-bound credential holding `space.usage` uses `GET /spaces/me/quotas` to read its own ceilings without knowing its space id.",
+    "Returns the per-space quota ceilings for a specific space. A `null` field means the env default applies, and an entirely-null payload means no per-space override is configured. Operator key only — a space-bound credential holding `space.usage` uses `GET /spaces/me/quotas` to read its own ceilings without knowing its space id.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -272,7 +272,7 @@ const putQuotasRoute = createRoute({
   tags: ["Spaces"],
   summary: "Update space quotas",
   description:
-    "Sets the per-space quota ceilings for a specific space. Each field is independent — a non-null value overrides the env default, while `null` resets that field to the env default. Platform-admin only.",
+    "Sets the per-space quota ceilings for a specific space. Each field is independent — a non-null value overrides the env default, while `null` resets that field to the env default. Operator key only.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -373,7 +373,7 @@ export function spaceRoutes(storage: Storage) {
 
   // **Route order matters.** `/me/quotas` is registered BEFORE `/{id}/quotas`
   // so a request to `GET /spaces/me/quotas` matches the own-space handler
-  // instead of the platform-admin handler with `id="me"`. Hono dispatches in
+  // instead of the operator handler with `id="me"`. Hono dispatches in
   // registration order; flipping these would 403 every space-bound caller.
   router.openapi(getOwnQuotasRoute, async (c) => {
     const key = requireAuth(c);
@@ -402,7 +402,8 @@ export function spaceRoutes(storage: Storage) {
     );
   });
 
-  // Platform-admin only — reading another space's caps is cross-space authority.
+  // Operator key only — reading another space's caps is cross-space
+  // authority.
   router.openapi(getQuotasRoute, async (c) => {
     requireOperatorKey(c);
     const { id } = c.req.valid("param");

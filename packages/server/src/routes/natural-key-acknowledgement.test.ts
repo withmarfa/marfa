@@ -19,7 +19,7 @@
  *  - **The extension namespaces: no.** That axis is not bounded by the
  *    natural key at all. `extension_permissions` are per credential, so a
  *    row can carry namespaces the caller holds nothing on — written by a
- *    space admin, by another tool, or by a sibling Connection of the same
+ *    a person, by another tool, or by a sibling Connection of the same
  *    integration, all of which share the source that resolved it.
  *  - **The type: no.** `item_source` is keyed on the manifest name and
  *    stable across mints, so a manifest that narrows leaves rows reachable
@@ -99,7 +99,7 @@ async function syncCredential(options: {
 
 /**
  * A trashed row at this credential's `(source, sourceId)`, carrying one
- * namespace the credential wrote and one a space admin did.
+ * namespace the credential wrote and one a person did.
  */
 async function trashedRow(cred: SyncKey, sourceId: string): Promise<string> {
   const created = await request(ctx.app, "POST", "/items", {

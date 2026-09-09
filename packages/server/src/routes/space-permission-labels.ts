@@ -1,19 +1,19 @@
 /**
- * Human names for the capability scopes, in the two shapes the surfaces need.
+ * Human names for the space permissions, in the two shapes the surfaces need.
  *
  * One home because three surfaces read them — the consent screen, the
- * device-approval screen, and the security page's revoke line — and a
- * capability whose name differs between the screen that grants it and the
+ * device-approval screen, and the security page's revoke line — and a space
+ * permission whose name differs between the screen that grants it and the
  * screen that revokes it is worse than one with no name at all.
  *
  * Both maps are keyed on `SpacePermission` rather than `string`, so adding a
- * capability fails to compile until it has been named in both. That is the
- * only guard that matters here: the fallback these replace is
+ * space permission fails to compile until it has been named in both. That is
+ * the only guard that matters here: the fallback these replace is
  * `humanizeType`, which takes the last dotted segment, so an unnamed
  * `space.webhooks` renders as "Webhooks" — byte-identical to what
  * `system.webhook:read` gets from the same fallback. One grant is sight of a
- * webhook row and the other is the power to point a new webhook anywhere,
- * and the one place a person inspects that difference would show none.
+ * webhook row and the other is the power to point a new webhook anywhere, and
+ * the one place a person inspects that difference would show none.
  */
 import type { SpacePermission } from "@withmarfa/shared";
 import { isSpacePermission } from "@withmarfa/shared";
@@ -63,7 +63,7 @@ export const SPACE_PERMISSION_SHORT: Record<SpacePermission, string> = {
 };
 
 /** The consent-toggle label for a literal, or undefined when it names no
- *  capability. A guard rather than a cast, so a literal outside the set
+ *  space permission. A guard rather than a cast, so a literal outside the set
  *  cannot be asserted into a lookup that has no entry for it. */
 export function spacePermissionLabel(literal: string): string | undefined {
   return isSpacePermission(literal)
@@ -72,7 +72,7 @@ export function spacePermissionLabel(literal: string): string | undefined {
 }
 
 /** The inline-list form for a literal, or undefined when it names no
- *  capability. */
+ *  space permission. */
 export function spacePermissionShort(literal: string): string | undefined {
   return isSpacePermission(literal)
     ? SPACE_PERMISSION_SHORT[literal]

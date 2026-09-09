@@ -32,7 +32,7 @@ export const spaces = pgTable("spaces", {
   created_at: text("created_at").notNull(),
   // Operator-controlled space status. `'active'` (default) allows writes;
   // `'suspended'` blocks them at the auth middleware. Reads pass through
-  // regardless. Platform-admin keys bypass the gate so operators can
+  // regardless. The operator key bypasses the gate so operators can
   // inspect a suspended space.
   status: text("status").notNull().default("active"),
 });
@@ -363,7 +363,7 @@ export const apiKeys = pgTable(
 // ---------------------------------------------------------------------------
 
 // Composite PK on (space_id, hash); empty-string sentinel for instance-wide /
-// platform-admin / single-space rows. See sqlite/schema.ts for design rationale.
+// operator-key / single-space rows. See sqlite/schema.ts for design rationale.
 export const blobs = pgTable(
   "blobs",
   {
@@ -644,11 +644,11 @@ export const auditLog = pgTable(
     timestamp: text("timestamp").notNull(),
     key_id: text("key_id"),
     /**
-     * Space scope. Stamped from the calling api key's `space_id` (or
-     * `null` for system-initiated audits / bootstrap-admin keys with no
-     * space). Reads filter by this column when the caller is
-     * space-scoped; keys without a space (bootstrap admin) see all rows.
-     * Indexed because `GET /audit` filters here on every hosted-mode request.
+     * Space scope. Stamped from the calling api key's `space_id` (or `null`
+     * for system-initiated audits and the bootstrap credential, which has no
+     * space). Reads filter by this column when the caller is space-scoped; a
+     * credential with no space sees all rows. Indexed because `GET /audit`
+     * filters here on every hosted-mode request.
      */
     space_id: text("space_id"),
     action: text("action").notNull(),
@@ -717,7 +717,7 @@ export const bulkActionJobs = pgTable(
     // NULLS NOT DISTINCT is applied by a migration because Drizzle's
     // uniqueIndex builder doesn't expose .nullsNotDistinct() yet — only
     // `unique()` constraints carry it, and those don't support WHERE.
-    // Without it, two replays from a space-less admin credential
+    // Without it, two replays from a space-less credential
     // (space_id IS NULL) wouldn't conflict on the (NULL, key) pair
     // because PG defaults treat NULLs as distinct in unique indexes.
     // Idempotency would silently double-fire for the admin path.
@@ -1277,7 +1277,7 @@ export const idempotencyRecords = pgTable(
     // mirroring `idx_items_source_dedup`: `space_id` is nullable and NULL
     // never equals NULL in a unique index, so the plain shape would stop
     // deduping the null-space bucket entirely — every request on a
-    // single-space self-host, and every platform-admin request anywhere.
+    // single-space self-host, and every operator-key request anywhere.
     // The same defect was found and repaired on `bulk_action_jobs`, which
     // reached for NULLS NOT DISTINCT instead; COALESCE says it once and is
     // the same expression in both dialects.

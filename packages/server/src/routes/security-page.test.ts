@@ -365,10 +365,10 @@ describe("POST /auth/grants/:id/revoke + /auth/sessions/:id/revoke gates", () =>
 // The summary counts everything before it says anything.
 //
 // Two earlier versions returned on first sight, one arm for a write and one
-// for a capability, so the line depended on the order the scopes arrived in
-// and the losing half went unmentioned on a page that renders one line. The
-// default flow landed on the worse branch: administrative access renders
-// last on the consent screen and a form submits in document order.
+// for a space permission, so the line depended on the order the scopes
+// arrived in and the losing half went unmentioned on a page that renders one
+// line. The default flow landed on the worse branch: administrative access
+// renders last on the consent screen and a form submits in document order.
 // ---------------------------------------------------------------------------
 
 describe("the summary does not depend on scope order", () => {
@@ -393,7 +393,7 @@ describe("the summary does not depend on scope order", () => {
     expect(summary).toContain("revoke the other apps");
   });
 
-  it("names the capability rather than summarizing the family", () => {
+  it("names the space permission rather than summarizing the family", () => {
     // No one sentence is honest across this set, so the line lists what was
     // granted. These three are the cases a collective phrase got wrong in
     // both directions.

@@ -53,7 +53,6 @@ beforeAll(async () => {
     body: {
       label: "occurrences-pagination",
       source: "occurrences-page-src",
-      role: "member",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
     },
