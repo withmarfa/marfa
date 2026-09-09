@@ -156,8 +156,15 @@ WHERE `space_id` IS NULL
 -- an aborted migration naming a unique index is not something a self-hoster
 -- can act on. The newest row per key is the one the caller would have been
 -- served, so it is the one kept.
+--
+-- Guarded on the provisioned space like every move around it, and for the
+-- same reason turned around: this is the one destructive statement here, and
+-- an instance where nothing is being moved has no collision coming. Without
+-- the guard it would delete history on a hosted instance the rest of this
+-- migration leaves alone.
 DELETE FROM `bulk_action_jobs`
-WHERE `space_id` IS NULL
+WHERE EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001')
+  AND `space_id` IS NULL
   AND `idempotency_key` IS NOT NULL
   AND `id` NOT IN (
     SELECT `id` FROM `bulk_action_jobs` AS `keep`

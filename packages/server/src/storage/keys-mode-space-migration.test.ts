@@ -195,6 +195,99 @@ describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
     expect(grant.rows[0]!.space_id).toBeNull();
   });
 
+  /**
+   * One row in one table, per arm of the provision gate.
+   *
+   * Each arm is a whole class of instance that would otherwise get no space,
+   * and a table-driven case per arm is what makes dropping any single one
+   * redden. A test seeding two arms at once passes with either removed.
+   */
+  const GATE_ARMS: { name: string; seed: string; args?: string[] }[] = [
+    {
+      name: "a registered type of its own",
+      seed: `INSERT INTO custom_types (space_id, id, schema, origin, created_at, updated_at)
+             VALUES ('', 'my.recipe', '{}', 'user', ?, ?)`,
+      args: [NOW, NOW],
+    },
+    {
+      name: "a custom edge type",
+      seed: `INSERT INTO custom_edge_types (space_id, id, schema, created_at, updated_at)
+             VALUES ('', 'my.cites', '{}', ?, ?)`,
+      args: [NOW, NOW],
+    },
+    {
+      name: "an outbound webhook",
+      seed: `INSERT INTO outbound_webhooks (id, space_id, url, secret, events, created_at, updated_at)
+             VALUES ('w1', NULL, 'https://example.test/hook', 's', '[]', ?, ?)`,
+      args: [NOW, NOW],
+    },
+    {
+      name: "an item of its own",
+      seed: `INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
+             VALUES ('note', NULL, 'core.note', 'active', '{}', ?, ?, ?)`,
+      args: [NOW, NOW, NOW],
+    },
+    {
+      name: "a live ordinary key",
+      seed: `INSERT INTO api_keys (id, space_id, key_hash, label, source, is_operator, created_at)
+             VALUES ('working', NULL, 'h', 'working', 'cli', 0, ?)`,
+      args: [NOW],
+    },
+  ];
+
+  for (const arm of GATE_ARMS) {
+    it(`provisions for an instance holding ${arm.name}`, async () => {
+      const client = await seeded(
+        `arm-${arm.name.replace(/\W+/g, "-")}`,
+        async (c) => {
+          await insertKey(c, {
+            id: "operator",
+            space_id: null,
+            is_operator: 1,
+            source: "bootstrap",
+          });
+          await c.execute({ sql: arm.seed, args: arm.args ?? [] });
+        },
+      );
+      const spaces = await client.execute("SELECT id FROM spaces");
+      expect(spaces.rows.map((r) => r.id as string)).toEqual([PROVISIONED]);
+    });
+  }
+
+  it("leaves the bulk-job history of an instance it is not moving alone", async () => {
+    // The dedupe is the one destructive statement here, and a hosted instance
+    // gets no space and no move — so it must get no delete either. Without
+    // the guard this ran anywhere, on rows nothing was about to collide.
+    const dbPath = join(workDir, "hosted-bulk.db");
+    await runSqliteMigrationsThrough(dbPath, tagBefore("sqlite"));
+    const client = createClient({ url: `file:${dbPath}` });
+    await client.execute({
+      sql: `INSERT INTO spaces (id, name, created_at) VALUES ('space-a', 'A', ?)`,
+      args: [NOW],
+    });
+    for (const [id, created] of [
+      ["hosted-first", "2026-01-01T00:00:00.000Z"],
+      ["hosted-replay", "2026-01-01T00:00:01.000Z"],
+    ] as [string, string][]) {
+      await client.execute({
+        sql: `INSERT INTO bulk_action_jobs
+                (id, space_id, status, action, input, matched_ids, idempotency_key, created_at)
+              VALUES (?, NULL, 'queued', 'tag', '{}', '[]', 'retry-42', ?)`,
+        args: [id, created],
+      });
+    }
+
+    await runSqliteMigrations(dbPath);
+
+    const jobs = await client.execute(
+      "SELECT id FROM bulk_action_jobs ORDER BY id",
+    );
+    expect(jobs.rows.map((r) => r.id as string)).toEqual([
+      "hosted-first",
+      "hosted-replay",
+    ]);
+  });
+
   it("collapses duplicate space-less bulk jobs rather than aborting on the index", async () => {
     // `idx_bulk_action_jobs_idempotency` is UNIQUE on (space_id,
     // idempotency_key) with NULLs distinct, and the upsert's conflict target
@@ -229,6 +322,55 @@ describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
     // would have been served.
     expect(jobs.rows.map((r) => r.id as string)).toEqual(["job-replay"]);
     expect(jobs.rows[0]!.space_id).toBe(PROVISIONED);
+  });
+
+  it("keeps one row per key on a tie, and leaves a keyless job alone", async () => {
+    // Two things the happy case cannot see. Two replays in the same
+    // millisecond are ordinary for a retry loop, and both surviving would
+    // abort the migration on the index this collapse exists to clear. A job
+    // with no `Idempotency-Key` is outside that index entirely and is a
+    // duplicate of nothing.
+    //
+    // A space-bound row sharing a key with a space-less one is deliberately
+    // not covered, because it cannot be built: the collapse runs only where a
+    // space was just provisioned, which requires the instance to have had
+    // none, so every job in the table at that moment is space-less. The
+    // `space_id IS NULL` clause is belt and braces over a guard that already
+    // holds.
+    const client = await seeded("bulk-edges", async (c) => {
+      await insertKey(c, {
+        id: "worker",
+        space_id: null,
+        is_operator: 0,
+        source: "worker",
+      });
+      const rows: [string, string | null, string][] = [
+        ["tie-a", "retry-1", "2026-01-01T00:00:00.000Z"],
+        ["tie-b", "retry-1", "2026-01-01T00:00:00.000Z"],
+        ["tie-c", "retry-1", "2026-01-01T00:00:00.000Z"],
+        ["keyless-a", null, NOW],
+        ["keyless-b", null, NOW],
+      ];
+      for (const [id, key, created] of rows) {
+        await c.execute({
+          sql: `INSERT INTO bulk_action_jobs
+                  (id, space_id, status, action, input, matched_ids, idempotency_key, created_at)
+                VALUES (?, NULL, 'queued', 'tag', '{}', '[]', ?, ?)`,
+          args: [id, key, created],
+        });
+      }
+    });
+
+    const jobs = await client.execute(
+      "SELECT id, space_id FROM bulk_action_jobs ORDER BY id",
+    );
+    const ids = jobs.rows.map((r) => r.id as string);
+    expect(ids).toContain("keyless-a");
+    expect(ids).toContain("keyless-b");
+    expect(ids.filter((id) => id.startsWith("tie-"))).toHaveLength(1);
+    expect(ids).toHaveLength(3);
+    // Everything that survived moved.
+    expect(jobs.rows.every((r) => r.space_id === PROVISIONED)).toBe(true);
   });
 
   it("moves a keys-mode instance's rows, revoked ones included, and keeps only the operator key space-less", async () => {

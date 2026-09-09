@@ -634,14 +634,31 @@ function refuseWideningAnAppsKey(
 }
 
 /**
- * Run the bootstrap mint, and give the sentinel back if it throws.
+ * Run the bootstrap mint, and give the sentinel back only if nothing was
+ * minted.
  *
  * `settings.claim` is atomic and one-shot, which is what keeps two concurrent
- * unauthenticated mints from both succeeding. It is also what tells
- * `authMiddleware` to stop admitting an unauthenticated `POST /keys`, and
- * nothing else clears it — so a claim followed by a failure is an instance
- * with no credential and no route that can make one. Releasing here turns
- * that into a retry.
+ * unauthenticated mints from both succeeding. It is also the only thing
+ * telling `authMiddleware` to stop admitting an unauthenticated `POST /keys`,
+ * and nothing else clears it, so a claim followed by a failure used to be an
+ * instance with no credential and no route that could make one.
+ *
+ * **The release is conditional, and the condition is the whole safety of it.**
+ * Releasing on any failure would reopen unauthenticated minting on an
+ * instance that already has an operator key — a stranger who won the reopened
+ * window would hold one, and an operator key reaches
+ * `POST /admin/spaces/{id}/keys`, which is deliberately unclamped and hands
+ * out the whole of a space. That is a takeover, where the problem being
+ * solved was only a lockout. So the window reopens exactly when there is no
+ * credential to protect, which is the state the middleware's own gate is
+ * about.
+ *
+ * The check is a read of the key table rather than a flag, because a throw
+ * carries no reliable account of what committed before it.
+ *
+ * A failure to release is swallowed. It leaves the instance no worse than
+ * before this wrapper existed, and replacing the caller's error with a
+ * cleanup's would hide what actually went wrong.
  *
  * A non-bootstrap call passes straight through, because there is no claim to
  * give back.
@@ -655,7 +672,19 @@ async function withBootstrapRelease<T>(
   try {
     return await mint();
   } catch (error) {
-    await storage.settings.release("bootstrapped");
+    try {
+      const minted = await storage.keys.list();
+      if (minted.length === 0) {
+        await storage.settings.release("bootstrapped");
+      }
+    } catch (releaseFailure) {
+      log("error", "bootstrap claim could not be released", {
+        error:
+          releaseFailure instanceof Error
+            ? releaseFailure.message
+            : String(releaseFailure),
+      });
+    }
     throw error;
   }
 }
@@ -690,17 +719,34 @@ async function provisionKeysModeSpace(
   | undefined
 > {
   if (!storage.spaces) return undefined;
-  // Same guard the migration carries: provision only where there is no space
-  // at all. Two paths reach this state — an instance migrated from before
-  // keys mode had spaces, and a fresh one bootstrapping now — and without the
-  // guard they compound. A keys-mode instance can reach `POST /keys` with the
-  // migration's space already in place (an install through a signed-in
-  // session creates rows before anything is bootstrapped), and a second space
-  // is not a cosmetic surplus: `resolveSpaceCaller` refuses on anything but
-  // exactly one, so every session-authenticated surface would 403 for good.
+  // **A second space is never created, and an existing one is adopted.** Two
+  // paths reach this point — an instance migrated from before keys mode had
+  // spaces, and a fresh one bootstrapping now — and a keys-mode instance can
+  // arrive with the migration's space already in place, because rows can be
+  // written through a signed-in session before anything is bootstrapped.
+  // Creating another is not a cosmetic surplus: `resolveSpaceCaller` refuses
+  // on anything but exactly one, so every session-authenticated surface would
+  // 403 for good.
+  //
+  // Returning nothing in that case would be worse than it sounds, because the
+  // operator key is not a working key: the response would carry a credential
+  // that can reach nothing, on the exact instance shape this exists to serve.
+  // So the one space is adopted and the working key minted into it. More than
+  // one, and there is nothing to choose between them — the resolver is
+  // already refusing and already names the route that fixes it.
   const existing = await storage.spaces.list();
-  if (existing.length > 0) return undefined;
-  const space = await storage.spaces.create("Default");
+  if (existing.length > 1) return undefined;
+  const only = existing[0];
+  // A space that already has a working credential needs no second one, and
+  // `source` is unique per space, so minting again would fail rather than
+  // duplicate.
+  if (only) {
+    const held = await storage.keys.list();
+    if (held.some((k) => k.space_id === only.id && !k.is_operator)) {
+      return undefined;
+    }
+  }
+  const space = only ?? (await storage.spaces.create("Default"));
   const rawKey = generateRawKey();
   const stored = await storage.keys.create(
     {
@@ -998,15 +1044,29 @@ export function keyRoutes(
       // last three here makes it the shipped shape rather than three paragraphs
       // of documentation a person follows by hand.
       //
-      // Keys mode only. In hosted mode a space belongs to an account and arrives
-      // with one, so provisioning here would leave a stray space owned by
-      // nobody. Ordered after the operator key so a failure leaves an instance
-      // that is bootstrapped and usable through the instance routes rather than
-      // one that is neither.
-      const bootstrapSpace =
-        isBootstrap && authMode === "keys" && storage.spaces
-          ? await provisionKeysModeSpace(storage, salt)
-          : undefined;
+      // Keys mode only. In hosted mode a space belongs to an account and
+      // arrives with one, so provisioning here would leave a stray space owned
+      // by nobody.
+      //
+      // **Best effort, and after the operator key is committed.** The operator
+      // key is the deliverable and its plaintext exists only in this response,
+      // so letting a convenience fail the request would throw it away — and
+      // the claim cannot be given back once a credential exists, because
+      // giving it back reopens unauthenticated minting on an instance that now
+      // has one. An instance that lands here without a space still holds a
+      // credential that can make one.
+      let bootstrapSpace: Awaited<ReturnType<typeof provisionKeysModeSpace>>;
+      if (isBootstrap && authMode === "keys" && storage.spaces) {
+        try {
+          bootstrapSpace = await provisionKeysModeSpace(storage, salt);
+        } catch (error) {
+          log(
+            "error",
+            "keys-mode space could not be provisioned at bootstrap",
+            { error: error instanceof Error ? error.message : String(error) },
+          );
+        }
+      }
 
       return c.json(
         {

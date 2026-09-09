@@ -499,14 +499,82 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  it("provisions no second space where one already exists", async () => {
-    // Two paths provision the keys-mode space — the migration, for an
-    // instance that predates spaces, and bootstrap, for a fresh one — and an
-    // instance can reach bootstrap with a space already in place, because
-    // rows can be written through a signed-in session before anything is
-    // bootstrapped. A second space is not a cosmetic surplus: the resolver
-    // behind every session-authenticated surface refuses on anything but
-    // exactly one, so the instance would 403 there for good.
+  it("keeps the claim once a credential exists, whatever fails after it", async () => {
+    // **The release is only safe while there is nothing to protect.** An
+    // instance that has minted its operator key and then failed must not
+    // reopen unauthenticated minting: a stranger winning the reopened window
+    // would hold an operator key, and an operator key reaches
+    // `POST /admin/spaces/{id}/keys`, which is deliberately unclamped and
+    // hands out the whole of a space. That is a takeover where the problem
+    // being solved was a lockout.
+    //
+    // The failure is injected after the key insert, which is the half the
+    // release-on-any-failure shape got wrong.
+    const { app, storage, tmpDir } = await freshApp();
+    try {
+      const list = storage.spaces!.list.bind(storage.spaces);
+      storage.spaces!.list = () => {
+        throw new Error("storage is having a moment");
+      };
+
+      const res = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+
+      // The operator key is the deliverable and its plaintext lives only in
+      // this response, so a convenience failing after it must not take the
+      // response with it.
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { key: string; space?: unknown };
+      expect(body.key).toBeTruthy();
+      expect(body.space).toBeUndefined();
+
+      // And the window is shut.
+      expect(await storage.settings.get("bootstrapped")).toBe("true");
+      storage.spaces!.list = list;
+      const second = await request(app, "POST", "/keys", {
+        body: { label: "stranger", source: "stranger" },
+      });
+      expect(second.status).toBe(401);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the claim when a failure does reach the release, with a key already minted", async () => {
+    // The second lock, tested where the first one is deliberately absent.
+    // Nothing in the handler currently throws past the key insert — the
+    // provisioning above is caught, and the audit write is fire-and-forget —
+    // so this reaches the release the only way left, by making the audit
+    // write throw synchronously. The point is not that path; it is that a
+    // future step added after the insert cannot reopen the window by failing.
+    const { app, storage, tmpDir } = await freshApp({ authMode: "hosted" });
+    try {
+      storage.audit.log = () => {
+        throw new Error("storage is having a moment");
+      };
+
+      const res = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(res.status).toBe(500);
+
+      // The key was written before the throw, so the claim stands and the
+      // door stays shut even though the caller lost the plaintext.
+      expect(await storage.keys.list()).toHaveLength(1);
+      expect(await storage.settings.get("bootstrapped")).toBe("true");
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("mints the working key into a space that is already there", async () => {
+    // A keys-mode instance migrated from before spaces arrives here with the
+    // migration's space in place. Creating a second is refused everywhere
+    // downstream, but returning nothing would hand back an operator key and
+    // call it setup — and the operator key is not a working key.
     const { app, storage, tmpDir } = await freshApp();
     try {
       const existing = await storage.spaces!.create("Already here");
@@ -515,11 +583,20 @@ describe("bootstrap sentinel", () => {
         body: { label: "first-admin", source: "first-admin" },
       });
       expect(res.status).toBe(201);
-      const body = (await res.json()) as { space?: unknown };
-      expect(body.space).toBeUndefined();
+      const body = (await res.json()) as {
+        space?: { id: string };
+        space_key?: { key: string; is_operator: boolean };
+      };
+      expect(body.space?.id).toBe(existing.id);
+      expect(body.space_key?.is_operator).toBe(false);
+      expect(await storage.spaces!.list()).toHaveLength(1);
 
-      const spaces = await storage.spaces!.list();
-      expect(spaces.map((s) => s.id)).toEqual([existing.id]);
+      // And it works in that space.
+      const created = await request(app, "POST", "/items", {
+        key: body.space_key?.key ?? "",
+        body: { type: "core.note", properties: { body: "hello" } },
+      });
+      expect(created.status).toBe(201);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
