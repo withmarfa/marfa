@@ -161,7 +161,7 @@ async function createActiveConnection(
         ...properties,
       },
     },
-    undefined,
+    ctx.spaceId,
   );
   return item.id;
 }
@@ -627,14 +627,30 @@ describe("local-runtime supervisor", () => {
     expect(reported[0]?.space_id).toBe(space.id);
   });
 
-  it("writes nothing for a hosted connection that has no space", async () => {
-    // A space-less credential is the platform tier, so the hosted mint
-    // refuses one. Such a connection cannot dispatch at all: the mint throws
-    // before the handler runs. The two paths that reach the row without
-    // minting are the hop-budget boundary, which runs before the lock, and
-    // the dead-letter worker. This drives the first.
+  it("writes nothing for a connection that has no space", async () => {
+    // A space-less credential is the operator tier, so the mint refuses one
+    // in every mode. Such a connection cannot dispatch at all: the mint
+    // throws before the handler runs. The two paths that reach the row
+    // without minting are the hop-budget boundary, which runs before the
+    // lock, and the dead-letter worker. This drives the first.
+    //
+    // Built inline rather than through `createActiveConnection`, which puts
+    // a connection in the context's space like every other case here. The
+    // absent space is the premise, so it has to be stated.
     const integrationId = await createIntegrationItem();
-    const connectionId = await createActiveConnection(integrationId);
+    const orphan = await ctx.storage.items.create(
+      {
+        type: "system.connection",
+        properties: {
+          kind: "integration",
+          status: "active",
+          integration_ref: integrationId,
+          granted_at: new Date().toISOString(),
+        },
+      },
+      undefined,
+    );
+    const connectionId = orphan.id;
 
     let dispatched = 0;
     const registration: LocalIntegrationRegistration = {

@@ -32,11 +32,14 @@ beforeAll(async () => {
       item_source: MIRROR_SOURCE,
     },
     hashApiKey(ownerKey, "test-salt"),
-    undefined,
+    ctx.spaceId,
   );
 
+  // Minted from the space key, not the operator key: a mint from an operator
+  // caller produces another operator key, which is space-less and is not the
+  // ordinary member this case is about.
   const memberRes = await request(ctx.app, "POST", "/keys", {
-    key: ctx.adminKey,
+    key: ctx.spaceKey,
     body: {
       label: "mirror-member",
       source: "mirror-member-src",

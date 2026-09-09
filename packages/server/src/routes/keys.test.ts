@@ -179,6 +179,10 @@ describe("PATCH /keys/{id}", () => {
         is_operator: false,
       },
       hashApiKey(narrow, TEST_API_KEY_SALT),
+      // Bound to the instance's space, because an unbound non-operator key is
+      // the one shape the row constraint refuses: a space-less credential is
+      // the operator key and nothing else.
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "PATCH", `/keys/${id}`, {
@@ -223,7 +227,7 @@ describe("PATCH /keys/{id}", () => {
         item_source: null,
       },
       hashApiKey(`marfa_k1_runtime_${suffix}`, TEST_API_KEY_SALT),
-      undefined,
+      ctx.spaceId,
     );
     expect(minted.expires_at).toBe(expiresAt);
 
@@ -260,7 +264,9 @@ describe("bootstrap sentinel", () => {
   // `bootstrapped` sentinel isn't set — bootstrap path can fire cleanly.
   // SQLite: fresh tmp DB. Cannot use `createTestContext` because that
   // pre-creates an admin key and stamps the bootstrapped sentinel.
-  async function freshApp(): Promise<{
+  async function freshApp(overrides?: {
+    authMode?: "keys" | "hosted";
+  }): Promise<{
     app: ReturnType<typeof createApp>;
     storage: Storage;
     /** Removed by the caller alongside `storage.close()`; nothing else
@@ -325,6 +331,7 @@ describe("bootstrap sentinel", () => {
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
       mcpEnabled: false,
+      ...overrides,
     });
     return { app, storage, tmpDir };
   }
@@ -370,6 +377,80 @@ describe("bootstrap sentinel", () => {
       expect(createRows.data.some((r) => r.resource_id === body.id)).toBe(
         false,
       );
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("provisions the keys-mode space and a key that works in it", async () => {
+    // **The operator key is not a working key**, so a self-host handed only
+    // that has a credential it cannot use: no space, no permissions, because
+    // running the instance sits outside the permission model. The design's
+    // setup story is mint the operator key, create a space, mint a key into
+    // it, work with that key — and this is that story shipped rather than
+    // written down.
+    const { app, storage, tmpDir } = await freshApp();
+    try {
+      const res = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as {
+        is_operator: boolean;
+        space?: { id: string; name: string | null };
+        space_key?: {
+          key: string;
+          is_operator: boolean;
+          space_permissions?: string[];
+        };
+      };
+
+      expect(body.is_operator).toBe(true);
+      expect(body.space?.id).toBeTruthy();
+      expect(body.space_key?.key).toBeTruthy();
+      // The working key is an ordinary credential holding the whole space.
+      expect(body.space_key?.is_operator).toBe(false);
+      expect(body.space_key?.space_permissions).toEqual(
+        expect.arrayContaining(["space.keys", "space.settings"]),
+      );
+
+      // The row is bound to the space that was just made.
+      const keys = await storage.keys.list();
+      const spaceKey = keys.find((k) => k.source === "default-space");
+      expect(spaceKey?.space_id).toBe(body.space?.id);
+
+      // **And it works.** A key bound to a space that holds nothing it can
+      // reach would satisfy every assertion above and be useless, so the
+      // round trip is the assertion that matters.
+      const created = await request(app, "POST", "/items", {
+        key: body.space_key?.key ?? "",
+        body: { type: "core.note", properties: { body: "hello" } },
+      });
+      expect(created.status).toBe(201);
+      const listed = await request(app, "GET", "/items?type=core.note", {
+        key: body.space_key?.key ?? "",
+      });
+      expect(listed.status).toBe(200);
+      const page = (await listed.json()) as { data: unknown[] };
+      expect(page.data).toHaveLength(1);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("provisions nothing in hosted mode, where a space belongs to an account", async () => {
+    const { app, storage, tmpDir } = await freshApp({ authMode: "hosted" });
+    try {
+      const res = await request(app, "POST", "/keys", {
+        body: { label: "first-admin", source: "first-admin" },
+      });
+      expect(res.status).toBe(201);
+      const body = (await res.json()) as { space?: unknown };
+      expect(body.space).toBeUndefined();
+      // A stray space owned by nobody is the thing to avoid here.
+      expect(await storage.spaces?.list()).toEqual([]);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });
@@ -526,10 +607,15 @@ describe("bootstrap sentinel", () => {
       const stamped = await storage.settings.get("bootstrapped");
       expect(stamped).toBe("true");
 
-      // Only one key persisted in the store.
+      // **Exactly one operator key**, which is the property. A bootstrap call
+      // also provisions the keys-mode space and mints a working key into it,
+      // so the store holds two rows and counting rows would have stopped
+      // saying anything about the race.
       const keys = await storage.keys.list();
-      expect(keys.length).toBe(1);
-      expect(keys[0]?.is_operator).toBe(true);
+      expect(keys.filter((k) => k.is_operator)).toHaveLength(1);
+      expect(keys.filter((k) => !k.is_operator)).toHaveLength(1);
+      // And one space, so seven losing callers provisioned nothing.
+      expect(await storage.spaces?.list()).toHaveLength(1);
     } finally {
       await storage.close();
       rmSync(tmpDir, { recursive: true, force: true });

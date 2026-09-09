@@ -4,20 +4,29 @@ import type { Edge, Item, Metadata, MergeStrategy } from "@withmarfa/shared";
  * Which server, which space and which account this store belongs to.
  *
  * All three, together, because any one of them alone lets two different
- * corpora share a cursor. A server with no spaces has no space id to give,
- * so the sentinel below stands in rather than the field being optional —
- * an optional field is a third state nothing here wants to reason about.
+ * corpora share a cursor. A credential that names no space has none to give,
+ * so the sentinel below stands in rather than the field being optional — an
+ * optional field is a third state nothing here wants to reason about.
  */
 export interface StoreIdentity {
   /** Base URL of the server this store syncs with. */
   origin: string;
-  /** Space id, or {@link SINGLE_SPACE} on a server that has none. */
+  /** Space id, or {@link SINGLE_SPACE} where the credential names none. */
   spaceId: string;
   /** Account id, or {@link SINGLE_ACCOUNT} where the credential names none. */
   accountId: string;
 }
 
-/** Sentinel space for a single-space server. */
+/**
+ * Sentinel space for a credential that names none.
+ *
+ * **It used to mean "a server with no spaces", and that server no longer
+ * exists**: keys mode provisions one at bootstrap and mints its working
+ * credential into it, so an ordinary key always carries a space id. What still
+ * reaches this is the operator key, which holds no space because running the
+ * instance is fenced outside the permission model — so the sentinel stays, and
+ * what it stands for moved from the server to the credential.
+ */
 export const SINGLE_SPACE = "";
 /** Sentinel account for a credential that names none. */
 export const SINGLE_ACCOUNT = "";

@@ -49,10 +49,16 @@ function manifest(): IntegrationManifest {
   };
 }
 
+/** The space the stub installs below name. Nothing resolves it — these
+ *  tests never touch real storage — but it has to be a space rather than
+ *  absent, because the mint refuses a connection that belongs to none. */
+const STUB_SPACE_ID = "spc_install_pipeline_stub";
+
 /**
  * The Connection row the mint re-reads under the lifecycle lock. The
  * stubs below never persist anything, so the read has to be answered
- * with a row in the state the pipeline just created.
+ * with a row in the state the pipeline just created — which includes the
+ * space it was installed into, since a space-less connection cannot mint.
  */
 function activeConnection(id: string): {
   id: string;
@@ -65,7 +71,7 @@ function activeConnection(id: string): {
     id,
     type: "system.connection",
     state: "active",
-    space_id: null,
+    space_id: STUB_SPACE_ID,
     properties: { kind: "integration", status: "active" },
   };
 }
@@ -122,7 +128,7 @@ describe("performInstall — happy path", () => {
 
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
-      spaceId: undefined,
+      spaceId: ctx.spaceId,
       authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
@@ -161,7 +167,7 @@ describe("performInstall — happy path", () => {
     const before = await ctx.storage.keys.list();
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
-      spaceId: undefined,
+      spaceId: ctx.spaceId,
       authMode: "keys",
       integrationItemId: integration.id,
       manifest: manifest(),
@@ -223,7 +229,7 @@ describe("performInstall — the manifest's declared defaults are written in", (
 
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
-      spaceId: undefined,
+      spaceId: ctx.spaceId,
       authMode: "keys",
       integrationItemId: integration.id,
       manifest: withDefaults,
@@ -333,7 +339,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         stubStorage as unknown as Parameters<typeof performInstall>[0],
         {
           apiKeyId: "api_admin",
-          spaceId: undefined,
+          spaceId: STUB_SPACE_ID,
           authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
@@ -444,7 +450,7 @@ describe("performInstall — compensating writes on activity failure", () => {
         stubStorage as unknown as Parameters<typeof performInstall>[0],
         {
           apiKeyId: "api_admin",
-          spaceId: undefined,
+          spaceId: STUB_SPACE_ID,
           authMode: "keys",
           integrationItemId: "itm_int_fake",
           manifest: manifest(),
@@ -515,7 +521,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
             "test-encrypted-placeholder|test-encrypted-placeholder|tag",
         },
       },
-      undefined,
+      ctx.spaceId,
     );
     return credential.id;
   }
@@ -553,7 +559,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
             "test-encrypted-placeholder|test-encrypted-placeholder|tag",
         },
       },
-      undefined,
+      ctx.spaceId,
     );
     const noOauth = manifest();
     delete (noOauth as { oauth_requirements?: unknown }).oauth_requirements;
@@ -561,7 +567,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     await expect(
       performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
-        spaceId: undefined,
+        spaceId: ctx.spaceId,
         authMode: "keys",
         integrationItemId: integrationId,
         manifest: noOauth,
@@ -599,7 +605,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
-      spaceId: undefined,
+      spaceId: ctx.spaceId,
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -630,7 +636,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
     await expect(
       performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
-        spaceId: undefined,
+        spaceId: ctx.spaceId,
         authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
@@ -651,13 +657,13 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
         type: "system.credential",
         properties: { label: "wrong-kind", kind: "api_key" },
       },
-      undefined,
+      ctx.spaceId,
     );
 
     await expect(
       performInstall(ctx.storage, {
         apiKeyId: adminKey.id,
-        spaceId: undefined,
+        spaceId: ctx.spaceId,
         authMode: "keys",
         integrationItemId: integrationId,
         manifest: manifest(),
@@ -684,12 +690,12 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
             "test-encrypted-placeholder|test-encrypted-placeholder|tag",
         },
       },
-      undefined,
+      ctx.spaceId,
     );
 
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
-      spaceId: undefined,
+      spaceId: ctx.spaceId,
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -712,7 +718,7 @@ describe("performInstall — credentialRef (OAuth provider credential reuse)", (
 
     const result = await performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
-      spaceId: undefined,
+      spaceId: ctx.spaceId,
       authMode: "keys",
       integrationItemId: integrationId,
       manifest: manifest(),
@@ -749,11 +755,13 @@ describe("performInstall — the state a rolled-back install leaves", () => {
   });
 
   it("leaves no connection reading as active after the space fence refuses", async () => {
-    // A real failure, not an injected one: a hosted deployment refuses to
-    // mint a runtime credential for a connection with no space, because a
-    // space-less credential is the platform tier rather than a narrow one.
-    // Step 1 has committed by then, so the compensation is what decides
-    // what the space admin sees.
+    // A real failure, not an injected one: the pipeline refuses to mint a
+    // runtime credential for a connection with no space, because a
+    // space-less credential is the operator tier rather than a narrow one.
+    // The refusal is unconditional now that keys mode has a space of its
+    // own, so the mode this runs under is incidental. Step 1 has committed
+    // by then, so the compensation is what decides what the space admin
+    // sees.
     const adminKey = await hosted.storage.keys
       .list()
       .then((keys) => keys.find((k) => k.is_operator));
@@ -863,7 +871,7 @@ describe("performInstall — an unaudited install does not stand", () => {
     await expect(
       performInstall(storage, {
         apiKeyId: adminKey.id,
-        spaceId: undefined,
+        spaceId: ctx.spaceId,
         authMode: "keys",
         integrationItemId: integration.id,
         manifest: { ...manifest(), name: `acme.audit-${stamp}` },

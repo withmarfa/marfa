@@ -390,14 +390,19 @@ describe("runSpaceCleanup — audit and event-log fan-out", () => {
       },
     });
 
-    // Three calls expected: tA(7), tB(30), NULL(30). Plus the total
-    // sums those.
+    // tA takes its override, tB falls through to the instance default, and
+    // the space-less bucket is swept at the default too.
     const bySpace = new Map(calls.map((c) => [c.spaceId, c.retention]));
     expect(bySpace.get(tA.id)).toBe(7);
     expect(bySpace.get(tB.id)).toBe(30);
     expect(bySpace.get(null)).toBe(30);
-    expect(calls.length).toBe(3);
-    expect(total).toBe(3);
+
+    // Every space on the instance, plus that bucket. Derived rather than
+    // written down: the context provisions a space of its own at bootstrap,
+    // so a literal count would be counting the fixture.
+    const spaces = await ctx.storage.spaces.list();
+    expect(calls.length).toBe(spaces.length + 1);
+    expect(total).toBe(calls.length);
   });
 
   it("skips spaces whose effective retention is 0 (disabled)", async () => {

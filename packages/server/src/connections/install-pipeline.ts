@@ -353,7 +353,7 @@ export async function performInstall(
           { connection_id: connection.id },
         );
       }
-      assertMintableSpaceScope(current, input.authMode);
+      assertMintableSpaceScope(current);
     });
   } catch (err) {
     return rollback(err);

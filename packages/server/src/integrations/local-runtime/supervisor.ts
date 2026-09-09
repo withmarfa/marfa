@@ -302,7 +302,6 @@ export function createSupervisor(
           storage,
           config.apiKeySalt,
           message.connection_id,
-          config.authMode,
         );
         const state = await readConnectionRuntimeState(
           storage,

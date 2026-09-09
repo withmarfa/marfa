@@ -63,10 +63,13 @@ const VALID_MANIFEST = {
   manifest_schema_version: "2.0.0",
 };
 
+// Written through storage rather than `POST /items`, because neither
+// credential can do this over the wire: the reserved namespace admits only a
+// platform credential, and that one holds no space to put the row in. A
+// connection is the install pipeline's to create, and it names the space.
 async function createConnection(): Promise<string> {
-  const res = await request(ctx.app, "POST", "/items", {
-    key: ctx.adminKey,
-    body: {
+  const item = await ctx.storage.items.create(
+    {
       type: "system.connection",
       properties: {
         kind: "integration",
@@ -75,13 +78,9 @@ async function createConnection(): Promise<string> {
         integration_ref: integrationId,
       },
     },
-  });
-  if (res.status !== 201) {
-    const txt = await res.text();
-    throw new Error(`createConnection failed: ${String(res.status)} ${txt}`);
-  }
-  const body = (await res.json()) as ItemResponse;
-  return body.item.id;
+    ctx.spaceId,
+  );
+  return item.id;
 }
 
 async function issueLease(
@@ -312,7 +311,6 @@ describe("integration runtime credential", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
 
     const res = await request(
@@ -333,7 +331,6 @@ describe("integration runtime credential", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "keys",
     );
     const created = (await (
       await issueLease(connectionId)
@@ -348,51 +345,27 @@ describe("integration runtime credential", () => {
     expect(res.status).toBe(200);
   });
 
-  it("refuses a runtime credential bound to a different connection", async () => {
-    const connectionA = await createConnection();
-    const connectionB = await createConnection();
-    const credential = await mintLocalRuntimeCredential(
-      ctx.storage,
-      TEST_API_KEY_SALT,
-      connectionA,
-      "keys",
-    );
-
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/connections/${connectionB}/lease-tokens`,
-      {
-        key: credential.api_key,
-        body: { capability_id: "drive.upload" },
-      },
-    );
-    expect(res.status).toBe(403);
-    // Both refusals in this handler are FORBIDDEN, so the status alone
-    // does not say which one fired. These fixtures are space-less, so
-    // this one is the space fence rather than the identity gate. The
-    // hosted case below is the one that reaches the identity gate.
-    const body = (await res.json()) as { error: { message: string } };
-    expect(body.error.message).toContain("Space scope required");
-  });
-
   /**
-   * The identity gate on its own, with the space fence satisfied.
+   * The identity gate, which is the only refusal a runtime credential can
+   * now reach here.
    *
-   * The case above cannot reach it: a space-less credential is refused
-   * by the defense-in-depth block before the gate is consulted, so it
-   * would still pass with the whole `!isAdmin && !isIntegration` branch
-   * deleted. Here both connections live in one space and the credential
-   * carries that space, so the fence does not fire and the only thing
-   * left that can refuse is the `connection_id` binding.
+   * This used to sit beside a space-less case that proved the handler's
+   * defense-in-depth space fence instead. That case is gone: a connection
+   * with no space cannot be minted a runtime credential at all, so no
+   * credential exists that could arrive space-less and be refused by the
+   * fence. The fence stays in the handler, and nothing short of a hand-built
+   * row can exercise it.
+   *
+   * Both connections live in one space and the credential carries that
+   * space, so the only thing left that can refuse is the `connection_id`
+   * binding.
    */
-  it("refuses a hosted runtime credential reaching a sibling connection in its own space", async () => {
+  it("refuses a runtime credential reaching a sibling connection in its own space", async () => {
     const { connectionA, connectionB } = await spaceWithTwoConnections();
     const credential = await mintLocalRuntimeCredential(
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionA,
-      "hosted",
     );
 
     const own = await request(

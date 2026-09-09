@@ -228,7 +228,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
 
   async function catalog(): Promise<RegisterResponse[]> {
     const res = await request(ctx.app, "GET", "/integrations?latest=true", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
     });
     expect(res.status).toBe(200);
     return ((await res.json()) as ListResponse).data;
@@ -361,7 +361,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
     await ctx.app.request(`/integrations/${registered.id}/install`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({ decision: "approve" }).toString(),
@@ -381,7 +381,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
     await ctx.app.request(`/integrations/${v1.id}/install`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({ decision: "approve" }).toString(),
@@ -401,7 +401,7 @@ describe("GET /integrations?latest=true (the catalog view)", () => {
     await ctx.app.request(`/integrations/${registered.id}/install`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: new URLSearchParams({ decision: "approve" }).toString(),
@@ -609,7 +609,7 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
     const res = await ctx.app.request(`/integrations/${regBody.id}/install`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ctx.adminKey}`,
+        Authorization: `Bearer ${ctx.spaceKey}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
       body: formBody,

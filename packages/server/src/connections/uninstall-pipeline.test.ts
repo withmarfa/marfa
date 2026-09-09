@@ -80,7 +80,7 @@ async function installFresh(): Promise<{
 
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
-    spaceId: undefined,
+    spaceId: ctx.spaceId,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: {
@@ -103,20 +103,14 @@ async function installFresh(): Promise<{
 /** Mint a runtime credential for a Connection the way a dispatch does,
  *  and resolve the row id the mint does not return. */
 async function mintRuntimeCredentialId(connectionId: string): Promise<string> {
-  return mintRuntimeCredentialIdIn(ctx.storage, connectionId, "keys");
+  return mintRuntimeCredentialIdIn(ctx.storage, connectionId);
 }
 
 async function mintRuntimeCredentialIdIn(
   storage: TestContext["storage"],
   connectionId: string,
-  authMode: "hosted" | "keys",
 ): Promise<string> {
-  await mintLocalRuntimeCredential(
-    storage,
-    TEST_API_KEY_SALT,
-    connectionId,
-    authMode,
-  );
+  await mintLocalRuntimeCredential(storage, TEST_API_KEY_SALT, connectionId);
   const bound = await storage.keys.listByConnectionId(connectionId, undefined);
   const runtime = bound.find((k) => k.is_runtime_credential);
   if (!runtime) throw new Error("runtime credential did not resolve");
@@ -296,7 +290,7 @@ describe("performUninstall — partial-state semantics", () => {
         item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
       },
       hashApiKey("marfa_k1_" + "0".repeat(64), "test-salt"),
-      undefined,
+      ctx.spaceId,
     );
 
     const result = await performUninstall(ctx.storage, {
@@ -348,7 +342,7 @@ async function makeCredential(
             }),
       },
     },
-    undefined,
+    ctx.spaceId,
   );
   return credential.id;
 }
@@ -380,7 +374,7 @@ async function installWithCredential(credentialRef: string): Promise<{
 
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
-    spaceId: undefined,
+    spaceId: ctx.spaceId,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: { ...manifest(), name: `acme.upstream-${stamp}` },
@@ -519,20 +513,20 @@ describe("performUninstall — the upstream credential", () => {
 });
 
 // ---------------------------------------------------------------------------
-// A connection that lives in a space.
+// A connection in a space the caller does not hold.
 //
-// Everything before this point installs with `spaceId: undefined`, where
-// nothing carries a `space_id` at all. The space fence therefore never
-// narrows anything and a defect in what an absent space means is invisible:
-// every row matches either reading of it. Naming a space is what makes the
-// fence load-bearing, and it is the shape both live environments run.
+// Everything before this point installs into the context's one space and
+// uninstalls with the operator key, which holds no space of its own. That
+// pair already exercises the fence, but only against a single space, so a
+// defect in what an absent space means at the uninstall end still matches
+// every row it is asked about.
 //
-// The context is `authMode: "hosted"` to match those deployments, but that
-// is not what these cases turn on: hosted only wires the users store, which
-// no pipeline here touches, and the one guard that reads `authMode` passes
-// either way once a space is named. The named space is the discriminating
-// input. (`install-pipeline.test.ts` has the one case where hosted is
-// genuinely the property under test.)
+// This block adds the second space: a sibling created here, on a deployment
+// that has more than one. That is what makes a fence that reads an absent
+// space as "the rows with no space" visibly wrong rather than merely
+// unproven. The context is `authMode: "hosted"` to match such a deployment,
+// though hosted only wires the users store, which no pipeline here touches.
+// The named space is the discriminating input.
 // ---------------------------------------------------------------------------
 
 describe("performUninstall — a connection inside a space", () => {
@@ -595,7 +589,6 @@ describe("performUninstall — a connection inside a space", () => {
       credentialId: await mintRuntimeCredentialIdIn(
         hosted.storage,
         result.connection_id,
-        "hosted",
       ),
     };
   }
@@ -748,7 +741,7 @@ describe("performUninstall — affected rows, not attempts", () => {
         item_source: runtimeCredentialItemSource({ name: "acme/fixture" }),
       },
       hashApiKey(`marfa_k1_raced_${randomUUID()}`, TEST_API_KEY_SALT),
-      undefined,
+      ctx.spaceId,
     );
 
     const real = ctx.storage.keys;

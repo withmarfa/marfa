@@ -70,6 +70,20 @@ export interface TestContext {
   storage: Storage;
   blobBackend: BlobBackend;
   adminKey: string;
+  /**
+   * The instance's one space. Keys mode provisions one at bootstrap, so a
+   * fixture that stamps the sentinel instead has to provision it here or it
+   * tests a shape the product stopped producing.
+   */
+  spaceId: string;
+  /**
+   * A credential bound to `spaceId`, holding every space permission and
+   * writing every content family — an ordinary working key, which is what a
+   * self-hoster actually holds. `adminKey` is the operator key beside it and
+   * is not a working key: it reaches the instance routes and carries no space,
+   * which is now the whole of what a space-less credential can be.
+   */
+  spaceKey: string;
   /** The per-context temporary directory holding the sqlite database and
    *  the blob root. Exposed so a test can assert on its lifetime; removed
    *  by `cleanup`. */
@@ -698,11 +712,41 @@ async function buildTestContext(
   );
   await storage.settings.set("bootstrapped", "true");
 
+  // **The instance's one space, provisioned here because bootstrap provisions
+  // it there.** This fixture stamps the sentinel directly rather than driving
+  // the unauthenticated mint, so nothing else would create it — and a keys-mode
+  // instance with no space is a shape the product no longer produces. Anything
+  // a real caller would own lives in it: connections above all, because a
+  // connection with no space cannot mint a runtime credential now that a
+  // space-less credential is the operator key and nothing else.
+  const space = await storage.spaces?.create("test-space");
+  const spaceRawKey = `marfa_k1_test_space_key_${suffix}`;
+  if (space) {
+    await storage.keys.create(
+      {
+        label: "test-space-key",
+        source: `test-space-${suffix}`,
+        type_permissions: { "*": "write" },
+        extension_permissions: { "*": "write" },
+        edge_permissions: { "*": "write" },
+        metadata_permissions: { "*": "write" },
+        profile_permissions: { "*": "write" },
+        space_permissions: [...SPACE_PERMISSIONS],
+        default_tier: "library",
+        is_operator: false,
+      },
+      hashApiKey(spaceRawKey, SALT),
+      space.id,
+    );
+  }
+
   return {
     app,
     storage,
     blobBackend,
     adminKey: rawKey,
+    spaceId: space?.id ?? "",
+    spaceKey: spaceRawKey,
     tmpDir,
     cleanup: async () => {
       try {

@@ -118,7 +118,7 @@ const createKeyRoute = createRoute({
   tags: ["Keys"],
   summary: "Create an API key",
   description:
-    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: no authentication, and the key it mints is the operator key.",
+    "Creates a new API key in the caller's space. The plaintext `key` is returned only in this response and never shown again, so store it securely.\n\nThe new key's space is always the caller's: a `space_id` in the body is rejected. Use `POST /admin/spaces/{id}/keys` to mint into a named space.\n\nA credential is a set of permissions and nothing else. `space_permissions` names the space permissions the key holds; omitting it takes the creator's whole set, and anything named is clamped to what the creator holds, so a mint can narrow and can never widen. The content maps behave the same way, and a signed-in app must hold `space.keys` to reach this route at all.\n\nAn operator key mints another operator key here and nothing else, because the instance tier is the absence of a space binding and an operator caller has no space to hand down. `is_operator` is granted only when the caller is itself an operator key.\n\nOn a fresh server with zero keys this runs in bootstrap mode: no authentication, and the key it mints is the operator key.\n\nIn keys mode the bootstrap call also provisions the instance's one space and mints a working key into it, returned as `space` and `space_key`. The operator key is not a working key — it holds no space and no permissions, because running the instance sits outside the permission model — so the space key is the one to configure a client with.",
 
   security: [{ bearerAuth: [] }],
   request: {
@@ -172,7 +172,19 @@ const createKeyRoute = createRoute({
     201: {
       content: {
         "application/json": {
-          schema: KeyResponseSchema,
+          schema: KeyResponseSchema.extend({
+            // Present on a keys-mode bootstrap call and on nothing else. The
+            // operator key cannot work in a space, so a self-host that only
+            // ever received it would have a credential it could not use; these
+            // two are what the design's setup story hands over instead.
+            space: z
+              .object({ id: z.string(), name: z.string().nullable() })
+              .optional()
+              .describe("The space provisioned by a keys-mode bootstrap call."),
+            space_key: KeyResponseSchema.optional().describe(
+              "A working key bound to that space, holding everything in it. The plaintext is returned only here.",
+            ),
+          }),
         },
       },
       description: "API key created",
@@ -621,10 +633,83 @@ function refuseWideningAnAppsKey(
   }
 }
 
+/** Everything, in the wildcard form, on one content family. */
+const EVERY_TYPE = { "*": "write" } as const;
+
+/**
+ * Provision the one space a keys-mode instance has, and a key that works in
+ * it.
+ *
+ * **Keys mode used to bind nothing to a space**, which made a space-less key
+ * ambiguous: an operator key on a hosted instance, an ordinary credential on a
+ * self-host. That ambiguity is why the `api_keys` row constraint could only
+ * say an operator key has no space, rather than the equivalence — a space-less
+ * key *is* the operator key — which is the shape that makes every other
+ * combination unwritable.
+ *
+ * The key minted here holds the whole space, because there is nobody to ask
+ * what it should hold and a self-hoster's first credential having to be
+ * narrowed upward is the wrong default. It can be narrowed afterwards, and a
+ * narrower one minted from it.
+ */
+async function provisionKeysModeSpace(
+  storage: Storage,
+  salt: string,
+): Promise<
+  | {
+      space: { id: string; name: string | null };
+      space_key: z.infer<typeof KeyResponseSchema>;
+    }
+  | undefined
+> {
+  if (!storage.spaces) return undefined;
+  const space = await storage.spaces.create("Default");
+  const rawKey = generateRawKey();
+  const stored = await storage.keys.create(
+    {
+      label: "Default space key",
+      source: "default-space",
+      default_tier: "library",
+      is_operator: false,
+      space_permissions: [...SPACE_PERMISSIONS],
+      type_permissions: EVERY_TYPE,
+      extension_permissions: EVERY_TYPE,
+      edge_permissions: EVERY_TYPE,
+      metadata_permissions: EVERY_TYPE,
+      profile_permissions: EVERY_TYPE,
+    },
+    hashApiKey(rawKey, salt),
+    space.id,
+  );
+  return {
+    space: { id: space.id, name: space.name ?? null },
+    space_key: {
+      id: stored.id,
+      key: rawKey,
+      label: stored.label,
+      source: stored.source,
+      default_tier: stored.default_tier,
+      is_operator: stored.is_operator,
+      space_permissions: stored.space_permissions,
+      type_permissions: stored.type_permissions,
+      extension_permissions: stored.extension_permissions,
+      edge_permissions: stored.edge_permissions,
+      metadata_permissions: stored.metadata_permissions,
+      profile_permissions: stored.profile_permissions,
+      created_at: stored.created_at,
+      last_used_at: stored.last_used_at,
+    },
+  };
+}
+
 // Router
 // ---------------------------------------------------------------------------
 
-export function keyRoutes(storage: Storage, salt: string) {
+export function keyRoutes(
+  storage: Storage,
+  salt: string,
+  authMode: "keys" | "hosted" = "keys",
+) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createKeyRoute, async (c) => {
@@ -642,8 +727,6 @@ export function keyRoutes(storage: Storage, salt: string) {
       // about separately: `requireSpacePermission` here, and the breadth clamp
       // below. Removing one without the other is the mistake to avoid; see
       // `auth/mint-clamp.ts`.
-      //
-      requireAuth(c);
       requireSpaceKeysOrOperator(c);
     }
 
@@ -848,6 +931,24 @@ export function keyRoutes(storage: Storage, salt: string) {
       details: mintDetails(c, platformTierMint, grantItemId),
     });
 
+    // **A keys-mode instance gets its space here, not by hand.** The operator
+    // key is not a working key — no space, no permissions, because running the
+    // instance sits outside the model — so a self-host handed only that has a
+    // credential it cannot use. The design's setup story is "mint the operator
+    // key, create a space, mint a key into it, work with that key"; doing the
+    // last three here makes it the shipped shape rather than three paragraphs
+    // of documentation a person follows by hand.
+    //
+    // Keys mode only. In hosted mode a space belongs to an account and arrives
+    // with one, so provisioning here would leave a stray space owned by
+    // nobody. Ordered after the operator key so a failure leaves an instance
+    // that is bootstrapped and usable through the instance routes rather than
+    // one that is neither.
+    const bootstrapSpace =
+      isBootstrap && authMode === "keys" && storage.spaces
+        ? await provisionKeysModeSpace(storage, salt)
+        : undefined;
+
     return c.json(
       {
         id: stored.id,
@@ -865,6 +966,7 @@ export function keyRoutes(storage: Storage, salt: string) {
         profile_permissions: stored.profile_permissions,
         created_at: stored.created_at,
         last_used_at: stored.last_used_at,
+        ...(bootstrapSpace ?? {}),
       },
       201,
     );

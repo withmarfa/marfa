@@ -11,7 +11,9 @@
  *
  * The session branch is a different principal from the bearer branch: the
  * account holder acting on their own space, rather than a credential someone
- * minted. It resolves that person's space rather than reading one off a key.
+ * minted. It resolves that person's space rather than reading one off a key —
+ * and in keys mode, where there is no per-user space model, it resolves the
+ * instance's one space rather than answering with none.
  */
 import type { Context } from "hono";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
@@ -25,11 +27,11 @@ export interface SpaceCaller {
   /** Audit identity. `auth_user:<id>` when a session authorized the call. */
   apiKeyId: string;
   /**
-   * The space this call acts on. Never `undefined` for a session caller:
-   * downstream, an absent space is not "no space" but "no space filter",
-   * so a caller whose space could not be resolved is refused rather than
-   * handed the platform tier. A bearer caller may still be space-less,
-   * because a platform credential legitimately is.
+   * The space this call acts on. Never `undefined` for a session caller, in
+   * either mode: downstream, an absent space is not "no space" but "no space
+   * filter", so a caller whose space could not be resolved is refused rather
+   * than handed the instance tier. A bearer caller may still be space-less,
+   * because the operator key legitimately is.
    */
   spaceId: string | undefined;
 }
@@ -71,13 +73,33 @@ export async function resolveSpaceCaller(
   if (auth) {
     const session = await auth.getSession(c.req.raw.headers);
     if (session) {
-      // No users store means keys mode: a single-space self-host, where
-      // there is no per-user space model to resolve against and no role
-      // to read. A space-less caller there is not unscoped authority, it
-      // is the only space the instance has. Hosted mode is the case
-      // below, and the two must not share an answer.
+      // No users store means keys mode: a single-space self-host, where there
+      // is no per-user space model to resolve against. The answer used to be
+      // `undefined` on the reasoning that a space-less caller there is not
+      // unscoped authority but the only space the instance has — which was
+      // true while nothing on such an instance had a space, and is not now.
+      //
+      // **`undefined` is "no space filter" downstream, and that is a different
+      // thing from "the instance's space".** A connection installed through
+      // one of these pages would be written space-less while the instance's
+      // working credential is bound to a space, so the row it just made would
+      // be invisible to it — and the runtime credential the connection needs
+      // cannot be minted at all, because a space-less non-operator credential
+      // is the one shape the row constraint refuses.
+      //
+      // So the instance's one space is resolved and handed back. There is
+      // exactly one by construction: bootstrap provisions it, and keys mode
+      // has no route that makes a second.
       if (!storage.users) {
-        return { apiKeyId: `auth_user:${session.user.id}`, spaceId: undefined };
+        const spaces = (await storage.spaces?.list()) ?? [];
+        const only = spaces[0];
+        if (spaces.length !== 1 || !only) {
+          // Nothing here can pick between two, and there is nothing to act in
+          // when there are none. Refusing names the state; guessing would
+          // write into whichever the store happened to return first.
+          throw new MarfaError(ErrorCode.FORBIDDEN, forbiddenMessage);
+        }
+        return { apiKeyId: `auth_user:${session.user.id}`, spaceId: only.id };
       }
       // Being signed in is not authority: what a session buys is a space to
       // act in, and that space has to resolve.

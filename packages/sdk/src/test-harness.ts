@@ -29,9 +29,10 @@ const TEST_API_KEY_SALT = "test-salt";
  *
  * Two flavors:
  *
- * - `createKeysModeFixture()` — the simple bring-up. Bootstraps a
- *   platform-admin API key over `POST /keys` and returns a client
- *   pointed at it. Use for any SDK surface that doesn't depend on
+ * - `createKeysModeFixture()` — the simple bring-up. One unauthenticated
+ *   `POST /keys`, which mints the operator key, provisions the instance's
+ *   one space and mints a working key into it; the client bears that
+ *   working key. Use for any SDK surface that doesn't depend on
  *   `auth_user` resolution. Mirrors the inline pattern in
  *   `client.test.ts`.
  *
@@ -187,11 +188,17 @@ export async function createKeysModeFixture(
   );
   const fetch = createTestFetch(app);
 
-  // **The first, unauthenticated mint produces the operator key**, and that is
-  // the whole of what it is: running the instance sits outside the permission
-  // model, so the row carries no space and no permission of any kind. It is
-  // not a working key, and a fixture that handed it to a client would be
-  // testing a credential the product does not intend anyone to work through.
+  // **One call, because that is now the whole of keys-mode setup.** The first
+  // unauthenticated mint produces the operator key — which is not a working
+  // key: running the instance sits outside the permission model, so the row
+  // carries no space and no permission of any kind — and provisions the
+  // instance's one space with a credential that holds it.
+  //
+  // This fixture used to do those last two steps by hand, through
+  // `POST /admin/spaces` and `POST /admin/spaces/{id}/keys`. That was the
+  // right flow and the wrong test: a suite doing by hand what the product does
+  // for itself exercises a path nobody takes and leaves the shipped one
+  // uncovered.
   const bootstrapRes = await fetch("http://localhost/keys", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -201,46 +208,19 @@ export async function createKeysModeFixture(
       default_tier: "feed",
     }),
   });
-  const { key: operatorKey } = (await bootstrapRes.json()) as { key: string };
-
-  // **Then the operator key creates a space and mints a key into it**, which is
-  // the setup keys mode is meant to follow. Both routes are instance-tier and
-  // take the operator key; everything after this point is ordinary work done
-  // through an ordinary space-bound credential.
-  const operatorHeaders = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${operatorKey}`,
+  const bootstrap = (await bootstrapRes.json()) as {
+    key: string;
+    space?: { id: string };
+    space_key?: { key: string };
   };
-  const spaceRes = await fetch("http://localhost/admin/spaces", {
-    method: "POST",
-    headers: operatorHeaders,
-    body: JSON.stringify({ name: "sdk-test" }),
-  });
-  const { id: spaceId } = (await spaceRes.json()) as { id: string };
-
-  // Named rather than implied. The key this fixture works through used to
-  // carry a rank that bypassed every permission map, so an empty body still
-  // produced a credential that reached everything; the maps and the permission
-  // list are the entire reach of a credential now, and the fixture has to say
-  // so.
-  const workerRes = await fetch(
-    `http://localhost/admin/spaces/${spaceId}/keys`,
-    {
-      method: "POST",
-      headers: operatorHeaders,
-      body: JSON.stringify({
-        label: "test-admin",
-        source: "sdk-test-admin",
-        default_tier: "feed",
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        metadata_permissions: { "*": "write" },
-      }),
-    },
-  );
-  const { key } = (await workerRes.json()) as { key: string };
+  const operatorKey = bootstrap.key;
+  const spaceId = bootstrap.space?.id;
+  const key = bootstrap.space_key?.key;
+  if (spaceId === undefined || key === undefined) {
+    throw new Error(
+      "keys-mode bootstrap returned no space: the fixture needs a working credential, and the operator key is not one",
+    );
+  }
 
   const client = new MarfaClient({
     url: "http://localhost",

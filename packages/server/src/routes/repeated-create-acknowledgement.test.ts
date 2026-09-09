@@ -359,7 +359,7 @@ describe("the gates an acknowledgement still runs", () => {
             integration_ref: integration.id,
           },
         },
-        undefined,
+        ctx.spaceId,
       );
     const mine = await connection();
     const theirs = await connection();
@@ -368,7 +368,6 @@ describe("the gates an acknowledgement still runs", () => {
       ctx.storage,
       TEST_API_KEY_SALT,
       mine.id,
-      "keys",
     );
 
     // The twin's row: the source this credential writes under, written by
@@ -686,13 +685,12 @@ describe("attribution on the two acknowledged doors", () => {
           granted_at: new Date().toISOString(),
         },
       },
-      undefined,
+      ctx.spaceId,
     );
     const cred = await mintLocalRuntimeCredential(
       ctx.storage,
       TEST_API_KEY_SALT,
       connection.id,
-      "keys",
     );
     // An activity row attributed to a connection that is not this
     // credential's. `permitsActivityAttribution` compares the row's
@@ -707,7 +705,7 @@ describe("attribution on the two acknowledged doors", () => {
           granted_at: new Date().toISOString(),
         },
       },
-      undefined,
+      ctx.spaceId,
     );
     const activity = await ctx.storage.items.create(
       {

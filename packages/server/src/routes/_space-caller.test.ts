@@ -102,23 +102,48 @@ describe("resolveSpaceCaller — the session branch", () => {
     });
   });
 
-  it("admits the account holder of a keys-mode self-host, which has no users store", async () => {
-    // The distinction that makes the refusal above safe. Keys mode has no
-    // per-user space model, and its space-less caller is the only space the
-    // instance has rather than authority over every space. Collapsing the two
-    // would either break every self-host browser flow or leave the hosted
-    // hole open.
+  it("admits the account holder of a keys-mode self-host, in the instance's one space", async () => {
+    // **Keys mode has no per-user space model and does have a space.** The
+    // answer here used to be `undefined`, on the reasoning that a space-less
+    // caller on such an instance is the only space it has rather than
+    // authority over every space. That was true while nothing there had a
+    // space; bootstrap now provisions one and mints the working credential
+    // into it, and `undefined` reads downstream as "do not filter by space",
+    // which is a different thing — a connection installed through one of these
+    // pages would be written where the instance's own credential cannot see
+    // it, and could never mint a runtime credential at all.
     const caller = await resolveSpaceCaller(
       sessionContext(),
-      {} as unknown as Storage,
+      {
+        spaces: { list: () => Promise.resolve([{ id: "only-space" }]) },
+      } as unknown as Storage,
       auth,
       "Your account is not attached to a space",
       "space.connections",
     );
     expect(caller).toMatchObject({
       apiKeyId: "auth_user:auth-1",
-      spaceId: undefined,
+      spaceId: "only-space",
     });
+  });
+
+  it("refuses a keys-mode session when there is not exactly one space", async () => {
+    // Nothing here can pick between two, and there is nothing to act in when
+    // there are none. Guessing would write into whichever the store happened
+    // to return first, which is the failure the `undefined` answer used to be.
+    for (const spaces of [[], [{ id: "a" }, { id: "b" }]]) {
+      await expect(
+        resolveSpaceCaller(
+          sessionContext(),
+          {
+            spaces: { list: () => Promise.resolve(spaces) },
+          } as unknown as Storage,
+          auth,
+          "Your account is not attached to a space",
+          "space.connections",
+        ),
+      ).rejects.toMatchObject({ code: ErrorCode.FORBIDDEN });
+    }
   });
 });
 

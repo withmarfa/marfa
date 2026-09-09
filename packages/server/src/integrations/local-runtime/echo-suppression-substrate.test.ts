@@ -169,7 +169,7 @@ async function createActiveConnection(
         granted_at: new Date().toISOString(),
       },
     },
-    undefined,
+    ctx.spaceId,
   );
   return item.id;
 }

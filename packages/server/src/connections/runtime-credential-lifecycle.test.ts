@@ -123,7 +123,6 @@ async function mint(connectionId: string): Promise<MintOutcome> {
       ctx.storage,
       TEST_API_KEY_SALT,
       connectionId,
-      "hosted",
     );
     return { ok: true, api_key: cred.api_key };
   } catch (err) {

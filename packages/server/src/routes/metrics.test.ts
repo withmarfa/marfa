@@ -22,6 +22,7 @@ beforeAll(async () => {
       item_source: runtimeCredentialItemSource({ name: "conn_metrics_live" }),
     },
     hashApiKey("marfa_k1_metrics_runtime_live", "test-salt"),
+    ctx.spaceId,
   );
   const expired = await ctx.storage.keys.createRuntimeCredential(
     {
@@ -35,6 +36,7 @@ beforeAll(async () => {
       }),
     },
     hashApiKey("marfa_k1_metrics_runtime_retired", "test-salt"),
+    ctx.spaceId,
   );
   await ctx.storage.keys.revoke(expired.id);
 });

@@ -59,7 +59,7 @@ beforeAll(async () => {
       item_source: ITEM_SOURCE,
     },
     hashApiKey(RUNTIME_KEY, TEST_API_KEY_SALT),
-    undefined,
+    ctx.spaceId,
   );
 });
 

@@ -90,7 +90,7 @@ async function installFresh(): Promise<{
 
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
-    spaceId: undefined,
+    spaceId: ctx.spaceId,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifest(integrationName),
@@ -111,7 +111,6 @@ async function mintRuntimeCredentialId(connectionId: string): Promise<string> {
     ctx.storage,
     TEST_API_KEY_SALT,
     connectionId,
-    "keys",
   );
   const bound = await ctx.storage.keys.listByConnectionId(
     connectionId,
@@ -174,7 +173,7 @@ describe("POST /connections/install — auth", () => {
   it("rejects a caller without space.connections with 403", async () => {
     const integration = await createIntegration();
     const unprivilegedKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "install-unprivileged",
         source: `install-unprivileged-${Date.now().toString()}`,
@@ -198,7 +197,7 @@ describe("POST /connections/install — happy path", () => {
     const integration = await createIntegration();
 
     const res = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { integration_id: integration.id },
     });
     expect(res.status).toBe(201);
@@ -217,7 +216,7 @@ describe("POST /connections/install — happy path", () => {
   it("threads body.configuration onto the new connection's properties.configuration", async () => {
     const integration = await createIntegration();
     const res = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         integration_id: integration.id,
         configuration: {
@@ -248,7 +247,7 @@ describe("POST /connections/install — happy path", () => {
 describe("POST /connections/install — error mapping", () => {
   it("returns 404 for an unknown integration_id", async () => {
     const res = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { integration_id: "00000000-0000-7000-8000-000000000000" },
     });
     expect(res.status).toBe(404);
@@ -265,7 +264,7 @@ describe("POST /connections/install — error mapping", () => {
       undefined,
     );
     const res = await request(ctx.app, "POST", "/connections/install", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { integration_id: note.id },
     });
     expect(res.status).toBe(400);
@@ -329,7 +328,7 @@ describe("POST /connections/:id/uninstall — auth", () => {
   it("rejects a caller without space.connections with 403", async () => {
     const installed = await installFresh();
     const unprivilegedKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "uninstall-unprivileged",
         source: `uninstall-unprivileged-${Date.now().toString()}`,
@@ -431,6 +430,8 @@ describe("POST /connections/:id/uninstall — error mapping", () => {
           granted_at: new Date().toISOString(),
         },
       },
+      // No space: an app grant is an OAuth projection, and keys mode has no
+      // user store to resolve one from.
       undefined,
     );
     const res = await request(
@@ -533,7 +534,7 @@ async function installItemEventConnection(): Promise<{
   );
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
-    spaceId: undefined,
+    spaceId: ctx.spaceId,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: manifestWithItemEventTrigger(integrationName),
@@ -554,7 +555,7 @@ describe("POST /connections/preview-event — auth", () => {
 
   it("rejects a caller without space.connections with 403", async () => {
     const unprivilegedKeyRes = await request(ctx.app, "POST", "/keys", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         label: "preview-unprivileged",
         source: `preview-unprivileged-${Date.now().toString()}`,
@@ -579,7 +580,7 @@ describe("POST /connections/preview-event — auth", () => {
 describe("POST /connections/preview-event — error mapping", () => {
   it("returns 404 when item_id does not resolve", async () => {
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         item_id: "00000000-0000-7000-8000-000000000000",
         event_type: "created",
@@ -593,10 +594,10 @@ describe("POST /connections/preview-event — error mapping", () => {
   it("returns 404 when the filtered connection_id does not resolve", async () => {
     const note = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "preview target" } },
-      undefined,
+      ctx.spaceId,
     );
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         item_id: note.id,
         event_type: "created",
@@ -612,11 +613,11 @@ describe("POST /connections/preview-event — happy path", () => {
     const { connectionId } = await installItemEventConnection();
     const note = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "preview target" } },
-      undefined,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         item_id: note.id,
         event_type: "created",
@@ -653,16 +654,19 @@ describe("POST /connections/preview-event — happy path", () => {
           granted_at: new Date().toISOString(),
         },
       },
-      undefined,
+      // In the caller's space, so the route can reach it. A row the space
+      // walk cannot see would satisfy the assertions below without the
+      // route having judged it at all.
+      ctx.spaceId,
     );
 
     const note = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "preview target" } },
-      undefined,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: { item_id: note.id, event_type: "created" },
     });
     expect(res.status).toBe(200);
@@ -686,15 +690,18 @@ describe("POST /connections/preview-event — non-dispatch reasons", () => {
           granted_at: new Date().toISOString(),
         },
       },
-      undefined,
+      // In the caller's space, so the route can reach it. A row the space
+      // walk cannot see would satisfy the assertions below without the
+      // route having judged it at all.
+      ctx.spaceId,
     );
     const note = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "preview target" } },
-      undefined,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         item_id: note.id,
         event_type: "created",
@@ -714,11 +721,11 @@ describe("POST /connections/preview-event — non-dispatch reasons", () => {
     const { connectionId } = await installItemEventConnection();
     const note = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "preview target" } },
-      undefined,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         item_id: note.id,
         event_type: "created",
@@ -743,11 +750,11 @@ describe("POST /connections/preview-event — non-dispatch reasons", () => {
         type: "core.bookmark",
         properties: { url: "https://example.com/preview" },
       },
-      undefined,
+      ctx.spaceId,
     );
 
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         item_id: bookmark.id,
         event_type: "created",
@@ -766,13 +773,13 @@ describe("POST /connections/preview-event — non-dispatch reasons", () => {
     const { connectionId } = await installItemEventConnection();
     const note = await ctx.storage.items.create(
       { type: "core.note", properties: { body: "preview target" } },
-      undefined,
+      ctx.spaceId,
     );
 
     // Default hop budget is 5; hop_count: 99 with a non-null originating
     // id makes this integration-originated and over budget.
     const res = await request(ctx.app, "POST", "/connections/preview-event", {
-      key: ctx.adminKey,
+      key: ctx.spaceKey,
       body: {
         item_id: note.id,
         event_type: "created",

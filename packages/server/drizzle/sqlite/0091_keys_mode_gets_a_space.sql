@@ -1,0 +1,201 @@
+-- Keys mode gets a real space, so a space-less key is the operator key and
+-- nothing else.
+--
+-- `api_keys_operator_is_space_less` says an operator key holds no space. The
+-- end state is the equivalence — a space-less key **is** the operator key —
+-- which is what makes every other combination unwritable rather than merely
+-- unminted. It could not ship with the permission model because keys mode
+-- bound nothing to a space: every working credential on a single-space
+-- self-host was space-less, so the equivalence would have declared each one an
+-- operator key, which is the opposite of what the model is for.
+--
+-- Bootstrap now provisions the one space and mints a working key into it. This
+-- moves the instances that already exist, and then tightens the constraint.
+--
+-- **The whole data move is gated on two things, and the second one matters
+-- more than it looks: the instance has no space at all, and it has something
+-- that needs one.** A migration runs on every deployment, and on a hosted one a
+-- space-less row is not stale keys-mode data — it is instance-scoped by
+-- design, shared by every tenant. Sweeping the catalogue into one tenant's
+-- space would be a serious and quiet bug. So the first statement provisions a
+-- space only where none exists, at a known id, and every statement after it is
+-- conditioned on that row being there. On a hosted instance the insert writes
+-- nothing and the moves are no-ops.
+--
+-- The second half of the gate is what keeps a *fresh* instance clean. A hosted
+-- deployment that has never had an account has no spaces either, so "no space"
+-- alone would provision one on it — a Default space nobody asked for, on an
+-- instance where a space belongs to an account. Requiring something to move
+-- says the same thing more honestly: this migration creates a home only when
+-- there is already data that needs one. A fresh keys-mode instance is covered
+-- by bootstrap, which provisions the space and mints the working key into it,
+-- and a fresh hosted one is covered by sign-up.
+--
+-- Two signals rather than one, because either alone misses a real instance.
+-- Space-less ordinary keys are the rows the constraint below refuses, so they
+-- are the reason this migration exists — but an instance whose operator did
+-- everything through the bootstrap key has data and has never held one, since
+-- that key admitted itself past every map under the old model. Space-less
+-- items outside the manifest catalogue catch that instance.
+--
+-- **Three tables keep some of their space-less rows, and each has a
+-- discriminator.**
+--
+-- `items` keeps two kinds. A `system.integration` row is the registered
+-- manifest catalogue, written with no space precisely so one registration is
+-- visible everywhere, and read through the deliberate `space_id = $1 OR
+-- space_id IS NULL` widening. A `system.connection` row with `kind = 'app'` is
+-- an OAuth grant projection, and the provider store resolves those with an
+-- inline `IS NULL` predicate rather than through the space fence — keys mode
+-- has no user store, so the space it resolves for a sign-in stays undefined
+-- whatever this migration does. Moving those rows would leave re-consent
+-- unable to find a standing grant and minting a duplicate beside it.
+--
+-- `custom_types` keeps `origin = 'platform'` and `origin = 'integration'`. The
+-- shipped set is upserted into the `''` bucket at every boot and would simply
+-- be rewritten there; the same is true of a manifest's declared types, which
+-- the catalogue reconcile re-registers with no space each start. Only
+-- `origin = 'user'` moves, and it has to: a self-hoster's own registered types
+-- stop resolving for a caller holding a space id, and an item write against
+-- one then fails as an unknown type.
+--
+-- `api_keys` keeps its operator key, which is the point of the exercise.
+--
+-- **On a hosted instance the space-less ordinary keys are dropped rather than
+-- moved.** They are revoked rows from before the space-mint route existed, and
+-- their space is not recoverable: an instance with tenants has no single space
+-- that is the truthful home for them, and picking one would be a fiction. What
+-- they recorded — that a credential was created and later retired — is in the
+-- audit log, which is the append-only history and is not touched. A live one
+-- would fail the constraint below rather than be deleted, which is the right
+-- way round: that is a credential somebody may still be using, and it needs a
+-- person rather than a migration.
+INSERT INTO `spaces` (`id`, `name`, `created_at`, `status`)
+SELECT
+  '01996d00-0000-7000-8000-000000000001',
+  'Default',
+  strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+  'active'
+WHERE NOT EXISTS (SELECT 1 FROM `spaces`)
+  AND (
+    EXISTS (SELECT 1 FROM `api_keys` WHERE `space_id` IS NULL AND `is_operator` = 0)
+    OR EXISTS (SELECT 1 FROM `items` WHERE `space_id` IS NULL AND `type` <> 'system.integration')
+  );
+--> statement-breakpoint
+UPDATE `items` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND `type` <> 'system.integration'
+  AND NOT (`type` = 'system.connection' AND json_extract(`properties`, '$.kind') = 'app')
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `edges` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `blobs` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` = ''
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `custom_types` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` = '' AND `origin` = 'user'
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `custom_edge_types` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` = ''
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `outbound_webhooks` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `inbound_webhooks` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `connection_oauth_tokens` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `connection_leased_tokens` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `audit_log` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `bulk_action_jobs` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `event_log` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `enrichment_state` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `idempotency_records` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+UPDATE `api_keys` SET `space_id` = '01996d00-0000-7000-8000-000000000001'
+WHERE `space_id` IS NULL
+  AND `is_operator` = 0
+  AND EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+DELETE FROM `api_keys`
+WHERE `space_id` IS NULL
+  AND `is_operator` = 0
+  AND `revoked_at` IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM `spaces` WHERE `id` = '01996d00-0000-7000-8000-000000000001');
+--> statement-breakpoint
+PRAGMA foreign_keys=OFF;--> statement-breakpoint
+CREATE TABLE `__new_api_keys` (
+	`id` text PRIMARY KEY NOT NULL,
+	`space_id` text,
+	`key_hash` text NOT NULL,
+	`label` text NOT NULL,
+	`source` text NOT NULL DEFAULT '',
+	`default_tier` text NOT NULL DEFAULT 'library',
+	`is_operator` integer NOT NULL DEFAULT 0,
+	`is_runtime_credential` integer NOT NULL DEFAULT 0,
+	`connection_id` text,
+	`item_source` text,
+	`space_permissions` text NOT NULL DEFAULT '[]',
+	`type_permissions` text NOT NULL DEFAULT '{"*":"write"}',
+	`extension_permissions` text NOT NULL DEFAULT '{}',
+	`edge_permissions` text NOT NULL DEFAULT '{}',
+	`metadata_permissions` text NOT NULL DEFAULT '{}',
+	`profile_permissions` text NOT NULL DEFAULT '{}',
+	`oauth_client_id` text,
+	`created_at` text NOT NULL,
+	`expires_at` text,
+	`revoked_at` text,
+	`last_used_at` text,
+	CONSTRAINT `api_keys_operator_iff_space_less`
+	  CHECK ((`space_id` IS NULL) = (`is_operator` = 1))
+);
+--> statement-breakpoint
+INSERT INTO `__new_api_keys`(
+  "id", "space_id", "key_hash", "label", "source", "default_tier",
+  "is_operator", "is_runtime_credential", "connection_id", "item_source",
+  "space_permissions", "type_permissions", "extension_permissions",
+  "edge_permissions", "metadata_permissions", "profile_permissions", "oauth_client_id",
+  "created_at", "expires_at", "revoked_at", "last_used_at")
+SELECT
+  "id", "space_id", "key_hash", "label", "source", "default_tier",
+  "is_operator", "is_runtime_credential", "connection_id", "item_source",
+  "space_permissions", "type_permissions", "extension_permissions",
+  "edge_permissions", "metadata_permissions", "profile_permissions", "oauth_client_id",
+  "created_at", "expires_at", "revoked_at", "last_used_at"
+FROM `api_keys`;
+--> statement-breakpoint
+DROP TABLE `api_keys`;--> statement-breakpoint
+ALTER TABLE `__new_api_keys` RENAME TO `api_keys`;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS `api_keys_key_hash_unique` ON `api_keys` (`key_hash`);--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `idx_api_keys_connection_id` ON `api_keys` (`connection_id`) WHERE `connection_id` IS NOT NULL;--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `idx_api_keys_runtime_credential` ON `api_keys` (`is_runtime_credential`) WHERE `is_runtime_credential`;--> statement-breakpoint
+CREATE UNIQUE INDEX IF NOT EXISTS `idx_api_keys_source_per_space` ON `api_keys` (`space_id`, `source`) WHERE revoked_at IS NULL;--> statement-breakpoint
+PRAGMA foreign_keys=ON;

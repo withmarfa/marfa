@@ -89,7 +89,6 @@ beforeAll(async () => {
     ctx.storage,
     TEST_API_KEY_SALT,
     connection.id,
-    "hosted",
   );
   runtimeKey = cred.api_key;
   runtimeConnectionId = connection.id;

@@ -68,7 +68,7 @@ async function install(): Promise<string> {
   );
   const result = await performInstall(ctx.storage, {
     apiKeyId: adminKey.id,
-    spaceId: undefined,
+    spaceId: ctx.spaceId,
     authMode: "keys",
     integrationItemId: integration.id,
     manifest: MANIFEST,
@@ -92,7 +92,7 @@ async function mintRuntimeKey(
       item_source: runtimeCredentialItemSource(MANIFEST),
     },
     hashApiKey(rawKey, "test-salt"),
-    undefined,
+    ctx.spaceId,
   );
   return rawKey;
 }
@@ -124,7 +124,7 @@ describe("install refuses configuration outside the declared contract", () => {
     );
     return performInstall(ctx.storage, {
       apiKeyId: adminKey.id,
-      spaceId: undefined,
+      spaceId: ctx.spaceId,
       authMode: "keys",
       integrationItemId: integration.id,
       manifest,

@@ -256,7 +256,7 @@ describe("the reserved connection namespaces", () => {
           granted_at: new Date().toISOString(),
         },
       },
-      undefined,
+      ctx.spaceId,
     );
     const suffix = Math.random().toString(36).slice(2, 10);
     const runtimeKey = `marfa_k1_extruntime_${suffix}`;
@@ -270,7 +270,7 @@ describe("the reserved connection namespaces", () => {
         item_source: runtimeCredentialItemSource({ name: "acme.fixture" }),
       },
       hashApiKey(runtimeKey, TEST_API_KEY_SALT),
-      undefined,
+      ctx.spaceId,
     );
 
     const controller = new AbortController();

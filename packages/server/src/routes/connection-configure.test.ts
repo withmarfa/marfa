@@ -264,7 +264,7 @@ async function seedGoogleCalendarConnection(
         feed_activity: false,
       },
     },
-    undefined,
+    ctx.spaceId,
   );
   if (opts.withOauthTokens) {
     await ctx.storage.connectionOauthTokens.upsert({

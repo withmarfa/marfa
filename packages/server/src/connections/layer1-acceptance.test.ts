@@ -70,7 +70,6 @@ async function mintRuntimeCredential(connectionId: string): Promise<MintResp> {
     ctx.storage,
     TEST_API_KEY_SALT,
     connectionId,
-    "keys",
   );
 }
 
@@ -103,7 +102,7 @@ async function createActiveConnection(): Promise<string> {
         integration_ref: integration.id,
       },
     },
-    undefined,
+    ctx.spaceId,
   );
   return item.id;
 }

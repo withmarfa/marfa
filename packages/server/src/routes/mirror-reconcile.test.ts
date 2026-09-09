@@ -72,7 +72,7 @@ beforeAll(async () => {
       item_source: MIRROR_SOURCE,
     },
     hashApiKey(ownerKey, "test-salt"),
-    undefined,
+    ctx.spaceId,
   );
 
   // A member credential, not an admin: reconciliation is a user gesture,
