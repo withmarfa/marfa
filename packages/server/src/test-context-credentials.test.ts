@@ -26,7 +26,7 @@ import type { ApiKey } from "@withmarfa/shared";
 function authorityOf(key: ApiKey) {
   return {
     is_operator: key.is_operator,
-    space_bound: key.space_id !== null && key.space_id !== undefined,
+    space_bound: key.space_id !== undefined,
     type_permissions: key.type_permissions,
     edge_permissions: key.edge_permissions,
     metadata_permissions: key.metadata_permissions,

@@ -406,113 +406,96 @@ describe("export → restore round trip", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The operator key's own export, which is the one that carried no bytes.
+// The bytes an archive claims to hold.
 //
-// A space-less export spans every space, so its blob lookup has to as well.
-// It asked the instance-wide `""` bucket instead — where none of those
-// hashes live — and the manifest recorded `blob_count: 0` while the response
-// reported success. The archive work exists to stop exactly that: an export
-// that looks like it worked and cannot restore what it claims to hold.
+// The blob lookup once asked the instance-wide `""` bucket, where none of a
+// space's hashes live, and the manifest recorded `blob_count: 0` while the
+// response reported success. The archive work exists to stop exactly that: an
+// export that looks like it worked and cannot restore what it claims to hold.
 //
-// Driven by restoring into an empty space and reading the bytes back,
+// Driven by restoring into an empty database and reading the bytes back,
 // because reading the manifest is what let this survive: the count agreed
 // with the (empty) blob set it was counting.
 //
-// The case is red, and the fixture is not what is wrong with it. An export
-// spanning every space needs a space-less caller, the operator key is the
-// only space-less credential there is, and an export is a list read narrowed
-// by `getTypeFilter` — whose contract is that an empty `allowed` means no
-// items visible. The operator key's type map is empty, so its export carries
-// no items, and blob hashes are collected from the items an export carries.
-// Nothing the test can mint reaches this shape; giving the instance tier a
-// read of its own would be a change to the product.
+// **On one space, because that is the only shape there is.** This used to be
+// written as a whole-instance export spanning two spaces, which needs a
+// space-less caller; the only space-less credential is the operator key, its
+// type map is empty, and an export is a list read narrowed by that map, so it
+// carried no items and therefore no blob hashes. The route no longer offers
+// that arm, and the lookup this pins is per space either way.
 // ---------------------------------------------------------------------------
 
-describe("a platform-level export", () => {
-  it("carries the bytes from every space it spans", async () => {
+describe("an archive's blobs", () => {
+  it("carries the bytes, and a restore reads them back", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const spaceA = `t-pa-${Math.random().toString(36).slice(2, 8)}`;
-    const spaceB = `t-pb-${Math.random().toString(36).slice(2, 8)}`;
+    const space = source.spaceId;
 
-    const bytesA = Buffer.from("space A's file, and its exact contents");
-    const bytesB = Buffer.from("space B's file — different bytes entirely");
-    const hashes = new Map<string, string>();
-    for (const [space, bytes] of [
-      [spaceA, bytesA],
-      [spaceB, bytesB],
-    ] as const) {
-      const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-      await source.blobBackend.put(hash, bytes, "text/plain");
-      await source.storage.blobs.register(
-        hash,
-        "text/plain",
-        bytes.length,
-        hash,
-        space,
-      );
-      await source.storage.items.create(
-        {
-          type: "core.file",
-          properties: {
-            title: `${space} attachment`,
-            blob_ref: hash,
-            mime_type: "text/plain",
-            size: bytes.length,
-          },
-          source: "pa-seed",
+    const bytes = Buffer.from("the file's exact contents, and not a stand-in");
+    const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    await source.blobBackend.put(hash, bytes, "text/plain");
+    await source.storage.blobs.register(
+      hash,
+      "text/plain",
+      bytes.length,
+      hash,
+      space,
+    );
+    await source.storage.items.create(
+      {
+        type: "core.file",
+        properties: {
+          title: "attachment",
+          blob_ref: hash,
+          mime_type: "text/plain",
+          size: bytes.length,
         },
-        space,
-      );
-      hashes.set(space, hash);
-    }
+        source: "blob-seed",
+      },
+      space,
+    );
 
-    // No `target_space_id`: the operator key's whole-instance export.
     const exportRes = await request(
       source.app,
       "GET",
       "/export?format=archive",
-      { key: source.operatorKey },
+      { key: source.spaceKey },
     );
     expect(exportRes.status).toBe(200);
     const archive = Buffer.from(await exportRes.arrayBuffer());
     const entries = await extractArchive(archive);
 
     // The bytes are in the archive, and they are the right bytes. Asserting
-    // presence alone would pass on an archive that packed two empty files.
-    const hashA = hashes.get(spaceA)!;
-    const hashB = hashes.get(spaceB)!;
+    // presence alone would pass on an archive that packed an empty file.
     expect(
-      entries.get(`blobs/${hashA}`),
-      "no bytes packed for the first space",
+      entries.get(`blobs/${hash}`),
+      "no bytes packed for the space's blob",
     ).toBeDefined();
-    expect(
-      entries.get(`blobs/${hashB}`),
-      "no bytes packed for the second space",
-    ).toBeDefined();
-    expect(entries.get(`blobs/${hashA}`)!.toString()).toBe(bytesA.toString());
-    expect(entries.get(`blobs/${hashB}`)!.toString()).toBe(bytesB.toString());
+    expect(entries.get(`blobs/${hash}`)!.toString()).toBe(bytes.toString());
 
     const manifest = JSON.parse(entries.get("manifest.json")!.toString()) as {
       blob_count: number;
       space_id: string | null;
     };
-    expect(manifest.blob_count).toBe(2);
-    expect(manifest.space_id).toBeNull();
+    expect(manifest.blob_count).toBe(1);
+    expect(manifest.space_id).toBe(space);
 
     // And the round trip, which is what the archive is for: restore into a
     // database that has never seen these bytes and read one back.
-    const restoreRes = await destination.app.request("/admin/restore-archive", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${destination.operatorKey}`,
-        "Content-Type": "application/gzip",
+    const restoreRes = await destination.app.request(
+      `/admin/restore-archive?target_space_id=${space}`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${destination.operatorKey}`,
+          "Content-Type": "application/gzip",
+        },
+        body: archive,
       },
-      body: archive,
-    });
+    );
     expect(restoreRes.status, await restoreRes.clone().text()).toBe(200);
-    const restored = await destination.blobBackend.get(hashA);
+    const restored = await destination.blobBackend.get(hash);
     expect(restored).not.toBeNull();
-    expect(Buffer.from(restored!).toString()).toBe(bytesA.toString());
+    expect(Buffer.from(restored!).toString()).toBe(bytes.toString());
   });
 });

@@ -586,7 +586,8 @@ export async function mintSpaceKey(
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = options?.rawKey ?? `marfa_k1_test_space_${suffix}`;
-  const { rawKey: _ignored, ...input } = options ?? {};
+  const input: Partial<CreateKeyInput> = { ...options };
+  delete (input as { rawKey?: string }).rawKey;
   await ctx.storage.keys.create(
     {
       label: `test-space-key-${suffix}`,

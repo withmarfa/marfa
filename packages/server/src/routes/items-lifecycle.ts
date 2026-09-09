@@ -11,7 +11,6 @@ import { publish } from "../pubsub.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemWithMetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
-import { refuseUnlessUninstalled } from "./_connection-refusal.js";
 import {
   createOwnershipGuard,
   resolveOrphanScopeForOwnWrite,
@@ -250,13 +249,15 @@ export function itemsLifecycleRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     requireRowWritable(c.get("apiKey"), item);
     await lifecycleGuard()(c.get("apiKey"), item);
-    // A live connection does not leave `active` through this door: the
-    // lifecycle table admits only `revoked` for a `system.*` type and this
-    // route cannot name it, so the store would refuse in any case. The
-    // refusal here answers first, so the caller reads why a grant is not
-    // retired this way rather than a lifecycle complaint, and the door
-    // stays closed if the table ever widens.
-    if (state !== "active") refuseUnlessUninstalled(item);
+    // **No live-connection refusal here.** It would sit behind
+    // `requireTypeAccess`, which refuses a `system.connection` write to
+    // every credential the product can mint: the reserved namespace admits
+    // only `is_operator`, the operator key's own type permissions are
+    // empty, and a runtime credential's carve-out names `system.activity`
+    // alone. A refusal below that gate can never answer, and unreachable
+    // enforcement is worse than none because it reads as a protection
+    // somebody is relying on. The gate that does the work is the type
+    // access check above, and `item-state-doors.test.ts` pins it there.
     const updated = await storage.items.transition(id, state, spaceId);
     const metadata = await storage.metadata.get(id);
     await publish({

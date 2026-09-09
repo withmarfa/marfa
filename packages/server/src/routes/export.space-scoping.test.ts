@@ -11,12 +11,11 @@
  *   - a space-bound credential with a mismatching `target_space_id` is
  *     rejected with 403 (cross-space authority not granted).
  *
- *   - the operator key with an explicit `target_space_id` scopes to that
- *     space.
+ *   - the operator key is refused outright: an export is scoped to one
+ *     space and that credential is bound to none.
  *
- *   - the operator key without target_space_id falls through to the
- *     unscoped path (self-host compat) and is audited as
- *     `details.scope: "platform_unscoped"` so operators can alert.
+ *   - the audit record names the space that was resolved, which is where
+ *     the resolution is observable before a byte is streamed.
  *
  *   - Archive export stamps `manifest.space_id` with the resolved
  *     scope, and `/admin/restore-archive` rejects an archive whose
@@ -137,36 +136,66 @@ describe("space-scoped export — the operator key", () => {
     await ctx.cleanup();
   });
 
-  it("scopes to target_space_id when supplied", async () => {
-    // The operator key is the only credential that may name a space other
-    // than its own here, and it is also the one credential that reads no
-    // content: its type map is empty, so the read narrowing every export
-    // runs through resolves to nothing whatever space it lands in. The
-    // resolved scope is therefore asserted on the record the route writes
-    // before it streams, which is where the resolution is observable — and
-    // the emptiness is asserted beside it rather than left to be discovered,
-    // since an assertion that a foreign space's rows are absent would
-    // otherwise pass on a body that is empty for an unrelated reason.
+  /**
+   * The operator key used to have two arms here: name a space and export it,
+   * or name none and export the whole instance. Both always streamed nothing.
+   * That credential holds no content permissions at all, so the read
+   * narrowing every export runs through resolved to the empty set whatever
+   * space it landed in, while the audit record said a space had been
+   * exported. An export that reports success and writes zero rows is worse
+   * than one that refuses, so the arms are gone and the door says why.
+   *
+   * Moving a space is a key minted into it with everything, which is the
+   * ordinary path the cases above take.
+   */
+  it("is refused, because an export is scoped to a space and it has none", async () => {
     ctx = await createTestContext();
-    const spaceA = `t-platform-${Math.random().toString(36).slice(2, 10)}`;
-    const spaceB = `t-platform-b-${Math.random().toString(36).slice(2, 10)}`;
+    const spaceA = `t-operator-${Math.random().toString(36).slice(2, 10)}`;
     await ctx.storage.items.create(
       { type: "core.note", properties: { body: "A" } },
       spaceA,
     );
+
+    const named = await request(
+      ctx.app,
+      "GET",
+      `/export?target_space_id=${spaceA}`,
+      { key: ctx.operatorKey },
+    );
+    expect(named.status).toBe(403);
+
+    const unscoped = await request(ctx.app, "GET", "/export", {
+      key: ctx.operatorKey,
+    });
+    expect(unscoped.status).toBe(403);
+
+    // Refused before anything was recorded: an audit row saying a space was
+    // exported is exactly what the old arms produced wrongly.
+    const audit = await ctx.storage.audit.list({ action: "export.space" });
+    expect(audit.data).toEqual([]);
+  });
+
+  it("a space key's own export is recorded against the space it resolved", async () => {
+    // The audit record is where the resolution is observable, because it is
+    // written before the first byte is streamed. It is also the alerting
+    // surface for a bulk extraction, so what it names has to be the space
+    // that was actually read.
+    ctx = await createTestContext();
+    const spaceA = `t-audit-${Math.random().toString(36).slice(2, 10)}`;
+    const wsAdmin = await mintSpaceAdmin(ctx, spaceA, "ws-audit");
     await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "B" } },
-      spaceB,
+      { type: "core.note", properties: { body: "A" } },
+      spaceA,
     );
 
     const res = await request(
       ctx.app,
       "GET",
       `/export?target_space_id=${spaceA}`,
-      { key: ctx.operatorKey },
+      { key: wsAdmin },
     );
     expect(res.status).toBe(200);
-    expect(await readNdjsonItems(res)).toEqual([]);
+    expect(await readNdjsonItems(res)).toHaveLength(1);
 
     const audit = await waitForAudit(
       () => ctx.storage.audit.list({ action: "export.space" }),
@@ -179,27 +208,7 @@ describe("space-scoped export — the operator key", () => {
     };
     expect(details.scope).toBe("space");
     expect(details.target_space_id).toBe(spaceA);
-    // The row is stamped with the space that was resolved, not with the
-    // caller's absent one, which is the half a fallback to unscoped would
-    // get wrong.
     expect(row?.space_id).toBe(spaceA);
-  });
-
-  it("falls through to unscoped (self-host compat) without target_space_id and audits as platform_unscoped", async () => {
-    ctx = await createTestContext();
-    const res = await request(ctx.app, "GET", "/export", {
-      key: ctx.operatorKey,
-    });
-    expect(res.status).toBe(200);
-
-    const audit = await waitForAudit(
-      () => ctx.storage.audit.list({ action: "export.space" }),
-      (result) => result.data.length > 0,
-    );
-    const row = audit.data[0];
-    expect(row).toBeDefined();
-    const details = row?.details as { scope: string } | undefined;
-    expect(details?.scope).toBe("platform_unscoped");
   });
 });
 

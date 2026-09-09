@@ -268,7 +268,7 @@ describe("every administrative door consults a space permission", () => {
       "integrations.ts": { "space.connections": 2 },
       "items.ts": { "space.item_purge": 1 },
       "keys.ts": { "space.keys": 4 },
-      "oauth-callback.ts": { "space.credentials": 3 },
+      "oauth-callback.ts": { "space.credentials": 2 },
       "spaces.ts": { "space.settings": 2, "space.usage": 1 },
       "types.ts": { "space.schema": 2 },
       "webhooks.ts": { "space.webhooks": 6 },

@@ -66,9 +66,7 @@ async function acquireRlsOrRefuse(
  * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a dedicated pool connection for the duration
  * of the stream. Without both set, the route runs on the owner
- * connection — used for SQLite, for a space-less caller (which is the
- * operator key and nothing else), and when RLS enforcement is disabled
- * instance-wide.
+ * connection: SQLite, and an instance with RLS enforcement disabled.
  */
 export interface ExportRoutesOptions {
   rlsEnforce: boolean;
@@ -81,43 +79,37 @@ export interface ExportRoutesOptions {
 /**
  * Resolve the target space for an export request.
  *
- * **It branches on the caller's space binding and on the query parameter, and
- * on nothing else.** There is no rank to read.
+ * An export reads the caller's own space, and `?target_space_id` is an
+ * assertion about which space that is rather than a way of naming another:
+ * a mismatch is refused with 403 so a client exporting the wrong space is
+ * told, instead of receiving somebody else's rows under its own name.
  *
- *   1. **A space-bound caller** — its own space wins, and naming any other
- *      through `?target_space_id` is rejected with 403.
- *   2. **A space-less caller naming a space** — the named space. That caller
- *      is the operator key, which is the only credential that can be
- *      space-less.
- *   3. **A space-less caller naming none** — `spaceId: undefined` passes
- *      through to the storage layer, so list operations match `space_id IS
- *      NULL` and the export covers the space-less rows. The audit trail
- *      records it as unscoped, which is the signal that this happened; there
- *      is no 400 here and an earlier version of this comment claimed one.
+ * **The two space-less arms are gone rather than dormant.** They existed for
+ * the operator key, the only credential that can be space-less, and that key
+ * holds no content permissions at all: the read narrowing every export runs
+ * through resolved to nothing, so both the named-space arm and the
+ * whole-instance fallback streamed an empty body while writing an audit
+ * record saying a space had been exported. Moving a space is a key minted
+ * into it with everything, and such a key takes the ordinary path here.
  */
 function resolveExportSpace(
   apiKey: ApiKey | undefined,
   targetParam: string | undefined,
-): string | undefined {
+): string {
   const callerSpace = apiKey?.space_id;
-  // Space-bound caller — own space wins.
-  if (callerSpace) {
-    if (targetParam !== undefined && targetParam !== callerSpace) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        "Cannot export another space's data — target_space_id must match caller's space_id (or be omitted).",
-      );
-    }
-    return callerSpace;
+  if (!callerSpace) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "Export is scoped to one space and this credential is bound to none. Mint a key into the space and export with that.",
+    );
   }
-  // Space-less caller — the operator key, which is the only credential that
-  // can be space-less. Naming a space scopes the export to it; naming none
-  // exports the space-less rows, which on any instance is the manifest
-  // catalogue and the grant projections rather than anybody's content.
-  if (targetParam !== undefined) {
-    return targetParam;
+  if (targetParam !== undefined && targetParam !== callerSpace) {
+    throw new MarfaError(
+      ErrorCode.FORBIDDEN,
+      "Cannot export another space's data — target_space_id must match caller's space_id (or be omitted).",
+    );
   }
-  return undefined;
+  return callerSpace;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,15 +157,13 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe("Output format: `ndjson` (default) or `archive`"),
-      // A space-less caller — the operator key — scopes a hosted-mode
-      // export to one space by passing `?target_space_id=<id>`. A space-bound
-      // caller gets its own space automatically, and supplying a mismatching
-      // value here returns 403.
+      // An assertion, not a selector: the export is always the caller's own
+      // space, and naming a different one is refused rather than honored.
       target_space_id: z
         .string()
         .optional()
         .describe(
-          "A caller with no space binding scopes the export to one space with this; a space-bound caller exports its own space and may not name another",
+          "Must match the caller's own space when supplied; naming another space is refused",
         ),
     }),
   },
@@ -239,26 +229,20 @@ export function exportRoutes(
 
     const spaceId = resolveExportSpace(c.get("apiKey"), query.target_space_id);
 
-    // Audit the export attempt before streaming starts — stamped for
-    // both archive and NDJSON paths. `details.scope: "platform_unscoped"`
-    // signals operators when the operator key exports without a
-    // target_space_id (the self-host fallback that returns all rows —
-    // fine where nothing carries a space, a real concern on hosted
-    // multi-space). Alerting on this shape catches accidental cross-
-    // space exports.
-    const platformUnscoped =
-      c.get("apiKey")?.space_id === undefined &&
-      query.target_space_id === undefined;
+    // Audit the export attempt before streaming starts, stamped for both
+    // the archive and NDJSON paths. An export is a bulk extraction of a
+    // space, so the record has to exist whether or not the stream that
+    // follows completes.
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: spaceId ?? null,
+      space_id: spaceId,
       key_id: c.get("apiKey")?.id,
       action: "export.space",
       resource_type: "space",
-      resource_id: spaceId ?? undefined,
+      resource_id: spaceId,
       details: {
         format: query.format ?? "ndjson",
-        scope: platformUnscoped ? "platform_unscoped" : "space",
+        scope: "space",
         ...(query.target_space_id !== undefined
           ? { target_space_id: query.target_space_id }
           : {}),
@@ -268,10 +252,9 @@ export function exportRoutes(
     // An export is a list read, so the space's read-narrowing lever applies
     // to it. Leaving it out would make the control bypassable by swapping
     // endpoint rather than by rewording the query.
-    const spaceConfigForExport =
-      spaceId && storage.spaces
-        ? await storage.spaces.getConfig(spaceId)
-        : null;
+    const spaceConfigForExport = storage.spaces
+      ? await storage.spaces.getConfig(spaceId)
+      : null;
     const sourceFilter = resolveEnforcement(
       spaceConfigForExport,
       c.get("apiKey"),
@@ -292,8 +275,7 @@ export function exportRoutes(
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    // The space resolved once above, as the archive path passes it: the
-    // operator key exporting another space names that space's types.
+    // The space resolved once above, as the archive path passes it.
     assertTypeFilter(type, spaceId);
 
     // Same resolution as `GET /items`, sentinel included. Export shares the
@@ -345,9 +327,9 @@ export function exportRoutes(
               // the whole export rather than once per page — a million rows
               // at 200 a page is five thousand walks otherwise, all on the
               // one reserved RLS connection this stream pins. Per page is
-              // still where it is *called*, because the space is a property
-              // of the rows and an operator-key export carries every
-              // space's. See `_orphaned.ts`.
+              // still where it is *called*, because the space is a
+              // property of the rows rather than of the request. See
+              // `_orphaned.ts`.
               const orphanScope = await orphans.resolve(result.data);
               for (const item of result.data) {
                 const metadata = await storage.metadata.get(item.id);
@@ -424,11 +406,11 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   /**
-   * space_id stamped at export time. `null` for instance-wide
-   * self-host exports (no space scope on either side); a string for
-   * hosted-mode exports. Used by `/admin/restore-archive` to verify
-   * cross-space restore attempts (rejected unless the operator key
-   * passes an explicit `target_space_id`).
+   * space_id stamped at export time, and always a string on anything
+   * this build writes: an export is scoped to the caller's space. `null`
+   * survives on the read side for archives written before that was true,
+   * and `/admin/restore-archive` uses the field to verify cross-space
+   * restore attempts.
    */
   space_id: string | null;
   item_count: number;
@@ -452,7 +434,7 @@ async function handleArchiveExport(
   options: ExportRoutesOptions,
   /** Already resolved by the route handler — passed in rather than
    *  re-resolved so the space decision happens exactly once per request. */
-  spaceId: string | undefined,
+  spaceId: string,
   /** The space's `source_filter` lever, resolved alongside `spaceId`. */
   sourceFilter: SourceFilterSettings | undefined,
 ): Promise<Response> {
@@ -574,11 +556,10 @@ async function handleArchiveExport(
         customEdgeTypeCount += 1;
       }
 
-      // A space-less export is the operator key's, and its items came from
-      // every space — so the blob lookup has to reach every space too. It
-      // used to ask the instance-wide `""` bucket instead, where none of
-      // those hashes live, and the archive recorded `blob_count: 0` while
-      // reporting success. The same rule the read routes use.
+      // The same blob resolution the read routes use, which falls back to
+      // the instance-wide bucket only after the space's own. Asking the
+      // `""` bucket directly, where none of these hashes live, recorded
+      // `blob_count: 0` while reporting success.
       for (const hash of blobHashes) {
         const record = await resolveBlobForSpace(storage, spaceId, hash);
         if (record) {
@@ -602,7 +583,7 @@ async function handleArchiveExport(
     version: 1,
     format: "marfa-archive-v1",
     created_at: new Date().toISOString(),
-    space_id: spaceId ?? null,
+    space_id: spaceId,
     item_count: lines.length,
     edge_count: edgeLines.length,
     blob_count: Object.keys(blobMeta).length,

@@ -358,25 +358,27 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
 });
 
 /**
- * Two of the doors below no longer reach the grant refusal at all, and the
- * cases that pin it are red because of it rather than because the refusal
- * moved.
+ * A live grant cannot be stranded through the item doors, and which door
+ * refuses depends on which gate the door reaches first.
  *
- * `DELETE /items/{id}` and `POST /items/{id}/transition` both run
- * `requireTypeAccess(item.type, "write")` before `refuseUnlessUninstalled`,
- * and a grant is a `system.connection`. The reserved-namespace fence admits
- * only the operator key there, and the operator key's own type map is empty,
- * so `resolveTypePermission` then refuses it too: no credential in the
- * product can write a `system.connection`, and both doors answer 403
- * `type_not_permitted` before the grant refusal is consulted. The refusal is
- * still reached through the delete cascade and through the purge door, which
- * consult it ahead of the write rule, and those cases pass.
+ * **Two of these doors never reach the grant refusal.** `DELETE /items/{id}`
+ * and `POST /items/{id}/transition` both run `requireTypeAccess(item.type,
+ * "write")` first, and a grant is a `system.connection`: the
+ * reserved-namespace fence admits only the operator key, whose own type map
+ * is empty, so no credential the product can mint writes one. Both answer 403
+ * `type_not_permitted` and never consult liveness at all. The refusal that
+ * used to sit behind that gate was removed rather than reordered, because a
+ * refusal nobody can reach reads as a protection somebody is relying on; what
+ * these cases pin is the gate that does the work, and that the grant is
+ * untouched afterwards.
  *
- * Making the refusal answer first at the other two doors is a change to the
- * routes, not to a fixture, so the cases below stand as written.
+ * **Two doors do reach it**, and keep their cases: the purge door reads the
+ * row and refuses before it asks the write question, and the delete cascade
+ * carries rows the type gate never saw, because the gate ran against the row
+ * named in the URL.
  */
-describe("an operator cannot strand a live grant through the item doors", () => {
-  it("DELETE /items/{id} refuses a live grant and names the grant routes", async () => {
+describe("a live grant cannot be stranded through the item doors", () => {
+  it("DELETE /items/{id} never reaches the grant: the type gate answers first", async () => {
     ctx = await createTestContext({
       authMode: "hosted",
       authAllowSignup: true,
@@ -394,12 +396,11 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
       key,
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(403);
     const body = (await res.json()) as {
       error: { code: string; message: string };
     };
-    expect(body.error.code).toBe("validation_error");
-    expect(body.error.message).toContain(`/auth/grants/${grant!.id}/revoke`);
+    expect(body.error.code).toBe("type_not_permitted");
 
     // Nothing moved: still listed, still live on both axes.
     expect((await listedGrants(c, key)).map((g) => g.id)).toEqual([grant!.id]);
@@ -433,7 +434,12 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect((await listedGrants(c, key)).map((g) => g.id)).toEqual([grant!.id]);
   });
 
-  it("a grant revoked through the grants surface deletes freely", async () => {
+  it("a revoked grant meets the same type gate, and the cascade is what removes it", async () => {
+    // The type gate reads the row's type and nothing else, so revoking
+    // first does not change its answer: a tombstone is refused at this door
+    // exactly as a live grant is. Removing one is the cascade's job, which
+    // is the second half of this case rather than a separate file, because
+    // the pair is the whole story of how a grant row ever leaves.
     ctx = await createTestContext({
       authMode: "hosted",
       authAllowSignup: true,
@@ -456,12 +462,35 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(revoke.status).toBe(302);
     expect(revoke.headers.get("location")).toContain("notice=grant_revoked");
 
-    const res = await request(c.app, "DELETE", `/items/${grant!.id}`, {
+    const direct = await request(c.app, "DELETE", `/items/${grant!.id}`, {
       key,
     });
-    expect(res.status).toBe(200);
-    // The soft delete took: the row moved on the state axis. The list was
-    // already empty after the revoke, so it is not the evidence here.
+    expect(direct.status).toBe(403);
+    expect(
+      ((await direct.json()) as { error: { code: string } }).error.code,
+    ).toBe("type_not_permitted");
+    expect((await c.storage.items.get(grant!.id))?.state).toBe("active");
+
+    // Through a `parent-of` edge the cascade reaches the row the type gate
+    // never saw, and with the grant revoked there is nothing left to refuse.
+    const note = await request(c.app, "POST", "/items", {
+      key,
+      body: { type: "core.note", properties: { body: "holds the tombstone" } },
+    });
+    expect(note.status).toBe(201);
+    const noteId = ((await note.json()) as { item: { id: string } }).item.id;
+    const edge = await request(c.app, "POST", "/edges", {
+      key,
+      body: { source_id: noteId, target_id: grant!.id, edge_type: "parent-of" },
+    });
+    expect(edge.status).toBe(201);
+
+    const cascaded = await request(c.app, "DELETE", `/items/${noteId}`, {
+      key,
+    });
+    expect(cascaded.status).toBe(200);
+    // The soft delete took: the row moved on the state axis, into the state
+    // its own bounded lifecycle names rather than into `trashed`.
     expect((await c.storage.items.get(grant!.id))?.state).toBe("revoked");
   });
 
@@ -487,13 +516,16 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(row?.state).toBe("revoked");
     expect(row?.properties.status).toBe("active");
 
+    // Two doors, two different refusals, and both leave the row standing.
+    // The delete door never gets as far as liveness; the purge door reads
+    // the row first and names the strand.
     const del = await request(c.app, "DELETE", `/items/${grant!.id}`, {
       key,
     });
-    expect(del.status).toBe(400);
-    expect(
-      ((await del.json()) as { error: { message: string } }).error.message,
-    ).toContain("still live");
+    expect(del.status).toBe(403);
+    expect(((await del.json()) as { error: { code: string } }).error.code).toBe(
+      "type_not_permitted",
+    );
     const purge = await request(c.app, "DELETE", `/items/${grant!.id}/purge`, {
       key,
     });
@@ -504,10 +536,12 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     expect(await c.storage.items.get(grant!.id)).not.toBeNull();
   });
 
-  it("POST /items/{id}/transition out of active refuses a live grant", async () => {
-    // Defence in depth: the lifecycle table refuses every state but
-    // `revoked` for a `system.*` type and this route cannot name it, so
-    // what is pinned is that the connection refusal answers first.
+  it("POST /items/{id}/transition never reaches the grant either", async () => {
+    // The type gate runs before anything reads the row's liveness, so this
+    // door answers the same way the delete door does. Behind it the
+    // lifecycle table would refuse anyway: a `system.*` type admits only
+    // `revoked` and this route's schema cannot name it. Neither of those is
+    // what a caller meets, and the one that answers is the one pinned.
     ctx = await createTestContext({
       authMode: "hosted",
       authAllowSignup: true,
@@ -521,18 +555,14 @@ describe("an operator cannot strand a live grant through the item doors", () => 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 
-    // The route's own schema admits only `active`, `archived` and `trashed`,
-    // so `revoked` was never reachable here; `archived` is the shape a
-    // caller can actually send, and the refusal has to come before the
-    // store's transition rules get to say anything about it.
     const res = await request(c.app, "POST", `/items/${grant!.id}/transition`, {
       key,
       body: { state: "archived" },
     });
-    expect(res.status).toBe(400);
-    expect(
-      ((await res.json()) as { error: { message: string } }).error.message,
-    ).toContain("still live");
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+      "type_not_permitted",
+    );
     const row = await c.storage.items.get(grant!.id);
     expect(row?.state).toBe("active");
     expect(row?.properties.status).toBe("active");

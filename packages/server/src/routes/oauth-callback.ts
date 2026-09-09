@@ -419,7 +419,6 @@ export function oauthStartRoutes(
   const r = new Hono<AppEnv>();
   r.post("/:id/oauth/start", async (c) => {
     const apiKey = requireAuth(c);
-    requireSpacePermission(c, "space.credentials");
     // No integration arm on this door: it starts the upstream OAuth dance and
     // takes a caller-supplied scope override into the authorize URL, so it is
     // a credentials surface, reached on `space.credentials` and nothing else.

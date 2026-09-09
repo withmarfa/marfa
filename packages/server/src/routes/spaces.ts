@@ -351,21 +351,37 @@ export function spaceRoutes(storage: Storage) {
     // not set.
     const body: SpaceConfig = c.req.valid("json");
 
-    if (!key.space_id || !storage.spaces) {
+    if (!storage.spaces) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,
-        "Space config requires a space-scoped credential",
+        "This deployment holds no space configuration",
       );
     }
 
-    await storage.spaces.updateConfig(key.space_id, body);
+    // **The space-less refusal that used to sit beside that one is gone.**
+    // `space.settings` is a space permission, and the operator key is both
+    // the only credential that can be space-less and the one that holds none
+    // of the eleven, so the gate above turns away every space-less caller
+    // before this line. A refusal here could never answer, and a refusal
+    // nobody can reach reads as a protection somebody is relying on.
+    // `spaces.test.ts` asserts the gate that does the work instead.
+    //
+    // What is left is an assertion rather than a door: if the invariant ever
+    // breaks it is this file's mistake, not the caller's, and it should stop
+    // rather than be reported as a bad request.
+    const spaceId = key.space_id;
+    if (spaceId === undefined) {
+      throw new Error("space.settings admitted a credential with no space");
+    }
+
+    await storage.spaces.updateConfig(spaceId, body);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
+      space_id: spaceId,
       key_id: key.id,
       action: "space.config.update",
       resource_type: "space",
-      resource_id: key.space_id,
+      resource_id: spaceId,
     });
 
     return c.json(body, 200);

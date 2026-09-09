@@ -576,13 +576,29 @@ describe("POST /connections/:id/lease-tokens — space scoping", () => {
     expect(created.space_id).toBe(spaceId);
   });
 
-  it("an operator key's issue stamps the connection's space, not its own", async () => {
-    const { spaceId, connectionId } = await spaceScopedConnection();
-    const res = await request(
+  it("refuses the one space-less caller, and the row lands in the connection's space", async () => {
+    const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
+
+    // The operator key is the only credential that carries no space, and
+    // this door refuses it for that: a lease row has to live in the
+    // connection's space or the fenced list and revoke lookups, and the
+    // uninstall sweep, never reach it. The door used to admit the operator
+    // key past the space guard and stamp the connection's space to cover
+    // the divergence; it holds no `space.connections`, so it was refused a
+    // few lines later anyway and the divergence never existed.
+    const asOperator = await request(
       ctx.app,
       "POST",
       `/connections/${connectionId}/lease-tokens`,
       { key: ctx.operatorKey, body: { capability_id: "drive.upload" } },
+    );
+    expect(asOperator.status).toBe(403);
+
+    const res = await request(
+      ctx.app,
+      "POST",
+      `/connections/${connectionId}/lease-tokens`,
+      { key: spaceKey, body: { capability_id: "drive.upload" } },
     );
     expect(res.status).toBe(201);
     const created = (await res.json()) as CreatedConnectionLeasedToken;

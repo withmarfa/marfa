@@ -300,11 +300,11 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
   // looks subscriptions up fenced on the connection's space, so a row
   // stamped with anything else is a subscription that never delivers.
   //
-  // The route stamps the connection's space rather than the caller's, and
-  // the only credential for which those could differ is a space-less one.
-  // That is the operator key alone, and it holds no `space.connections`,
-  // so the door refuses it: the second case below pins both the refusal
-  // and the stamp that follows from it.
+  // The caller's space and the connection's are necessarily the same: the
+  // connection lookup is fenced on the caller's space, and the only
+  // credential that could arrive without one is the operator key, which
+  // this door refuses. The second case below pins the refusal and the
+  // stamp that follows from it.
   async function spaceScopedConnection(): Promise<{
     spaceId: string;
     spaceKey: string;
@@ -364,10 +364,12 @@ describe("POST /connections/:id/inbound-webhooks — space scoping", () => {
   it("refuses the one space-less caller, and the row lands in the connection's space", async () => {
     const { spaceId, spaceKey, connectionId } = await spaceScopedConnection();
 
-    // The operator key is the only credential that carries no space. It
-    // clears the space-scope guard on operator authority and is then
-    // refused for the permission, which is what keeps the caller's space
-    // and the connection's from ever diverging on this door.
+    // The operator key is the only credential that carries no space, and
+    // the space guard refuses it for exactly that. It used to be admitted
+    // past that guard on the operator flag, which is what the stamping of
+    // the connection's space rather than the caller's existed to cover; it
+    // holds no `space.connections` either, so it was refused a few lines
+    // later anyway and the two spaces could never diverge.
     const asOperator = await request(
       ctx.app,
       "POST",
