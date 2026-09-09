@@ -17,9 +17,11 @@
  * dismissed as theoretical; this is it arising on its own, in ordinary
  * operation.
  *
- * The mint paths are guarded where they mint — `POST /keys` refuses a
- * space-less `space_admin`, and `assertMintableSpaceScope` refuses a
- * runtime-credential mint for a Connection with no space. Those tests prove
+ * The mint paths are guarded where they mint — the `api_keys` row constraint
+ * makes space-less and operator the same set, so a space-less ordinary
+ * credential is no longer representable at all, and
+ * `assertMintableSpaceScope` refuses a runtime-credential mint for a
+ * Connection with no space. Those tests prove
  * the refusals. This one proves the consequence, at the layer the residue
  * appeared: what a credential actually writes. A future mint path that
  * reintroduces the gap would pass every existing test and fail this one.

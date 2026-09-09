@@ -81,7 +81,7 @@ describe("admin runtime dead-letter routes", () => {
     ctx = await createTestContext(undefined, undefined, ops);
 
     const suffix = Math.random().toString(36).slice(2, 10);
-    spaceKey = `marfa_k1_test_space_admin_${suffix}`;
+    spaceKey = `marfa_k1_test_space_bound_${suffix}`;
     await ctx.storage.keys.create(
       {
         label: `test-space-admin-${suffix}`,
