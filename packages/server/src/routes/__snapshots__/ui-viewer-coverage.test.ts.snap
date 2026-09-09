@@ -85,10 +85,10 @@ exports[`every gallery variant renders > renders 'auth/consent/all-scope-kinds' 
     </details><details class="grp">
       <summary>
         <span class="gmain">
-          <span class="gtop"><span class="glabel">Administrative access</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
+          <span class="gtop"><span class="glabel">Space permissions</span><svg class="gchev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></span>
           <span class="gdesc">Set up webhooks that send your data elsewhere.</span>
         </span>
-        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" aria-label="Administrative access"><span class="tk" aria-hidden="true"></span></label>
+        <label class="sw" onclick="event.stopPropagation()"><input type="checkbox" aria-label="Space permissions"><span class="tk" aria-hidden="true"></span></label>
       </summary>
       <div class="gsub"><div class="subrow"><span>Set up webhooks that send your data elsewhere</span><label class="sw"><input type="checkbox" name="scopes" value="space.webhooks"><span class="tk" aria-hidden="true"></span></label></div></div>
     </details></div><input type="checkbox" name="scopes" value="openid" checked hidden>

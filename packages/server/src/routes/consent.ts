@@ -295,7 +295,7 @@ function buildGroups(
   // Arriving pre-ticked would grant it by silence, which is what it exists
   // to stop.
   const otherSpacePermission: ScopeGroup = {
-    label: "Administrative access",
+    label: "Space permissions",
     desc: "Parts of your space this app asked to manage.",
     rows: [],
   };
@@ -327,7 +327,7 @@ function buildGroups(
       otherRead.rows.push({ scope, defaultOn: true });
     }
   }
-  // Administrative access last: it is the widest thing on the screen, and a
+  // Space permissions last: it is the widest thing on the screen, and a
   // reader scanning downward should not meet it between two content groups.
   return [...byBundle.values(), otherRead, otherWrite, otherSpacePermission]
     .filter((g) => g.rows.length > 0)
