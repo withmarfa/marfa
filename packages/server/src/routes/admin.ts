@@ -1,6 +1,6 @@
 /**
- * `/admin/*` operator surface. Every route in this file is platform-
- * admin only (`requireOperatorKey` enforces). The CLI's `my platform` command
+ * `/admin/*` operator surface. Every route in this file is operator-key
+ * only (`requireOperatorKey` enforces). The CLI's `my platform` command
  * tree is the canonical consumer; the routes are also reachable directly
  * via the SDK's `client.admin` namespace.
  *
@@ -21,7 +21,7 @@
  *   - POST   /admin/oauth-clients/:client_id/delete — remove an OAuth client and every grant made to it
  *
  * Quotas READ/WRITE for a specific space reuses the existing
- * `/spaces/:id/quotas` GET + PUT (already platform-admin-gated). No
+ * `/spaces/:id/quotas` GET + PUT (already operator-gated). No
  * `/admin/spaces/:id/quotas` shim is added — the CLI hits the existing
  * route directly.
  *
@@ -30,7 +30,7 @@
  * `account-deletion/purge-now` emits an `admin.account_deletion.purge_now`
  * audit row with `space_id: null` (instance-wide sweep). Suspended
  * spaces reject writes at the auth middleware layer
- * (`middleware/space-suspension.ts`); platform admins bypass.
+ * (`middleware/space-suspension.ts`); the operator key bypasses it.
  */
 import { randomBytes } from "node:crypto";
 import { createRoute, z } from "@hono/zod-openapi";
@@ -164,7 +164,7 @@ const createSpaceRoute = createRoute({
   tags: ["Admin"],
   summary: "Create a space",
   description:
-    "Creates an empty space and returns it. Platform-admin only. Pair with `POST /admin/spaces/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a space already existed, so before this a space could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a space-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
+    "Creates an empty space and returns it. Takes the operator key. Pair with `POST /admin/spaces/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a space already existed, so before this a space could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a space-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -231,7 +231,7 @@ const listSpacesRoute = createRoute({
   tags: ["Admin"],
   summary: "List spaces",
   description:
-    "Lists every space in the instance with current operator status. Platform-admin only.",
+    "Lists every space in the instance with current operator status. Takes the operator key.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -268,7 +268,7 @@ const showSpaceRoute = createRoute({
   tags: ["Admin"],
   summary: "Show a space",
   description:
-    "Returns the space row, its current quota overrides, and a slice of recent activity. Quota overrides are null when none are configured. Platform-admin only.",
+    "Returns the space row, its current quota overrides, and a slice of recent activity. Quota overrides are null when none are configured. Takes the operator key.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Space id.") }),
@@ -400,7 +400,7 @@ const spaceMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get space metrics",
   description:
-    "Returns a per-space usage snapshot covering item, blob, and storage counts plus recent activity. Platform-admin only.",
+    "Returns a per-space usage snapshot covering item, blob, and storage counts plus recent activity. Takes the operator key.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Space id.") }),
@@ -444,7 +444,7 @@ const listSpaceKeysRoute = createRoute({
   tags: ["Admin"],
   summary: "List a space's API keys",
   description:
-    "Lists active (non-revoked) API keys for a space, for emergency revocation paired with key deletion. Platform-admin only.",
+    "Lists active (non-revoked) API keys for a space, for emergency revocation paired with key deletion. Takes the operator key.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Space id.") }),
@@ -484,7 +484,7 @@ const createSpaceKeyRoute = createRoute({
   tags: ["Admin"],
   summary: "Create a space-bound API key",
   description:
-    "Creates an API key bound to the specified space. Platform-admin only. The plaintext key is returned only in this response.",
+    "Creates an API key bound to the specified space. Takes the operator key. The plaintext key is returned only in this response.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({ id: z.string().describe("Space id.") }),
@@ -742,7 +742,7 @@ const createAccountRoute = createRoute({
   tags: ["Admin"],
   summary: "Create an account",
   description:
-    "Creates an email + password account, already verified, with its own space, which it solely owns — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
+    "Creates an email + password account, already verified, with its own space, which it solely owns — the same shape a hosted sign-up produces. Takes the operator key. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -1004,7 +1004,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
 
   router.openapi(createSpaceRoute, async (c) => {
     requireOperatorKey(c);
-    // A single-space deployment has no space store at all. `NOT_FOUND`
+    // A deployment with no space plane has no space store at all. `NOT_FOUND`
     // rather than a dedicated code, matching every sibling route here: the
     // resource does not exist on this instance.
     if (!storage.spaces) {
@@ -1090,7 +1090,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       // Stamp the target space so the suspended space's own audit
-      // feed surfaces the event. (The actor is a platform admin and
+      // feed surfaces the event. (The actor is the operator key and
       // space-less; using their space_id here would hide the row from
       // the target space's `GET /audit` scope.)
       space_id: id,
@@ -1116,7 +1116,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
       // Stamp the target space so the suspended space's own audit
-      // feed surfaces the event. (The actor is a platform admin and
+      // feed surfaces the event. (The actor is the operator key and
       // space-less; using their space_id here would hide the row from
       // the target space's `GET /audit` scope.)
       space_id: id,
@@ -1214,7 +1214,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
         // a type registered tomorrow is inside "everything in that space".
         space_permissions: (body.space_permissions ??
           SPACE_PERMISSIONS) as SpacePermission[],
-        // This route deliberately cannot create platform credentials. Its
+        // This route deliberately cannot create operator keys. Its
         // purpose is issuing a credential whose authority is confined to id.
         is_operator: false,
         type_permissions: body.type_permissions ?? EVERYTHING,
@@ -1278,7 +1278,7 @@ export function adminRoutes(storage: Storage, opts: AdminRoutesOptions) {
       client_ip: c.get("clientIp") ?? null,
       // Instance-wide sweep — no target space. NULL space_id keeps
       // the row out of any specific space's `GET /audit` scope; only
-      // a platform-admin reading the raw audit_log surfaces it.
+      // the operator key reading the raw audit_log surfaces it.
       space_id: null,
       key_id: actor.id,
       action: "admin.account_deletion.purge_now",

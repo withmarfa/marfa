@@ -60,7 +60,7 @@ export interface DeadLetterOps {
    * Separate from `list` because its only caller is `/health`, which is
    * unauthenticated: a count is the same shape as the connection figures
    * that endpoint already publishes, and the identifiers `list` returns
-   * are platform-admin data that has no business there.
+   * are operator-only data that has no business there.
    */
   count(): Promise<number>;
 }

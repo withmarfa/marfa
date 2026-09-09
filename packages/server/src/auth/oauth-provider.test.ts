@@ -129,8 +129,8 @@ describe("a bundle is not a way around the scope grammar", () => {
   });
 
   it("drops a near-miss under a reserved prefix", () => {
-    // The shape a capability typo takes. `space.webhooks:write` reads
-    // as a capability grant and is not one, and `space.*:read` is the
+    // The shape a space permission typo takes. `space.webhooks:write` reads
+    // as a space permission grant and is not one, and `space.*:read` is the
     // literal the parser has to claim so it cannot be read as an item-type
     // pattern instead.
     const scopes = new Set(
@@ -195,7 +195,7 @@ describe("permission bundles bind to the type registry", () => {
     const unresolved: string[] = [];
     for (const literal of expandBundlesToScopes(DEFAULT_PERMISSION_BUNDLES)) {
       if (NON_TYPE_LITERALS.has(literal)) continue;
-      // A capability names no type, and `split(":")` makes it its own
+      // A space permission names no type, and `split(":")` makes it its own
       // pattern: the literal carries no colon, so the whole string survives
       // and falls through to a registry lookup that can never succeed now
       // the root is reserved. The day a bundle names one, a correct config

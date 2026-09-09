@@ -57,16 +57,16 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
-        userRole: "space_admin",
+        seedUserRow: true,
       },
     );
 
-    // The capability gate admits it — that is the point. The refusal has to
-    // come from the credential's narrow content reach, not from a missing
-    // scope. Both capabilities are granted so that the request reaches the
-    // check this file is about: `keys` for the probe below, `webhooks` for the
-    // door itself. Neither buys any data-plane reach, so what the webhook door
-    // sees is unchanged.
+    // The space permission gate admits it — that is the point. The refusal
+    // has to come from the credential's narrow content reach, not from a
+    // missing scope. Both space permissions are granted so that the request
+    // reaches the check this file is about: `keys` for the probe below,
+    // `webhooks` for the door itself. Neither buys any data-plane reach, so
+    // what the webhook door sees is unchanged.
     const keysRes = await request(ctx.app, "GET", "/keys", { key: token });
     expect(keysRes.status).toBe(200);
 
@@ -117,10 +117,10 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
-        userRole: "space_admin",
+        seedUserRow: true,
       },
     );
-    // The capability gate admits it, so the refusal below comes from the
+    // The space permission gate admits it, so the refusal below comes from the
     // credential's content reach. The create test asserts the same.
     expect(
       (await request(ctx.app, "GET", "/keys", { key: token })).status,
@@ -167,7 +167,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
       ["space.keys", "space.webhooks"],
       {
         spaceId: space.id,
-        userRole: "space_admin",
+        seedUserRow: true,
       },
     );
     expect(

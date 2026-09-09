@@ -476,9 +476,9 @@ async function resolveFanout(
  * **A caller's space and its rows' space are the same thing right up until
  * they are not.** Storage is space-scoped at the SQL layer, so for an ordinary
  * space-bound credential a row it read is already in its own space and this
- * changes nothing. A platform admin is not space-bound: its `space_id` is
+ * changes nothing. The operator key is not space-bound: its `space_id` is
  * null, so every door that took the space from the credential published
- * unscoped whenever an admin wrote to somebody else's rows.
+ * unscoped whenever it wrote to somebody else's rows.
  *
  * An unscoped event is not a broadly-delivered one. `subscribeItems` drops an
  * event whose space does not match a space-bound subscriber's, so the account
@@ -790,7 +790,7 @@ export async function* subscribe(
       // The space goes to the matcher, or a space's own subtype of a
       // shipped type does not answer a filter naming that type. `?? null`
       // rather than passing the value through: the list surfaces resolve
-      // a space-less caller against the null-space overlay a single-space
+      // a space-less caller against the null-space overlay a platform
       // self-host registers into, and a stream resolving it against core
       // types alone would disagree with them for exactly those
       // deployments. It also matters that this is not `undefined`, which

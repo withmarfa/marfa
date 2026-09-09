@@ -13,7 +13,7 @@
  *     (a rule keyed on "does this space have any integration" passes the
  *     positive case and fails here);
  *   - the same integration, live in a *different* space, must not rescue it,
- *     and the case that matters is a platform-admin read, where one response
+ *     and the case that matters is an operator-key read, where one response
  *     carries both spaces' rows and the query is unfenced — `spaceId`
  *     `undefined` means no fence in this codebase, so a scope keyed on the
  *     caller reported another tenant's install as this tenant's;
@@ -408,8 +408,8 @@ describe("GET /items", () => {
     expect(there.orphaned).toBe(false);
   });
 
-  it("keeps the spaces apart in one unfenced platform-admin read", async () => {
-    // The case a space-bound reader cannot reach. A platform key carries no
+  it("keeps the spaces apart in one unfenced operator-key read", async () => {
+    // The case a space-bound reader cannot reach. The operator key carries no
     // `space_id`, and an absent space means *no fence* here, so this one
     // response holds both spaces' rows and any scope resolved from the
     // caller would have walked every space's connections at once — finding
@@ -1108,7 +1108,6 @@ describe("the own-write shortcut's space equality", () => {
       is_runtime_credential: true,
       item_source: itemSource,
       space_id: spaceId,
-      role: "member",
       type_permissions: {},
     } as unknown as ApiKey;
   }
@@ -1151,7 +1150,7 @@ describe("the own-write shortcut's space equality", () => {
   });
 });
 
-describe("the single-space self-host shape", () => {
+describe("the space-less bucket", () => {
   /**
    * Every context above is hosted, with several spaces to tell apart. A
    * self-host has exactly one, and that is the difference worth covering:

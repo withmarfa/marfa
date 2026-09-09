@@ -643,11 +643,11 @@ describe("POST /connections/:id/inbound-webhooks/:webhook_id/deliveries/:event_i
 
 /**
  * This route admits a Connection acting on itself as an alternative to
- * space-admin rank, and the shape that reaches it in production is a
- * runtime credential rather than an admin key. Nothing here covered
- * that, so the identity arm of the gate was carried entirely by the
- * proxy and leased-token suites while this route shared the predicate
- * with them.
+ * `space.connections`, and the shape that reaches it in production is a
+ * runtime credential rather than a credential holding the permission.
+ * Nothing here covered that, so the identity arm of the gate was carried
+ * entirely by the proxy and leased-token suites while this route shared the
+ * predicate with them.
  *
  * Minted through the real path rather than hand-built: a fixture given
  * a `source` of the author's choosing can satisfy a gate that reads

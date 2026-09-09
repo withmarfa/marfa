@@ -199,7 +199,7 @@ export async function createSqliteStorage(
     rateLimits: new SqliteRateLimitStore(db),
     // Space store is wired unconditionally so the per-space cleanup
     // fan-out has one code path on every deployment. Space rows are only
-    // ever created by the hosted sign-up flow, so on a single-space
+    // ever created by the hosted sign-up flow, so on an instance with no
     // deployment this lists zero spaces and the cleanup falls through to
     // the NULL-bucket sweep.
     spaces: new SqliteSpaceStore(db),

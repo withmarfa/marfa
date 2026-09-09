@@ -134,7 +134,7 @@ const PUBLIC_TAGS = [
  * A new internal route adds its operationId here.
  */
 const INTERNAL_OPERATION_IDS = new Set<string>([
-  // admin.ts — platform-admin space operations
+  // admin.ts — operator-key space operations
   "adminListSpaces",
   "adminGetSpace",
   "adminSuspendSpace",
@@ -149,7 +149,8 @@ const INTERNAL_OPERATION_IDS = new Set<string>([
   // blobs.ts — operator maintenance
   "cleanupBlobs",
   "reconcileBlobs",
-  // spaces.ts — platform-admin, by space id (self-service /me/quotas stays public)
+  // spaces.ts — operator key, by space id (self-service /me/quotas stays
+  // public)
   "getSpaceQuotas",
   "updateSpaceQuotas",
 ]);

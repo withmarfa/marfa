@@ -49,8 +49,8 @@ export async function resolveRuntimeCredentialManifest(
  * the platform tier. The per-request RLS wrapper skips a space-less
  * caller entirely, and the storage layer's space predicate widens from
  * an equality to no predicate at all, so the credential reads and
- * writes every space's rows. A Connection installed by a platform
- * admin without naming a space produces exactly that: an integration
+ * writes every space's rows. A Connection installed by the operator key
+ * without naming a space produces exactly that: an integration
  * built for one customer holding a key to all of them.
  *
  * **This used to be a hosted-mode rule and is now everyone's.** Keys mode

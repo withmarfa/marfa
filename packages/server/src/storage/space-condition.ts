@@ -7,16 +7,16 @@
  * different ways: most read it as "do not narrow", while one key-store
  * method read it as "narrow to the rows with no space". Both are defensible
  * in isolation and together they are a defect, because a caller cannot know
- * which one it is talking to. A platform admin uninstalling a space's
+ * which one it is talking to. The operator key uninstalling a space's
  * connection resolved the connection under the first meaning and then
  * looked for its credentials under the second, so the revocation list came
  * back empty every time and the pipeline reported success.
  *
  * **`undefined` means no fence.** That is the meaning that wins, and it
  * wins because it is the only one that makes an absent space argument mean
- * the same thing as an absent space on a credential: platform authority is
+ * the same thing as an absent space on a credential: operator authority is
  * authority not confined to a space. Reading it as "the rows with no space"
- * makes a platform caller narrower than a space caller, which is backwards,
+ * makes the operator key narrower than a space credential, which is backwards,
  * and it is unreachable in hosted mode anyway — nothing there is written
  * without a space.
  *
@@ -105,7 +105,7 @@ export function spaceSentinelCondition(
  * A space's own rows plus the platform-scoped ones.
  *
  * The catalog widening: `system.integration` rows are registered by a
- * platform credential and carry no space, and a space member still has to
+ * operator key and carry no space, and a space credential still has to
  * read them. Opt in per call, never by default, and always pair it with a
  * type check on the result — the widening is the lookup mechanic, the type
  * is the gate.

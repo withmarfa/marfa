@@ -43,7 +43,7 @@ function spaces() {
   return ctx.storage.spaces;
 }
 
-/** A space holding one active app grant, plus keys at each rank in it. */
+/** A space holding one active app grant, plus keys holding different permissions in it. */
 async function seedSpaceWithGrant() {
   const space = await spaces().create("grants-authority-space");
   const grant = await ctx.storage.items.create(

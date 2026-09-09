@@ -20,7 +20,7 @@ const MS_PER_DAY = 86_400_000;
  *      `SpaceConfig` override field, falling back to the instance default).
  *   3. Runs a space-scoped sweep with that effective retention.
  *   4. Also runs the NULL-space sweep at the instance default — catches
- *      single-space self-host items and any rows with no space scope.
+ *      rows with no space scope.
  *   5. Sums the deleted counts.
  *
  * Each per-space + the NULL sweep are gated by a per-space coordination
@@ -286,10 +286,10 @@ export class RevokedGrantPurger {
  *
  * A grant lasted for as long as nobody revoked it: the tokens under it
  * rotated forever, the consent row and the projection stood, and the app
- * kept its access to a space it had stopped reading. Three `space_admin`
- * keys accumulated on production from finished sessions the same way, and
- * the rule for keys is the rule here: standing privilege nobody is tracking
- * needs an owner in code.
+ * kept its access to a space it had stopped reading. Three keys holding a
+ * whole space accumulated on production from finished sessions the same way,
+ * and the rule for keys is the rule here: standing authority nobody is
+ * tracking needs an owner in code.
  *
  * Every live app grant whose `last_used_at`, or `granted_at` where it was
  * never used, is older than the window goes through the same cascade the
@@ -1175,7 +1175,7 @@ async function runSpaceFanout(opts: {
     );
     if (deleted) total += deleted;
   }
-  // NULL-space scope — single-space self-host items + any rows with
+  // NULL-space scope — rows with
   // no space scope. Always uses the instance default, which is the
   // retention self-hosts get when they never configure per-space
   // overrides.

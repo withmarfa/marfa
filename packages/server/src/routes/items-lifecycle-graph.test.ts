@@ -11,7 +11,7 @@
  *     `trashed`, in both dialects, where `delete()` and `transition()` both
  *     validated first.
  *   - `POST /items` accepted an optional `state` checked only for membership
- *     of the universal state list, so a platform credential could create a
+ *     of the universal state list, so the operator key could create a
  *     `system.*` row directly in `trashed` — a state that type's lifecycle
  *     does not contain, reachable by no transition and leavable by none.
  *

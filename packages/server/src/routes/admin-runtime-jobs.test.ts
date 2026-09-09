@@ -1,7 +1,7 @@
 /**
  * `/admin/runtime/dead-letters` operator route tests.
  *
- * Covers the platform-admin gate (anonymous 401, space-bound key 403),
+ * Covers the operator gate (anonymous 401, space-bound key 403),
  * the listing and replay happy paths, error propagation from the ops
  * layer (404 unknown job, 409 not-failed), the malformed-id 400, and
  * the 503 a deployment without the local substrate answers.
@@ -122,7 +122,7 @@ describe("admin runtime dead-letter routes", () => {
     expect(replayRes.status).toBe(403);
   });
 
-  it("lists dead-lettered dispatches for a platform admin", async () => {
+  it("lists dead-lettered dispatches for the operator key", async () => {
     const res = await request(ctx.app, "GET", "/admin/runtime/dead-letters", {
       key: ctx.adminKey,
     });

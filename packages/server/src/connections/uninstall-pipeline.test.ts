@@ -555,7 +555,7 @@ describe("performUninstall — a connection inside a space", () => {
     const stamp = `${Date.now().toString()}-${Math.random().toString(36).slice(2, 8)}`;
 
     // The catalog row carries no space: `system.integration` is registered
-    // by a platform credential and read through the widening, exactly as it
+    // by the operator key and read through the widening, exactly as it
     // is on a live deployment.
     const integration = await hosted.storage.items.create(
       {
@@ -607,8 +607,8 @@ describe("performUninstall — a connection inside a space", () => {
     ).toBeUndefined();
   });
 
-  it("revokes the runtime credential when a platform admin uninstalls a space's connection", async () => {
-    // The mismatch: a platform admin holds no `space_id`, so the route
+  it("revokes the runtime credential when the operator key uninstalls a space's connection", async () => {
+    // The mismatch: the operator key holds no `space_id`, so the route
     // computes `spaceId: undefined` and the pipeline resolves the
     // connection unfenced. Every credential the connection owns carries
     // the connection's space, so a fence that reads an absent space as

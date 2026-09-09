@@ -247,7 +247,7 @@ export interface MarfaAuth {
    * operator asked for the account rather than a stranger claiming it, and
    * nobody is going to open the inbox to click a link.
    *
-   * `POST /admin/accounts` is the only caller, and the platform-admin gate
+   * `POST /admin/accounts` is the only caller, and the operator gate
    * lives there. This function does not decide who may create an account.
    */
   createEmailAccount: (params: {
@@ -874,9 +874,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       return { ok: false, reason: "email_exists" };
     }
     const password = await authContext.password.hash(params.password);
-    // The handle, space and role all derive from `name`, and the column
-    // is NOT NULL, so a name that is absent or blank falls back to the
-    // address's local part rather than reaching the hook as undefined.
+    // The handle and the space both derive from `name`, and the column is
+    // NOT NULL, so a name that is absent or blank falls back to the address's
+    // local part rather than reaching the hook as undefined.
     const submittedName = params.name?.trim() ?? "";
     const name =
       submittedName === "" ? (email.split("@")[0] ?? email) : submittedName;

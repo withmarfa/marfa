@@ -5,7 +5,7 @@
  * `idx_items_source_dedup`, so two spaces choosing the same key are two
  * records. Without the COALESCE the null-space bucket would not dedupe at
  * all, and with a plain equality on a nullable column two spaces would
- * still be separate but every platform-admin request would share one
+ * still be separate but every operator-key request would share one
  * keyspace with every other.
  *
  * The second case here is the one a reader should look for: a create

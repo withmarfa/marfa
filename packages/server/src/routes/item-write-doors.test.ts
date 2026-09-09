@@ -1362,8 +1362,8 @@ describe("destroying a sibling's row (D64)", () => {
     expect(mineRes.status).toBe(201);
     const ours = ((await mineRes.json()) as { item: { id: string } }).item.id;
 
-    // Through a credential bound to this space, not the platform admin: the
-    // platform credential holds no space, so the edge would land space-less
+    // Through a credential bound to this space, not the operator key: the
+    // operator key holds no space, so the edge would land space-less
     // and the cascade — which is scoped to the caller's space — would never
     // find it. The case would then pass by not cascading at all.
     const edgeKeyRes = await request(

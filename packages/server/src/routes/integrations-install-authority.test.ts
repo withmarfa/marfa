@@ -1,5 +1,5 @@
 /**
- * Installing an integration is space-admin work on the bearer path.
+ * Installing an integration needs `space.connections` on the bearer path.
  *
  * An install commits a space to running the integration's code, and every
  * credential the Connection is later minted takes its permission maps from
@@ -16,7 +16,7 @@
  * `POST /connections/:id/configure` and `POST /connections/:id/uninstall`
  * are all `requireAuth`, and the configure route's own comment says
  * it matches the install routes. The HTML install pair was the one that
- * never got the gate, so a member key holding nothing but
+ * never got the gate, so a space-bound key holding nothing but
  * `system.integration: read` could provision an integration into its own
  * space and then be unable to configure or remove the thing it had just
  * created.
@@ -124,7 +124,7 @@ describe("the bearer install path refuses a key without `space.connections`", ()
     expect(connections.data).toHaveLength(0);
   });
 
-  it("still admits a space admin, whose job installing is", async () => {
+  it("still admits a caller holding it, whose job installing is", async () => {
     if (!ctx.storage.spaces) return;
     const id = await registerIntegration("acme/install-authority-allowed");
     const space = await ctx.storage.spaces.create("install-authority-allowed");

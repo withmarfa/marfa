@@ -824,7 +824,7 @@ describe("POST /auth/device/consent — approve / deny", () => {
  * rather than the requested one.
  *
  * **This is what replaced the initiation refusal.** A scope only an
- * off-by-default bundle offers, and every capability, used to be refused
+ * off-by-default bundle offers, and every space permission, used to be refused
  * outright at `POST /auth/device` because the screen could not express
  * withholding. It can now, so the withholding happens where a person can act
  * on it — and these pin the half that makes that safe: what the form submits

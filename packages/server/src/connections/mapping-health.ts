@@ -12,9 +12,9 @@
  * time, on a schedule nobody is watching, as one activity row per record.
  * This module moves the discovery to the moment the invariant breaks.
  *
- * **Reported, not refused.** A type deletion is a space administrator
+ * **Reported, not refused.** A type deletion is somebody
  * operating on their own registry; a mapping is one person's configuration
- * on a connection. Refusing the deletion would mean an administrator
+ * on a connection. Refusing the deletion would mean a person
  * cannot remove their own type until they have searched every connection's
  * settings for a preference somebody else set. A guard on the delete path
  * would also answer only half the question, since adding a required field

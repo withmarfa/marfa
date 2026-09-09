@@ -1,9 +1,9 @@
 /**
  * Bulk edge operations — space scoping.
  *
- * `POST /edges/bulk` is space-admin capable (widened from platform-admin).
- * A space_admin can bulk-upsert edges within their own space but the
- * storage path is fenced so they never resolve, mutate, or wire another
+ * `POST /edges/bulk` is reachable by a space-bound credential (widened from
+ * the operator key). One can bulk-upsert edges within its own space but the
+ * storage path is fenced so it never resolves, mutates, or wires another
  * space's edges:
  *
  *   - the upsert duplicate lookup (`findByTriplesBatch`) is space-scoped,
@@ -14,7 +14,7 @@
  *   - the create path (`assertEdgeCanBeCreated`) already fences source /
  *     target items to the space, so A cannot wire B's items together.
  *
- * Platform-admin keeps cross-space authority.
+ * The operator key keeps cross-space authority.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -53,7 +53,7 @@ async function mintSpaceAdmin(label: string, spaceId: string): Promise<string> {
   return raw;
 }
 
-/** Create a source/target pair owned by the given space_admin key. */
+/** Create a source/target pair owned by the given space-bound key. */
 async function makePair(
   key: string,
 ): Promise<{ sourceId: string; targetId: string }> {
@@ -116,8 +116,8 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-describe("POST /edges/bulk — space_admin within own space", () => {
-  it("space_admin bulk-creates and upserts edges in their own space", async () => {
+describe("POST /edges/bulk — a space-bound credential within its own space", () => {
+  it("bulk-creates and upserts edges in its own space", async () => {
     const { sourceId, targetId } = await makePair(adminA);
 
     const create = await request(ctx.app, "POST", "/edges/bulk", {
@@ -242,9 +242,9 @@ describe("POST /edges/bulk — cross-space isolation", () => {
   });
 });
 
-describe("POST /edges/bulk — platform-admin unaffected", () => {
-  it("platform-admin bulk-creates edges (cross-space authority)", async () => {
-    // Platform-admin items carry no space scope; wire a fresh pair.
+describe("POST /edges/bulk — the operator key unaffected", () => {
+  it("the operator key bulk-creates edges (cross-space authority)", async () => {
+    // The operator key's items carry no space scope; wire a fresh pair.
     const suffix = Math.random().toString(36).slice(2, 8);
     const src = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,

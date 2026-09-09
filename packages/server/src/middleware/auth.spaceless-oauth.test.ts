@@ -7,7 +7,7 @@
  * unmapped auth_user, a provisioning gap, a space deleted after issuance —
  * the synthetic principal used to carry `space_id: undefined`, and the
  * storage layer treats an absent space id as "no space clause": the
- * platform-admin shape, reached by accident. Such a token did not see
+ * operator-key shape, reached by accident. Such a token did not see
  * nothing; it saw every space, bounded only by its granted scopes.
  *
  * Hosted mode refuses these tokens outright. Keys mode is untouched: there,

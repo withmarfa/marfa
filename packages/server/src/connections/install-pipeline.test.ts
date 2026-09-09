@@ -139,8 +139,8 @@ describe("performInstall — happy path", () => {
 
   // The install used to mint a credential here, hash it, and discard the
   // plaintext, so the row it left could not be presented by anyone. Its
-  // one visible effect was a key in the space's list that a space admin
-  // did not create and could not use, until the reaper took it an hour
+  // one visible effect was a key in the space's list that nobody in the
+  // space created and nobody could use, until the reaper took it an hour
   // later. The supervisor mints per dispatch and revokes what it finds,
   // so nothing downstream ever needed it.
   it("mints no credential", async () => {
@@ -749,8 +749,8 @@ describe("performInstall — the state a rolled-back install leaves", () => {
     // space-less credential is the operator tier rather than a narrow one.
     // The refusal is unconditional now that keys mode has a space of its
     // own, so the mode this runs under is incidental. Step 1 has committed
-    // by then, so the compensation is what decides what the space admin
-    // sees.
+    // by then, so the compensation is what decides what a person in the
+    // space sees.
     const adminKey = await hosted.storage.keys
       .list()
       .then((keys) => keys.find((k) => k.is_operator));

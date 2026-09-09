@@ -13,9 +13,11 @@
  * existing one. Connections installed against v1.0 keep pointing at the
  * v1.0 item even after v1.1 lands; upgrade is an explicit caller concern.
  *
- * Registration is platform-credential gated (is_operator: true) — the
- * marketplace publisher (or the orchestrator's CLI) is the legitimate
- * caller. Listing/get is admin-or-platform.
+ * Registration takes the operator key (`is_operator: true`) — the marketplace
+ * publisher, or the orchestrator's CLI, is the legitimate caller. Listing and
+ * getting take an authenticated caller and nothing else: a manifest is a
+ * description of what an integration would do, the same for every space, and
+ * there is nothing in one to withhold.
  */
 import { Hono } from "hono";
 import { MAX_PAGE_LIMIT } from "../page-limits.js";
@@ -393,7 +395,7 @@ export function integrationRoutes(storage: Storage, auth?: MarfaAuth) {
     if (!apiKey.is_operator) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
-        "Integration registration requires a platform credential (is_operator: true)",
+        "Integration registration requires the operator key (is_operator: true)",
       );
     }
 

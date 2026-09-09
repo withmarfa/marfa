@@ -1,14 +1,16 @@
 /**
- * A capability is granted by being ticked, on every surface that offers one.
+ * A space permission is granted by being ticked, on every surface that offers
+ * one.
  *
  * **Two screens held opposite opinions and which one a person met decided
- * what they handed over.** The code-flow consent screen gives a capability no
- * bundle claims its own unticked row, on the reasoning that it is authority a
- * token would otherwise inherit from a role without anybody naming it. The
+ * what they handed over.** The code-flow consent screen gives a space
+ * permission no bundle claims its own unticked row, on the reasoning that it
+ * is authority over the space itself and has to be handed over deliberately
+ * rather than by silence. The
  * device-approval screen could not reach that reasoning: its only withholding
- * input was derived from the configured bundles, so a capability no bundle
- * names was in no withheld set, and its rows were confirmations rather than
- * toggles — one Approve granted the lot.
+ * input was derived from the configured bundles, so a space permission no
+ * bundle names was in no withheld set, and its rows were confirmations rather
+ * than toggles — one Approve granted the lot.
  *
  * Both now read `requiresExplicitConsent`, so the rule has one home. These
  * cases are the two screens asked the same question.
@@ -44,8 +46,8 @@ const CONSENT_PARAMS = {
   descriptions: {},
 };
 
-describe("the code-flow consent screen never pre-ticks a capability", () => {
-  it("renders an unclaimed capability unticked", () => {
+describe("the code-flow consent screen never pre-ticks a space permission", () => {
+  it("renders an unclaimed space permission unticked", () => {
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
       scopes: [parsed("core.note:read"), parsed("space.keys")],
@@ -62,7 +64,7 @@ describe("the code-flow consent screen never pre-ticks a capability", () => {
     // opinion about its own contents; `requiresExplicitConsent` is the
     // platform's about the scope, and the platform's outranks it. Without
     // this the fallback bucket never fires for a claimed literal and the
-    // capability inherits the bundle's tick.
+    // space permission inherits the bundle's tick.
     const claiming: PermissionBundle = {
       id: "operator-custom",
       label: "Operator custom",
@@ -79,26 +81,26 @@ describe("the code-flow consent screen never pre-ticks a capability", () => {
     expect(rowFor(html, "core.note:read")).toContain("checked");
   });
 
-  it("shows a capability the person already granted as granted", () => {
+  it("shows a space permission the person already granted as granted", () => {
     // The other direction, and the one that costs an app its tokens if it is
     // wrong: a default that decides what to OFFER must never decide what to
     // KEEP. At re-consent a standing grant renders from the prior grant, so
-    // an untouched Continue cannot silently drop a capability and trigger the
-    // narrowing revoke.
+    // an untouched Continue cannot silently drop a space permission and
+    // trigger the narrowing revoke.
     const html = renderConsentScreen({
       ...CONSENT_PARAMS,
       scopes: [parsed("space.keys"), parsed("core.note:read")],
       bundles: DEFAULT_PERMISSION_BUNDLES,
       // A standing grant, so this render is the re-consent diff: the
-      // capability lands in "Already allowed", which is being shown rather
-      // than offered.
+      // space permission lands in "Already allowed", which is being shown
+      // rather than offered.
       priorScopes: ["space.keys"],
     });
     expect(rowFor(html, "space.keys")).toContain("checked");
   });
 });
 
-describe("the device-approval screen offers a capability as a toggle", () => {
+describe("the device-approval screen offers a space permission as a toggle", () => {
   const DEVICE_PARAMS = {
     clientName: "Marfa CLI",
     userCode: "ABCD-EFGH",
@@ -119,7 +121,7 @@ describe("the device-approval screen offers a capability as a toggle", () => {
     expect(html).toContain('value="space.keys"');
   });
 
-  it("leaves a capability unticked and everything else ticked", () => {
+  it("leaves a space permission unticked and everything else ticked", () => {
     const html = renderDeviceConsentScreen({
       ...DEVICE_PARAMS,
       scopes: [parsed("core.note:read"), parsed("space.keys")],

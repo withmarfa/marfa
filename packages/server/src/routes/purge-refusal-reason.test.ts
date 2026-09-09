@@ -3,7 +3,7 @@
  *
  * Purging is trash-then-purge, so a caller meets `DELETE /items/{id}` first.
  * For a reserved-namespace row a space-scoped credential is refused there,
- * by name: "only platform credentials may write `marfa.*` items". The row
+ * by name: "only the operator key may write `marfa.*` items". The row
  * therefore never becomes trashed, and `DELETE /items/{id}/purge` then
  * answers "Only trashed items can be purged" — which is true, and which
  * describes an ordering mistake the caller did not make.
@@ -26,7 +26,7 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 /** Space-scoped and deliberately NOT platform: the credential the refusal is
- *  about. A platform credential is refused by neither gate. */
+ *  about. The operator key is refused by neither gate. */
 let spaceKey: string;
 let spaceId: string;
 
@@ -70,8 +70,8 @@ afterAll(async () => {
  * A reserved-namespace row inside the space, seeded through storage.
  *
  * Through storage rather than the API because the API gate is the very
- * thing under test: a space credential cannot create one, and the platform
- * credential holds no space, so neither route puts a `marfa.*` row where a
+ * thing under test: a space credential cannot create one, and the operator
+ * key holds no space, so neither route puts a `marfa.*` row where a
  * space-scoped caller can address it. That combination is exactly the
  * situation an integration's corpus is in.
  */
@@ -105,7 +105,7 @@ describe("purging a row a space credential may not write", () => {
     // alone, because the code is what a machine reads and the message is
     // what sent somebody to the wrong place.
     expect(body.error.message).toContain("marfa.*");
-    expect(body.error.message).toContain("platform credentials");
+    expect(body.error.message).toContain("only the operator key");
     // And it does NOT say the thing that misdirected: a caller told to trash
     // first will try, be refused there too, and learn nothing either time.
     expect(body.error.message).not.toContain("trashed");

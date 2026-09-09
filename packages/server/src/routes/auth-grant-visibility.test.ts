@@ -8,7 +8,7 @@
  * either axis is listed by neither and cannot be revoked through any
  * interface the product has.
  *
- * `DELETE /items/{id}` with a platform credential produced exactly one such
+ * `DELETE /items/{id}` with the operator key produced exactly one such
  * row on its own, before that door refused a live grant; every item door
  * refuses it now, so the fixture below is written through the store.
  * `softDeleteState` resolves `revoked` rather than `trashed`
@@ -155,7 +155,7 @@ async function allGrantRows(c: TestContext) {
   return listed.data;
 }
 
-/** `GET /auth/grants` as the platform credential, which is unbound and so
+/** `GET /auth/grants` as the operator key, which is unbound and so
  *  sees every space's grants. This is the surface the Disconnect button
  *  reads from, so it is what "the user can see it" means here. */
 async function listedGrants(
@@ -200,7 +200,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
     // The baseline. An empty list at the end proves nothing unless the
     // grant was listed to begin with, and this is also what pins that the
-    // platform credential can read this surface at all.
+    // operator key can read this surface at all.
     const before = await listedGrants(c);
     expect(before.length).toBe(1);
     const originalId = before[0]!.id;
@@ -208,7 +208,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
     // The shape that produces the disagreement: revoked on the state axis
     // and active on the status axis. `DELETE /items/{id}` used to produce it
-    // with a platform credential; that door now refuses a live grant (pinned
+    // with the operator key; that door now refuses a live grant (pinned
     // below), so the row is put into the shape directly, as any earlier
     // deployment's data or a future door could.
     await softDeleteGrantRow(c, originalId);

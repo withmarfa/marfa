@@ -74,10 +74,10 @@ export function bundlePublishedScopes(
 ): Set<string> {
   // The withheld drop belongs here as much as in `buildAllowedScopes`, and
   // more subtly: this set is what a stale client ceiling is WIDENED BY. A
-  // capability literal admitted here is written into a registration row, where
-  // it outlives the configuration that introduced it — so the drop applied at
-  // one door and not the other would leave the narrower door repairing the
-  // damage the wider one had already stored.
+  // space permission literal admitted here is written into a registration
+  // row, where it outlives the configuration that introduced it — so the drop
+  // applied at one door and not the other would leave the narrower door
+  // repairing the damage the wider one had already stored.
   return new Set(
     publishableBundleScopes(bundles, (scope) => isValidScope(scope)),
   );

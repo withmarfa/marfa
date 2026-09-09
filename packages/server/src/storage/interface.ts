@@ -785,7 +785,7 @@ export interface ItemStore {
    * `spaceId` semantics:
    * - `undefined` — every row older than the cutoff.
    * - `string` — only rows where `space_id` matches.
-   * - `null` — only rows where `space_id IS NULL` (single-space
+   * - `null` — only rows where `space_id IS NULL` (instance-wide
    *   self-host items + any rows with no space scope).
    */
   purgeTrashedOlderThan(
@@ -1016,8 +1016,8 @@ export interface VersionStore {
 
 export interface TypeStore {
   /** Lists the types visible to a space: the global core/system set plus the
-   *  space's own custom types. Omit `spaceId` for the null-space bucket
-   *  (single-space self-host / platform). */
+   *  space's own custom types. Omit `spaceId` for the null-space bucket,
+   *  which holds the platform-shipped set. */
   list(spaceId?: string): Promise<TypeSchema[]>;
   /** Resolves a type by id within the space: core/system types resolve
    *  globally, custom types only for their owning space. */
@@ -1121,7 +1121,7 @@ export interface LoadedType {
 
 export interface EdgeTypeStore {
   /** Lists a single space's custom edge types. Omit `spaceId` for the
-   *  null-space bucket (single-space self-host / platform). */
+   *  null-space bucket, which holds the platform-shipped set. */
   list(spaceId?: string): Promise<EdgeTypeSchema[]>;
   get(id: string, spaceId?: string): Promise<EdgeTypeSchema | undefined>;
   create(schema: EdgeTypeSchema, spaceId?: string): Promise<EdgeTypeSchema>;
@@ -1278,8 +1278,8 @@ export interface KeyStore {
  * `(space_id, hash)`; the same hash can appear under multiple space_ids
  * (the storage backend dedupes physically — one file per hash — but each
  * space gets their own metadata row). The empty string `""` is the
- * sentinel for "instance-wide / single-space / operator"; routes pass
- * `key.space_id ?? ""` so single-space deployments and operator uploads
+ * sentinel for "instance-wide / operator"; routes pass
+ * `key.space_id ?? ""` so instance-wide rows and operator uploads
  * continue to interoperate.
  *
  * `register`, `get`, `remove` all take a space scope — passing the wrong
@@ -1305,9 +1305,9 @@ export interface BlobStore {
    * Resolve a hash without a space, for a caller whose authority is not
    * confined to one. Content addressing makes this well defined: every row
    * for a hash describes the same bytes, so any of them answers the
-   * question a platform credential is asking.
+   * question the operator key is asking.
    *
-   * Only the platform-authority read path calls this. A space-bound caller
+   * Only the operator read path calls this. A space-bound caller
    * MUST go through `get(hash, spaceId)`, which is what keeps a cross-space
    * probe answering 404.
    */
@@ -1879,7 +1879,7 @@ export interface OAuthStore {
    *
    * Space-scoped: the WHERE matches `(id, space_id)` so a hosted-mode
    * caller cannot trip this against another space's grant row. Pass
-   * `null` for the unscoped (single-space self-host) case.
+   * `null` for the unscoped case, which is a grant with no space behind it.
    *
    * Best-effort: callers swallow errors. The middleware-side cache mark
    * already prevents a stampede; storage failures must never break the
@@ -2358,7 +2358,7 @@ export interface OauthProviderStore {
    * on `properties.kind / .client_id / .user_id` via the dialect's JSON
    * extractor. Sub-ms in PG, sub-ms in SQLite.
    *
-   * Space-scoped: pass `null` for the unscoped (single-space self-host)
+   * Space-scoped: pass `null` for the unscoped (no space scope)
    * case so the row's `space_id IS NULL` predicate is used. A hosted-mode
    * caller passing a real space cannot cross-space-match.
    */
@@ -2431,7 +2431,7 @@ export interface AuditLogEntry {
   key_id?: string;
   /** Space scope. Pass `c.get("apiKey")?.space_id ?? null` from route
    *  handlers; null for system-initiated audits and for the operator shape
-   *  on self-hosted single-space deployments. */
+   *  on rows carrying no space. */
   space_id?: string | null;
   action: string;
   resource_type: string;
@@ -2499,7 +2499,7 @@ export interface AuditStore {
    * - `undefined` — every row older than the cutoff (unscoped sweep).
    * - `string` — only rows where `space_id` matches.
    * - `null` — only rows where `space_id IS NULL` (system-initiated
-   *   audits + the no-space rows that single-space self-hosts use).
+   *   audits + the no-space rows the platform set uses).
    *
    * Returns the number of rows actually deleted.
    */
@@ -2839,8 +2839,8 @@ export interface EdgeStore {
    * cross-space id matches zero rows and raises `edge_not_found`, which
    * the handler answers 404 — a bare error here would reach the generic
    * tail and cost the caller a 500 for a row that is simply gone.
-   * Omitting `spaceId` leaves the update unscoped (operator /
-   * single-space self-host).
+   * Omitting `spaceId` leaves the update unscoped, which is the operator
+   * key and nothing else.
    *
    * **This is the only statement in the codebase that changes an edge row
    * in place**, which is why the version bump lives here rather than in a
@@ -2890,7 +2890,7 @@ export interface EdgeStore {
    * to that space so a space-scoped caller cannot delete another space's
    * edge by id — a cross-space id matches zero rows and is a silent no-op
    * (the route layer's prior 404-cloak is the user-visible signal). Omitting
-   * `spaceId` leaves the delete unscoped (operator / single-space
+   * `spaceId` leaves the delete unscoped (the operator key, and nothing
    * self-host).
    */
   delete(id: string, spaceId?: string): Promise<void>;
@@ -3357,8 +3357,9 @@ export interface BulkActionJobStore {
    */
   create(input: CreateBulkActionJobInput): Promise<BulkActionJobRow>;
   /** Fetch by id. Space scoping is the caller's responsibility — the
-   *  store returns the row regardless. The route handler enforces auth
-   *  (`api_key_id` match or admin). */
+   *  store returns the row regardless. The route handler enforces auth: the
+   *  credential that created the job, or the operator key, and nothing else.
+   *  No space permission says "read another credential's bulk jobs". */
   getById(id: string): Promise<BulkActionJobRow | null>;
   /**
    * Atomically claim the next queued job. On Postgres, wraps a single
@@ -3569,7 +3570,7 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
    * search-index cleanup, so it does not sit inside `SpaceStore`.
    *
    * This is the counterpart the cascade cannot serve — a space
-   * provisioned by a platform credential has no `auth_user` behind it,
+   * provisioned by the operator key has no `auth_user` behind it,
    * and until this existed there was no way to remove one. Conformance
    * creating a space per run is the standing case.
    *

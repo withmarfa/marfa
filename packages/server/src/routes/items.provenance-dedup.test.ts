@@ -35,7 +35,6 @@ async function integrationKey(label: string, source: string): Promise<string> {
     body: {
       label,
       source,
-      role: "member",
       type_permissions: { "*": "write" },
     },
   });
@@ -150,7 +149,7 @@ describe("the same upstream record in two spaces", () => {
 
   it("dedupes a space-less caller against the null-space bucket, not every space", async () => {
     // The pre-check's space predicate used to be conditional, so a caller
-    // with no space (platform admin, single-space self-host) deduped
+    // with no space (the operator key) deduped
     // against every space's rows. A space-less write must not collide
     // with a row that belongs to a space.
     const shared = { source: "feed-nullspace", source_id: "upstream-null" };

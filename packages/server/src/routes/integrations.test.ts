@@ -2,7 +2,7 @@
  * Tests for the Integration registry + install pipeline.
  *
  * Covers:
- *   - POST /integrations: platform-credential gate, manifest validation,
+ *   - POST /integrations: the operator gate, manifest validation,
  *     sibling-per-version uniqueness, persistence as system.integration.
  *   - GET /integrations + GET /integrations/:id list/get round-trip.
  *   - GET /integrations/:id/install: HTML consent screen renders with the
@@ -726,8 +726,8 @@ describe("POST /integrations/:id/install (install pipeline)", () => {
 // ---------------------------------------------------------------------------
 // Catalog visibility for space-bound tokens.
 //
-// Manifests register under platform credentials (is_operator: true), which
-// carry space_id: null. The default space-equality filter on items.list
+// Manifests register under the operator key (is_operator: true), which
+// carries space_id: null. The default space-equality filter on items.list
 // hides them from any in-space caller — turning the marketplace surface
 // invisible to every real user. The catalog list opts into
 // `includePlatformScoped: true` so platform-scoped rows surface alongside
@@ -809,9 +809,9 @@ describe("GET /integrations — catalog visibility", () => {
     expect(res.status).toBe(200);
   });
 
-  it("platform credentials still see every manifest", async () => {
-    // Existing platform-admin behavior preserved. Sanity check that the
-    // widening flag doesn't accidentally constrain admin reads.
+  it("the operator key still sees every manifest", async () => {
+    // Existing operator-key behavior preserved. Sanity check that the
+    // widening flag doesn't accidentally constrain the operator key's reads.
     await request(ctx.app, "POST", "/integrations", {
       key: ctx.adminKey,
       body: { manifest: baseManifest({ name: "acme/platform-still-sees" }) },

@@ -54,7 +54,7 @@ const listDriftRoute = createRoute({
   summary: "Shipped types this instance carries that the build does not",
   security: [{ bearerAuth: [] }],
   description:
-    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items across every space still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Platform-admin only.",
+    "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items across every space still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
   responses: {
     200: {
       content: {
@@ -90,7 +90,7 @@ const removeDriftedTypeRoute = createRoute({
   summary: "Remove one shipped type the build no longer carries",
   security: [{ bearerAuth: [] }],
   description:
-    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Platform-admin only.",
+    "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
   request: {
     params: z.object({ id: z.string() }),
   },
@@ -152,7 +152,7 @@ const removeDriftedTypeRoute = createRoute({
  *
  * Read from the rows rather than the in-memory registry so a space's own
  * registration that inherits from a platform type is counted too. It is
- * that space's data, and a platform-admin action in another scope should
+ * that space's data, and an operator-key action in another scope should
  * not narrow it.
  */
 async function declaredChildrenOf(

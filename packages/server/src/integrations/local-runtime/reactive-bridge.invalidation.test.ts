@@ -93,7 +93,6 @@ describe("the live bridge honors pause and resume", () => {
         body: {
           label: "bridge-probe",
           source: "bridge-probe",
-          role: "space_admin",
           default_tier: "library",
           type_permissions: { "*": "write" },
         },

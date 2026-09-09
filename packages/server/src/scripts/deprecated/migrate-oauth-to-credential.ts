@@ -141,7 +141,7 @@ export async function migrateOauthToCredential(
             },
           },
           // space_id isn't carried on the public Item type. The storage
-          // layer will accept undefined here (single-space fallback).
+          // layer will accept undefined here (the space-less fallback).
           // Multi-space deployments need to extend this script to enumerate
           // spaces — flagged in the README until that surface lands.
           undefined,

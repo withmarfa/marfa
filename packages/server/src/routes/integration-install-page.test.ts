@@ -271,7 +271,7 @@ describe("renderInstallConsentScreen — display name", () => {
    * text its publisher wrote, and that button grants write on every declared
    * target type. If a label could replace the identifier outright, a
    * manifest registered as `mallory/calendar-sync` declaring itself "Google
-   * Calendar" would render a screen a space admin could not tell from the
+   * Calendar" would render a screen a person could not tell from the
    * real one.
    */
   it("keeps the identifier on the page when a display_name is shown", () => {

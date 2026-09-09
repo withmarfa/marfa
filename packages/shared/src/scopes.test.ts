@@ -411,10 +411,10 @@ describe("parseScope defers to the type-pattern grammar", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Capability scopes
+// Space permissions
 // ---------------------------------------------------------------------------
 
-describe("capability scopes", () => {
+describe("space permissions", () => {
   for (const literal of SPACE_PERMISSIONS) {
     it(`parses ${literal}`, () => {
       expect(parseScope(literal)).toEqual({
@@ -509,7 +509,7 @@ describe("capability scopes", () => {
     expect(parseScope("space.*")).toBeNull();
     expect(parseScope("space.*:read")).toBeNull();
     expect(parseScope("space.")).toBeNull();
-    expect(parseScope("Capability.webhooks")).toBeNull();
+    expect(parseScope("Space.webhooks")).toBeNull();
     expect(parseScope("space.web hooks")).toBeNull();
   });
 

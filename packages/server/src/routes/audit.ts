@@ -15,7 +15,7 @@ const AuditEntrySchema = z.object({
   key_id: z.string().nullable(),
   /**
    * Space scope. Stamped at write time from the calling api key's
-   * `space_id`. Null for system-initiated audits and bootstrap-admin keys.
+   * `space_id`. Null for system-initiated audits and the bootstrap credential.
    */
   space_id: z.string().nullable(),
   action: z.string(),
@@ -118,7 +118,7 @@ export function auditRoutes(storage: Storage) {
       c.req.valid("query");
 
     // A credential with no `space_id` reads every row — preserves the
-    // self-hosted single-space operator view. A space-bound credential
+    // instance-wide operator view. A space-bound credential
     // reads only its own space. Mirrors the `ItemStore.list`
     // admit-all-when-space-less pattern.
     const callerSpaceId = c.get("apiKey")?.space_id ?? null;

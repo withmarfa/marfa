@@ -144,7 +144,7 @@ const createEdgeTypeRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Space-admin required",
+      description: "`space.schema` required",
     },
     409: {
       content: {

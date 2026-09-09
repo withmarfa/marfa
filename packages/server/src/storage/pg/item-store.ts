@@ -338,7 +338,7 @@ export class PgItemStore implements ItemStore {
       return pgRequestContext.run({ tx }, async () => {
         if (input.source && input.source_id) {
           // The space predicate is unconditional. A conditional one meant
-          // a caller with no space (platform admin, single-space
+          // a caller with no space (the operator key, and nothing
           // self-host) deduped against every space's rows, so the same
           // call that collided for one caller silently reached across
           // spaces for another. A space-less caller belongs to the

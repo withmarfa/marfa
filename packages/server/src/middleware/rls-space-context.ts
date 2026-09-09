@@ -25,17 +25,17 @@ import type { AppEnv } from "./auth.js";
  *   1. **RLS disabled** (`config.rlsEnforce === false`; the flag
  *      defaults to enabled, so this is the explicit opt-out).
  *      Pass-through. No transaction wrapper. All queries flow on the
- *      base owner connection with no SET LOCAL — single-space
+ *      base owner connection with no SET LOCAL — instance-wide
  *      self-hosts and the existing application-layer scoping
  *      continue unchanged.
  *
  *   2. **RLS enabled, no space on the api key.** Includes
- *      anonymous/public routes (no api key), platform-admin keys
- *      (`space_id IS NULL`), and bootstrap. These are platform-tier
+ *      anonymous/public routes (no api key), the operator key
+ *      (`space_id IS NULL`), and bootstrap. These are space-less
  *      contexts that intentionally see all spaces — they bypass the
  *      role switch and run on the owner connection. Application-
- *      layer audit + the platform-admin-only gate
- *      (`requireOperatorKey`) are still load-bearing here.
+ *      layer audit + the operator gate (`requireOperatorKey`) are
+ *      still load-bearing here.
  *
  *   3. **RLS enabled, request has a space.** Wrap the handler in
  *      `db.transaction(...)` and set `SET LOCAL ROLE marfa_app` +
@@ -201,7 +201,7 @@ export function rlsSpaceContextMiddleware(options: RlsMiddlewareOptions) {
       return;
     }
 
-    // Case 2: no space on the request — platform admin / anonymous /
+    // Case 2: no space on the request — the operator key / anonymous /
     // bootstrap. Bypass the role switch.
     const spaceId = c.var.apiKey?.space_id;
     if (!spaceId) {

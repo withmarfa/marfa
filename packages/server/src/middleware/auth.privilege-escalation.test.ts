@@ -11,7 +11,7 @@
  * 2. **The operator tier is the absence of a space binding.**
  *    `checkOperatorKey` reads `is_operator` *and* the space together, so a
  *    credential bound to a space reaches none of `/admin/*` however it came
- *    to exist. Platform authority is authority not confined to a space.
+ *    to exist. Operator authority is authority not confined to a space.
  *
  * Each layer is tested on its own, because either fence holding says nothing
  * about the other.

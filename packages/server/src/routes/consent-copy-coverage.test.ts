@@ -17,7 +17,7 @@
  * nobody thought to list fails here rather than shipping.
  *
  * **The two floors, which are the two ways a person is shown machine text.**
- * The device approval screen has no toggles and no labels: its row is
+ * The device approval screen has no labels: its row is
  * `descriptions[pattern] ?? literal`, so a pattern with no copy renders as
  * `todoist.task:read` and a pattern with only registry copy renders as
  * several hundred characters written for somebody reading API docs. The
@@ -117,8 +117,8 @@ function distinctPatterns(
 
 /**
  * The kinds whose row is resolved through the description map. OIDC and
- * capability literals are not among them: both renderers answer those from
- * their own label maps and return before the description map is read, so
+ * space permission literals are not among them: both renderers answer those
+ * from their own label maps and return before the description map is read, so
  * they are held to those maps instead, further down.
  *
  * **`content` was listed here before it reached anything, and that is why
@@ -377,7 +377,7 @@ describe("the consent copy guard derives the scopes it checks", () => {
     }
   });
 
-  it("names an OIDC literal and a capability without the description map", () => {
+  it("names an OIDC literal and a space permission without the description map", () => {
     // Both renderers resolve these through their own maps and return before
     // the description map is read, so the check above cannot see them and
     // an unnamed one would render as its literal on the device screen.
@@ -388,16 +388,16 @@ describe("the consent copy guard derives the scopes it checks", () => {
       expect(oidcLabel(literal), literal).toMatch(/\S/);
     }
 
-    // No bundle emits a capability literal today, so this loop is usually
+    // No bundle emits a space permission literal today, so this loop is usually
     // empty — which is why the set is also held directly below it. A
-    // capability becoming requestable is the event that makes the loop
+    // space permission becoming requestable is the event that makes the loop
     // matter, and it should not be the event that first writes the check.
     for (const scope of distinctPatterns(["space"])) {
-      const capability = scope.spacePermission ?? scope.typePattern;
+      const permission = scope.spacePermission ?? scope.typePattern;
       // Through the guard the device screen uses rather than an indexed
       // lookup, so a literal outside the closed set is answered rather than
       // asserted into a map that has no entry for it.
-      expect(spacePermissionLabel(capability), capability).toMatch(/\S/);
+      expect(spacePermissionLabel(permission), permission).toMatch(/\S/);
     }
     expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
     for (const literal of SPACE_PERMISSIONS) {

@@ -30,7 +30,7 @@ export interface SpaceCaller {
    * The space this call acts on. Never `undefined` for a session caller, in
    * either mode: downstream, an absent space is not "no space" but "no space
    * filter", so a caller whose space could not be resolved is refused rather
-   * than handed the instance tier. A bearer caller may still be space-less,
+   * than handed every space at once. A bearer caller may still be space-less,
    * because the operator key legitimately is.
    */
   spaceId: string | undefined;
@@ -73,7 +73,7 @@ export async function resolveSpaceCaller(
   if (auth) {
     const session = await auth.getSession(c.req.raw.headers);
     if (session) {
-      // No users store means keys mode: a single-space self-host, where there
+      // No users store means keys mode: an instance with no user store, where there
       // is no per-user space model to resolve against. The answer used to be
       // `undefined` on the reasoning that a space-less caller there is not
       // unscoped authority but the only space the instance has — which was

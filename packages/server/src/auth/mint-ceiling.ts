@@ -79,13 +79,13 @@ export function dcrDefaultScopes(): string[] {
   // **The third bundle door, and it has to apply the same drop as the other
   // two.** `publishableBundleScopes` exists because a drop applied at one
   // door and not another is the defect it closes, and this one read the
-  // bundles raw. That was invisible while capabilities were unpublishable —
-  // the registration validated its own defaults against an allowlist holding
-  // none, so an operator bundle naming one made every anonymous registration
-  // fail `invalid_scope`, loudly. With the family published the check passes
-  // instead, and the literal is written into a stored client row that
-  // outlives the configuration that introduced it. Loud became silent, which
-  // is the direction that matters.
+  // bundles raw. That was invisible while space permissions were
+  // unpublishable — the registration validated its own defaults against an
+  // allowlist holding none, so an operator bundle naming one made every
+  // anonymous registration fail `invalid_scope`, loudly. With the family
+  // published the check passes instead, and the literal is written into a
+  // stored client row that outlives the configuration that introduced it.
+  // Loud became silent, which is the direction that matters.
   const bundles = getPermissionBundles().filter((b) => b.default_on);
   return withSessionScopes(
     publishableBundleScopes(bundles, (scope) => isValidScope(scope)),

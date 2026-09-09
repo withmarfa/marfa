@@ -101,7 +101,7 @@ async function openAppPoolTransactions(storage: Storage): Promise<number> {
   return rows[0]?.n ?? 0;
 }
 
-/** A space-bound `space_admin` key, which is what makes RLS engage. */
+/** A space-bound key, which is what makes RLS engage. */
 async function mintSpaceKey(storage: Storage, space: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 12);
   const raw = `marfa_k1_proxypool_${suffix}`;

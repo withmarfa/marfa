@@ -219,7 +219,7 @@ const registerTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Register a custom type",
   description:
-    "Registers a custom type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; reserved roots, ancestor-field redefinitions, and property names shadowing first-class `Item` fields all reject with `400`. Admin keys bypass; non-admin credentials need the `metadata.types:write` scope, which is off by default.",
+    "Registers a custom type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; reserved roots, ancestor-field redefinitions, and property names shadowing first-class `Item` fields all reject with `400`. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -294,7 +294,7 @@ const updateTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Update a custom type",
   description:
-    "Replaces a custom type's schema, re-running the registration-time correctness rails. Admin-only — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
+    "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `space.schema` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -346,7 +346,7 @@ const deleteTypeRoute = createRoute({
   tags: ["Types"],
   summary: "Delete a custom type",
   description:
-    "Removes a custom type registration. Admin-only — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
+    "Removes a custom type registration. Requires `space.schema` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({
@@ -464,7 +464,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
     // package and compiled into the registry; nothing legitimate mints one
     // over HTTP, and the route's own published description already says so.
     //
-    // This used to admit a platform credential, which made registration and
+    // This used to admit the operator key, which made registration and
     // restore disagree: an archive carrying a reserved-namespace type is
     // refused whatever credential restores it, precisely because a file is
     // something an attacker can hand you. A registration is no more
@@ -486,7 +486,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
       // handle. The rule binds only in hosted mode — keys mode has no
       // user accounts, so there is no handle system to check against and
       // the only party a refusal could stop is the deployment's own
-      // operator. Platform credentials are exempt so seeding and operator
+      // operator. The operator key is exempt so seeding and operator
       // tooling keep working across spaces.
       if (
         tier === "publisher" &&
@@ -585,9 +585,9 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
     requireAuth(c);
     requireSpacePermission(c, "space.schema");
     const { id } = c.req.valid("param");
-    // Scope to the caller's space: a space_admin sees and mutates only its
-    // own custom types. A probe for another space's id resolves to nothing
-    // and 404s.
+    // Scope to the caller's space: a space-bound credential sees and mutates
+    // only its own custom types. A probe for another space's id resolves to
+    // nothing and 404s.
     const spaceId = c.get("apiKey")?.space_id;
 
     if (!isValidTypeIdentifier(id)) {
@@ -679,8 +679,8 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
     requireAuth(c);
     requireSpacePermission(c, "space.schema");
     const { id } = c.req.valid("param");
-    // Scope to the caller's space: a space_admin can only delete its own
-    // custom types; another space's id resolves as not-found.
+    // Scope to the caller's space: a space-bound credential can only delete
+    // its own custom types; another space's id resolves as not-found.
     const spaceId = c.get("apiKey")?.space_id;
 
     if (isLockedPlatformType(id)) {

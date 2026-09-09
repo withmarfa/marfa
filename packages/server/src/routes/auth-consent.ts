@@ -1285,14 +1285,17 @@ async function projectGrantOnConsent(
     // places. This screen offers per-scope toggles: a set arriving smaller
     // than the standing grant is the user having unticked something, so it
     // is honored, and honoring it means the tokens carrying the removed
-    // scopes have to stop working. The device screen has no toggles. It
-    // confirms a list, so the same shrink there carries no such decision,
-    // and `createUserAppGrant` in `routes/auth-pages.ts` merges into the
-    // standing grant instead of replacing it, and merges against nothing
-    // when that grant has been revoked, so a re-approval cannot put back a
-    // scope the user withdrew. Neither surface narrows without the user
-    // having asked, and neither leaves a record claiming access the user
-    // withdrew.
+    // scopes have to stop working.
+    //
+    // **The device screen offers toggles too, and still merges rather than
+    // narrowing.** It once had none, which is where this contrast came from;
+    // `device-scope-merge.ts` carries the current reasoning and it is a
+    // deliberate difference rather than a leftover — a set arriving smaller
+    // there may be the client asking for less or the person unticking a row,
+    // and nothing at that call site can tell the two apart. What the untick
+    // reaches there is the token that device is issued. Neither surface
+    // narrows without the user having asked, and neither leaves a record
+    // claiming access the user withdrew.
     if (priorScopes.some((s) => !grantCoversScope(opts.scopes, s))) {
       const provider = storage.oauthProvider;
       if (typeof provider?.revokeAccessTokensForGrant !== "function") {
@@ -1709,8 +1712,8 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
   //
   // **The prohibition is not tidiness, it is the only way the two screens
   // can be made to agree.** These sentences used to carry a futurity clause,
-  // because the device screen has no toggles and no second line and this is
-  // the whole of what it says about a grant. But `scopeName` on the
+  // because the device screen has no second line, so the description is the
+  // whole of what it says about a grant. But `scopeName` on the
   // authorize screen falls through to this map wherever nothing curated
   // names the pattern, so the clause written for one screen arrived as the
   // other screen's toggle label, directly above a line about to state the same
@@ -1868,26 +1871,27 @@ function describeScope(scope: ParsedScope): string | undefined {
     case "space":
       // Deliberately absent, for the reason above. `scopeName` in
       // `consent.ts` and `describeScope` in `device-pages.ts` both
-      // resolve a capability literal through `space-permission-labels.ts` and
-      // return before they look at this map, so anything written here for
-      // one was computed and discarded. The branch that filled it is gone
-      // with it.
+      // resolve a space permission literal through
+      // `space-permission-labels.ts` and return before they look at this map,
+      // so anything written here for one was computed and discarded. The
+      // branch that filled it is gone with it.
       //
-      // Absent here is not a gap waiting on capability scopes reaching a
+      // Absent here is not a gap waiting on space permissions reaching a
       // consent screen. They are already described when they get there, on
-      // both surfaces, by `SPACE_PERMISSION_LABELS` and `SPACE_PERMISSION_SHORT`.
-      // Whoever comes to put one in front of a person should extend those
-      // maps rather than this one: an entry here is a third name for the
-      // same grant, in the one place neither renderer reads.
+      // both surfaces, by `SPACE_PERMISSION_LABELS` and
+      // `SPACE_PERMISSION_SHORT`. Whoever comes to put one in front of a
+      // person should extend those maps rather than this one: an entry here
+      // is a third name for the same grant, in the one place neither renderer
+      // reads.
       return undefined;
     case "content":
       // Resolved from the curated map, unlike the two arms above, because
       // both renderers do read the map for this kind. `describeScope`
       // on the device screen falls to `descriptions?.[s.typePattern]` for
-      // everything that is not OIDC or a capability, and `labelFor` on the
-      // authorize screen falls through `SCOPE_LABELS` to the same map. So a
-      // `content` entry written there reaches a person on both surfaces, and
-      // a hard return here would discard it — silently, on the one screen
+      // everything that is not OIDC or a space permission, and `labelFor` on
+      // the authorize screen falls through `SCOPE_LABELS` to the same map. So
+      // a `content` entry written there reaches a person on both surfaces,
+      // and a hard return here would discard it — silently, on the one screen
       // whose job is saying how large a grant is.
       //
       // The entry exists now, and this arm never changed to accommodate it —

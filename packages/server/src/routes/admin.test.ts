@@ -2,8 +2,8 @@
  * `/admin/*` operator route tests. Covers the auth gate, every
  * happy path, the suspend → write-rejected contract enforced by the
  * space-suspension middleware, the audit-trail on suspend/unsuspend,
- * and the cross-space platform-admin read path (the core value
- * proposition: a platform admin must be able to read space B's
+ * and the cross-space operator read path (the core value
+ * proposition: the operator key must be able to read space B's
  * resources from any session).
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
@@ -28,10 +28,10 @@ afterAll(async () => {
 });
 
 /**
- * Mint a non-platform member key in the named space. The CLI's normal
+ * Mint a space-bound key in the named space. The CLI's normal
  * `my keys create` flow goes through `POST /keys`, but tests get a
  * direct storage call so they don't have to mint and authenticate a
- * second admin first.
+ * second credential first.
  */
 async function mintSpaceKey(
   spaceId: string,
@@ -116,7 +116,7 @@ describe("admin auth gate", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Happy paths + cross-space platform-admin
+// Happy paths + cross-space operator key
 // ---------------------------------------------------------------------------
 
 describe("admin happy paths", () => {
@@ -304,7 +304,7 @@ describe("admin happy paths", () => {
     expect(Array.isArray(body.recent_activity)).toBe(true);
   });
 
-  it("platform-admin mints a key bound to the requested space", async () => {
+  it("the operator key mints a key bound to the requested space", async () => {
     if (!ctx.storage.spaces) return;
     const target = await ctx.storage.spaces.create("space-key-target");
     const other = await ctx.storage.spaces.create("space-key-other");
@@ -357,12 +357,12 @@ describe("admin happy paths", () => {
 
   /**
    * Verification #4 from the orchestrator. The core value proposition of
-   * a platform-admin key is cross-space authority — the tests above use
+   * the operator key is cross-space authority — the tests above use
    * the seeded admin (space-less). This one creates a SECOND space and
-   * confirms the platform admin can read its metrics directly without
+   * confirms the operator key can read its metrics directly without
    * any session ownership of the target space.
    */
-  it("platform-admin reads another space's metrics + show + keys cross-space", async () => {
+  it("the operator key reads another space's metrics + show + keys cross-space", async () => {
     if (!ctx.storage.spaces) return;
     const spaceB = await ctx.storage.spaces.create("cross-space-target");
     // Mint a non-platform key inside spaceB so listForSpace has a hit.
@@ -422,7 +422,7 @@ describe("space suspension", () => {
     const t = await ctx.storage.spaces.create("suspend-write-block");
     const memberKey = await mintSpaceKey(t.id);
 
-    // Baseline — member can write before suspension.
+    // Baseline — a space credential can write before suspension.
     const beforeWrite = await request(ctx.app, "POST", "/items", {
       key: memberKey,
       body: { type: "core.note", properties: { body: "pre-suspend" } },
@@ -518,16 +518,16 @@ describe("space suspension", () => {
     expect(res.status).toBe(404);
   });
 
-  it("platform-admin can still write to a suspended space (bypass)", async () => {
+  it("the operator key can still write to a suspended space (bypass)", async () => {
     if (!ctx.storage.spaces) return;
     const t = await ctx.storage.spaces.create("platform-bypass");
     await request(ctx.app, "POST", `/admin/spaces/${t.id}/suspend`, {
       key: ctx.adminKey,
     });
-    // Platform admin operates without a `space_id`, but a real
-    // platform write that targets the suspended space — e.g. flipping
-    // quotas — must succeed. PUT /spaces/:id/quotas is the canonical
-    // platform-admin write surface.
+    // The operator key operates without a `space_id`, but a real write
+    // that targets the suspended space — e.g. flipping quotas — must
+    // succeed. PUT /spaces/:id/quotas is the canonical operator write
+    // surface.
     const quotaRes = await request(ctx.app, "PUT", `/spaces/${t.id}/quotas`, {
       key: ctx.adminKey,
       body: { items_limit: 9999 },

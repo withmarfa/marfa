@@ -18,7 +18,7 @@
  * is fully dispatchable, because the supervisor mints per dispatch
  * without consulting what is already there, and that mint revokes
  * whatever it finds. The row's only visible effect was a key in the
- * space's list that a space admin did not create and could not use.
+ * space's list that nobody in the space created and nobody could use.
  *
  * Atomicity — `storage.runInTransaction` is genuinely transactional on
  * both dialects, but install spans multiple storage stores and
@@ -319,14 +319,14 @@ export async function performInstall(
   // -------------------------------------------------------------------
   try {
     // The lock is what makes the state read below mean anything. The
-    // Connection row is visible to a space admin the moment step 1
+    // Connection row is visible in the space the moment step 1
     // commits, so an uninstall can reach it before this line runs, and an
     // install that completed behind that sweep would leave an active
     // Connection the sweep believed it had revoked.
     //
-    // The fence is the rule that a space-less credential is the platform
-    // tier rather than a narrow one; an admin installing without naming a
-    // space is exactly how one gets minted. Refusing here rather than at
+    // The fence is the rule that a space-less credential reaches every space
+    // rather than none; the operator key installing without naming a space
+    // is exactly how one gets minted. Refusing here rather than at
     // the first dispatch is what makes the failure legible: the install
     // says which space is missing, while a dispatch-time refusal surfaces
     // as an integration that installed cleanly and never ran.

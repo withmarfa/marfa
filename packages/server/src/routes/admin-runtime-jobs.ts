@@ -1,5 +1,5 @@
 /**
- * Platform-admin operator surface over the local integration substrate's
+ * Operator surface over the local integration substrate's
  * dead-lettered dispatches.
  *
  * `GET /admin/runtime/dead-letters` lists dispatches that exhausted their
@@ -13,7 +13,7 @@
  * Mounted unconditionally so the OpenAPI reflection sees the routes in
  * every configuration; deployments without the integration runtime
  * (SQLite) answer 503
- * `local_runtime_not_available`. Platform-admin only: dead-letter rows
+ * `local_runtime_not_available`. Operator key only: dead-letter rows
  * span every space, so a space-bound credential is refused.
  */
 import { createRoute, z } from "@hono/zod-openapi";
@@ -46,7 +46,7 @@ const listDeadLettersRoute = createRoute({
   tags: ["Admin"],
   summary: "List dead-lettered integration dispatches",
   description:
-    "Dispatches on the local integration substrate that exhausted their retry ladder, newest failure first. Each row carries the integration and connection the dispatch belonged to, the recorded failure reason, the delivery attempts consumed, and when the job was created and finally failed. Rows age out with the queue's own retention. Platform-admin only. Deployments without the local substrate answer 503.",
+    "Dispatches on the local integration substrate that exhausted their retry ladder, newest failure first. Each row carries the integration and connection the dispatch belonged to, the recorded failure reason, the delivery attempts consumed, and when the job was created and finally failed. Rows age out with the queue's own retention. Operator key only. Deployments without the local substrate answer 503.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -104,7 +104,7 @@ const replayDeadLetterRoute = createRoute({
   tags: ["Admin"],
   summary: "Replay one dead-lettered dispatch",
   description:
-    "Re-queues exactly one named dead-lettered dispatch for one more delivery attempt. Only a job currently in the failed state can be replayed; replaying a job that was already replayed, is running, or has completed is refused with a 409 naming its actual state. A replayed job that fails again returns to the listing and can be replayed again. Platform-admin only. Deployments without the local substrate answer 503.",
+    "Re-queues exactly one named dead-lettered dispatch for one more delivery attempt. Only a job currently in the failed state can be replayed; replaying a job that was already replayed, is running, or has completed is refused with a 409 naming its actual state. A replayed job that fails again returns to the listing and can be replayed again. Operator key only. Deployments without the local substrate answer 503.",
   security: [{ bearerAuth: [] }],
   request: {
     params: z.object({

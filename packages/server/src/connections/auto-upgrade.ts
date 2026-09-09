@@ -59,7 +59,7 @@ export type DriftDisposition =
   | "current"
   /** Behind, reaches nothing new, and this pass may move it. */
   | "upgradable"
-  /** Behind and reaches something new. Waits for a space admin. */
+  /** Behind and reaches something new. Waits for a person to approve. */
   | "awaiting_consent"
   /** Behind, but moving it would strand something. Waits for a person too,
    *  for a different reason, and says which. */
@@ -91,7 +91,7 @@ export interface DriftSummary {
   behind: number;
   /** Behind and safe to move without a person. */
   upgradable: number;
-  /** Behind and waiting on a space admin because the move widens a grant. */
+  /** Behind and waiting on a person because the move widens a grant. */
   awaiting_consent: number;
   /** Behind and held back for a stated non-consent reason. */
   blocked: number;
@@ -180,7 +180,7 @@ export async function assessConnection(
  * every measurement of it has been taken so far.
  *
  * `spaceId` scopes the scan. The instance-wide read is the platform
- * metrics surface; a space admin sees their own space and needs the same
+ * metrics surface; a person sees their own space and needs the same
  * survey narrowed, not a second implementation of it.
  */
 export async function surveyConnectionDrift(
@@ -385,7 +385,7 @@ export interface PendingConsent {
 }
 
 /**
- * The connections a space admin has to decide about, and what each move
+ * The connections a person has to decide about, and what each move
  * would newly allow.
  *
  * The survey already knows which connections are held back; what it does

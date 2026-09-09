@@ -263,7 +263,7 @@ describe("bootstrap sentinel", () => {
   // PG: cloned from the test-template, so tables are empty and the
   // `bootstrapped` sentinel isn't set — bootstrap path can fire cleanly.
   // SQLite: fresh tmp DB. Cannot use `createTestContext` because that
-  // pre-creates an admin key and stamps the bootstrapped sentinel.
+  // pre-creates the bootstrap credential and stamps the bootstrapped sentinel.
   async function freshApp(overrides?: {
     authMode?: "keys" | "hosted";
   }): Promise<{
@@ -703,7 +703,7 @@ describe("bootstrap sentinel", () => {
         key: string;
       };
 
-      // Second POST authenticated as the bootstrap admin — this is the
+      // Second POST authenticated as the bootstrap credential — this is the
       // non-bootstrap branch (sentinel is now stamped).
       const followUpRes = await request(app, "POST", "/keys", {
         key: bootstrap.key,
@@ -727,7 +727,7 @@ describe("bootstrap sentinel", () => {
       expect(row).toBeTruthy();
       expect(row?.action).toBe("key.create");
       expect(row?.resource_type).toBe("key");
-      // Caller is the bootstrap admin — `key_id` is its id.
+      // Caller is the bootstrap credential — `key_id` is its id.
       expect(row?.key_id).toBe(bootstrap.id);
 
       // Negative: no `key.bootstrap` row for the second-mint id.
@@ -923,8 +923,8 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
   // The blanket refusal that used to stand here did two jobs: it withheld the
   // permission, and it prevented the escalation a mint makes possible. Both
   // still hold, through two things that can fail independently — the
-  // capability gate and the breadth clamp — so each gets its own case rather
-  // than one test standing for both.
+  // space permission gate and the breadth clamp — so each gets its own case
+  // rather than one test standing for both.
   let hostedCtx: TestContext;
   let spaceId: string;
 
@@ -941,9 +941,9 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     await hostedCtx.cleanup();
   });
 
-  it("refuses every keys door to a session that was not granted the capability", async () => {
+  it("refuses every keys door to a session that was not granted the space permission", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, ["openid"], {
-      userRole: "space_admin",
+      seedUserRow: true,
       spaceId,
     });
     const doors: [string, string, unknown?][] = [
@@ -972,7 +972,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -996,7 +996,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1022,7 +1022,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.*:write"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1037,7 +1037,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("never mints an operator key from a session, whatever the body asks", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      userRole: "space_admin",
+      seedUserRow: true,
       spaceId,
     });
     const res = await request(hostedCtx.app, "POST", "/keys", {
@@ -1064,7 +1064,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token, clientId } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1090,7 +1090,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 
   it("lets a granted session read, revoke and rename", async () => {
     const { token } = await seedOauthBearer(hostedCtx.storage, grantScopes(), {
-      userRole: "space_admin",
+      seedUserRow: true,
       spaceId,
     });
     const raw = "marfa_k1_sess_" + Math.random().toString(36).slice(2);
@@ -1134,7 +1134,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1182,7 +1182,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const widen = await request(hostedCtx.app, "PATCH", `/keys/${victim.id}`, {
       key: token,
@@ -1206,7 +1206,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1252,7 +1252,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
 
     // The derive path does hand the edge map over when nothing is named.
@@ -1293,7 +1293,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read", "edge.about:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const res = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1320,7 +1320,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const { token } = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("core.note:read"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const minted = await request(hostedCtx.app, "POST", "/keys", {
       key: token,
@@ -1349,7 +1349,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const contentOnly = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("content:write"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const refused = await request(hostedCtx.app, "POST", "/keys", {
       key: contentOnly.token,
@@ -1370,7 +1370,7 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
     const metaHolder = await seedOauthBearer(
       hostedCtx.storage,
       grantScopes("metadata:write"),
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const allowed = await request(hostedCtx.app, "POST", "/keys", {
       key: metaHolder.token,
@@ -1560,7 +1560,7 @@ describe("POST /keys — space binding", () => {
 });
 
 describe("POST /keys — single-space deployments keep minting space-less keys", () => {
-  // A single-space self-host has no space rows at all (they are only ever
+  // An instance with no space plane has no space rows at all (they are only ever
   // created by the hosted sign-up flow), so every key it mints is legitimately
   // space-less — which is to say every key it mints is an operator key. The
   // space-bound refusal still applies here, and is not conditioned on the

@@ -4,7 +4,7 @@
  * Two endpoints that complete the OAuth Authorization Code dance for
  * integration connections:
  *
- *   - `POST /connections/:id/oauth/start` (admin-gated): builds the
+ *   - `POST /connections/:id/oauth/start` (`space.credentials`): builds the
  *     upstream provider's authorize URL with a server-signed `state`
  *     param + the connection's stored client_id + this deployment's
  *     own callback URI. Returns the URL for the install script (or
@@ -398,7 +398,7 @@ async function buildAuthorizeUrl(
 }
 
 /**
- * `POST /connections/:id/oauth/start` — admin-gated. Returns the
+ * `POST /connections/:id/oauth/start` — needs `space.credentials`. Returns the
  * upstream authorize URL (including signed state, PKCE challenge) the
  * install script or consent UI should open in the user's browser. Body:
  *   {
@@ -422,7 +422,7 @@ export function oauthStartRoutes(
     requireSpacePermission(c, "space.credentials");
     // No integration arm on this door: it starts the upstream OAuth dance and
     // takes a caller-supplied scope override into the authorize URL, so it is
-    // a credentials surface reached on rank and nothing else.
+    // a credentials surface, reached on `space.credentials` and nothing else.
     requireSpacePermission(c, "space.credentials");
     const connectionId = c.req.param("id");
     // Fenced on the caller's space. Holding `space.credentials` confers no

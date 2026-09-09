@@ -7025,7 +7025,7 @@
           "Items"
         ],
         "summary": "Permanently delete an item",
-        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible and admin-only. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+        "description": "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `space.item_purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
         "security": [
           {
             "bearerAuth": []
@@ -7208,7 +7208,7 @@
             }
           },
           "403": {
-            "description": "Admin required, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
+            "description": "`space.item_purge` is missing, or the item is in a reserved namespace this credential may not write. The second reads `type_not_permitted` and is the answer for an untrashed row: purging is trash-then-purge, and a credential refused at the trash door would otherwise be told only that the item is not trashed, which describes an ordering mistake it did not make.",
             "content": {
               "application/json": {
                 "schema": {
@@ -8864,7 +8864,7 @@
             }
           },
           "403": {
-            "description": "Admin required (purge only)",
+            "description": "`space.item_purge` required (purge only)",
             "content": {
               "application/json": {
                 "schema": {
@@ -8997,7 +8997,7 @@
           "Items"
         ],
         "summary": "Get a bulk-action job",
-        "description": "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it, by an admin within the same space, and by a platform credential. A job in another space reads as absent.",
+        "description": "Returns the current state of an asynchronous bulk-action job; once terminal, `result` carries the outcome envelope. Readable by the credential that created it and by the operator key, and by nothing else: no space permission says \"read another credential's bulk jobs\". A job in another space reads as absent.",
         "security": [
           {
             "bearerAuth": []
@@ -9203,7 +9203,7 @@
             }
           },
           "403": {
-            "description": "Not the originating credential, and not an admin for this space",
+            "description": "Not the originating credential, and not the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -9596,7 +9596,7 @@
             }
           },
           "403": {
-            "description": "Not the originating credential, and not an admin for this space",
+            "description": "Not the originating credential, and not the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -14916,7 +14916,7 @@
             }
           },
           "403": {
-            "description": "Space-admin required",
+            "description": "`space.schema` required",
             "content": {
               "application/json": {
                 "schema": {
@@ -15780,7 +15780,7 @@
           "Types"
         ],
         "summary": "Register a custom type",
-        "description": "Registers a custom type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; reserved roots, ancestor-field redefinitions, and property names shadowing first-class `Item` fields all reject with `400`. Admin keys bypass; non-admin credentials need the `metadata.types:write` scope, which is off by default.",
+        "description": "Registers a custom type at runtime under the `app.*`, `user.*`, or `<publisher>.*` namespaces; reserved roots, ancestor-field redefinitions, and property names shadowing first-class `Item` fields all reject with `400`. Every credential needs the `metadata.types:write` scope, which is off by default. The operator key is no exception: this door reads the map like any other.",
         "security": [
           {
             "bearerAuth": []
@@ -16550,7 +16550,7 @@
           "Types"
         ],
         "summary": "Update a custom type",
-        "description": "Replaces a custom type's schema, re-running the registration-time correctness rails. Admin-only — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
+        "description": "Replaces a custom type's schema, re-running the registration-time correctness rails. Requires `space.schema` — core types are immutable and return 403; the structural diff between versions sets the required version bump, and a mismatch rejects with `422 version_bump_mismatch`.",
         "security": [
           {
             "bearerAuth": []
@@ -16935,7 +16935,7 @@
           "Types"
         ],
         "summary": "Delete a custom type",
-        "description": "Removes a custom type registration. Admin-only — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
+        "description": "Removes a custom type registration. Requires `space.schema` — platform-shipped types are immutable.\n\nRejected with `409 type_has_subtypes` while another registered type declares this one as its parent, naming them in `details.subtype_ids`. `?force=true` does not cover that case: delete each subtype first, or give it a different parent through `PUT /types/{id}`.\n\nRejected with `409 type_in_use` if any item of the type still exists, unless `?force=true` orphans those rows (they persist, but new writes against the type return `400 invalid_type`).",
         "security": [
           {
             "bearerAuth": []
@@ -21367,7 +21367,7 @@
           "Keys"
         ],
         "summary": "List API keys",
-        "description": "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`.",
+        "description": "Returns every API key in the caller's space without plaintext, which is only ever returned at creation time. `last_used_at` is debounced to at most one write per hour, so treat it as a coarse activity signal rather than an audit log. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
         "security": [
           {
             "bearerAuth": []
@@ -21651,7 +21651,7 @@
           "Keys"
         ],
         "summary": "Revoke an API key",
-        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`.",
+        "description": "Revokes the key immediately; the next request bearing it returns `401 unauthorized`. In-flight long-lived connections (SSE) terminate on the next heartbeat. Requires `space.keys`, or the operator key, which reaches these doors by being the operator key rather than by holding a permission.",
         "security": [
           {
             "bearerAuth": []
@@ -22197,7 +22197,7 @@
             }
           },
           "403": {
-            "description": "Admin only",
+            "description": "`space.keys` required, unless the caller is the operator key",
             "content": {
               "application/json": {
                 "schema": {
@@ -25502,7 +25502,7 @@
           "Admin"
         ],
         "summary": "List dead-lettered integration dispatches",
-        "description": "Dispatches on the local integration substrate that exhausted their retry ladder, newest failure first. Each row carries the integration and connection the dispatch belonged to, the recorded failure reason, the delivery attempts consumed, and when the job was created and finally failed. Rows age out with the queue's own retention. Platform-admin only. Deployments without the local substrate answer 503.",
+        "description": "Dispatches on the local integration substrate that exhausted their retry ladder, newest failure first. Each row carries the integration and connection the dispatch belonged to, the recorded failure reason, the delivery attempts consumed, and when the job was created and finally failed. Rows age out with the queue's own retention. Operator key only. Deployments without the local substrate answer 503.",
         "security": [
           {
             "bearerAuth": []
@@ -25842,7 +25842,7 @@
           "Admin"
         ],
         "summary": "Replay one dead-lettered dispatch",
-        "description": "Re-queues exactly one named dead-lettered dispatch for one more delivery attempt. Only a job currently in the failed state can be replayed; replaying a job that was already replayed, is running, or has completed is refused with a 409 naming its actual state. A replayed job that fails again returns to the listing and can be replayed again. Platform-admin only. Deployments without the local substrate answer 503.",
+        "description": "Re-queues exactly one named dead-lettered dispatch for one more delivery attempt. Only a job currently in the failed state can be replayed; replaying a job that was already replayed, is running, or has completed is refused with a 409 naming its actual state. A replayed job that fails again returns to the listing and can be replayed again. Operator key only. Deployments without the local substrate answer 503.",
         "security": [
           {
             "bearerAuth": []
@@ -26261,7 +26261,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items across every space still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Platform-admin only.",
+        "description": "Lists platform type rows this instance still carries that the running build no longer ships, each with how many items across every space still carry the identifier. `/health` publishes the count of these as `platform_types`, a report that carries no status and never degrades the response; this is where the identifiers live, because that endpoint is unauthenticated. The count is read live rather than cached at boot: it is the part that changes without a restart, and a removal reasoning from a stale copy is the failure worth avoiding. Operator key only.",
         "responses": {
           "200": {
             "description": "The drifted rows, with their live item counts",
@@ -26513,7 +26513,7 @@
             "bearerAuth": []
           }
         ],
-        "description": "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Platform-admin only.",
+        "description": "Removes exactly one platform type row this build does not ship. Refused with `409` when the identifier is one the build still ships, so this can never remove a live type, and refused with `409` when items still carry it: the row is what makes those items resolve, and orphaning readable data to tidy a registry is the wrong trade. The item count is recomputed inside the request rather than read from the boot-time report. The type stops resolving on the next restart, since the in-memory registry is filled from the rows at boot. Operator key only.",
         "parameters": [
           {
             "schema": {
@@ -26936,10 +26936,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Platform admins scope the export to a specific space"
+              "description": "A caller with no space binding scopes the export to one space with this; a space-bound caller exports its own space and may not name another"
             },
             "required": false,
-            "description": "Platform admins scope the export to a specific space",
+            "description": "A caller with no space binding scopes the export to one space with this; a space-bound caller exports its own space and may not name another",
             "name": "target_space_id",
             "in": "query"
           }
@@ -30539,7 +30539,7 @@
           "Connections"
         ],
         "summary": "Install an integration",
-        "description": "Installs a connection from a registered integration manifest without the browser consent screen, for non-interactive operator and tooling use. Admin-only; runs the same compensating-write pipeline and audit trail as the HTML consent flow.",
+        "description": "Installs a connection from a registered integration manifest without the browser consent screen, for non-interactive operator and tooling use. Requires `space.connections`; runs the same compensating-write pipeline and audit trail as the HTML consent flow.",
         "security": [
           {
             "bearerAuth": []
@@ -30722,7 +30722,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31581,7 +31581,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31946,7 +31946,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32411,7 +32411,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -32775,7 +32775,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33381,7 +33381,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33780,7 +33780,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin, or the newer manifest widens what the connection may do and needs consent.",
+            "description": "Caller does not hold `space.connections`, or the newer manifest widens what the connection may do and needs consent.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34151,7 +34151,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -34515,7 +34515,7 @@
             }
           },
           "403": {
-            "description": "Caller is not an admin.",
+            "description": "Caller does not hold `space.connections`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -37656,7 +37656,7 @@
           "Admin"
         ],
         "summary": "Create a space",
-        "description": "Creates an empty space and returns it. Platform-admin only. Pair with `POST /admin/spaces/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a space already existed, so before this a space could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a space-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
+        "description": "Creates an empty space and returns it. Takes the operator key. Pair with `POST /admin/spaces/{id}/keys` to issue a credential scoped to it.\n\nEvery other operator verb on a space already existed, so before this a space could only come into being through a hosted sign-up. That left an operator unable to provision a space for someone, and left anything that needs a space-scoped credential — a conformance suite, a test harness, a self-hoster seeding an instance — with no supported path to one.",
         "security": [
           {
             "bearerAuth": []
@@ -38031,7 +38031,7 @@
           "Admin"
         ],
         "summary": "Create a space-bound API key",
-        "description": "Creates an API key bound to the specified space. Platform-admin only. The plaintext key is returned only in this response.",
+        "description": "Creates an API key bound to the specified space. Takes the operator key. The plaintext key is returned only in this response.",
         "security": [
           {
             "bearerAuth": []
@@ -38967,7 +38967,7 @@
           "Admin"
         ],
         "summary": "Create an account",
-        "description": "Creates an email + password account, already verified, with its own space, which it solely owns — the same shape a hosted sign-up produces. Platform-admin only. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
+        "description": "Creates an email + password account, already verified, with its own space, which it solely owns — the same shape a hosted sign-up produces. Takes the operator key. Answers with the account id and the space id; the password is never returned. The address must not already have an account, and the password must fall within the length the sign-in path itself enforces.\n\nThis is the only way to obtain an account where hosted sign-up is closed, which is the default: `POST /auth/sign-up/email` refuses there, and a space with an API key is not an account and cannot hold a browser session. The password goes through Better Auth's own hasher, so the account signs in immediately with no verification email. It is deliberate that the address arrives proven rather than proving itself, which makes this route unsuitable for handing an account to the person who owns the mailbox.",
         "security": [
           {
             "bearerAuth": []

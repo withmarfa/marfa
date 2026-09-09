@@ -27,7 +27,7 @@
  *
  * Step ordering (after the step-0 re-check):
  *   1. Resolve `users.space_id`. If no row, only the auth_user
- *      cleanup runs (the user never had a space — a single-space
+ *      cleanup runs (the user never had a space — an instance-wide
  *      self-host shape, or a sign-up that bailed before space
  *      provisioning).
  *   2. Per-space teardown of connection-related artifacts. The full
@@ -80,7 +80,7 @@
  * applies unchanged, since a whole-space teardown is not a set of row
  * edits any replica repairs from.
  *
- * The one subscriber that does survive is a platform credential, which
+ * The one subscriber that does survive is the operator key, which
  * carries no `space_id` and therefore streams unfiltered. It would see
  * these rows go if they were published. It is deliberately not told: it
  * holds no per-space replica to repair, and the alternative is thousands
@@ -214,7 +214,7 @@ export async function pgPurgeSpaceScopedRows(
  * Hard-delete a space that no account owns.
  *
  * The counterpart to `pgDeleteAccountCascade` for the case it cannot
- * serve: a space provisioned by a platform credential rather than by
+ * serve: a space provisioned by the operator key rather than by
  * sign-up has no `auth_user` to cascade from, and until this existed
  * there was no way to remove one at all. Conformance is the standing
  * example — it creates a space per run and its own comments record that

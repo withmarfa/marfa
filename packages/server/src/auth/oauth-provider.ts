@@ -207,24 +207,25 @@ export function buildAllowedScopes(
       `${PROFILE_ROOT}.${row}:read`,
       `${PROFILE_ROOT}.${row}:write`,
     ]),
-    // The capability family: authority over one administrative surface,
-    // named and consented to rather than inherited from a role.
+    // The space permission family: authority over one administrative surface,
+    // which is handed over by being named and consented to and by nothing
+    // else. Nothing inherits it, and no door admits without it.
     //
     // **Emitted from the closed set, deliberately not through a bundle.** The
     // shape this replaces was to put them in an off-by-default bundle so a
     // stale client's ceiling would catch up to them. That fails twice over: a
-    // bundle-claimed capability leaves the consent screen's unclaimed-scope
-    // bucket, so it renders inside the bundle's group and inherits the
-    // bundle's tick rather than its own rule; and it makes reachability
-    // depend on a configuration, so an operator shipping no bundles has an
-    // instance whose gates can never be satisfied by anybody. The family is
-    // the platform's, so the platform publishes it.
+    // bundle-claimed space permission leaves the consent screen's
+    // unclaimed-scope bucket, so it renders inside the bundle's group and
+    // inherits the bundle's tick rather than its own rule; and it makes
+    // reachability depend on a configuration, so an operator shipping no
+    // bundles has an instance whose gates can never be satisfied by anybody.
+    // The family is the platform's, so the platform publishes it.
     //
     // **Publishable is not grantable, and the distance between them is the
     // whole design.** Every surface that offers one has to obtain a
     // deliberate yes — `requiresExplicitConsent` is the rule, read by the
     // consent screen and the device screen at their own call sites. The
-    // bundle door below still drops a capability a configuration names,
+    // bundle door below still drops a space permission a configuration names,
     // which now guards the stored client ceiling rather than this list.
     ...SPACE_PERMISSIONS,
     // The content category, the parent grant over everything a person
@@ -322,10 +323,11 @@ export function buildAllowedScopes(
   // whether the grammar recognizes the literal at all; `isWithheldFromAllowlist`
   // asks whether a bundle may be the thing that publishes one it recognizes.
   //
-  // The capability family is emitted above, from the closed set, so the drop
-  // no longer changes this function's output for one. What it still decides
-  // is whether a *configuration* can claim the literal, which is the half
-  // that reaches a stored client ceiling and the consent screen's grouping.
+  // The space permission family is emitted above, from the closed set, so the
+  // drop no longer changes this function's output for one. What it still
+  // decides is whether a *configuration* can claim the literal, which is the
+  // half that reaches a stored client ceiling and the consent screen's
+  // grouping.
   for (const scope of expandBundlesToScopes(permissionBundles)) {
     if (!isValidScope(scope)) {
       warnOnceAboutBundleScope(scope);
@@ -1116,7 +1118,7 @@ async function resolveClientRevoke(
  * already gone and refusing would tell the client to retry a revocation
  * that cannot be retried (the plugin has forgotten the token). The failure
  * is logged at error naming the grant, and the person's Disconnect or the
- * platform admin's client delete puts the records right. The person's own
+ * operator key's client delete puts the records right. The person's own
  * Disconnect makes the opposite call and fails loud, because there the
  * cascade is the whole of the work.
  */

@@ -48,7 +48,7 @@ afterAll(async () => {
 describe("GET /metrics", () => {
   it("requires admin", async () => {
     const res = await request(ctx.app, "GET", "/metrics");
-    // No credential → 401. A non-admin credential would 403, but we don't
+    // No credential → 401. A space-bound credential would 403, but we don't
     // need to cover that here — the auth gate is exercised by other routes.
     expect(res.status).toBe(401);
   });

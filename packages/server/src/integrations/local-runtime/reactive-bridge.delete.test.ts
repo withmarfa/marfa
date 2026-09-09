@@ -97,7 +97,6 @@ describe("the live bridge fans out deletes", () => {
         body: {
           label: "bridge-delete-probe",
           source: "bridge-delete-probe",
-          role: "space_admin",
           default_tier: "library",
           type_permissions: { "*": "write" },
         },

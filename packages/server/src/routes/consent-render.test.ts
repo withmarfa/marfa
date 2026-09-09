@@ -207,8 +207,8 @@ describe("renderConsentScreen — soft-tile groups", () => {
         const parsed = parseScope(literal);
         expect(parsed, `unparseable bundle scope: ${literal}`).not.toBeNull();
         if (!parsed) continue;
-        // The capability arm has to be here or the guard stops guarding:
-        // without it a capability resolves through `humanizeType` to a
+        // The space permission arm has to be here or the guard stops guarding:
+        // without it a space permission resolves through `humanizeType` to a
         // truthy "Webhooks" and the case passes while green-lighting the
         // exact collision `SPACE_PERMISSION_LABELS` exists to prevent.
         const label =
@@ -561,12 +561,13 @@ describe("renderConsentScreen — re-consent diff", () => {
   /**
    * The one place an OIDC literal still reached `humanizeType`.
    *
-   * "No longer needed" resolved its labels through capabilities, then
-   * `SCOPE_LABELS`, then the last-dotted-segment fallback — never through
-   * the OIDC copy. So a client that dropped `profile` rendered "Profile"
-   * here while the granted row above it said "Your name and picture", and
-   * dropping `offline_access` rendered "Offline access". The raw-literal
-   * class this whole change exists to remove, surviving in the same file.
+   * "No longer needed" resolved its labels through the space permission map,
+   * then `SCOPE_LABELS`, then the last-dotted-segment fallback — never
+   * through the OIDC copy. So a client that dropped `profile` rendered
+   * "Profile" here while the granted row above it said "Your name and
+   * picture", and dropping `offline_access` rendered "Offline access". The
+   * raw-literal class this whole change exists to remove, surviving in the
+   * same file.
    */
   it("resolves a dropped OIDC literal to its label, not its dotted segment", () => {
     const html = renderConsentScreen({
@@ -1114,19 +1115,18 @@ describe("a grant that reaches things not yet created says so", () => {
     //
     // The conjunction is asserted here where `SPACE_PERMISSION_SHORT` deliberately
     // leaves it alone, and the difference is what the two maps hold. A
-    // capability's short form is a verb phrase, where "connect and
+    // space permission's short form is a verb phrase, where "connect and
     // disconnect services" is one item and reads correctly in a list. Every
     // entry here is the name of a thing, and a name joined by a conjunction
     // is two names: "Notes, People and places and Files" is what this one
-    // rendered.
-    // The separators are the ones a joined sentence breaks on, not the one
-    // that broke first. Two were guarded because two were what `summarize`
-    // literally writes, and that is the wrong question: the reader is
-    // parsing a list, so anything that reads as an item boundary splits the
-    // label whether or not this file produced it. "Files & folders" passed,
-    // and would have rendered as "Bookmarks, Files & folders and
-    // Organizations", which is the exact sentence this case exists to stop.
-    // Lowercased, so a capitalized "And" is caught too.
+    // rendered. The separators are the ones a joined sentence breaks on, not
+    // the one that broke first. Two were guarded because two were what
+    // `summarize` literally writes, and that is the wrong question: the
+    // reader is parsing a list, so anything that reads as an item boundary
+    // splits the label whether or not this file produced it. "Files &
+    // folders" passed, and would have rendered as "Bookmarks, Files & folders
+    // and Organizations", which is the exact sentence this case exists to
+    // stop. Lowercased, so a capitalized "And" is caught too.
     //
     // **The rule is now conditional, and the condition is the whole of what
     // `SCOPE_SHORT` bought.** A label reaches the summary only where no short
@@ -1301,8 +1301,8 @@ describe("a grant that reaches things not yet created says so", () => {
    * rule below runs over both rather than over the toggles alone.
    *
    * A label wins on the authorize screen, so it is the whole of what that
-   * screen says about a grant. The device screen has no toggles and no
-   * second line: it prints the description and stops. Neither surface is the
+   * screen says about a grant. The device screen has no second line: it
+   * prints the description beside its toggle and stops. Neither surface is the
    * lenient one, and the description is if anything the surface where a
    * wrong sentence does more damage, because nothing beside it qualifies
    * what it says.
@@ -1456,8 +1456,8 @@ describe("a grant that reaches things not yet created says so", () => {
 // webhook row and the other is the power to point a new webhook anywhere.
 // ---------------------------------------------------------------------------
 
-describe("capability labels", () => {
-  it("names every capability in both shapes", () => {
+describe("space permission labels", () => {
+  it("names every space permission in both shapes", () => {
     // The docstrings claim a test pins this. It is this one.
     expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
     for (const literal of SPACE_PERMISSIONS) {
@@ -1788,7 +1788,7 @@ describe("renderConsentScreen — a scope in two bundles", () => {
 /**
  * Every label that reaches a joined sentence needs a sentence form.
  *
- * `summarize` resolves OIDC scopes through `OIDC_SHORT` and capabilities
+ * `summarize` resolves OIDC scopes through `OIDC_SHORT` and space permissions
  * through `SPACE_PERMISSION_SHORT`, both separate maps from the toggle labels.
  * Two maps with the same keys and no compile-time link is exactly how the
  * capitalization bug this replaced got in: adding a toggle label without
@@ -2049,16 +2049,17 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
     }
   });
 
-  it("leaves a capability out, because both screens name one without it", () => {
-    // `labelFor` here and `describeScope` on the device screen both
-    // resolve a capability through `space-permission-labels.ts` and return before
+  it("leaves a space permission out, because both screens name one without it", () => {
+    // `labelFor` here and `describeScope` on the device screen both resolve a
+    // space permission through `space-permission-labels.ts` and return before
     // they reach this map, so an entry would be computed and discarded on
     // every render. That is the whole reason the map has nothing for one.
     //
     // Held by rendering with no map at all rather than by asserting what the
     // map holds. The absence is only safe while both screens still name a
-    // capability unaided, and asserting the absence alone would pass equally
-    // well on a screen that had started needing an entry and lost the words.
+    // space permission unaided, and asserting the absence alone would pass
+    // equally well on a screen that had started needing an entry and lost the
+    // words.
     expect(SPACE_PERMISSIONS.length).toBeGreaterThan(0);
     const scopes = SPACE_PERMISSIONS.map(parse);
     expect(buildScopeDescriptions(scopes)).toEqual({});
@@ -2079,7 +2080,7 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
       expect(authorize, literal).toContain(SPACE_PERMISSION_LABELS[literal]);
       expect(device, literal).toContain(SPACE_PERMISSION_LABELS[literal]);
       // The device screen's floor when nothing names a scope. Reached by the
-      // same arm, so a capability arriving here as its own literal is the
+      // same arm, so a space permission arriving here as its own literal is the
       // shape a lost label takes rather than a second failure.
       expect(device, literal).not.toContain(`<span>${literal}</span>`);
     }
@@ -2222,7 +2223,8 @@ describe("buildScopeDescriptions covers every kind a person can be shown", () =>
  *
  * Only the description field is held to this. The label field is deliberately
  * free to differ: `SCOPE_LABELS` gives the authorize screen a short toggle
- * name where the device screen, which has no toggles, shows the sentence. So
+ * name where the device screen, which has no label field, shows the
+ * sentence. So
  * the literals below are ones with no label entry, where the authorize screen
  * renders the description itself and a disagreement would be visible.
  *

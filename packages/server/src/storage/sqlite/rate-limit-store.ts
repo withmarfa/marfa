@@ -4,7 +4,7 @@
  *
  * SQLite is single-process by file lock so "cluster-shared" collapses
  * to "still correct in-process". The same upsert codepath ships on both
- * dialects so single-space self-hosts behave identically to a hosted
+ * dialects so a self-hosted instance behaves identically to a hosted one
  * single-instance — no dead code, no dialect-specific branches at the
  * call site.
  *

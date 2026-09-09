@@ -557,27 +557,27 @@ describe("null on an optional property is treated as unset", () => {
   });
 });
 
-describe("POST /items — platform-credential gate", () => {
+describe("POST /items — the operator gate", () => {
   it("rejects a space credential writing system.* even with explicit type_permissions", async () => {
     // Only operator credentials may write `system.*` or `marfa.*`, and the
     // fence stands ahead of the type map: naming the literal does not open
     // it. Reads are unrestricted.
-    const spaceAdminKey = "marfa_k1_test_non_platform_admin";
+    const spaceKey = "marfa_k1_test_space_bound";
     await ctx.storage.keys.create(
       {
-        label: "space-admin-non-platform",
-        source: "space-admin-non-platform",
+        label: "space-bound-not-operator",
+        source: "space-bound-not-operator",
         space_permissions: [...SPACE_PERMISSIONS],
         type_permissions: { "system.connection": "write" },
         default_tier: "library",
         is_operator: false,
       },
-      hashApiKey(spaceAdminKey, TEST_API_KEY_SALT),
+      hashApiKey(spaceKey, TEST_API_KEY_SALT),
       "space-x",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
-      key: spaceAdminKey,
+      key: spaceKey,
       body: {
         type: "system.connection",
         properties: {
@@ -593,11 +593,11 @@ describe("POST /items — platform-credential gate", () => {
     const body = (await res.json()) as {
       error: { code: string; message: string };
     };
-    expect(body.error.message).toMatch(/platform/i);
+    expect(body.error.message).toMatch(/operator key/i);
     expect(body.error.message).toMatch(/system/);
   });
 
-  it("admits the bootstrap admin (is_operator: true) writing system.*", async () => {
+  it("admits the bootstrap credential (is_operator: true) writing system.*", async () => {
     // Sanity check the legitimate path stays open. Bootstrap admin is
     // the test fixture admin which is platform-shaped.
     const res = await request(ctx.app, "POST", "/items", {
@@ -1448,7 +1448,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
   });
 
   it("collision: PATCH source_id to a value already used by another item under the same source → 409 source_id_conflict", async () => {
-    // Two items under the same admin credential (same stamped source).
+    // Two items under the same credential (same stamped source).
     const occupant = await request(ctx.app, "POST", "/items", {
       key: ctx.adminKey,
       body: {

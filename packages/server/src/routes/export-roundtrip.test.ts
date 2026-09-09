@@ -400,7 +400,7 @@ describe("export → restore round trip", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The platform admin's own export, which is the one that carried no bytes.
+// The operator key's own export, which is the one that carried no bytes.
 //
 // A space-less export spans every space, so its blob lookup has to as well.
 // It asked the instance-wide `""` bucket instead — where none of those
@@ -452,7 +452,7 @@ describe("a platform-level export", () => {
       hashes.set(space, hash);
     }
 
-    // No `target_space_id`: the platform admin's whole-instance export.
+    // No `target_space_id`: the operator key's whole-instance export.
     const exportRes = await request(
       source.app,
       "GET",

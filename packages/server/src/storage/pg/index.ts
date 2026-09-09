@@ -244,7 +244,7 @@ export async function createPgStorage(
      * RLS middleware's transaction (a space-scoped request), the proxy
      * resolves `transaction` against the existing `tx` and Drizzle issues a
      * SAVEPOINT — staying on the middleware's connection and preserving RLS
-     * isolation. Outside a request (retention jobs, single-space self-host),
+     * isolation. Outside a request (retention jobs, instance-wide work),
      * the proxy falls through to `baseDb` and opens a fresh transaction on
      * the owner connection. Either way the inner work shares one pool slot,
      * not two.

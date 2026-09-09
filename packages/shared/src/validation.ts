@@ -449,18 +449,19 @@ export function resolveExtensionPermission(
 }
 
 /**
- * Filters extension namespaces based on the requesting key's permissions.
- * Admins see everything. Members see namespaces they have read or write access to.
+ * Filters extension namespaces to the ones the requesting credential's
+ * extension permissions reach, plus its own label's namespace.
+ *
+ * There is no privileged reader. The parameter that used to name one was
+ * passed `false` at every call site, because a rank that saw everything was
+ * the thing one permission model removed.
  */
 export function filterExtensionsByPermission(
   extensions: Record<string, Record<string, unknown>>,
   permissions:
     Record<string, import("./types.js").ExtensionPermission> | undefined,
   keyLabel: string,
-  isAdmin: boolean,
 ): Record<string, Record<string, unknown>> {
-  if (isAdmin) return extensions;
-
   const filtered: Record<string, Record<string, unknown>> = {};
   for (const [ns, data] of Object.entries(extensions)) {
     const perm = resolveExtensionPermission(ns, permissions, keyLabel);

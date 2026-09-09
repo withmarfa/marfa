@@ -115,8 +115,11 @@
  * judgement this guard informs rather than makes.
  *
  * **What a moved surface costs, which this file used to state wrongly.**
- * Removing an export is a break and ships as at least a minor, with a commit
- * footer naming it — not as a major. Pre-launch nothing outside this estate
+ * Breaking an export is a break and ships as at least a minor, with a commit
+ * footer naming it — not as a major. Removing one is the obvious case;
+ * narrowing a signature, tightening a type or dropping a parameter is the
+ * same break and takes the same bump, because what decides it is whether a
+ * caller compiled before and does not now. Pre-launch nothing outside this estate
  * consumes these packages, so a major buys no consumer anything, and on a
  * workspace dependency it costs something real: a package still pinned to the
  * old major resolves a second copy of it into the install tree beside the one

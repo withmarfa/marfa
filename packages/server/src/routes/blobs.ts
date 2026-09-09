@@ -226,7 +226,7 @@ const cleanupBlobsRoute = createRoute({
   tags: ["Blobs"],
   summary: "Remove unreferenced blobs",
   description:
-    "Removes blobs that nothing references. Live items, trashed items, metadata extensions, and version history all count as references. Admin-only; defaults to `dry_run=true`, so deletion requires an explicit `dry_run=false`.",
+    "Removes blobs that nothing references. Live items, trashed items, metadata extensions, and version history all count as references. Operator key only; defaults to `dry_run=true`, so deletion requires an explicit `dry_run=false`.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -266,7 +266,7 @@ const reconcileBlobsRoute = createRoute({
   tags: ["Blobs"],
   summary: "Reconcile blob storage",
   description:
-    "Compares the blob storage backend against the database to find orphaned files (in storage, not the DB) and missing files (in the DB, not storage). Admin-only; defaults to `dry_run=true` for safety.",
+    "Compares the blob storage backend against the database to find orphaned files (in storage, not the DB) and missing files (in the DB, not storage). Operator key only; defaults to `dry_run=true` for safety.",
   security: [{ bearerAuth: [] }],
   request: {
     query: z.object({
@@ -413,7 +413,7 @@ export function blobRoutes(
             { resource: "storage_bytes", increment: data.length },
           ]);
           // Register the metadata row scoped to the caller's space. Empty-
-          // string sentinel for instance-wide / single-space / platform-admin
+          // string sentinel for instance-wide and operator-key
           // uploads. Different spaces uploading the same hash bytes get
           // separate rows; the storage backend dedupes the physical file.
           await storage.blobs.register(
@@ -565,7 +565,7 @@ export function blobRoutes(
     return c.json({ url, expires_in: ttl }, 200);
   });
 
-  // POST /blobs/cleanup — remove unreferenced blobs (admin only)
+  // POST /blobs/cleanup — remove unreferenced blobs (operator key only)
   router.openapi(cleanupBlobsRoute, async (c) => {
     requireOperatorKey(c);
 
@@ -628,8 +628,8 @@ export function blobRoutes(
     if (!dryRun) {
       for (const hash of orphaned) {
         await blobBackend.delete(hash);
-        // Platform-admin orphan cleanup nukes the row in every space
-        // — this hash is unreferenced everywhere as far as the admin's
+        // Operator-key orphan cleanup nukes the row in every space
+        // — this hash is unreferenced everywhere as far as the caller's
         // visible items go.
         await storage.blobs.removeAllForHash(hash);
       }
@@ -647,7 +647,8 @@ export function blobRoutes(
     );
   });
 
-  // POST /blobs/reconcile — compare storage backend against database (admin only)
+  // POST /blobs/reconcile — compare storage backend against database
+  // (operator key only)
   router.openapi(reconcileBlobsRoute, async (c) => {
     requireOperatorKey(c);
 

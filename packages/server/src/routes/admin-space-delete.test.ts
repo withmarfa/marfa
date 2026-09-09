@@ -2,7 +2,7 @@
  * Operator-initiated space deletion.
  *
  * The counterpart to account deletion for the case that cascade cannot
- * serve: a space provisioned by a platform credential has no `auth_user`
+ * serve: a space provisioned by the operator key has no `auth_user`
  * behind it, so before this route there was no way to remove one at all.
  * Conformance creating a space per run is the standing consequence.
  *
@@ -41,7 +41,7 @@ async function seedAccountlessSpace(c: TestContext): Promise<string> {
 }
 
 describe("POST /admin/spaces/:id/delete", () => {
-  it("requires a platform admin", async () => {
+  it("requires the operator key", async () => {
     ctx = await createTestContext();
     const res = await request(ctx.app, "POST", "/admin/spaces/x/delete", {
       body: { confirm: "x" },

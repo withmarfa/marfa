@@ -53,7 +53,7 @@ const MAX_PARSED_HOP_COUNT = Number.MAX_SAFE_INTEGER;
  *      with `source: "oauth:<connection_item_id>"`. The connection_id
  *      is encoded in the source prefix; we parse it back out here.
  *
- * Anything else — bootstrap admin, ordinary space api keys with no
+ * Anything else — the bootstrap credential, ordinary space api keys with no
  * connection binding — has no implicit origin. Returns `null` so the
  * resulting cycle is the human sentinel.
  */

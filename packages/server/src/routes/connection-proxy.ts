@@ -23,21 +23,21 @@ import type { PgDb } from "../storage/pg/connection.js";
 // ---------------------------------------------------------------------------
 // Connection OAuth proxy
 //
-// `POST /connections/:id/proxy/*` — let an integration (or a space admin)
-// make an outbound HTTP call to an external service through a single
-// server-side path that:
+// `POST /connections/:id/proxy/*` — let an integration (or a caller holding
+// `space.upstream_access`) make an outbound HTTP call to an external service
+// through a single server-side path that:
 //   1. Decrypts the connection's stored access_token and stamps it as
 //      `Authorization: Bearer <access_token>` on the outbound request.
 //   2. On a 401-from-upstream, single-flight-refreshes the access token
 //      (exchange refresh_token via the OAuth provider's token endpoint),
 //      retries the original request once.
 //   3. On terminal refresh failure (`invalid_grant` or no refresh token),
-//      flips the connection's `runtime_status` to `reauth_required` and
-//      emits a `system.activity` row with severity `action_required` so
-//      the user surface knows to prompt for re-authorization.
-//   4. Rotates the refresh_token whenever the upstream returns a new one;
-//      the rotated-out token's SHA-256 is written to
-//      `previous_refresh_hash` for forensic logging.
+//      flips the connection's `runtime_status` to `reauth_required` and emits
+//      a `system.activity` row with severity `action_required` so the user
+//      surface knows to prompt for re-authorization.
+//   4. Rotates the refresh_token whenever the upstream returns a new one; the
+//      rotated-out token's SHA-256 is written to `previous_refresh_hash` for
+//      forensic logging.
 //   5. Audits every call (success and failure) regardless of outcome.
 //
 // All HTTP verbs route through here — proxies have to be method-agnostic.
@@ -745,29 +745,29 @@ async function requireConnectionProxyAccess(
     );
   }
   // A connection is a space resource, so the gate is `space.upstream_access`
-  // rather than platform authority: the permission says who may reach an
+  // rather than operator authority: the permission says who may reach an
   // upstream through a connection. The lookup above is already fenced on
   // `key.space_id`, so it says that only about the caller's own connections.
-  const isAdmin = holdsSpacePermission(c, "space.upstream_access");
+  const holdsUpstreamAccess = holdsSpacePermission(c, "space.upstream_access");
   // Shared with the inbound-webhook and leased-token routes: the caller
   // is the Connection itself, either as an OAuth grant or as a runtime
   // credential stamped with this `connection_id`. Without the runtime
   // half, an integration's `proxyRequest` call 403s on dispatch.
   const isIntegration = actsAsConnection(key, connectionId);
-  if (!isAdmin && !isIntegration) {
+  if (!holdsUpstreamAccess && !isIntegration) {
     throw new MarfaError(
       ErrorCode.FORBIDDEN,
       "Caller cannot proxy through this connection",
     );
   }
 
-  // **Only the rank arm needs the capability, and the distinction is the whole
-  // point.** A connection acting as itself is not an app inheriting somebody's
-  // role — it is the credential the connection was installed with, so there is
-  // no consent screen behind it and nothing for a capability to have been
-  // ticked on. Requiring one unconditionally here would 403 an integration's
-  // own dispatch. Reached only once admission is settled above, so a caller
-  // that is not the connection got in on rank.
+  // **Only the non-integration arm needs the permission, and the distinction
+  // is the whole point.** A connection acting as itself is the credential the
+  // connection was installed with, so there is no consent screen behind it and
+  // nothing for a permission to have been ticked on. Requiring one
+  // unconditionally here would 403 an integration's own dispatch. Reached only
+  // once admission is settled above, so a caller that is not the connection is
+  // holding `space.upstream_access` or is not here.
   if (!isIntegration) requireSpacePermission(c, "space.upstream_access");
   return { spaceId, connection };
 }

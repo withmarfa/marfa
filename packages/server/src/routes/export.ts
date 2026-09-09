@@ -66,9 +66,9 @@ async function acquireRlsOrRefuse(
  * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a dedicated pool connection for the duration
  * of the stream. Without both set, the route runs on the owner
- * connection — used for SQLite, for space-less callers (platform
- * admin / single-space self-host), and when RLS enforcement is
- * disabled instance-wide.
+ * connection — used for SQLite, for a space-less caller (which is the
+ * operator key and nothing else), and when RLS enforcement is disabled
+ * instance-wide.
  */
 export interface ExportRoutesOptions {
   rlsEnforce: boolean;
@@ -81,23 +81,19 @@ export interface ExportRoutesOptions {
 /**
  * Resolve the target space for an export request.
  *
- * Three cases:
- *   1. **space_admin / member with space_id** — caller's space
- *      wins; cross-space attempts (`?target_space_id` set to
- *      anything other than the caller's own) are rejected with 403.
- *   2. **platform admin (no space_id)** — MUST pass an explicit
- *      `?target_space_id=<id>` query param. Without it we reject
- *      with 400, so a platform key never receives an export covering
- *      every space on the instance.
- *   3. **single-space self-host (anonymous / bootstrap admin
- *      mode)** — a space-less caller running against a DB whose items
- *      have no space_id (NULL) is the legitimate single-space path:
- *      pass `spaceId: undefined` through to the storage layer so list
- *      operations match `space_id IS NULL`, exporting the whole DB.
- *      Distinguishing this
- *      from case 2 is the explicit `target_space_id` query param —
- *      operators on hosted multi-space deployments must set it;
- *      single-space operators don't.
+ * **It branches on the caller's space binding and on the query parameter, and
+ * on nothing else.** There is no rank to read.
+ *
+ *   1. **A space-bound caller** — its own space wins, and naming any other
+ *      through `?target_space_id` is rejected with 403.
+ *   2. **A space-less caller naming a space** — the named space. That caller
+ *      is the operator key, which is the only credential that can be
+ *      space-less.
+ *   3. **A space-less caller naming none** — `spaceId: undefined` passes
+ *      through to the storage layer, so list operations match `space_id IS
+ *      NULL` and the export covers the space-less rows. The audit trail
+ *      records it as unscoped, which is the signal that this happened; there
+ *      is no 400 here and an earlier version of this comment claimed one.
  */
 function resolveExportSpace(
   apiKey: ApiKey | undefined,
@@ -114,14 +110,14 @@ function resolveExportSpace(
     }
     return callerSpace;
   }
-  // Space-less caller — platform admin OR single-space self-host.
-  // The presence of `target_space_id` distinguishes them: platform
-  // admins on hosted multi-space set it explicitly; single-space
-  // self-hosts leave it unset.
+  // Space-less caller — the operator key, which is the only credential that
+  // can be space-less. Naming a space scopes the export to it; naming none
+  // exports the space-less rows, which on any instance is the manifest
+  // catalogue and the grant projections rather than anybody's content.
   if (targetParam !== undefined) {
-    return targetParam; // platform admin scoping to a specific space
+    return targetParam;
   }
-  return undefined; // single-space self-host fallback
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -169,14 +165,16 @@ const exportRoute = createRoute({
         .string()
         .optional()
         .describe("Output format: `ndjson` (default) or `archive`"),
-      // Platform admins scope a hosted-mode export to a specific space
-      // by passing `?target_space_id=<id>`. Space-bound callers
-      // (space_admin / member) get their own space automatically;
-      // supplying a mismatching value here returns 403.
+      // A space-less caller — the operator key — scopes a hosted-mode
+      // export to one space by passing `?target_space_id=<id>`. A space-bound
+      // caller gets its own space automatically, and supplying a mismatching
+      // value here returns 403.
       target_space_id: z
         .string()
         .optional()
-        .describe("Platform admins scope the export to a specific space"),
+        .describe(
+          "A caller with no space binding scopes the export to one space with this; a space-bound caller exports its own space and may not name another",
+        ),
     }),
   },
   responses: {
@@ -243,9 +241,9 @@ export function exportRoutes(
 
     // Audit the export attempt before streaming starts — stamped for
     // both archive and NDJSON paths. `details.scope: "platform_unscoped"`
-    // signals operators when a platform admin exports without a
+    // signals operators when the operator key exports without a
     // target_space_id (the self-host fallback that returns all rows —
-    // fine on single-space deployments, a real concern on hosted
+    // fine where nothing carries a space, a real concern on hosted
     // multi-space). Alerting on this shape catches accidental cross-
     // space exports.
     const platformUnscoped =
@@ -294,13 +292,13 @@ export function exportRoutes(
     // means the type and everything under it on all three, so the explicit
     // `parent.*` spelling has to be accepted on all three too.
     const type = query.type;
-    // The space resolved once above, as the archive path passes it: a
-    // platform admin exporting another space names that space's types.
+    // The space resolved once above, as the archive path passes it: the
+    // operator key exporting another space names that space's types.
     assertTypeFilter(type, spaceId);
 
     // Same resolution as `GET /items`, sentinel included. Export shares the
     // storage filter with the listing, so a door that could not name every
-    // state was a route-layer gap rather than a missing capability.
+    // state was a route-layer gap rather than a missing permission.
     const { state, all_states: allStates } = resolveStateFilter(query.state);
 
     const timestampAfter = query.timestamp_after;
@@ -348,7 +346,7 @@ export function exportRoutes(
               // at 200 a page is five thousand walks otherwise, all on the
               // one reserved RLS connection this stream pins. Per page is
               // still where it is *called*, because the space is a property
-              // of the rows and a platform-admin export carries every
+              // of the rows and an operator-key export carries every
               // space's. See `_orphaned.ts`.
               const orphanScope = await orphans.resolve(result.data);
               for (const item of result.data) {
@@ -426,10 +424,10 @@ interface ArchiveManifest {
   format: string;
   created_at: string;
   /**
-   * space_id stamped at export time. `null` for single-space
+   * space_id stamped at export time. `null` for instance-wide
    * self-host exports (no space scope on either side); a string for
    * hosted-mode exports. Used by `/admin/restore-archive` to verify
-   * cross-space restore attempts (rejected unless the platform admin
+   * cross-space restore attempts (rejected unless the operator key
    * passes an explicit `target_space_id`).
    */
   space_id: string | null;
@@ -576,7 +574,7 @@ async function handleArchiveExport(
         customEdgeTypeCount += 1;
       }
 
-      // A space-less export is a platform admin's, and its items came from
+      // A space-less export is the operator key's, and its items came from
       // every space — so the blob lookup has to reach every space too. It
       // used to ask the instance-wide `""` bucket instead, where none of
       // those hashes live, and the archive recorded `blob_count: 0` while

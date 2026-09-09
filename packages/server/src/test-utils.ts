@@ -225,12 +225,12 @@ export async function closeTestContexts(
  *                           (defaults to undefined — keys-mode self-host)
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
- * @param opts.userRole      Optionally seed a `users` row bound to the
- *                           `auth_user` with this role. Without it, no
- *                           `users` row is created and the bearer
- *                           middleware falls back to `member` projection.
- *                           Hosted-mode storage only (no-op when the
- *                           storage doesn't expose `users`).
+ * @param opts.seedUserRow   Seed a `users` row bound to the `auth_user`, so
+ *                           the bearer middleware can resolve the caller's
+ *                           space. It used to be `userRole` and to take one
+ *                           of three role strings, none of which was ever
+ *                           stored — a user row carries no role and nothing
+ *                           projects one. Hosted-mode storage only.
  */
 export async function seedOauthBearer(
   storage: Storage,
@@ -239,7 +239,7 @@ export async function seedOauthBearer(
     clientName?: string;
     spaceId?: string;
     authUserId?: string;
-    userRole?: "instance_admin" | "space_admin" | "member";
+    seedUserRow?: boolean;
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
   if (
@@ -359,15 +359,15 @@ export async function seedOauthBearer(
     accessTtlMs: 3600_000,
   });
 
-  if (opts.userRole) {
+  if (opts.seedUserRow) {
     if (!storage.users) {
       throw new Error(
-        "seedOauthBearer({ userRole }) requires hosted-mode storage with a UserStore",
+        "seedOauthBearer({ seedUserRow }) requires hosted-mode storage with a UserStore",
       );
     }
     if (!opts.spaceId) {
       throw new Error(
-        "seedOauthBearer({ userRole }) requires opts.spaceId (users.space_id is FK-bound)",
+        "seedOauthBearer({ seedUserRow }) requires opts.spaceId (users.space_id is FK-bound)",
       );
     }
     await storage.users.create({
@@ -699,6 +699,14 @@ async function buildTestContext(
       // empty `type_permissions` still reached every type. With one permission
       // model the maps are the whole of a credential's reach, so the fixture
       // has to say what the rank used to grant it silently.
+      //
+      // **This is deliberately wider than any operator key the product can
+      // mint.** Bootstrap forces all four maps empty, and an operator key can
+      // only mint another operator key clamped to its own set, so the shape
+      // below is reachable solely by writing the row. The suite needs one
+      // credential that reaches everything; do not read this fixture as
+      // evidence that an operator key carries content reach, because it does
+      // not.
       type_permissions: { "*": "write" },
       extension_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },

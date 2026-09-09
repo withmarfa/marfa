@@ -346,10 +346,10 @@ export function idempotencyMiddleware(opts: {
     // unauthenticated stranger insert a row per request, keyed on 255
     // bytes of their choosing and kept for the whole retention window, on
     // a table with no quota; and because a space-less caller lands in the
-    // `COALESCE(space_id, '') = ''` bucket alongside every single-space
-    // self-host and every platform-admin credential, a planted key would
-    // make a legitimate caller's later use of the same one a fingerprint
-    // mismatch until it aged out.
+    // `COALESCE(space_id, '') = ''` bucket alongside every platform
+    // self-host and the operator key, a planted key would make a legitimate
+    // caller's later use of the same one a fingerprint mismatch until it
+    // aged out.
     //
     // An unauthenticated request has no write to make idempotent, so there
     // is nothing to give up by leaving it alone. No door here is the

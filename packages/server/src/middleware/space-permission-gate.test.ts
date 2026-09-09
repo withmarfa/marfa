@@ -106,7 +106,7 @@ describe("requireSpacePermission", () => {
     }).toThrow(MarfaError);
   });
 
-  it("refuses an OAuth caller holding no capability, naming the literal", () => {
+  it("refuses an OAuth caller holding no space permission, naming the literal", () => {
     let thrown: unknown;
     try {
       requireSpacePermission(
@@ -124,13 +124,13 @@ describe("requireSpacePermission", () => {
     const err = thrown as MarfaError;
     expect(err.code).toBe("forbidden");
     // The refusal names what would satisfy it. A generic 403 on an
-    // administrative surface sends the reader to the role, which is not what
-    // refused them, and the client cannot narrow toward a scope it is not told.
+    // administrative surface leaves the caller with nothing to act on, and it
+    // cannot narrow toward a scope it is not told.
     expect(err.message).toContain("space.keys");
     expect(err.details).toMatchObject({ required_scope: "space.keys" });
   });
 
-  it("admits an OAuth caller holding the capability", () => {
+  it("admits an OAuth caller holding the space permission", () => {
     expect(() => {
       requireSpacePermission(
         fakeContext({
@@ -143,9 +143,10 @@ describe("requireSpacePermission", () => {
     }).not.toThrow();
   });
 
-  it("does not let one capability stand in for another", () => {
-    // The family is exact by construction: no wildcard reaches a capability
-    // and holding every other member implies nothing about this one.
+  it("does not let one space permission stand in for another", () => {
+    // The family is exact by construction: no wildcard reaches a space
+    // permission and holding every other member implies nothing about this
+    // one.
     expect(() => {
       requireSpacePermission(
         fakeContext({
@@ -194,7 +195,9 @@ describe("the bearer middleware carries the grant onto the request", () => {
 
   beforeAll(async () => {
     ctx = await createTestContext({ authMode: "hosted" });
-    const space = await ctx.storage.spaces!.create("capability-carrier-space");
+    const space = await ctx.storage.spaces!.create(
+      "space-permission-carrier-space",
+    );
     spaceId = space.id;
   });
   afterAll(async () => {
@@ -219,7 +222,7 @@ describe("the bearer middleware carries the grant onto the request", () => {
     const seeded = await seedOauthBearer(
       ctx.storage,
       ["openid", "space.keys", "core.note:read"],
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const res = await probeApp().request("/probe", {
       headers: { Authorization: `Bearer ${seeded.token}` },
@@ -243,15 +246,15 @@ describe("the bearer middleware carries the grant onto the request", () => {
 
   it("carries what the projections drop, and does not widen them", async () => {
     // The premise of the whole carrier, asserted rather than assumed: the
-    // capability must appear in the grant and in none of the permission maps.
-    // If it ever reaches a map, a wildcard on that axis could resolve it and
-    // administrative authority would be grantable by breadth — which is the
-    // wrong repair `scopes.ts` warns against, and it would be invisible here
-    // without this check because the gate would still pass.
+    // space permission must appear in the grant and in none of the permission
+    // maps. If it ever reaches a map, a wildcard on that axis could resolve
+    // it and administrative authority would be grantable by breadth — which
+    // is the wrong repair `scopes.ts` warns against, and it would be
+    // invisible here without this check because the gate would still pass.
     const seeded = await seedOauthBearer(
       ctx.storage,
       ["openid", "space.keys", "core.note:read"],
-      { userRole: "space_admin", spaceId },
+      { seedUserRow: true, spaceId },
     );
     const app = new Hono<AppEnv>();
     app.use("*", authMiddleware(ctx.storage, TEST_API_KEY_SALT, "hosted"));
@@ -308,7 +311,9 @@ describe("a real door reads what a real grant carries", () => {
 
   beforeAll(async () => {
     ctx = await createTestContext({ authMode: "hosted" });
-    const space = await ctx.storage.spaces!.create("capability-door-space");
+    const space = await ctx.storage.spaces!.create(
+      "space-permission-door-space",
+    );
     spaceId = space.id;
   });
   afterAll(async () => {
@@ -320,7 +325,7 @@ describe("a real door reads what a real grant carries", () => {
     // proves the middleware, the gate and the route agree in one request.
     const { token } = await seedOauthBearer(ctx.storage, ["space.keys"], {
       spaceId,
-      userRole: "space_admin",
+      seedUserRow: true,
     });
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(200);
@@ -329,7 +334,7 @@ describe("a real door reads what a real grant carries", () => {
   it("refuses a bearer whose grant does not", async () => {
     const { token } = await seedOauthBearer(ctx.storage, ["core.note:read"], {
       spaceId,
-      userRole: "space_admin",
+      seedUserRow: true,
     });
     const res = await request(ctx.app, "GET", "/keys", { key: token });
     expect(res.status).toBe(403);

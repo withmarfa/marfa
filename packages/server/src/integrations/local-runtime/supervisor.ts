@@ -738,7 +738,7 @@ export function createSupervisor(
   ): Promise<void> {
     // Read for the connection's own space and its feed preference. The
     // message's space is not a substitute: a manual run carries the
-    // caller's space, and a platform admin has none, so keying on it would
+    // caller's space, and the operator key has none, so keying on it would
     // drop the row for an in-space connection somebody ran by hand.
     //
     // Failing this read must not cost the row. It decides a tier stamp and

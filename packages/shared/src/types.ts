@@ -282,8 +282,8 @@ export type EdgePermission = "read" | "write";
  * Per-metadata-sub-resource permission levels. Today the only sub-resource
  * is `types` (gating type registration via `POST /types`); future entries
  * (e.g. space config) follow the same shape. Default `{}` — no access —
- * means non-admin/non-platform credentials cannot mutate the metadata
- * surface.
+ * means the credential cannot mutate the metadata surface, whatever else it
+ * holds.
  */
 export type MetadataPermission = "read" | "write";
 
@@ -315,8 +315,8 @@ export interface ApiKey {
    * of the reserved-namespace types (`core.*`, `system.*`, `marfa.*`) and
    * is exempt from the publisher-handle ownership rule at type
    * registration. It does not admit reserved-namespace registration:
-   * `POST /types` refuses a reserved-root type for every credential,
-   * platform included — those types arrive with the build. The first
+   * `POST /types` refuses a reserved-root type for every credential, the
+   * operator key included — those types arrive with the build. The first
    * credential created at server install is the seed operator key; only an
    * existing operator key may mint another. Defaults to `false` for every
    * ordinary space credential.
@@ -372,17 +372,19 @@ export interface ApiKey {
   /**
    * Per-edge-type permissions map. Keyed by edge type id (`parent-of`,
    * `about`, `karakeep.list-member`, …) or `*` for wildcard. Empty object
-   * means no edge permissions granted — non-admin keys with no entries
-   * cannot create/update/delete edges (reads fall back to the source
-   * item's type_permissions).
+   * means no edge permissions granted, and a credential with no entries
+   * cannot create, update or delete edges. The operator flag buys nothing
+   * here — the edge gate never reads it — so a credential carrying it is
+   * refused like any other holding no entries. Reads fall back to the source
+   * item's `type_permissions`.
    */
   edge_permissions?: Record<string, EdgePermission>;
   /**
    * Per-metadata-sub-resource permissions map. Today only `types` is
-   * surfaced (gates `POST /types` for non-admin credentials). Empty
-   * object means no metadata permissions granted; admin keys bypass the
-   * map entirely. OAuth tokens carry the same map projected from the
-   * grant's `metadata.<subresource>:<verb>` scopes.
+   * surfaced, and it gates `POST /types` for every credential. An empty
+   * object means no metadata permissions granted, and nothing bypasses the
+   * map. OAuth tokens carry the same map projected from the grant's
+   * `metadata.<subresource>:<verb>` scopes.
    */
   metadata_permissions?: Record<string, MetadataPermission>;
   /**
@@ -838,7 +840,7 @@ export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
 /**
  * Wire shape accepted by `POST /connections/install`. The JSON install
  * sibling of the HTML consent flow — skips the human-consent step (no
- * browser approval) and is admin-only.
+ * browser approval) and needs `space.connections`.
  */
 export interface ConnectionInstallInput {
   /** id of the `system.integration` item (a manifest registered via
@@ -947,7 +949,7 @@ export interface PreviewEventCycleOverride {
  * `QueueMessageBody` envelopes the reactive-run bridge would emit, and for
  * each subscribing connection that wouldn't be dispatched, the reason why.
  * Pure server-side transform — no handler invocation, no queue producer call.
- * Space-admin scoped.
+ * Needs `space.connections`.
  */
 export interface PreviewEventRequest {
   /** id of an existing item the operator wants to simulate fanout for. */
@@ -1103,8 +1105,8 @@ export interface Space {
   /**
    * Operator-controlled lifecycle. `'active'` (default) allows writes;
    * `'suspended'` blocks them at the auth middleware. Reads pass through
-   * regardless. Platform-admin keys bypass the gate so operators can inspect
-   * a suspended space.
+   * regardless. The operator key bypasses the gate, so whoever runs the
+   * instance can inspect a suspended space.
    */
   status: SpaceStatus;
 }
@@ -1214,10 +1216,10 @@ export interface EnforcementSettings {
 
 /**
  * Per-space resource quotas. Empty / missing limits fall back to the
- * instance defaults from env (`MARFA_DEFAULT_QUOTA_*`). Quotas are
- * platform-admin-managed via `GET/PUT /admin/spaces/:id/quotas`; space-own
- * reads land via `GET /spaces/me/quotas` (space_admin or admin). Counts are
- * computed on-demand from existing tables at quota-check time.
+ * instance defaults from env (`MARFA_DEFAULT_QUOTA_*`). Quotas are managed by
+ * the operator key via `GET/PUT /admin/spaces/:id/quotas`; space-own reads
+ * land via `GET /spaces/me/quotas`, on `space.usage`. Counts are computed
+ * on-demand from existing tables at quota-check time.
  */
 export interface SpaceQuota {
   space_id: string;
@@ -1237,14 +1239,14 @@ export interface SpaceQuota {
 export type QuotaResource =
   "items" | "webhooks" | "blobs" | "storage_bytes" | "rate_per_minute";
 
-/** Space-level configuration. Admin-writable via `/spaces/me/config`. */
+/** Space-level configuration. Written through `/spaces/me/config` on `space.settings`. */
 export interface SpaceConfig {
   enforcement?: EnforcementSettings;
   /**
    * Maximum number of hops a single event may traverse before the bus
    * drops it as a suspected cycle. Integration reactions can publish further
    * events; without a budget, a malformed integration could spin a feedback
-   * loop. Default 5; admins can raise it for deeply pipelined integrations
+   * loop. Default 5; raise it on `space.settings` for deeply pipelined integrations
    * or lower it to tighten the leash.
    */
   max_event_hop_budget?: number;

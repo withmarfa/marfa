@@ -93,7 +93,7 @@ const WRITERS: Record<string, string> = {
   "routes/edges-bulk.ts":
     "POST /edges/bulk upserts on the (source, target, type) triple, so a retry converges. A batch response is also megabytes, and storing one per key trades an unbounded table for a property the door already has",
   "routes/admin-archive.ts":
-    "archive restore is idempotent by construction — an existing row is reported skipped — and it is a platform-admin operation over a file rather than a write a client retries",
+    "archive restore is idempotent by construction — an existing row is reported skipped — and it is an operator-key operation over a file rather than a write a client retries",
 
   // --- Writes with no request behind them, so no header to carry ---
   "auth/account-holder.ts": "sign-up provisioning, inside the auth hook",

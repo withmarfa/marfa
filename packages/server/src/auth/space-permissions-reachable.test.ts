@@ -1,15 +1,15 @@
 /**
- * A capability scope is requestable, and is granted only by being named.
+ * A space permission is requestable, and is granted only by being named.
  *
  * **Two properties that pull in opposite directions, which is why they are
  * tested together.** Until now the family was unreachable: `buildAllowedScopes`
- * emitted no capability literal and the bundle door dropped any a
+ * emitted no space permission literal and the bundle door dropped any a
  * configuration named, so an authorization request naming one was refused
  * `invalid_scope`. That made the family safe by making it useless — no route
- * could gate on a capability nobody could hold.
+ * could gate on a space permission nobody could hold.
  *
  * Publishing the family is what makes the gate possible. What must not come
- * with it is the thing the withholding was standing in for: a capability
+ * with it is the thing the withholding was standing in for: a space permission
  * arriving pre-ticked, or arriving through a bundle that claims it. Those are
  * now two separate guards rather than one, and the drop is no longer visible
  * in the allowlist's output, so it needs asserting where it still shows.
@@ -29,7 +29,7 @@ import {
 import { dcrDefaultScopes } from "./mint-ceiling.js";
 
 /** A bundle of the shape `MARFA_PERMISSION_BUNDLES` produces, naming a
- *  capability — the configuration that can carry the defect. */
+ *  space permission — the configuration that can carry the defect. */
 const CLAIMING_BUNDLE: PermissionBundle = {
   id: "operator-custom",
   label: "Operator custom",
@@ -48,8 +48,8 @@ afterEach(() => {
   logSpy.mockRestore();
 });
 
-describe("the allowlist publishes the capability family", () => {
-  it("emits every capability literal, so a client can ask for one", () => {
+describe("the allowlist publishes the space permission family", () => {
+  it("emits every space permission literal, so a client can ask for one", () => {
     const scopes = new Set(buildAllowedScopes(DEFAULT_PERMISSION_BUNDLES));
     for (const literal of SPACE_PERMISSIONS) {
       expect(scopes.has(literal), literal).toBe(true);
@@ -57,7 +57,7 @@ describe("the allowlist publishes the capability family", () => {
   });
 
   it("emits them from the closed set rather than from a bundle", () => {
-    // Asked with no bundles at all: a capability's reachability must not
+    // Asked with no bundles at all: a space permission's reachability must not
     // depend on a configuration naming it, or an operator who ships none
     // has an instance whose gates can never be satisfied.
     const scopes = new Set(buildAllowedScopes([]));
@@ -94,7 +94,7 @@ describe("a bundle still cannot be the reason one is publishable", () => {
   it("keeps it out of the ceiling an anonymous registration is given", () => {
     // The third bundle door, and the one that was reading the bundles raw.
     // It was invisible while the family was unpublishable: the registration
-    // validated its own defaults against an allowlist holding no capability,
+    // validated its own defaults against an allowlist holding none of them,
     // so an operator bundle naming one made every anonymous DCR fail
     // `invalid_scope`. With the family published that check passes instead,
     // and the literal would be written into a stored client row that outlives
@@ -110,9 +110,9 @@ describe("a bundle still cannot be the reason one is publishable", () => {
     }
   });
 
-  it("no shipped bundle names a capability", () => {
+  it("no shipped bundle names a space permission", () => {
     // The property the gate rests on, pinned rather than remembered: a
-    // capability inside a default-on bundle would arrive ticked at every
+    // space permission inside a default-on bundle would arrive ticked at every
     // consent, which is the grant-by-silence the family exists to stop.
     for (const bundle of DEFAULT_PERMISSION_BUNDLES) {
       for (const scope of bundle.scopes) {

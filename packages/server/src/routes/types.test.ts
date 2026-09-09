@@ -767,12 +767,12 @@ describe("POST /types — reserved namespaces are not authored at runtime", () =
   // `storage.types.create` are this route and the archive-restore replay,
   // and the replay refuses reserved namespaces before it reaches it.
   for (const tier of ["core", "system", "marfa"] as const) {
-    it(`refuses a ${tier}.* registration from a platform credential`, async () => {
+    it(`refuses a ${tier}.* registration from the operator key`, async () => {
       const res = await request(ctx.app, "POST", "/types", {
-        key: ctx.adminKey, // bootstrap admin: is_operator, no space
+        key: ctx.adminKey, // the bootstrap credential: is_operator, no space
         body: { id: `${tier}.runtime-authored-probe`, ...baseType },
       });
-      // Previously 201: the gate admitted a platform credential, which put
+      // Previously 201: the gate admitted the operator key, which put
       // registration and archive restore in disagreement. An archive
       // carrying such a type is refused whatever credential restores it,
       // so the row could only ever have made that space's exports
@@ -868,9 +868,9 @@ describe("POST /types — publisher-tier handle ownership", () => {
     expect(res.status).toBe(201);
   });
 
-  it("exempts platform credentials", async () => {
+  it("exempts the operator key", async () => {
     const res = await request(hosted.app, "POST", "/types", {
-      key: hosted.adminKey, // bootstrap admin: is_operator, no space
+      key: hosted.adminKey, // the bootstrap credential: is_operator, no space
       body: { id: "somevendor.platform-seeded", ...baseType },
     });
     expect(res.status).toBe(201);
@@ -894,7 +894,7 @@ describe("POST /types — publisher-tier handle ownership", () => {
     //
     // Seeded space-bound and non-operator rather than minted through
     // `POST /keys`, which would hand it the caller's operator flag — and a
-    // platform credential is exempt from this rule for a different reason, so
+    // operator key is exempt from this rule for a different reason, so
     // the test would then pass without touching the one under test.
     const suffix = Math.random().toString(36).slice(2, 10);
     const rawKey = `marfa_k1_test_keysmode_${suffix}`;

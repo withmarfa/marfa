@@ -15,7 +15,7 @@ import {
 export interface HydrateTypeRegistryOptions {
   /**
    * Owning space for the registrations. Omit for the null-space bucket
-   * (single-space self-hosts, platform-registered types) — the same
+   * (the platform-registered set) — the same
    * convention `registerTypeSchema` follows.
    */
   spaceId?: string | null;

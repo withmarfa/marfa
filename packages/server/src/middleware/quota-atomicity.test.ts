@@ -66,7 +66,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** A space with an items ceiling, and a member key inside it. */
+/** A space with an items ceiling, and a space-bound key inside it. */
 async function spaceWithItemLimit(
   limit: number,
 ): Promise<{ spaceId: string; key: string }> {
@@ -89,7 +89,6 @@ async function spaceWithItemLimit(
       body: {
         label: `quota-${suffix}`,
         source: `quota-${suffix}`,
-        role: "space_admin",
         default_tier: "library",
         type_permissions: { "*": "write" },
       },
@@ -325,7 +324,6 @@ describe.skipIf(!isPg)("items quota under concurrency", () => {
         body: {
           label: `unl-${suffix}`,
           source: `unl-${suffix}`,
-          role: "space_admin",
           default_tier: "library",
           type_permissions: { "*": "write" },
         },

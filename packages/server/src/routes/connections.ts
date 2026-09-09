@@ -65,7 +65,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 // "space.connections")` on every route. The permission decides who, and the
 // caller's `space_id` decides where: storage lookups and writes are scoped by
 // it, so a space-bound credential reaches only its own space's connections,
-// while a space-less operator key on a single-space self-host reaches every
+// while a space-less operator key reaches every
 // one. A credential without the permission is rejected with 403.
 // ---------------------------------------------------------------------------
 
@@ -117,7 +117,7 @@ const installRoute = createRoute({
   tags: ["Connections"],
   summary: "Install an integration",
   description:
-    "Installs a connection from a registered integration manifest without the browser consent screen, for non-interactive operator and tooling use. Admin-only; runs the same compensating-write pipeline and audit trail as the HTML consent flow.",
+    "Installs a connection from a registered integration manifest without the browser consent screen, for non-interactive operator and tooling use. Requires `space.connections`; runs the same compensating-write pipeline and audit trail as the HTML consent flow.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -158,7 +158,7 @@ const installRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin.",
+      description: "Caller does not hold `space.connections`.",
     },
     404: {
       content: {
@@ -230,7 +230,7 @@ const pauseResponses = {
     content: {
       "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
     },
-    description: "Caller is not an admin.",
+    description: "Caller does not hold `space.connections`.",
   },
   404: {
     content: {
@@ -349,7 +349,7 @@ const upgradePreviewRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
-      description: "Caller is not an admin.",
+      description: "Caller does not hold `space.connections`.",
     },
     404: {
       content: {
@@ -400,7 +400,7 @@ const pendingUpgradesRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
-      description: "Caller is not an admin.",
+      description: "Caller does not hold `space.connections`.",
     },
   },
 });
@@ -477,7 +477,7 @@ const approveUpgradeRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
-      description: "Caller is not an admin.",
+      description: "Caller does not hold `space.connections`.",
     },
     404: {
       content: {
@@ -558,7 +558,7 @@ const upgradeRoute = createRoute({
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
       description:
-        "Caller is not an admin, or the newer manifest widens what the connection may do and needs consent.",
+        "Caller does not hold `space.connections`, or the newer manifest widens what the connection may do and needs consent.",
     },
     404: {
       content: {
@@ -622,7 +622,7 @@ const runRoute = createRoute({
       content: {
         "application/json": { schema: makeErrorResponseSchema(["forbidden"]) },
       },
-      description: "Caller is not an admin.",
+      description: "Caller does not hold `space.connections`.",
     },
     404: {
       content: {
@@ -683,7 +683,7 @@ const uninstallRoute = createRoute({
           schema: makeErrorResponseSchema(["forbidden"]),
         },
       },
-      description: "Caller is not an admin.",
+      description: "Caller does not hold `space.connections`.",
     },
     404: {
       content: {
@@ -850,7 +850,7 @@ export function connectionRoutes(
     const clientIp = c.var.clientIp;
 
     // Manifests are platform-scoped (space_id IS NULL) — the widening
-    // lets a space_admin caller look them up; the resulting connection
+    // lets a space-bound caller look them up; the resulting connection
     // is stamped with the caller's space_id.
     const integration = await storage.items.get(integration_id, spaceId, {
       includePlatformScoped: true,
@@ -911,7 +911,7 @@ export function connectionRoutes(
       );
     }
 
-    // spaceId is omitted for single-space self-hosts; the dispatch evaluator
+    // spaceId is omitted where the row carries no space; the dispatch evaluator
     // normalizes both sides to null so the cross-space gate doesn't trip spuriously.
     const cycle = body.cycle ?? {};
     const event: ItemEventWithId = {
@@ -1375,7 +1375,7 @@ export function connectionRoutes(
         // wait on, so a version registered in between is what would
         // actually be applied, carrying a consent nobody gave it.
         targetIntegrationItemId: candidateRef,
-        // The one place this is set. A space admin has seen the lines
+        // The one place this is set. A person has seen the lines
         // above and named the version they apply to.
         consentedToWidening: true,
       });

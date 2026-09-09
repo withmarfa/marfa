@@ -5,7 +5,7 @@
  * catalog at boot (`integrations/catalog-reconcile.ts`). The script is for
  * an instance you are not deploying to.
  *
- * It registers via `POST /integrations` (platform-credential gated), from
+ * It registers via `POST /integrations` (operator-key gated), from
  * `src/integrations/client-manifests.ts`. An installed integration is not
  * here: its manifest lives in withmarfa/integrations, and an instance gets
  * it from the image it runs.
@@ -17,10 +17,10 @@
  *
  * Usage (from the monorepo root):
  *   MARFA_API_URL=https://your-instance \
- *   MARFA_API_KEY=<platform-admin key> \
+ *   MARFA_API_KEY=<operator key> \
  *     pnpm --filter @withmarfa/server exec tsx scripts/seed-staging.ts
  *
- * The key MUST be a platform credential (is_operator: true). Re-running is
+ * The key MUST be the operator key (is_operator: true). Re-running is
  * safe: a manifest already registered at the same (name, version) returns
  * 409 and is reported as "exists", not an error.
  */
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   );
   const apiKey = process.env.MARFA_API_KEY;
   if (!apiKey) {
-    console.error("MARFA_API_KEY is required (platform-admin key).");
+    console.error("MARFA_API_KEY is required (the operator key).");
     process.exit(1);
   }
 

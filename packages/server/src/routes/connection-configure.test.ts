@@ -689,7 +689,7 @@ describe("the configuration surface answers a browser session", () => {
   }
 
   /** Install through the browser flow, so the connection lands in the
-   *  session user's own space rather than an admin key's. */
+   *  session user's own space rather than a bearer key's. */
   async function installAsBrowser(
     cookie: string,
     name: string,

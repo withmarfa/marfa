@@ -2,7 +2,7 @@
  * Create-path latency benchmark over real HTTP against a real Postgres.
  * Exercises the full space-bounded write path — RLS transaction wrapper,
  * rate-limit windows, quota gate — because those are where the create
- * path's round trips live; a space-less admin key would skip most of it.
+ * path's round trips live; a space-less credential would skip most of it.
  *
  * Usage:
  *   DATABASE_URL=postgres://... \
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
     );
   } finally {
     // The bench owns what it creates, on every exit path. The credential
-    // is the part that matters: a live space_admin key left behind is
+    // is the part that matters: a live space-bound key left behind is
     // not harmless if DATABASE_URL pointed anywhere real. The space is
     // suspended (there is no space delete), which blocks writes through
     // it; the inert bench items stay, which is fine for the scratch

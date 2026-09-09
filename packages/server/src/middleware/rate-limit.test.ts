@@ -111,7 +111,7 @@ async function buildCtx(): Promise<Ctx> {
   };
 }
 
-async function makeMemberKey(ctx: Ctx, label: string): Promise<string> {
+async function makeSpaceKey(ctx: Ctx, label: string): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 10);
   const res = await ctx.app.request("/keys", {
     method: "POST",
@@ -146,9 +146,9 @@ afterAll(async () => {
 
 describe("rate-limit keying", () => {
   it("limits per credential, not per IP, for authenticated requests", async () => {
-    // Two different member keys (so they have distinct credential ids).
-    const keyA = await makeMemberKey(ctx, "rl-a");
-    const keyB = await makeMemberKey(ctx, "rl-b");
+    // Two different space keys (so they have distinct credential ids).
+    const keyA = await makeSpaceKey(ctx, "rl-a");
+    const keyB = await makeSpaceKey(ctx, "rl-b");
 
     // Limit is 2/window on non-GET, default*2 on GET. Use GET /items which
     // resolves to limit=4. Issue 5 as key A — last one must 429.
@@ -421,7 +421,7 @@ describe("rate-limit response headers survive the error handler", () => {
   // reference promises the headers and the SDK's retry path reads
   // Retry-After.
   it("a 429 carries Retry-After and the X-RateLimit-* trio", async () => {
-    const key = await makeMemberKey(ctx, "rl-headers");
+    const key = await makeSpaceKey(ctx, "rl-headers");
     const hit = async () =>
       ctx.app.request("/items", {
         headers: { Authorization: `Bearer ${key}` },
@@ -447,7 +447,7 @@ describe("rate-limit response headers survive the error handler", () => {
   });
 
   it("an ordinary error response carries X-Request-ID", async () => {
-    const key = await makeMemberKey(ctx, "rl-reqid");
+    const key = await makeSpaceKey(ctx, "rl-reqid");
     const res = await ctx.app.request(
       "/items/019621f0-0000-7000-8000-000000000000",
       { headers: { Authorization: `Bearer ${key}` } },

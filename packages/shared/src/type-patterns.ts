@@ -127,7 +127,7 @@ export interface TypePatternSql {
 /**
  * `undefined` means the caller resolves names only, so the registry is never
  * consulted and the result is empty. `null` is a real scope — the null-space
- * bucket a single-space self-host registers into — and does resolve.
+ * bucket the platform set registers into — and does resolve.
  */
 function declaredExtras(root: string, spaceId?: string | null): string[] {
   if (spaceId === undefined) return [];
@@ -228,7 +228,7 @@ export function typeSubtreeToSql(
  *
  * `spaceId` reads exactly as it does for {@link typeSubtreeToSql}:
  * `undefined` means the caller resolves names only and the declared
- * clause is skipped, `null` is the real null-space scope a single-space
+ * clause is skipped, `null` is the real null-space scope a platform
  * self-host registers into, and a string is that space.
  *
  * Ordered cheapest first, and the ordering is load-bearing rather than

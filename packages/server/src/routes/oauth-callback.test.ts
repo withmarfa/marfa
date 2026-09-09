@@ -41,7 +41,7 @@ afterAll(async () => {
 });
 
 describe("POST /connections/:id/oauth/start — cross-space credential guard", () => {
-  it("refuses to resolve a cross-space credential_ref even for a platform admin caller", async () => {
+  it("refuses to resolve a cross-space credential_ref even for the operator key", async () => {
     if (!ctx.storage.spaces) return;
     const spaceA = await ctx.storage.spaces.create("t235-oauth-start-A");
     const spaceB = await ctx.storage.spaces.create("t235-oauth-start-B");

@@ -28,14 +28,14 @@ interface SeriesError {
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // A member credential, not an admin: reading your own calendar is the
-  // ordinary case, and it exercises the type filter rather than bypassing it.
+  // A space credential, not the operator key: reading your own calendar is
+  // the ordinary case, and it exercises the type filter rather than bypassing
+  // it.
   const res = await request(ctx.app, "POST", "/keys", {
     key: ctx.adminKey,
     body: {
       label: "occurrences-member",
       source: "occurrences-src",
-      role: "member",
       type_permissions: { "*": "write" },
       edge_permissions: { "*": "write" },
     },

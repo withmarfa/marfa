@@ -32,7 +32,7 @@ export class PgAccountLifecycleStore implements AccountLifecycleStore {
       //    The join is intentionally written via a sub-select so the
       //    cross-table mutation stays in one transaction. The user is
       //    looked up via `users.auth_user_id`; null-space rows on
-      //    `users` (single-space self-host) are skipped by the
+      //    `users` (no space scope) are skipped by the
       //    IS NOT NULL guard.
       await tx
         .update(apiKeys)
