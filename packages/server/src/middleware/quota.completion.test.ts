@@ -9,8 +9,8 @@
  *     window — a noisy single credential is bounded by the
  *     credential cap, a space's collective fleet by the space cap.
  *
- *   - Space-less keys (the operator key, single-space self-hosts)
- *     bypass per-space rate enforcement entirely.
+ *   - A space-less key, which is the operator key, bypasses per-space rate
+ *     enforcement entirely.
  */
 
 import { describe, it, expect, afterEach } from "vitest";

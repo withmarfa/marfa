@@ -39,8 +39,8 @@ import type { AppEnv } from "./auth.js";
  * orders would deadlock against each other; a deterministic order is what
  * makes the second reservation safe to add.
  *
- * No-op for a caller with no space: the operator key, single-space self-hosts
- * and the bootstrap credential have no space to constrain. Also a no-op when
+ * No-op for a caller with no space, which is the operator key and the
+ * bootstrap credential that becomes one: neither has a space to constrain. Also a no-op when
  * nothing is limited, so an unlimited space is never serialised against a
  * ceiling that does not exist — a NULL `<resource>_limit` on the space_quotas
  * row with no env default means unlimited.

@@ -21,9 +21,9 @@
  *     bootstrap (`POST /keys` when not yet bootstrapped) and the
  *     unauthenticated auth surfaces (`/auth/sign-in`, etc.). These don't
  *     carry a space in the credential — there's nothing to gate.
- *   - Space-less credentials (`apiKey.space_id === undefined`) —
- *     single-space self-hosts and the operator bootstrap. No
- *     space means no per-space status.
+ *   - Space-less credentials (`apiKey.space_id === undefined`) — the
+ *     operator key, and nothing else can be. No space means no per-space
+ *     status.
  *   - `is_operator: true` credentials — operators MUST be able to write
  *     to a suspended space to suspend it further, change quotas, or
  *     unsuspend it.
@@ -100,7 +100,8 @@ export function spaceSuspensionMiddleware(storage: Storage) {
       return next();
     }
 
-    // Fail open when the space store is absent (single-space self-hosts).
+    // Fail open when the space store is absent, which is a deployment with
+    // no space plane at all rather than a caller without a space.
     const spaces = storage.spaces;
     if (!spaces) {
       return next();

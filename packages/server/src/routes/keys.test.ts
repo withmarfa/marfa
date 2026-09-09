@@ -1560,7 +1560,7 @@ describe("POST /keys — space binding", () => {
 });
 
 describe("POST /keys — single-space deployments keep minting space-less keys", () => {
-  // A single-space self-host has no space rows at all (they are only ever
+  // An instance with no space plane has no space rows at all (they are only ever
   // created by the hosted sign-up flow), so every key it mints is legitimately
   // space-less — which is to say every key it mints is an operator key. The
   // space-bound refusal still applies here, and is not conditioned on the

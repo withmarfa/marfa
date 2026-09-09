@@ -20,7 +20,7 @@ const MS_PER_DAY = 86_400_000;
  *      `SpaceConfig` override field, falling back to the instance default).
  *   3. Runs a space-scoped sweep with that effective retention.
  *   4. Also runs the NULL-space sweep at the instance default — catches
- *      single-space self-host items and any rows with no space scope.
+ *      rows with no space scope.
  *   5. Sums the deleted counts.
  *
  * Each per-space + the NULL sweep are gated by a per-space coordination
@@ -1175,7 +1175,7 @@ async function runSpaceFanout(opts: {
     );
     if (deleted) total += deleted;
   }
-  // NULL-space scope — single-space self-host items + any rows with
+  // NULL-space scope — rows with
   // no space scope. Always uses the instance default, which is the
   // retention self-hosts get when they never configure per-space
   // overrides.

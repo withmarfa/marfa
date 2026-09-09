@@ -87,7 +87,7 @@ interface ArchiveManifest {
   /**
    * space_id stamped at export time. Used here to verify the importing
    * admin's authority over the source space. An archive without this
-   * field restores as null, so single-space self-host archives keep working.
+   * field restores as null, so an archive carrying no space keeps working.
    */
   space_id?: string | null;
   item_count: number;
@@ -425,7 +425,7 @@ export function adminArchiveRoutes(
     // Verify manifest.space_id against the resolved restore space.
     // Three legitimate shapes:
     //   - manifest.space_id is null/undefined → an unspaceed archive
-    //     or single-space self-host export. Allowed regardless of
+    //     or an export carrying no space. Allowed regardless of
     //     restore space (import semantics fall back to NULL space_id
     //     on items, matching the source shape).
     //   - manifest.space_id matches restoreSpaceId → expected

@@ -21,9 +21,9 @@
  *
  * The runtime source is read on two schedules, because registrations are
  * space-scoped and consent is per-space. At boot, the space-less bucket is
- * folded into the instance-wide bundle set — that bucket is where every
- * registration lands on a single-space self-host, so it is the whole
- * story in keys mode. In hosted mode a registration belongs to one space,
+ * folded into the instance-wide bundle set — that bucket is where a
+ * registration made before keys mode had a space still lives, so folding it
+ * in is what keeps such a registration reachable. In hosted mode a registration belongs to one space,
  * and folding it in instance-wide would present one space's namespaces on
  * every other space's consent screen; the consent route instead derives
  * that space's own roots at render time ({@link resolveRuntimeCustomNamespaces}

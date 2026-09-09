@@ -1150,7 +1150,7 @@ describe("the own-write shortcut's space equality", () => {
   });
 });
 
-describe("the single-space self-host shape", () => {
+describe("the space-less bucket", () => {
   /**
    * Every context above is hosted, with several spaces to tell apart. A
    * self-host has exactly one, and that is the difference worth covering:

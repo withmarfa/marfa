@@ -27,7 +27,7 @@ const _coreRegistry = new Map<string, EdgeTypeSchema>(
  * registered by space A is therefore invisible to space B's lookups —
  * the isolation that keeps one space's relationship vocabulary out of
  * another's. The sentinel `NULL_SPACE` key holds custom edge types with no
- * space (single-space self-hosts, platform-registered types) so the
+ * space (the platform-registered set) so the
  * keys-mode flow is unaffected.
  */
 const _customBySpace = new Map<string, Map<string, EdgeTypeSchema>>();
@@ -54,7 +54,7 @@ export const EDGE_TYPE_REGISTRY: ReadonlyMap<string, EdgeTypeSchema> =
  * Resolves an edge-type schema for a given space. Core edge types resolve
  * globally; custom edge types resolve only within their owning space. A
  * lookup with no `spaceId` sees core types plus the null-space bucket
- * (single-space self-hosts), never another space's custom types.
+ * (the platform-registered set), never another space's custom types.
  */
 export function getEdgeTypeSchema(
   edgeTypeId: string,
@@ -81,7 +81,7 @@ export function isCoreEdgeType(edgeTypeId: string): boolean {
  * Registers a custom edge-type schema into the space's overlay. Core edge
  * types are never registered here (they live in the global map); callers
  * filter them out before calling. `spaceId` is the owning space — omit it
- * only for the null-space bucket (single-space self-host / platform).
+ * only for the null-space bucket (the platform-registered set).
  */
 export function registerEdgeTypeSchema(
   schema: EdgeTypeSchema,

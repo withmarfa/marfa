@@ -147,7 +147,7 @@ export const items = sqliteTable(
     // one. COALESCE rather than a plain (space_id, source, source_id)
     // composite because `space_id` is nullable and NULL never equals NULL
     // in a unique index, which would stop deduping the null-space bucket
-    // entirely — every row on a single-space self-host.
+    // entirely — every row written with no space.
     uniqueIndex("idx_items_source_dedup")
       .on(sql`COALESCE(${table.space_id}, '')`, table.source, table.source_id)
       .where(sql`source IS NOT NULL`),
@@ -327,7 +327,7 @@ export const apiKeys = sqliteTable(
 //
 // `space_id` is `NOT NULL DEFAULT ''` rather than nullable to keep the
 // composite PK simple. Empty string `''` is the sentinel for
-// "instance-wide / no space" — used by single-space self-hosts and by
+// "instance-wide / no space" — used by the platform-registered set and by
 // operator-key uploads in hosted mode where the credential carries no
 // space_id. The empty-string-as-sentinel asymmetry vs other tables (which
 // use nullable `space_id`) is intentional: composite PKs with nullable
@@ -400,7 +400,7 @@ export const oauthDeviceCodes = sqliteTable(
 // Custom types are namespaced per space. The composite PK on (space_id, id)
 // lets two spaces register the same type id independently — each owns its own
 // type vocabulary. `space_id` is NOT NULL DEFAULT '' (empty-string sentinel)
-// for single-space self-host / platform registrations, mirroring the `blobs`
+// for platform registrations, mirroring the `blobs`
 // and `custom_edge_types` tables.
 export const customTypes = sqliteTable(
   "custom_types",
@@ -1196,7 +1196,7 @@ export const idempotencyRecords = sqliteTable(
     // mirroring `idx_items_source_dedup`: `space_id` is nullable and NULL
     // never equals NULL in a unique index, so the plain shape would stop
     // deduping the null-space bucket entirely — every request on a
-    // single-space self-host, and every operator-key request anywhere.
+    // instance-wide bucket, and every operator-key request anywhere.
     // The same defect was found and repaired on `bulk_action_jobs`, which
     // reached for NULLS NOT DISTINCT instead; COALESCE says it once and is
     // the same expression in both dialects.

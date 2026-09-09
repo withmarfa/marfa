@@ -66,9 +66,9 @@ async function acquireRlsOrRefuse(
  * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable
  * session-level RLS on a dedicated pool connection for the duration
  * of the stream. Without both set, the route runs on the owner
- * connection — used for SQLite, for space-less callers (the operator
- * key / single-space self-host), and when RLS enforcement is
- * disabled instance-wide.
+ * connection — used for SQLite, for a space-less caller (which is the
+ * operator key and nothing else), and when RLS enforcement is disabled
+ * instance-wide.
  */
 export interface ExportRoutesOptions {
   rlsEnforce: boolean;

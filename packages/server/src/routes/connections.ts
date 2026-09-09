@@ -65,7 +65,7 @@ import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 // "space.connections")` on every route. The permission decides who, and the
 // caller's `space_id` decides where: storage lookups and writes are scoped by
 // it, so a space-bound credential reaches only its own space's connections,
-// while a space-less operator key on a single-space self-host reaches every
+// while a space-less operator key reaches every
 // one. A credential without the permission is rejected with 403.
 // ---------------------------------------------------------------------------
 
@@ -911,7 +911,7 @@ export function connectionRoutes(
       );
     }
 
-    // spaceId is omitted for single-space self-hosts; the dispatch evaluator
+    // spaceId is omitted where the row carries no space; the dispatch evaluator
     // normalizes both sides to null so the cross-space gate doesn't trip spuriously.
     const cycle = body.cycle ?? {};
     const event: ItemEventWithId = {

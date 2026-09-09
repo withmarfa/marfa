@@ -273,7 +273,7 @@ export function shippedPlatformTypes(): SeededPlatformType[] {
  */
 const _customBySpace = new Map<string, Map<string, TypeSchema>>();
 
-// Sentinel for custom types with no owning space — single-space self-hosts
+// Sentinel for custom types with no owning space — the platform set
 // and platform-registered types. An empty string can't collide with a real
 // space id (ids are non-empty), so it's a safe bucket key.
 const NULL_SPACE = "";
@@ -286,7 +286,7 @@ function spaceKey(spaceId: string | null | undefined): string {
  * Resolves a type schema for a given space: core/system types resolve
  * globally; custom types resolve only within their owning space. A lookup
  * with no `spaceId` sees core/system plus the null-space bucket
- * (single-space self-hosts), never another space's custom types. This is the
+ * (the platform-registered set), never another space's custom types. This is the
  * single resolution primitive every space-aware helper below threads through,
  * including the inheritance-chain walks (a custom type's parent may itself be a
  * custom type in the same space).
@@ -411,7 +411,7 @@ export const TYPE_REGISTRY: ReadonlyMap<string, TypeSchema> = _coreRegistry;
  * Resolves a type schema for a given space. Core/system types resolve
  * globally; custom types resolve only within their owning space. A lookup
  * with no `spaceId` sees core/system plus the null-space bucket
- * (single-space self-hosts), never another space's custom types.
+ * (the platform-registered set), never another space's custom types.
  */
 export function getTypeSchema(
   typeId: string,
@@ -563,7 +563,7 @@ export function isPublisherType(id: string): boolean {
  * for such a type identically wherever it sits.
  *
  * `spaceId` is the owning space — omit it only for the null-space bucket
- * (single-space self-host / platform).
+ * (the platform-registered set).
  */
 export function registerTypeSchema(
   schema: TypeSchema,

@@ -194,7 +194,7 @@ export function evaluateDispatch(
   if (entry.connection_id === event.originatingConnectionId) {
     return { would_dispatch: false, reason: "self_event" };
   }
-  // Normalize to null on both sides so single-space self-hosted (where
+  // Normalize to null on both sides so an instance-wide row (where
   // both event.spaceId and entry.space_id are typically `undefined`)
   // doesn't fall foul of `undefined !== null` and accidentally drop every
   // subscriber. Hosted multi-space: both sides carry strings; the

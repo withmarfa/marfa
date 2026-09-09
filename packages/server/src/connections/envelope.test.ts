@@ -99,7 +99,7 @@ describe("evaluateDispatch", () => {
     ).toEqual({ would_dispatch: false, reason: "system_type" });
   });
 
-  it("passes a single-space self-host where neither side carries a space", () => {
+  it("passes an instance-wide row where neither side carries a space", () => {
     expect(
       evaluateDispatch(event({ spaceId: null }), {
         ...SUBSCRIBER,

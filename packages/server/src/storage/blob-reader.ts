@@ -12,7 +12,7 @@ export interface ResolvedBlob {
  * every space when the reader is not confined to one.
  *
  * The `blobs` table is keyed `(space_id, hash)`, with `""` standing for the
- * instance-wide bucket a single-space self-host writes into. A reader with no
+ * instance-wide bucket the platform set is written into. A reader with no
  * space is either the operator key, whose reach is every space, or that
  * self-host, whose only rows are the `""` ones. Looking `""` up in the first
  * case reports absence for bytes that are plainly there, and **absence is the

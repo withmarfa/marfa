@@ -1016,8 +1016,8 @@ export interface VersionStore {
 
 export interface TypeStore {
   /** Lists the types visible to a space: the global core/system set plus the
-   *  space's own custom types. Omit `spaceId` for the null-space bucket
-   *  (single-space self-host / platform). */
+   *  space's own custom types. Omit `spaceId` for the null-space bucket,
+   *  which holds the platform-shipped set. */
   list(spaceId?: string): Promise<TypeSchema[]>;
   /** Resolves a type by id within the space: core/system types resolve
    *  globally, custom types only for their owning space. */
@@ -1121,7 +1121,7 @@ export interface LoadedType {
 
 export interface EdgeTypeStore {
   /** Lists a single space's custom edge types. Omit `spaceId` for the
-   *  null-space bucket (single-space self-host / platform). */
+   *  null-space bucket, which holds the platform-shipped set. */
   list(spaceId?: string): Promise<EdgeTypeSchema[]>;
   get(id: string, spaceId?: string): Promise<EdgeTypeSchema | undefined>;
   create(schema: EdgeTypeSchema, spaceId?: string): Promise<EdgeTypeSchema>;
@@ -1879,7 +1879,7 @@ export interface OAuthStore {
    *
    * Space-scoped: the WHERE matches `(id, space_id)` so a hosted-mode
    * caller cannot trip this against another space's grant row. Pass
-   * `null` for the unscoped (single-space self-host) case.
+   * `null` for the unscoped case, which is a grant with no space behind it.
    *
    * Best-effort: callers swallow errors. The middleware-side cache mark
    * already prevents a stampede; storage failures must never break the
@@ -2358,7 +2358,7 @@ export interface OauthProviderStore {
    * on `properties.kind / .client_id / .user_id` via the dialect's JSON
    * extractor. Sub-ms in PG, sub-ms in SQLite.
    *
-   * Space-scoped: pass `null` for the unscoped (single-space self-host)
+   * Space-scoped: pass `null` for the unscoped (no space scope)
    * case so the row's `space_id IS NULL` predicate is used. A hosted-mode
    * caller passing a real space cannot cross-space-match.
    */
@@ -2499,7 +2499,7 @@ export interface AuditStore {
    * - `undefined` — every row older than the cutoff (unscoped sweep).
    * - `string` — only rows where `space_id` matches.
    * - `null` — only rows where `space_id IS NULL` (system-initiated
-   *   audits + the no-space rows that single-space self-hosts use).
+   *   audits + the no-space rows the platform set uses).
    *
    * Returns the number of rows actually deleted.
    */
@@ -2839,8 +2839,8 @@ export interface EdgeStore {
    * cross-space id matches zero rows and raises `edge_not_found`, which
    * the handler answers 404 — a bare error here would reach the generic
    * tail and cost the caller a 500 for a row that is simply gone.
-   * Omitting `spaceId` leaves the update unscoped (operator /
-   * single-space self-host).
+   * Omitting `spaceId` leaves the update unscoped, which is the operator
+   * key and nothing else.
    *
    * **This is the only statement in the codebase that changes an edge row
    * in place**, which is why the version bump lives here rather than in a

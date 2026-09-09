@@ -49,7 +49,7 @@ const DEFAULT_AGGREGATE_MULTIPLIER = 4;
  * The counter table sits in the same database every other space-scoped
  * table lives in. Two server instances pointed at the same DB share
  * counters cluster-wide; SQLite is single-process by file lock so the
- * same code path stays correct on single-space self-hosts.
+ * same code path stays correct on a self-hosted instance.
  *
  * Hot path: one upsert round-trip per gated request. The per-space
  * ceiling lookup (space_quotas.rate_per_minute_limit) stays cached
@@ -246,8 +246,8 @@ export function rateLimitMiddleware(
 
     // Per-space ceiling on top of the per-credential window. A noisy
     // single credential is bounded by the cap above; a space's
-    // collective fleet is bounded here. Skipped for space-less keys
-    // (single-space self-hosts, the operator key).
+    // collective fleet is bounded here. Skipped for a space-less key, which
+    // is the operator key and has no space to charge.
     if (spaceWindowKey && spaceLimitValue !== null) {
       rejectOver(
         windows.get(spaceWindowKey),
