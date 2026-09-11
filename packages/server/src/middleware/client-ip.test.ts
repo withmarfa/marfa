@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Context } from "hono";
-import { getClientIp, parseTrustedProxyCidrs } from "./client-ip.js";
+import {
+  getClientIp,
+  parseTrustedProxyCidrs,
+  parseTrustedProxyHeader,
+} from "./client-ip.js";
 
 // ---------------------------------------------------------------------------
 // Helpers — synthesize a minimal Hono context with peer address + headers.
@@ -9,9 +13,12 @@ import { getClientIp, parseTrustedProxyCidrs } from "./client-ip.js";
 function makeContext(args: {
   peer?: string | undefined;
   xff?: string | undefined;
+  headers?: Record<string, string>;
 }): Context {
   const headers = new Map<string, string>();
   if (args.xff !== undefined) headers.set("x-forwarded-for", args.xff);
+  for (const [k, v] of Object.entries(args.headers ?? {}))
+    headers.set(k.toLowerCase(), v);
   return {
     env: args.peer
       ? { incoming: { socket: { remoteAddress: args.peer } } }
@@ -138,5 +145,84 @@ describe("getClientIp", () => {
       xff: "garbage, 203.0.113.5",
     });
     expect(getClientIp(c, trusted)).toBe("203.0.113.5");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseTrustedProxyHeader
+// ---------------------------------------------------------------------------
+
+describe("parseTrustedProxyHeader", () => {
+  it("returns null when unset or blank", () => {
+    expect(parseTrustedProxyHeader(undefined)).toBeNull();
+    expect(parseTrustedProxyHeader("")).toBeNull();
+    expect(parseTrustedProxyHeader("   ")).toBeNull();
+  });
+
+  it("lower-cases the header name", () => {
+    expect(parseTrustedProxyHeader("X-Real-IP")).toBe("x-real-ip");
+  });
+
+  it("throws on a value that is not a header token", () => {
+    expect(() => parseTrustedProxyHeader("x real ip")).toThrow(
+      /not a valid header name/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getClientIp with a trusted platform header
+// ---------------------------------------------------------------------------
+
+describe("getClientIp with trustedHeader", () => {
+  const header = "x-real-ip";
+
+  it("returns the header value regardless of the peer address", () => {
+    const c = makeContext({
+      peer: "10.250.13.4",
+      headers: { "x-real-ip": "203.0.113.9" },
+    });
+    expect(getClientIp(c, [], header)).toBe("203.0.113.9");
+  });
+
+  it("takes precedence over the CIDR walk", () => {
+    // The peer is untrusted, so the CIDR algorithm would stop at the peer.
+    const c = makeContext({
+      peer: "10.250.13.4",
+      xff: "198.51.100.7",
+      headers: { "x-real-ip": "203.0.113.9" },
+    });
+    expect(getClientIp(c, parseTrustedProxyCidrs("127.0.0.1/32"), header)).toBe(
+      "203.0.113.9",
+    );
+  });
+
+  it("falls back to the peer when the header is absent", () => {
+    const c = makeContext({ peer: "10.250.13.4" });
+    expect(getClientIp(c, [], header)).toBe("10.250.13.4");
+  });
+
+  it("falls back to the peer when the header is unparseable", () => {
+    const c = makeContext({
+      peer: "10.250.13.4",
+      headers: { "x-real-ip": "not-an-ip" },
+    });
+    expect(getClientIp(c, [], header)).toBe("10.250.13.4");
+  });
+
+  it("takes the leftmost entry when the header carries a chain", () => {
+    const c = makeContext({
+      peer: "10.250.13.4",
+      headers: { "x-real-ip": "203.0.113.9, 198.51.100.7" },
+    });
+    expect(getClientIp(c, [], header)).toBe("203.0.113.9");
+  });
+
+  it("normalizes an IPv4-mapped IPv6 value", () => {
+    const c = makeContext({
+      peer: "10.250.13.4",
+      headers: { "x-real-ip": "::ffff:203.0.113.9" },
+    });
+    expect(getClientIp(c, [], header)).toBe("203.0.113.9");
   });
 });

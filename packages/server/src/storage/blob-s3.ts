@@ -15,6 +15,19 @@ export interface S3BlobConfig {
   accessKeyId?: string;
   secretAccessKey?: string;
   prefix?: string;
+  /**
+   * Path-style addressing (`<endpoint>/<bucket>/<key>`) rather than
+   * virtual-hosted (`<bucket>.<endpoint>/<key>`). Only consulted when an
+   * endpoint is set; AWS itself is always virtual-hosted.
+   *
+   * Defaults to true, because MinIO needs it and the self-host quickstart
+   * is the deployment most likely to be wrong about this. Stores that
+   * present virtual-hosted URLs set it false.
+   *
+   * It matters for presigned URLs as much as for direct calls, since both
+   * are signed by the same client and the style is part of the signature.
+   */
+  forcePathStyle?: boolean;
 }
 
 /**
@@ -37,7 +50,10 @@ export class S3BlobBackend implements BlobBackend {
     this.client = new S3Client({
       region: config.region,
       ...(config.endpoint
-        ? { endpoint: config.endpoint, forcePathStyle: true }
+        ? {
+            endpoint: config.endpoint,
+            forcePathStyle: config.forcePathStyle ?? true,
+          }
         : {}),
       ...(config.accessKeyId && config.secretAccessKey
         ? {

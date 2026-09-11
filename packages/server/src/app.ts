@@ -345,7 +345,13 @@ export function createApp(
   // `c.var.clientIp`. Runs BEFORE auth so audit rows emitted from
   // auth-side paths (e.g. token revocation) and route handlers alike
   // can attribute the originator without re-resolving each time.
-  app.use("*", clientIpMiddleware(config.trustedProxyCidrs));
+  app.use(
+    "*",
+    clientIpMiddleware(
+      config.trustedProxyCidrs,
+      config.trustedProxyHeader ?? null,
+    ),
+  );
 
   // Auth middleware runs BEFORE rate limiting so the limiter can key on
   // the credential id (per-credential enforcement). Anonymous requests
@@ -449,6 +455,7 @@ export function createApp(
           // to avoid a dead prefix in the table.
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
+        trustedProxyHeader: config.trustedProxyHeader ?? null,
         // Per-space rate ceiling on top of the per-credential window.
         // Reads space_quotas.rate_per_minute_limit (with env fallback)
         // via a 60s in-process cache. No-op for space-less keys.

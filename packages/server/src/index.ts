@@ -201,6 +201,7 @@ async function main() {
       endpoint: config.s3Endpoint || undefined,
       accessKeyId: config.s3AccessKeyId || undefined,
       secretAccessKey: config.s3SecretAccessKey || undefined,
+      forcePathStyle: config.s3ForcePathStyle,
     });
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);

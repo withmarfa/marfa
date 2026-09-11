@@ -17,6 +17,18 @@
  *
  * Algorithm when trust is unset:
  *   - Always return the peer address. `x-forwarded-for` is ignored.
+ *
+ * Some platforms cannot be expressed as a CIDR list. They terminate every
+ * connection at an edge whose addresses are undocumented and free to
+ * change, and they overwrite a single header with the client address —
+ * Railway sends `X-Real-IP` and no `X-Forwarded-For` at all. Pinning a
+ * CIDR there means guessing at a range the platform never promised, and
+ * getting it wrong fails silently: every request resolves to the edge, so
+ * per-client rate limiting collapses into one bucket and every audit row
+ * records the proxy. `TRUSTED_PROXY_HEADER` names that header instead, and
+ * the trust it declares is "nothing reaches this process except through
+ * the platform's edge, which overwrites this header". Set it on a
+ * directly-reachable deployment and any client can spoof its own address.
  */
 
 import ipaddr from "ipaddr.js";
@@ -45,6 +57,23 @@ export function parseTrustedProxyCidrs(raw: string | undefined): CidrRange[] {
         );
       }
     });
+}
+
+/** Parse `TRUSTED_PROXY_HEADER` into a lower-cased header name, or null
+ *  when unset. Throws on a value that is not a valid header token — the
+ *  same fail-loudly-at-startup posture `parseTrustedProxyCidrs` takes,
+ *  and worth having because the failure mode of a typo here is silent. */
+export function parseTrustedProxyHeader(
+  raw: string | undefined,
+): string | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(trimmed)) {
+    throw new Error(
+      `TRUSTED_PROXY_HEADER: "${trimmed}" is not a valid header name`,
+    );
+  }
+  return trimmed.toLowerCase();
 }
 
 /** Normalize an address: strips IPv4-mapped IPv6 (`::ffff:1.2.3.4` →
@@ -97,18 +126,35 @@ function readPeer(c: Context): string | null {
  * @param c - The Hono context.
  * @param trustedCidrs - Pre-parsed CIDR list (call `parseTrustedProxyCidrs`
  *   once at startup and reuse the result; do not parse per-request).
+ * @param trustedHeader - Pre-parsed header name from
+ *   `parseTrustedProxyHeader`, or null. When set it takes precedence over
+ *   the CIDR walk, because the two express different trust: a CIDR list
+ *   says which peers may speak for a client, and this says the platform
+ *   already did.
  * @returns The client IP as a string, or `null` when no peer is available
  *   (mostly in tests with synthetic contexts).
  */
 export function getClientIp(
   c: Context,
   trustedCidrs: CidrRange[],
+  trustedHeader: string | null = null,
 ): string | null {
   const peerRaw = readPeer(c);
   if (!peerRaw) return null;
 
   const peer = normalize(peerRaw);
   if (!peer) return null;
+
+  if (trustedHeader) {
+    // A header carrying a list is still a chain; the leftmost entry is the
+    // client. Falling back to the peer on an absent or unparseable value
+    // keeps a misconfigured deployment recording something real rather
+    // than null, which downstream treats as "no IP available".
+    const raw = c.req.header(trustedHeader);
+    const first = raw?.split(",")[0];
+    const addr = first ? normalize(first) : null;
+    return (addr ?? peer).toString();
+  }
 
   if (trustedCidrs.length === 0) return peer.toString();
 
@@ -145,9 +191,10 @@ export type { CidrRange };
  */
 export function clientIpMiddleware(
   trustedCidrs: CidrRange[],
+  trustedHeader: string | null = null,
 ): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    c.set("clientIp", getClientIp(c, trustedCidrs));
+    c.set("clientIp", getClientIp(c, trustedCidrs, trustedHeader));
     await next();
   };
 }
