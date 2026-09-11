@@ -15,8 +15,8 @@
 # deploy key on the checkout step, so no credential reaches a layer here;
 # building by hand means cloning it there first at that commit.
 #
-# The droplets this runs on are linux/amd64. Both the deploy and the CI
-# image-build job build it natively on a hosted amd64 runner, with no QEMU.
+# This runs on linux/amd64. Both the deploy and the CI image-build job
+# build it natively on a hosted amd64 runner, with no QEMU.
 # On an arm64 host, such as a local Apple-Silicon machine, the same buildx
 # command cross-compiles under emulation: slower, and the image is
 # identical.

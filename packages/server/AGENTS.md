@@ -56,6 +56,20 @@ The failures in this area share one shape: the wrong connection, from the wrong 
 - **Cleanup runs a scoped reset, not `DISCARD ALL`.** postgres.js caches prepared-statement names client-side and reuses them across reservations, so dropping them server-side without a client-side invalidation surfaces as `prepared statement does not exist` on whatever next touches the recycled connection. Policies read the GUC at execute time, so the cache is value-agnostic and the scoped reset matches the actual invariant. If the reset fails the connection is destroyed rather than returned.
 - **A dispatch holds its slot for tens of seconds, not milliseconds.** Budget it like a stream rather than like a job tick when sizing anything against the pool.
 
+### The connection budget
+
+**A process opens several pools, not one, and `MARFA_DB_POOL_SIZE` names only the largest.** Beside it sit the streaming and job pool derived from it, the reactive-run drainer's single connection, a single-connection pool for the Connection lifecycle lock, pg-boss's own pool, and on the web role a small client for the consent lock. A deployment that budgets by the variable alone under-counts by roughly six connections per process.
+
+**`MARFA_DB_POOL_SIZE` on the web role is also the ceiling on concurrent space-scoped requests**, which the name does not say and which is the number a deployment actually runs out of first. With RLS enforced every request carrying a space is wrapped in a transaction, and a transaction owns its connection until the response is finished, so a web process serves at most that many such requests at once and the rest queue. Nothing errors and nothing deadlocks; the server simply reads as slow, which is why this is worth stating rather than leaving to be measured.
+
+**Redo the sum before raising a pool size, adding a process, or adding a pool**, against what the database actually reports rather than what its tier is advertised to allow: `max_connections` less `superuser_reserved_connections`. Deploy-time is the case to watch, because a migration runs against the full running stack.
+
+### Streaming is load-bearing at the proxy, and not every proxy honours it
+
+Live updates are long-lived `text/event-stream` responses. Three properties have to hold, and a proxy that breaks any of them degrades the stream without failing a health check: **responses must not be buffered**, **the connection must not be closed on an idle timeout**, and **a client disconnect must reach the application**.
+
+This deployment ran behind Caddy with `flush_interval -1` and no configured timeouts, for exactly those reasons, and the absence of a timeout was deliberate rather than an omission. It is recorded here because the guarantee moved rather than disappeared: a platform that terminates TLS on the deployment's behalf supplies or withholds each property on its own terms, and **Railway caps any HTTP response at fifteen minutes with no setting to disable it**. Streams are therefore cut and must reconnect. A browser `EventSource` does that by itself; the Swift SDK, the CLI and the MCP see a transport error rather than an end of stream, so the resume machinery is what keeps the cost a reconnect rather than lost events.
+
 ## The change stream
 
 - **Every stream announces its position as its first frame, and that frame carries no SSE `id:`.** The absent id is the load-bearing half: a resuming client is sent this frame before its backlog, and both `EventSource` and this repository's own subscriber treat `id:` as the cursor to resume from, so one here would move the client past exactly the events it reconnected for.

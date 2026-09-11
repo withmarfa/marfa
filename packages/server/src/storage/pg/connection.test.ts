@@ -192,9 +192,8 @@ describe("createConnection pool-mode guard", () => {
     // Every number here is load-bearing somewhere else.
     //
     // `max: 1` is what bounds the deployment's connection sum: the budget
-    // in `infra/digitalocean/server.env.example` adds one per process for
-    // this pool and lands exactly on the tier's ceiling, so a second slot
-    // would put a two-role deployment over it.
+    // in `packages/server/AGENTS.md` adds one per process for this pool,
+    // so a second slot would double that term for a two-role deployment.
     //
     // The idle timeout is what makes that ceiling a ceiling rather than a
     // reservation. Nothing holds this pool between lifecycle changes, so

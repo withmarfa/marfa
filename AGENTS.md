@@ -1,6 +1,6 @@
 # Marfa
 
-Typed data layer. This monorepo holds the workspace packages, the sample apps under `examples/`, and the deploy shape under `infra/`.
+Typed data layer. This monorepo holds the workspace packages and the sample apps under `examples/`. The hosted deployment is a container image built by `deploy-server.yml` and run on a platform, so it has no shape checked in here; `docker-compose.yml` at the root is the self-hosting one and is a shipped feature rather than this deployment's path.
 
 **Query the docs MCP before reading source** on any documented surface: types, edges, runtime substrates, connections, auth flows. `https://docs.marfa.so/mcp`, or `marfa docs search "<query>"` from the CLI.
 
