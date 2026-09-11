@@ -40,11 +40,6 @@
 name: Integrations pin drift
 
 on:
-  schedule:
-    # Early UTC, so a failure is waiting at the start of the day rather than
-    # landing in the middle of one. Offset from the OpenAPI guard's 07:17 so
-    # the two are not competing for a runner or for attention.
-    - cron: "42 7 * * *"
   workflow_dispatch:
 
 concurrency:

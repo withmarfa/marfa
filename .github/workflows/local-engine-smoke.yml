@@ -21,10 +21,6 @@
 name: Local engine smoke
 
 on:
-  schedule:
-    # Off the hour: the top of the hour is the busiest slot in the account,
-    # and nothing here needs to be the first thing to run.
-    - cron: "37 6 * * *"
   workflow_dispatch:
 
 permissions:

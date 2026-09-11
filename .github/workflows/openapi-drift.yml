@@ -23,10 +23,6 @@
 name: OpenAPI drift
 
 on:
-  schedule:
-    # Early UTC, so a failure is waiting at the start of the day rather than
-    # landing in the middle of one.
-    - cron: "17 7 * * *"
   workflow_dispatch:
 
 concurrency:
