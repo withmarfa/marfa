@@ -1,6 +1,9 @@
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
-import { parseTrustedProxyCidrs } from "./middleware/client-ip.js";
+import {
+  parseTrustedProxyCidrs,
+  parseTrustedProxyHeader,
+} from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
 import { isSamePgEndpoint, pgEndpointLabel } from "./storage/pg/endpoint.js";
 
@@ -124,6 +127,11 @@ export interface AppConfig {
   s3Endpoint: string;
   s3AccessKeyId: string;
   s3SecretAccessKey: string;
+  /** See `S3BlobConfig.forcePathStyle`. Defaults true; only read when an
+   *  endpoint is set. Optional on the type so test contexts constructing
+   *  `AppConfig` literals don't have to supply it; `loadConfig` always
+   *  populates it. */
+  s3ForcePathStyle?: boolean;
   apiKeySalt: string;
   corsOrigins: string[];
   /** Named consent-screen permission bundles (see `DEFAULT_PERMISSION_BUNDLES`).
@@ -309,6 +317,11 @@ export interface AppConfig {
   /** Pre-parsed CIDR list for opt-in `x-forwarded-for` trust. Empty
    *  means "no proxy trusted; ignore the header". See middleware/client-ip.ts. */
   trustedProxyCidrs: CidrRange[];
+  /** Header the platform's edge overwrites with the client address, for
+   *  platforms whose edge has no pinnable CIDR. Null means unset. Takes
+   *  precedence over `trustedProxyCidrs`. Optional on the type for the same
+   *  reason as `s3ForcePathStyle`. See middleware/client-ip.ts. */
+  trustedProxyHeader?: string | null;
   /** Issuer URL the better-auth instance is reached at — protocol + host
    *  (and port). Drives cookie domains and the OAuth issuer field on the
    *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
@@ -915,6 +928,7 @@ export function loadConfig(): AppConfig {
     s3Endpoint: process.env.S3_ENDPOINT ?? "",
     s3AccessKeyId: process.env.S3_ACCESS_KEY_ID ?? "",
     s3SecretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "",
+    s3ForcePathStyle: process.env.S3_FORCE_PATH_STYLE !== "false",
     apiKeySalt,
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
     permissionBundles: getPermissionBundles(),
@@ -1057,6 +1071,9 @@ export function loadConfig(): AppConfig {
     // Parse + validate at startup. Malformed CIDRs throw — we want bad
     // config to surface immediately, not silently degrade.
     trustedProxyCidrs: parseTrustedProxyCidrs(process.env.TRUSTED_PROXY_CIDRS),
+    trustedProxyHeader: parseTrustedProxyHeader(
+      process.env.TRUSTED_PROXY_HEADER,
+    ),
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",

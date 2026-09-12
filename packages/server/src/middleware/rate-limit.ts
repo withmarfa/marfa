@@ -14,6 +14,12 @@ export interface RateLimitConfig {
   pathLimits: Record<string, number>;
   /** Trusted reverse-proxy CIDRs for safe x-forwarded-for handling. */
   trustedProxyCidrs: CidrRange[];
+  /** Platform edge header carrying the client address, or null. Must be
+   *  threaded through here as well as onto `clientIpMiddleware`: the
+   *  limiter resolves the IP itself rather than reading `c.var.clientIp`,
+   *  so a deployment that set only the middleware would keep limiting
+   *  every client as one. */
+  trustedProxyHeader?: string | null;
   /**
    * Required storage handle. The rate-limit counter lives in the shared
    * store (`storage.rateLimits`) and the per-space rate-cap lookup
@@ -134,7 +140,9 @@ export function rateLimitMiddleware(
   return async (c, next) => {
     const apiKey = c.get("apiKey");
     const identifier =
-      apiKey?.id ?? getClientIp(c, config.trustedProxyCidrs) ?? "anon";
+      apiKey?.id ??
+      getClientIp(c, config.trustedProxyCidrs, config.trustedProxyHeader) ??
+      "anon";
     const path = c.req.path;
 
     let limit = config.defaultLimit;
