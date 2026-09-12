@@ -12,15 +12,17 @@
 # call, and the health probe is a public HTTPS request.
 #
 # Migrate-then-deploy is Railway's pre-deploy command on `web`, set to
-# `node dist/migrate.js --dialect pg`. It runs between build and release in
-# a separate container from the same image, with the service's variables,
-# and a non-zero exit blocks the release without retrying. The server never
+# `node dist/predeploy.js`. It runs between build and release in a separate
+# container from the same image, with the service's variables, and a
+# non-zero exit blocks the release without retrying. The server never
 # migrates on boot.
 #
-# --dialect is explicit and load-bearing. The migrator falls back to
-# SQLITE when DB_DIALECT is absent or misspelled, so a pre-deploy without
-# the flag would run sqlite migrations against nothing, print "Migrations
-# complete." and exit 0 — the gate passing while applying nothing.
+# That entry applies the migrations and then seeds the fixed first-party
+# OAuth clients. It is ONE entry rather than two chained commands because
+# Railway execs the pre-deploy command rather than running it through a
+# shell: `a && b` passes everything after the first word to `a` as
+# arguments and runs only `a`, silently. See the docstring on
+# packages/server/src/scripts/predeploy.ts.
 #
 # Manual trigger only. Merges to main change nothing until dispatched.
 #

@@ -49,7 +49,7 @@ const CLIENTS: SeedClient[] = [
   },
 ];
 
-async function main(): Promise<void> {
+export async function seedFirstPartyClients(): Promise<void> {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
     console.error("DATABASE_URL is required (the env's direct Postgres URL).");
@@ -116,10 +116,20 @@ async function main(): Promise<void> {
   console.log(
     `\nDone: ${String(created)} created, ${String(existed)} already present.`,
   );
-  process.exit(0);
 }
 
-main().catch((err: unknown) => {
-  console.error(err);
-  process.exit(1);
-});
+// CLI entry point, kept so the script can still be run on its own.
+if (
+  process.argv[1] &&
+  (process.argv[1].endsWith("seed-oauth-clients.ts") ||
+    process.argv[1].endsWith("seed-oauth-clients.js"))
+) {
+  seedFirstPartyClients()
+    .then(() => {
+      process.exit(0);
+    })
+    .catch((err: unknown) => {
+      console.error(err);
+      process.exit(1);
+    });
+}

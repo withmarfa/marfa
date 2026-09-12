@@ -18,6 +18,10 @@ export default defineConfig({
     // the only place this can run, and there is no checkout there to run tsx
     // against.
     "seed-oauth-clients": "src/scripts/seed-oauth-clients.ts",
+    // The hosted pre-deploy step: migrations then OAuth client seeding, in one
+    // process, because Railway execs the pre-deploy command rather than running
+    // it through a shell and `a && b` silently runs only `a`.
+    predeploy: "src/scripts/predeploy.ts",
     // The client manifests, as their own entry so the in-image verification
     // can read the set this build actually ships without importing the
     // server. Importing `lib.js` would pull the whole route tree and the
