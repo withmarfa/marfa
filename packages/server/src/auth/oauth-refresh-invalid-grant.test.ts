@@ -30,7 +30,7 @@ describe("POST /auth/oauth2/token — unknown refresh token", () => {
       body: new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: "marfa_rt_does_not_exist",
-        client_id: "marfa-tickets",
+        client_id: "acme-notes",
       }).toString(),
     });
 

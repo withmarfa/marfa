@@ -453,10 +453,10 @@ describe("GET /auth/sign-in", () => {
 
   it("carries no such link for a client that has no picker", async () => {
     ctx = await createTestContext();
-    const redirectUri = "https://tickets.marfa.so/auth/callback";
+    const redirectUri = "https://notes.acme.example/auth/callback";
     await ctx.storage.oauthProvider?.createClient({
-      clientId: "marfa-tickets",
-      name: "Marfa Tickets",
+      clientId: "acme-notes",
+      name: "Acme Notes",
       isPublic: true,
       grantTypes: ["authorization_code", "refresh_token"],
       responseTypes: ["code"],
@@ -465,7 +465,7 @@ describe("GET /auth/sign-in", () => {
       redirectUris: [redirectUri],
       referenceId: null,
     });
-    const returnTo = `/auth/authorize?client_id=marfa-tickets&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
+    const returnTo = `/auth/authorize?client_id=acme-notes&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code`;
     const res = await request(
       ctx.app,
       "GET",
