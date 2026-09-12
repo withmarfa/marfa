@@ -35,7 +35,7 @@ const ORIGIN = "http://localhost:0";
 /** A return path shaped like the real one: a signed authorize query whose
  *  base64 signature contains the `+` that used to break the round trip. */
 const SIGNED_RETURN_TO =
-  "/auth/authorize?response_type=code&client_id=marfa-tickets" +
+  "/auth/authorize?response_type=code&client_id=acme-notes" +
   "&exp=9999999999&sig=BET18rqMuNKqxb8v32Q0S7bXVAd2SyMDGWh9wAqp%2B%2BA%3D";
 
 const encodeNext = (value: string): string =>

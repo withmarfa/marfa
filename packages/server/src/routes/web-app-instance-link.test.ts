@@ -89,12 +89,13 @@ describe("resolveWebAppInstanceLink", () => {
   });
 
   it("says nothing for another client", async () => {
-    // `marfa-tickets` is first-party too and has no instance picker to reach.
+    // Only the web app has an instance picker to be sent back to, so any
+    // other client gets no link regardless of how it is registered.
     const link = await resolveWebAppInstanceLink(
-      storageWith("marfa-tickets", ["https://tickets.marfa.so/auth/callback"]),
+      storageWith("acme-notes", ["https://notes.acme.example/auth/callback"]),
       authorizeReturnTo({
-        client_id: "marfa-tickets",
-        redirect_uri: "https://tickets.marfa.so/auth/callback",
+        client_id: "acme-notes",
+        redirect_uri: "https://notes.acme.example/auth/callback",
       }),
       INSTANCE,
     );

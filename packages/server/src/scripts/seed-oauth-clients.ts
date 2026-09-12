@@ -1,8 +1,8 @@
 /**
- * Seed the fixed, first-party OAuth clients (`marfa-web`, `marfa-tickets`)
- * directly into `auth_oauth_client`.
+ * Seed the fixed, first-party OAuth client (`marfa-web`) directly into
+ * `auth_oauth_client`.
  *
- * The hosted browser apps use a STABLE `client_id` rather than per-browser
+ * The hosted browser app uses a STABLE `client_id` rather than per-browser
  * dynamic client registration (DCR). A DCR client lives only in the database,
  * so a DB reset orphans every browser's cached client and sign-in then fails
  * with `invalid_client`. A fixed, pre-seeded client survives resets. The
@@ -22,10 +22,7 @@
  * Idempotent: a client that already exists is reported and skipped.
  */
 import { createPgStorage } from "../storage/pg/index.js";
-import {
-  MARFA_TICKETS_CLIENT_ID,
-  MARFA_WEB_CLIENT_ID,
-} from "../auth/first-party-clients.js";
+import { MARFA_WEB_CLIENT_ID } from "../auth/first-party-clients.js";
 
 interface SeedClient {
   clientId: string;
@@ -34,18 +31,13 @@ interface SeedClient {
 }
 
 // Redirect URIs are `${origin}/auth/callback` — the path every Marfa browser
-// app posts back to. Each app's production origin plus the shared local dev
-// origin (Vite on :5173) so the same fixed client works in development too.
+// app posts back to. The production origin plus the local dev origin (Vite on
+// :5173) so the same fixed client works in development too.
 const CLIENTS: SeedClient[] = [
   {
     clientId: MARFA_WEB_CLIENT_ID,
     name: "Marfa Web",
     origins: ["https://app.marfa.so", "http://localhost:5173"],
-  },
-  {
-    clientId: MARFA_TICKETS_CLIENT_ID,
-    name: "Marfa Tickets",
-    origins: ["https://tickets.marfa.so", "http://localhost:5173"],
   },
 ];
 
