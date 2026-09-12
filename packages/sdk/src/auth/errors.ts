@@ -23,7 +23,12 @@ export type OAuthErrorCode =
   // polling helper isn't used.
   | "authorization_pending"
   | "slow_down"
-  | "expired_token";
+  | "expired_token"
+  // RFC 7591 (Dynamic Client Registration) — the registration endpoint's own
+  // refusals. Both mean nothing was minted, so a caller holding a working
+  // registration keeps it rather than clearing one it cannot replace.
+  | "invalid_client_metadata"
+  | "invalid_redirect_uri";
 
 export class OAuthError extends Error {
   readonly code: OAuthErrorCode;

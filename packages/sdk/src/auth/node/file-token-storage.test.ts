@@ -63,13 +63,19 @@ describe("FileTokenStorage", () => {
     expect(file?.oauth?.blob).toBe("blob-value");
   });
 
-  it("delete removes only the oauth slot", async () => {
+  it("delete removes the session and leaves the registration", async () => {
+    // It used to take the whole `oauth` slot. The registration store keeps
+    // its record in that same slot, so signing out cost a fresh client
+    // registration on the way back in and abandoned the old row, which
+    // nothing on the client can revoke. A session ending says nothing about
+    // whether the client the server minted is still good.
     await writeConfigFile(path, { url: "http://localhost:8602" });
     const s = storage();
     await s.set("ignored", "blob-value");
     await s.delete("ignored");
     const file = await readConfigFile(path);
-    expect(file?.oauth).toBeUndefined();
+    expect(file?.oauth?.blob).toBeUndefined();
+    expect(file?.oauth?.client_id).toBe("client-1");
     expect(file?.url).toBe("http://localhost:8602");
     expect(await s.get("ignored")).toBeNull();
   });

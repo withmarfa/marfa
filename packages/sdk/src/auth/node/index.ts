@@ -22,3 +22,4 @@ export {
   FileTokenStorage,
   type FileTokenStorageOptions,
 } from "./file-token-storage.js";
+export { FileClientRegistrationStore } from "./client-registration-store.js";

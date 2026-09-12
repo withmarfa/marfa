@@ -41,7 +41,15 @@ export class FileTokenStorage implements TokenStorage {
   }
 
   async set(_key: string, value: string): Promise<void> {
+    // **Carry the registration fields across.** `mergeConfigFile` is a
+    // shallow merge at the top level, so handing it a fresh `oauth` replaces
+    // the whole slot — and the registration store keeps its record in that
+    // same slot. Rebuilding it from scratch here dropped the recorded scope
+    // ceiling on every sign-in, which reads as a stale registration on the
+    // next one and mints an abandoned client row each time round.
+    const existing = (await readConfigFile(this.path))?.oauth;
     const slot: OAuthSlot = {
+      ...existing,
       client_id: this.clientId,
       issuer: this.issuer,
       blob: value,
@@ -49,11 +57,21 @@ export class FileTokenStorage implements TokenStorage {
     await mergeConfigFile(this.path, { oauth: slot });
   }
 
+  /**
+   * Drop the session, and only the session.
+   *
+   * **The registration stays.** It used to take the whole `oauth` slot,
+   * client id included, so every sign-out cost a fresh client registration on
+   * the way back in and left the old row behind with nothing able to revoke
+   * it. A session ending says nothing about whether the client the server
+   * minted is still good.
+   */
   async delete(): Promise<void> {
     const file = await readConfigFile(this.path);
-    if (!file?.oauth) return;
-    const next = { ...file };
-    delete next.oauth;
-    await writeConfigFile(this.path, next);
+    const slot = file?.oauth;
+    if (!slot) return;
+    const withoutSession: OAuthSlot = { ...slot };
+    delete withoutSession.blob;
+    await writeConfigFile(this.path, { ...file, oauth: withoutSession });
   }
 }
