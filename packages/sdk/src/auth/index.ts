@@ -23,3 +23,26 @@ export { startDeviceFlow } from "./device-flow.js";
 export type { StartDeviceFlowConfig, DeviceFlowHandle } from "./device-flow.js";
 export { discoverEndpoints, DiscoveryError } from "./discovery.js";
 export type { Endpoints } from "./discovery.js";
+export {
+  registerClient,
+  resolveClient,
+  withClientRepair,
+  registrationIsStale,
+  uncoveredScopes,
+  repairCanHelp,
+  isDeadClientError,
+  isStaleCeilingError,
+  oauthErrorFrom,
+  InMemoryClientRegistrationStore,
+  CLIENT_REGISTRATION_EPOCH,
+  DEVICE_CODE_GRANT,
+} from "./client-registration.js";
+export type {
+  ClientManifest,
+  ClientOrigin,
+  ClientRegistrationStore,
+  RegisterClientOptions,
+  ResolveClientOptions,
+  ResolvedClient,
+  StoredClientRegistration,
+} from "./client-registration.js";

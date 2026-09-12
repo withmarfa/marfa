@@ -50,6 +50,19 @@ export interface OAuthSlot {
    *  client registration persisting the `client_id` and the device flow
    *  completing. */
   blob?: string;
+  /** The scope ceiling `client_id` was registered claiming. A ceiling is
+   *  invisible from the client side — the server freezes it and never
+   *  publishes it back — so this record is the only way to know what the
+   *  stored client can carry. */
+  client_scope?: string;
+  /** The registration epoch `client_id` was written under. Absent in records
+   *  written before epochs existed, which read as 0 and are replaced.
+   *
+   *  **Additive, and it has to stay that way.** Another shipped tool reads
+   *  this same file through an older build of this package; renaming or
+   *  relocating a field here breaks it in the field, long after the release
+   *  that did it. */
+  registration_epoch?: number;
 }
 
 export function resolveInstanceName(explicit?: string): string {
