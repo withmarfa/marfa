@@ -6,8 +6,10 @@ import type {
   SpaceStore,
 } from "./interface.js";
 import type { SpaceConfig } from "@withmarfa/shared";
+import type { BlobBackend } from "./blob-backend.js";
 import { log } from "../middleware/logger.js";
 import { logJobTickFailure } from "./job-tick.js";
+import { sweepUnreferencedBlobs } from "./blob-orphans.js";
 import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 
 const MS_PER_DAY = 86_400_000;
@@ -917,6 +919,97 @@ export class DcrClientCleaner {
       }
     } catch (err) {
       logJobTickFailure("DCR client cleanup", err, this.stopped);
+    }
+  }
+}
+
+/**
+ * Reclaims blobs nothing references.
+ *
+ * `POST /blobs` and `POST /items` are separate calls, and the bytes are
+ * stored and charged against the space's quotas by the first one. An item
+ * write refused for any reason leaves the blob registered with nothing
+ * pointing at it, still counted, and nothing reconciles the two. The
+ * operator route that finds these has existed for as long as the leak has;
+ * what was missing is anything that runs it.
+ *
+ * The grace window is what makes running it unattended safe. Unreferenced
+ * is also the ordinary state of a blob between its upload and the item
+ * write that names it, so the sweep considers only hashes registered
+ * longer than `graceMs` ago and lets the rest wait for the next tick.
+ *
+ * Instance-wide, like the other sweeps with no per-space fan-out: a hash
+ * is deleted from the backend once and loses every space's row, so the
+ * question "does anything reference this" has to be asked across all of
+ * them. Cluster-wide coordination lock keyed `"blob-cleanup"`.
+ *
+ * `graceMs <= 0` disables the job. A zero window would sweep a blob the
+ * instant it is unreferenced, which is the defect rather than a
+ * configuration of it, so the value doubles as the operator's off switch.
+ */
+export class BlobOrphanCleaner {
+  private interval: ReturnType<typeof setInterval> | null = null;
+  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
+  private stopped = false;
+
+  constructor(
+    private storage: Storage,
+    private blobBackend: BlobBackend,
+    private graceMs: number,
+    private intervalMs: number,
+    private nowFn: () => Date = () => new Date(),
+    private coordination?: CoordinationStore,
+  ) {}
+
+  start(): void {
+    this.stopped = false;
+    this.startupTimeout = setTimeout(() => void this.poll(), 30_000);
+    this.interval = setInterval(() => void this.poll(), this.intervalMs);
+  }
+
+  stop(): void {
+    this.stopped = true;
+    if (this.startupTimeout) {
+      clearTimeout(this.startupTimeout);
+      this.startupTimeout = null;
+    }
+    if (this.interval) {
+      clearInterval(this.interval);
+      this.interval = null;
+    }
+  }
+
+  /** Test entry point. Returns the number of blobs removed this tick. */
+  async runOnce(): Promise<number> {
+    if (this.graceMs <= 0) return 0;
+    const result = await sweepUnreferencedBlobs({
+      storage: this.storage,
+      blobBackend: this.blobBackend,
+      dryRun: false,
+      registeredBefore: new Date(
+        this.nowFn().getTime() - this.graceMs,
+      ).toISOString(),
+    });
+    return result.removed;
+  }
+
+  /** Scheduler entry point — see TrashPurger.runScheduled. */
+  runScheduled(): Promise<void> {
+    return this.poll();
+  }
+
+  private async poll(): Promise<void> {
+    try {
+      const removed = this.coordination
+        ? await this.coordination.withJobLock("blob-cleanup", () =>
+            this.runOnce(),
+          )
+        : await this.runOnce();
+      if (removed !== undefined && removed > 0) {
+        log("info", "Blob cleanup", { removed, graceMs: this.graceMs });
+      }
+    } catch (err) {
+      logJobTickFailure("Blob cleanup", err, this.stopped);
     }
   }
 }

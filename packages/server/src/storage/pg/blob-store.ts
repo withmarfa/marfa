@@ -30,6 +30,7 @@ export class PgBlobStore implements BlobStore {
         mime_type: mimeType,
         size,
         storage_path: storagePath,
+        created_at: new Date().toISOString(),
       })
       .onConflictDoNothing();
   }
@@ -70,6 +71,18 @@ export class PgBlobStore implements BlobStore {
     // Distinct hashes across every space — used by the admin reconcile
     // route to find orphan files on disk. Space-scoped reads use `get`.
     const rows = await this.db.selectDistinct({ hash: blobs.hash }).from(blobs);
+    return rows.map((r) => r.hash);
+  }
+
+  async listRegisteredBefore(cutoff: string): Promise<string[]> {
+    // Grouped by hash rather than filtered row by row: a hash the sweep
+    // takes loses every space's row at once, so one space registering it
+    // a moment ago has to hold the whole hash back.
+    const rows = await this.db
+      .select({ hash: blobs.hash })
+      .from(blobs)
+      .groupBy(blobs.hash)
+      .having(sql`max(${blobs.created_at}) < ${cutoff}`);
     return rows.map((r) => r.hash);
   }
 

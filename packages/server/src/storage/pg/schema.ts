@@ -405,6 +405,10 @@ export const blobs = pgTable(
     mime_type: text("mime_type").notNull(),
     size: integer("size").notNull(),
     storage_path: text("storage_path").notNull(),
+    // When this space registered the blob. The orphan sweep measures its
+    // grace window against it, so a blob whose item write is still in
+    // flight is not mistaken for one whose item write never landed.
+    created_at: text("created_at").notNull(),
   },
   (t) => [primaryKey({ columns: [t.space_id, t.hash] })],
 );

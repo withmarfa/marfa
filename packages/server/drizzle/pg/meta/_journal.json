@@ -771,6 +771,13 @@
       "when": 1788971800000,
       "tag": "0109_app_grants_join_their_resolved_space",
       "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1789257100000,
+      "tag": "0110_blobs_record_when_they_were_registered",
+      "breakpoints": true
     }
   ]
 }
