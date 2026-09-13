@@ -15,7 +15,7 @@ import { reserveQuota } from "../middleware/quota.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
-import { collectBlobHashes } from "../storage/blob-utils.js";
+import { sweepUnreferencedBlobs } from "../storage/blob-orphans.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 
@@ -570,77 +570,22 @@ export function blobRoutes(
     requireOperatorKey(c);
 
     const dryRun = c.req.valid("query").dry_run === "true";
-    const spaceId = c.get("apiKey")?.space_id;
-
-    // Collect all blob hashes registered in the store
-    const allHashes = await storage.blobs.listAll();
-
-    // Paginate through all items and extract every blob hash from properties
-    const referencedHashes = new Set<string>();
-
-    // One pass over every lifecycle state. This walked the corpus twice —
-    // once bare and once with the state pinned to `trashed` — because the
-    // bare listing applies the default that hides the bin, and there was no
-    // way to ask for all four states at once. `all_states` is that way, and
-    // it is one filter rather than a second full scan.
-    //
-    // The union has to include the bin: a blob referenced only by a trashed
-    // item is still referenced, and removing it would strip the bytes out
-    // from under a restore. The pinned second pass was what held that, so
-    // the widening here is load-bearing rather than a tidy-up.
-    let cursor: string | undefined;
-    let hasMore = true;
-    while (hasMore) {
-      const page = await storage.items.list({
-        spaceId,
-        all_states: true,
-        limit: 200,
-        cursor,
-      });
-      for (const item of page.data) {
-        collectBlobHashes(item.properties, referencedHashes);
-      }
-
-      // Also scan metadata extensions for blob references
-      const ids = page.data.map((item) => item.id);
-      const metadataList = await storage.metadata.getMany(ids);
-      for (const meta of metadataList) {
-        collectBlobHashes(meta.extensions, referencedHashes);
-      }
-      cursor = page.cursor ?? undefined;
-      hasMore = page.has_more;
-    }
-
-    // A hash referenced only by a version snapshot is still referenced:
-    // deleting it would strip the bytes out from under a version read.
-    let versionCursor: string | undefined;
-    for (;;) {
-      const page = await storage.versions.scanProperties(200, versionCursor);
-      for (const props of page.properties) {
-        collectBlobHashes(props, referencedHashes);
-      }
-      if (!page.cursor) break;
-      versionCursor = page.cursor;
-    }
-
-    const orphaned = allHashes.filter((h) => !referencedHashes.has(h));
-
-    if (!dryRun) {
-      for (const hash of orphaned) {
-        await blobBackend.delete(hash);
-        // Operator-key orphan cleanup nukes the row in every space
-        // — this hash is unreferenced everywhere as far as the caller's
-        // visible items go.
-        await storage.blobs.removeAllForHash(hash);
-      }
-    }
+    // No cutoff: an operator asking directly has decided for themselves,
+    // and the dry-run default is what protects an in-flight upload here.
+    // The scheduled sweep, which nobody is watching, passes one.
+    const result = await sweepUnreferencedBlobs({
+      storage,
+      blobBackend,
+      spaceId: c.get("apiKey")?.space_id,
+      dryRun,
+    });
 
     return c.json(
       {
-        total_blobs: allHashes.length,
-        referenced: referencedHashes.size,
-        orphaned: orphaned.length,
-        removed: dryRun ? 0 : orphaned.length,
+        total_blobs: result.totalBlobs,
+        referenced: result.referenced,
+        orphaned: result.orphaned,
+        removed: result.removed,
         dry_run: dryRun,
       },
       200,

@@ -44,6 +44,7 @@ import {
   RateLimitWindowCleaner,
   DcrClientCleaner,
   DeviceCodeCleaner,
+  BlobOrphanCleaner,
   RuntimeCredentialReaper,
   runSpaceCleanup,
 } from "./storage/retention.js";
@@ -758,6 +759,41 @@ async function main() {
     },
   );
 
+  // Storing a blob and creating the item that references it are separate
+  // calls, so an item write refused between them leaves bytes registered,
+  // charged against the space's quotas and pointed at by nothing. The
+  // operator route that finds them is a report by default and nothing ran
+  // it; this does, behind a grace window so the gap between a legitimate
+  // upload and its item write is not mistaken for the leak. Grace `0`
+  // disables the job.
+  const blobCleanupGraceMs = config.blobCleanupGraceMs ?? 86_400_000;
+  const blobCleanupIntervalMs = config.blobCleanupIntervalMs ?? 86_400_000;
+  const blobOrphanCleaner =
+    blobCleanupGraceMs > 0
+      ? new BlobOrphanCleaner(
+          storage,
+          blobBackend,
+          blobCleanupGraceMs,
+          blobCleanupIntervalMs,
+          undefined,
+          storage.coordination,
+        )
+      : undefined;
+  if (blobOrphanCleaner) {
+    scheduleJob(
+      {
+        name: "blob-cleanup",
+        logName: "Blob cleanup",
+        intervalMs: blobCleanupIntervalMs,
+        firstRunDelaySeconds: 30,
+        runOnce: () => blobOrphanCleaner.runScheduled(),
+      },
+      () => {
+        blobOrphanCleaner.start();
+      },
+    );
+  }
+
   // Runtime credentials are minted per dispatch, so the table grows with
   // traffic unless something retires them. The mint path supersedes its own
   // siblings and the bearer gate refuses expired rows, but neither reaches
@@ -1252,6 +1288,7 @@ async function main() {
     revokedGrantPurger?.stop();
     grantInactivityRetirer?.stop();
     deviceCodeCleaner.stop();
+    blobOrphanCleaner?.stop();
     runtimeCredentialReaper?.stop();
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();

@@ -252,7 +252,8 @@ CREATE TABLE IF NOT EXISTS public.blobs (
     mime_type text NOT NULL,
     size integer NOT NULL,
     storage_path text NOT NULL,
-    space_id text DEFAULT ''::text NOT NULL
+    space_id text DEFAULT ''::text NOT NULL,
+    created_at text DEFAULT '2026-09-12T23:50:00.000Z'::text NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS public.bulk_action_jobs (

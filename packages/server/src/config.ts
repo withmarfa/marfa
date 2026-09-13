@@ -239,6 +239,19 @@ export interface AppConfig {
   /** Cadence (ms) for the pending-delete purger sweep. Env override
    *  `MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
   accountDeletionPurgeIntervalMs?: number;
+  /** Cadence (ms) for the unreferenced-blob sweep. A full pass over the
+   *  item corpus and the version history, so this is deliberately slow:
+   *  default 86_400_000 (24h); env override
+   *  `MARFA_BLOB_CLEANUP_INTERVAL_MS`. Optional on the type; `index.ts`
+   *  applies the 24h fallback. */
+  blobCleanupIntervalMs?: number;
+  /** How long (ms) a blob has to have been registered before the sweep
+   *  will consider it unreferenced. Registering a blob and creating the
+   *  item that names it are two calls, so a window between them is normal
+   *  rather than a leak, and this is how much of one the sweep tolerates.
+   *  `0` disables the job. Default 86_400_000 (24h); env override
+   *  `MARFA_BLOB_CLEANUP_GRACE_MS`. */
+  blobCleanupGraceMs?: number;
   /** Cadence (ms) for the `rate_limit_windows` GC sweep that drops rows
    *  past their `expires_at`. Default 3_600_000 (1h); env override
    *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
@@ -1014,6 +1027,14 @@ export function loadConfig(): AppConfig {
     rateLimitCleanupIntervalMs: envNumber(
       process.env.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
       3_600_000,
+    ),
+    blobCleanupIntervalMs: envNumber(
+      process.env.MARFA_BLOB_CLEANUP_INTERVAL_MS,
+      86_400_000,
+    ),
+    blobCleanupGraceMs: envNumber(
+      process.env.MARFA_BLOB_CLEANUP_GRACE_MS,
+      86_400_000,
     ),
     enrichmentEnabled: process.env.MARFA_ENRICHMENT_ENABLED !== "false",
     enrichmentIntervalMs: envNumber(

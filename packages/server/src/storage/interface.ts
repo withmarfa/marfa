@@ -1338,6 +1338,16 @@ export interface BlobStore {
    * MUST go through `get(hash, spaceId)`.
    */
   listAll(): Promise<string[]>;
+  /**
+   * Hashes whose every row was registered before `cutoff` (ISO 8601),
+   * de-duplicated. The orphan sweep's candidate set: a blob is
+   * unreferenced for the whole window between its upload and the item
+   * write that names it, so sweeping on unreferenced alone would delete
+   * bytes a caller is still on its way to using. A hash any space
+   * registered more recently than the cutoff is held back entirely,
+   * because removal takes every space's row for it.
+   */
+  listRegisteredBefore(cutoff: string): Promise<string[]>;
   remove(hash: string, spaceId: string): Promise<void>;
   /**
    * Removes every row for a given hash across all spaces. Used only by

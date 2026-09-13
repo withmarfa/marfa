@@ -305,7 +305,7 @@ CREATE TABLE IF NOT EXISTS "blobs" (
   \`hash\` text NOT NULL,
   \`mime_type\` text NOT NULL,
   \`size\` integer NOT NULL,
-  \`storage_path\` text NOT NULL,
+  \`storage_path\` text NOT NULL, \`created_at\` text NOT NULL DEFAULT '2026-09-12T23:50:00.000Z',
   PRIMARY KEY ("space_id", \`hash\`)
 );
 
