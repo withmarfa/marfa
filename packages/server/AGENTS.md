@@ -123,7 +123,9 @@ Every page the server hands a person shares one voice, one layout and one styles
 ## Enrichment and the integrations runtime
 
 - **Enrichment is state-driven, never event-driven.** A sweeper finds candidates from `enrichment_state`; nothing enqueues on write. `enrichment_state` carries no grant to the application role, per the grant-without-policy rule above.
-- **The OCR seam exists so tests never touch the network**, and `EXTRACTOR_VERSION` is the re-extraction switch.
+- **The OCR seam exists so tests never touch the network**, and `EXTRACTOR_VERSION` is the re-extraction switch. It is also the only one that reaches a row already marked `done`: the config signature re-offers skipped rows and nothing else, so a new capability that should re-visit the whole corpus needs the version too.
+- **Neither store validates on update, only on create**, so a server-internal writer reaching `storage.items.update` can leave a row in a state no external caller could have produced. Validate the merged result first, through `mergeUpdateProperties` and `validateProperties`, guarded on the schema resolving; `bulk-actions/runner.ts` and the enrichment sweeper are the two worked examples. Nothing enumerates the writers that owe this, and the failure is silent in the worst way: the write succeeds and the refusal lands on whoever edits the item next, naming a property they never set.
+- **A derived value never overrules a supplied one and never fails a write.** The sweeper fills `extracted_text`, and `width`, `height` and `duration` on the types that declare them, only where the item has nothing; a format no reader handles records its reason and moves on. A required field nothing derives is a trap, which is what made two thirds of a bulk media import fail after its blobs were already stored.
 - **The runtime requires Postgres**, so SQLite deployments run without integrations. Dispatch serializes per Connection.
 - **The dispatch fixture is a workspace package, not a test file.** The image builds it by name in its own step, which is the only place the staging path is exercised before a deploy.
 

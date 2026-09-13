@@ -3,15 +3,15 @@
   "parent": "core.file",
   "label": "Image",
   "description": "Photos, screenshots, diagrams. Inherits all core.file fields.",
-  "version": 1,
+  "version": 2,
   "fields": {
     "width": {
       "type": "integer",
-      "description": "Width in pixels"
+      "description": "Width in pixels (server enrichment: derived from the file when the client does not supply it)"
     },
     "height": {
       "type": "integer",
-      "description": "Height in pixels"
+      "description": "Height in pixels (server enrichment: derived from the file when the client does not supply it)"
     },
     "latitude": {
       "type": "number",
@@ -26,7 +26,6 @@
       "description": "Altitude in meters"
     }
   },
-  "required": ["width", "height"],
   "display_hints": {
     "title_field": "title"
   }

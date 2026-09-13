@@ -3,19 +3,19 @@
   "parent": "core.file",
   "label": "Video",
   "description": "Video files. Inherits all core.file fields.",
-  "version": 1,
+  "version": 2,
   "fields": {
     "width": {
       "type": "integer",
-      "description": "Width in pixels"
+      "description": "Width in pixels (server enrichment: derived from the file when the client does not supply it)"
     },
     "height": {
       "type": "integer",
-      "description": "Height in pixels"
+      "description": "Height in pixels (server enrichment: derived from the file when the client does not supply it)"
     },
     "duration": {
       "type": "number",
-      "description": "Length in seconds"
+      "description": "Length in seconds (server enrichment: derived from the file when the client does not supply it)"
     },
     "latitude": {
       "type": "number",
@@ -35,7 +35,6 @@
       "format": "bcp47"
     }
   },
-  "required": ["width", "height", "duration"],
   "display_hints": {
     "title_field": "title"
   }

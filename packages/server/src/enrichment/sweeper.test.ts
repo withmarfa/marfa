@@ -495,6 +495,193 @@ describe("skips", () => {
   });
 });
 
+describe("dimensions", () => {
+  it("derives an image's width and height", async () => {
+    // No client values at all, which is the upload the schema used to
+    // refuse outright after the blob had already been stored and charged.
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+      "core.file.image",
+    );
+
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const props = await readItem(id);
+    expect(props.width).toBe(1700);
+    expect(props.height).toBe(2200);
+  });
+
+  it("leaves a client-supplied value alone", async () => {
+    // Deliberately wrong values: derivation filling an absence is useful,
+    // derivation overruling the uploader is a client losing an argument it
+    // did not know it was having.
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+      "core.file.image",
+      { width: 7, height: 9 },
+    );
+
+    await sweeper().runOnce();
+
+    const props = await readItem(id);
+    expect(props.width).toBe(7);
+    expect(props.height).toBe(9);
+  });
+
+  it("derives an audio file's duration", async () => {
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.mp3"), "audio/mpeg"),
+      "audio/mpeg",
+      "core.file.audio",
+    );
+
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    expect(Number((await readItem(id)).duration)).toBeGreaterThan(0.5);
+  });
+
+  it("derives a webm's width, height and duration", async () => {
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.webm"), "video/webm"),
+      "video/webm",
+      "core.file.video",
+    );
+
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const props = await readItem(id);
+    expect(props.width).toBe(160);
+    expect(props.height).toBe(120);
+    expect(Number(props.duration)).toBeGreaterThan(0.5);
+  });
+
+  it("writes an mp4's duration and records the size it could not read", async () => {
+    // A partial derivation is a write and a record, not a failure. The row
+    // says what is still missing, which is the data a later decision about
+    // a second video reader has to rest on.
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.mp4"), "video/mp4"),
+      "video/mp4",
+      "core.file.video",
+    );
+
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const props = await readItem(id);
+    expect(Number(props.duration)).toBeGreaterThan(0.5);
+    expect(props.width).toBeUndefined();
+
+    const row = await ctx.storage.enrichment.get(id);
+    expect(row?.status).toBe("done");
+    expect(row?.error).toContain("width");
+  });
+
+  it("parks a media file neither reader understands", async () => {
+    const id = await createFileItem(
+      await seedBlob(Buffer.from("not an image"), "image/x-made-up"),
+      "image/x-made-up",
+      "core.file.image",
+    );
+
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 0,
+      skipped: 1,
+      failed: 0,
+    });
+
+    expect((await readItem(id)).width).toBeUndefined();
+    const row = await ctx.storage.enrichment.get(id);
+    // Skipped rather than failed: an unreadable format is fixed under this
+    // configuration, so a retry budget spent on it buys nothing.
+    expect(row?.status).toBe("skipped");
+    expect(row?.error).toContain("no image reader");
+  });
+
+  it("does not derive onto a type that declares no such field", async () => {
+    // A plain `core.file` has no `width`, so writing one would leave a
+    // stray property on a schema with no opinion about it. The MIME gate
+    // is not enough on its own; the type is what decides.
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+    );
+
+    expect(await sweeper({ ocr: null }).runOnce()).toEqual({
+      extracted: 0,
+      skipped: 1,
+      failed: 0,
+    });
+
+    expect((await readItem(id)).width).toBeUndefined();
+    expect((await ctx.storage.enrichment.get(id))?.error).toBe(
+      "unsupported type",
+    );
+  });
+
+  it("derives dimensions alongside text on one write", async () => {
+    const ocr = new FakeOcr(() => Promise.resolve("text in the picture"));
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+      "core.file.image",
+    );
+
+    expect(await sweeper({ ocr }).runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+
+    const props = await readItem(id);
+    expect(props.extracted_text).toBe("text in the picture");
+    expect(props.width).toBe(1700);
+  });
+
+  it("keeps the dimensions when the text extraction throws", async () => {
+    // The derivation is cheap and cannot fail; an OCR worker dying is the
+    // usual way the text half does. Losing both because one broke would
+    // deny every image its size for as long as OCR is unhealthy.
+    const ocr = new FakeOcr(() => Promise.reject(new Error("engine exploded")));
+    const id = await createFileItem(
+      await seedBlob(await fixture("sample.png"), "image/png"),
+      "image/png",
+      "core.file.image",
+    );
+
+    expect(await sweeper({ ocr, maxAttempts: 1 }).runOnce()).toEqual({
+      extracted: 0,
+      skipped: 0,
+      failed: 1,
+    });
+
+    const props = await readItem(id);
+    expect(props.width).toBe(1700);
+    expect(props.extracted_text).toBeUndefined();
+    // Failed, so the retry budget still applies to the half that is missing.
+    const row = await ctx.storage.enrichment.get(id);
+    expect(row?.status).toBe("failed");
+    expect(row?.error).toContain("engine exploded");
+  });
+});
+
 describe("failures", () => {
   it("stops retrying at the attempts cap", async () => {
     const ocr = new FakeOcr(() => Promise.reject(new Error("engine exploded")));

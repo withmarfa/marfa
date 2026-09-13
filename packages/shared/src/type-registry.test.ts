@@ -374,20 +374,39 @@ describe("validateProperties", () => {
   });
 
   it("validates file types with multiple required fields", () => {
-    const result = validateProperties("core.file.image", {
-      blob_ref: "sha256:abc",
-      mime_type: "image/png",
-      // missing width and height
+    const result = validateProperties("core.file.video", {
+      // missing blob_ref and mime_type, both inherited from core.file
+      duration: 12,
     });
     expect(result.success).toBe(false);
     if (!result.success) {
       const fields = result.errors.map((e) => e.field);
-      expect(fields).toContain("width");
-      expect(fields).toContain("height");
+      expect(fields).toContain("blob_ref");
+      expect(fields).toContain("mime_type");
     }
   });
 
-  it("accepts valid file.image with all required fields", () => {
+  it("accepts a media file with no dimensions on it", () => {
+    // The upload half of the contract: a client that cannot measure the
+    // file still gets the item written, and the server fills what it can
+    // work out afterwards. Required dimensions refused the file after its
+    // blob was already stored and charged against quota.
+    for (const typeId of [
+      "core.file.image",
+      "core.file.audio",
+      "core.file.video",
+    ]) {
+      const result = validateProperties(typeId, {
+        blob_ref: "sha256:abc",
+        mime_type: "image/png",
+      });
+      expect(result.success, `${typeId} refused a dimensionless file`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("accepts valid file.image with dimensions supplied", () => {
     const result = validateProperties("core.file.image", {
       blob_ref: "sha256:abc",
       mime_type: "image/png",
