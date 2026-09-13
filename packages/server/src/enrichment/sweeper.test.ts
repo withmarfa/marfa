@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -52,7 +53,7 @@ function sweeper(
     batchSize: overrides.batchSize ?? 8,
     itemTimeoutMs: overrides.itemTimeoutMs ?? 60_000,
     maxBlobBytes: overrides.maxBlobBytes ?? 20 * 1024 * 1024,
-    maxTextChars: overrides.maxTextChars ?? 200_000,
+    maxTextChars: overrides.maxTextChars ?? DEFAULT_MAX_STRING_LENGTH,
     maxAttempts: overrides.maxAttempts ?? 3,
   });
 }
@@ -109,6 +110,7 @@ async function readItem(id: string): Promise<Record<string, unknown>> {
 /** The signature the default-config sweeper stamps, for direct store reads. */
 const DEFAULT_SIGNATURE = JSON.stringify({
   max_blob_bytes: 20 * 1024 * 1024,
+  max_text_chars: DEFAULT_MAX_STRING_LENGTH,
   ocr: false,
 });
 
@@ -436,6 +438,60 @@ describe("skips", () => {
 
     expect((await readItem(id)).extracted_text).toBeUndefined();
     expect((await ctx.storage.enrichment.get(id))?.status).toBe("skipped");
+  });
+
+  it("parks an extraction the type would refuse rather than writing it", async () => {
+    // The reported shape, driven by the only configuration that can still
+    // produce it: a truncation ceiling set above the one the validator
+    // enforces. Neither store validates on update, so before this the write
+    // simply succeeded and every later edit of the item was refused, naming
+    // a property the caller had never set.
+    const overLong = "q".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
+    const id = await createFileItem(
+      await seedBlob(Buffer.from(overLong), "text/plain"),
+      "text/plain",
+    );
+
+    const result = await sweeper({
+      maxTextChars: DEFAULT_MAX_STRING_LENGTH * 2,
+    }).runOnce();
+    expect(result).toEqual({ extracted: 0, skipped: 1, failed: 0 });
+
+    expect((await readItem(id)).extracted_text).toBeUndefined();
+    const row = await ctx.storage.enrichment.get(id);
+    // Skipped, not failed: the refusal is fixed under this configuration, so
+    // a retry budget spent on it only reaches the same answer three times.
+    expect(row?.status).toBe("skipped");
+    expect(row?.error).toContain("extracted_text");
+
+    // The claim that matters to a caller: the item is still writable.
+    const patch = await request(ctx.app, "PATCH", `/items/${id}`, {
+      key: ctx.spaceKey,
+      body: { properties: { title: "still editable" } },
+    });
+    expect(patch.status).toBe(200);
+  });
+
+  it("reconsiders a refused extraction once the ceiling is back under the validator's", async () => {
+    const overLong = "q".repeat(DEFAULT_MAX_STRING_LENGTH + 1);
+    const id = await createFileItem(
+      await seedBlob(Buffer.from(overLong), "text/plain"),
+      "text/plain",
+    );
+
+    expect(
+      await sweeper({ maxTextChars: DEFAULT_MAX_STRING_LENGTH * 2 }).runOnce(),
+    ).toEqual({ extracted: 0, skipped: 1, failed: 0 });
+
+    // The ceiling is in the config signature precisely so this re-offers.
+    expect(await sweeper().runOnce()).toEqual({
+      extracted: 1,
+      skipped: 0,
+      failed: 0,
+    });
+    expect(String((await readItem(id)).extracted_text)).toHaveLength(
+      DEFAULT_MAX_STRING_LENGTH,
+    );
   });
 });
 

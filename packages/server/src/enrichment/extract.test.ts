@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { extractText, isEnrichableMime } from "./extract.js";
@@ -8,7 +9,7 @@ import type { OcrEngine } from "./ocr.js";
 const fixture = (name: string): Promise<Buffer> =>
   readFile(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url)));
 
-const OPTS = { maxTextChars: 200_000, ocr: null };
+const OPTS = { maxTextChars: DEFAULT_MAX_STRING_LENGTH, ocr: null };
 
 /** Records what it was handed so a test can prove the dispatch reached OCR. */
 class FakeOcr implements OcrEngine {
