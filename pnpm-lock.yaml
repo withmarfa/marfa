@@ -2146,10 +2146,9 @@ packages:
   '@withmarfa/shared@2.0.0':
     resolution: {integrity: sha512-orT+hkl9SQNWT7/8YrKf1pfGu6FylXWateQO2XJjRYNAXRT0dSNAgP+rNn4K4WNMJZik/XZicQGBdqcyms+oPg==}
 
-  '@xmldom/xmldom@0.9.11':
-    resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
+  '@xmldom/xmldom@0.9.12':
+    resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
     engines: {node: '>=14.6'}
-    deprecated: this version has critical issues, please update to the latest version
 
   acorn-import-attributes@1.9.5:
     resolution: {integrity: sha512-n02Vykv5uA3eHGM/Z2dQrcD56kL8TyDb2p1+0P83PClMnC/nc+anbQRhIOWnSq4Ke/KvDPrY3C9hDtC/A3eHnQ==}
@@ -5122,7 +5121,7 @@ snapshots:
       uuidv7: 1.2.1
       zod: 4.4.3
 
-  '@xmldom/xmldom@0.9.11': {}
+  '@xmldom/xmldom@0.9.12': {}
 
   acorn-import-attributes@1.9.5(acorn@8.16.0):
     dependencies:
@@ -5862,7 +5861,7 @@ snapshots:
 
   officeparser@7.8.0:
     dependencies:
-      '@xmldom/xmldom': 0.9.11
+      '@xmldom/xmldom': 0.9.12
       fflate: 0.8.3
       file-type: 22.0.2
       pdfjs-dist: 6.2.108
