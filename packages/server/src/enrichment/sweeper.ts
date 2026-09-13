@@ -1,4 +1,8 @@
-import { getTypeSchema, validateProperties } from "@withmarfa/shared";
+import {
+  getResolvedFields,
+  getTypeSchema,
+  validateProperties,
+} from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
@@ -9,6 +13,12 @@ import {
 } from "../storage/merge-properties.js";
 import type { OcrEngine } from "./ocr.js";
 import { EXTRACTOR_VERSION, extractText, isEnrichableMime } from "./extract.js";
+import {
+  DIMENSION_FIELDS,
+  deriveDimensions,
+  isDimensionMime,
+} from "./dimensions.js";
+import type { DimensionField, DimensionOutcome } from "./dimensions.js";
 
 export interface TextEnrichmentSweeperOptions {
   storage: Storage;
@@ -24,15 +34,33 @@ export interface TextEnrichmentSweeperOptions {
 }
 
 /**
- * Extracts text from file blobs on a periodic tick and writes it back onto
- * the item as `extracted_text`, which the search indexer picks up on the
- * same write.
+ * The dimension fields this item could take: the ones its type declares,
+ * and only for a MIME a reader would look at.
  *
- * State-driven, never event-driven: the candidate query is the whole
- * trigger mechanism, so the write the sweeper performs can never feed back
- * as the event that schedules the next sweep. Instance-wide with a
- * cluster-wide job lock, like the retention sweeps it is modeled on.
+ * Gated on the type rather than on the MIME alone, because `width` means
+ * nothing on a plain `core.file` and writing it there would leave a stray
+ * property on a schema with no opinion about it. A custom type that
+ * declares the same names gets the same derivation for free, which is the
+ * behavior a type registry should have.
  */
+function derivableDimensionFields(
+  typeId: string,
+  spaceId: string | null,
+  mime: string,
+): DimensionField[] {
+  if (!isDimensionMime(mime)) return [];
+  let fields;
+  try {
+    fields = getResolvedFields(typeId, spaceId ?? undefined);
+  } catch {
+    // An unresolvable inheritance chain is the type registry's problem to
+    // report, not a reason to fail a derivation over.
+    return [];
+  }
+  if (!fields) return [];
+  return DIMENSION_FIELDS.filter((field) => field in fields);
+}
+
 /**
  * The validator's complaint about laying `patch` over `current`, or null
  * when the merged result is acceptable. Returns null for a type the
@@ -61,6 +89,22 @@ function validationRefusal(
     .join("; ")}`;
 }
 
+/**
+ * Derives what a file's own bytes can say, on a periodic tick, and writes
+ * it back onto the item.
+ *
+ * Two kinds, both best-effort and neither able to fail a write: text, onto
+ * `extracted_text`, which the search indexer picks up on the same write;
+ * and dimensions, onto `width`, `height` and `duration` for the types that
+ * declare them. A client-supplied value always wins, so derivation fills
+ * absences only. An item can take both, either, or neither, and what a kind
+ * could not read is recorded with its reason rather than dropped.
+ *
+ * State-driven, never event-driven: the candidate query is the whole
+ * trigger mechanism, so the write the sweeper performs can never feed back
+ * as the event that schedules the next sweep. Instance-wide with a
+ * cluster-wide job lock, like the retention sweeps it is modeled on.
+ */
 export class TextEnrichmentSweeper {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -139,6 +183,7 @@ export class TextEnrichmentSweeper {
   private async processOne(candidate: {
     item_id: string;
     space_id: string | null;
+    type: string;
     blob_ref: string;
     mime_type: string;
   }): Promise<"extracted" | "skipped" | "failed"> {
@@ -187,12 +232,19 @@ export class TextEnrichmentSweeper {
 
     try {
       // Cheapest gate first: a MIME no reader can handle costs nothing —
-      // no metadata lookup, no byte read. With OCR off, images land here.
-      if (
-        !isEnrichableMime(candidate.mime_type, {
-          ocrAvailable: this.opts.ocr !== null,
-        })
-      ) {
+      // no metadata lookup, no byte read. Two kinds answer now, so the
+      // gate is the union of them: with OCR off, an image still reaches
+      // the dimension reader, and a video whose type does not declare
+      // width, height or duration still lands here.
+      const wantsText = isEnrichableMime(candidate.mime_type, {
+        ocrAvailable: this.opts.ocr !== null,
+      });
+      const derivable = derivableDimensionFields(
+        candidate.type,
+        candidate.space_id,
+        candidate.mime_type,
+      );
+      if (!wantsText && derivable.length === 0) {
         await recordSkip("unsupported type");
         return "skipped";
       }
@@ -218,12 +270,54 @@ export class TextEnrichmentSweeper {
         return "failed";
       }
 
-      const outcome = await this.extractWithTimeout(bytes, candidate.mime_type);
-      if (outcome.kind !== "text") {
-        await recordSkip(
-          outcome.kind === "empty" ? "no text found" : "unsupported type",
+      const patch: Record<string, unknown> = {};
+      // Every reason a kind produced nothing, joined onto the row. This is
+      // the record a later decision about a native probe rests on: which
+      // files this instance holds that nothing here can read, and why.
+      const reasons: string[] = [];
+
+      // Dimensions first, and never throwing. Text extraction can blow up
+      // (an OCR worker dying is the usual way), and a derivation that would
+      // have succeeded must not go down with it.
+      if (derivable.length > 0) {
+        const derived = await this.deriveWithTimeout(
+          bytes,
+          candidate.mime_type,
         );
-        return "skipped";
+        if (derived.kind === "dimensions") {
+          for (const field of derivable) {
+            const value = derived.values[field];
+            if (typeof value === "number") patch[field] = value;
+          }
+          const missing = derivable.filter((field) => !(field in patch));
+          if (missing.length > 0) {
+            reasons.push(`no ${missing.join(", ")} in this file`);
+          }
+        } else {
+          reasons.push(derived.reason);
+        }
+      }
+
+      // A text extraction that throws is still a transient failure with a
+      // retry budget, exactly as before. Captured rather than propagated so
+      // a derivation that already succeeded reaches the item instead of
+      // being discarded by the outer handler.
+      let textError: string | null = null;
+      if (wantsText) {
+        try {
+          const outcome = await this.extractWithTimeout(
+            bytes,
+            candidate.mime_type,
+          );
+          if (outcome.kind === "text") patch.extracted_text = outcome.text;
+          else {
+            reasons.push(
+              outcome.kind === "empty" ? "no text found" : "unsupported type",
+            );
+          }
+        } catch (err) {
+          textError = err instanceof Error ? err.message : String(err);
+        }
       }
 
       // Re-read before writing: extraction can take most of a minute, and
@@ -237,7 +331,36 @@ export class TextEnrichmentSweeper {
       if (!fresh) return "skipped";
       if (fresh.properties.blob_ref !== candidate.blob_ref) return "skipped";
 
-      const patch = { extracted_text: outcome.text };
+      // A client-supplied value always wins; derivation fills absences and
+      // nothing else. Judged against the item as it is now and against the
+      // type it carries now, both of which may have moved since the
+      // candidate row was read.
+      const freshFields = derivableDimensionFields(
+        fresh.type,
+        fresh.space_id ?? candidate.space_id,
+        candidate.mime_type,
+      );
+      const keeps = (field: string): boolean =>
+        !DIMENSION_FIELDS.includes(field as DimensionField) ||
+        (freshFields.includes(field as DimensionField) &&
+          fresh.properties[field] == null);
+      const kept = Object.fromEntries(
+        Object.entries(patch).filter(([field]) => keeps(field)),
+      );
+
+      if (Object.keys(kept).length === 0) {
+        if (textError !== null) {
+          await recordTransient(textError);
+          return "failed";
+        }
+        await recordSkip(
+          reasons.join("; ") ||
+            (Object.keys(patch).length > 0
+              ? "already present"
+              : "nothing to derive"),
+        );
+        return "skipped";
+      }
 
       // Judge the merged result before writing it. Neither store validates
       // on update, only on create, so a server-internal writer reaching this
@@ -254,7 +377,7 @@ export class TextEnrichmentSweeper {
       const refusal = validationRefusal(
         fresh.type,
         fresh.properties,
-        patch,
+        kept,
         candidate.space_id,
       );
       if (refusal) {
@@ -274,7 +397,7 @@ export class TextEnrichmentSweeper {
 
       const updated = await storage.items.update(
         candidate.item_id,
-        { properties: patch, version: fresh.version },
+        { properties: kept, version: fresh.version },
         candidate.space_id ?? undefined,
       );
       // A conflict response means the item moved between the re-read and
@@ -282,7 +405,17 @@ export class TextEnrichmentSweeper {
       // judged against whatever the item has become.
       if (!("id" in updated)) return "skipped";
 
-      await record("done", null);
+      if (textError !== null) {
+        // Half of it landed. Recorded as a failure anyway, so the retry
+        // budget still applies to the half that did not, and the next pass
+        // sees the derived fields already present and attempts only text.
+        await recordTransient(textError);
+      } else {
+        // A reason on a done row is the useful case rather than a
+        // contradiction: a video that gave up its duration and not its size
+        // says exactly that.
+        await record("done", reasons.length > 0 ? reasons.join("; ") : null);
+      }
 
       const metadata = await storage.metadata.get(candidate.item_id);
       await publish({
@@ -291,7 +424,7 @@ export class TextEnrichmentSweeper {
         metadata,
         spaceId: candidate.space_id ?? undefined,
       });
-      return "extracted";
+      return textError === null ? "extracted" : "failed";
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await record("failed", message.slice(0, 500)).catch(() => {
@@ -337,6 +470,38 @@ export class TextEnrichmentSweeper {
         // A worker that cannot be terminated is replaced on next use.
       });
       throw err;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Races dimension derivation against the same per-item budget the text
+   * side gets, and answers `unreadable` rather than throwing when it runs
+   * out: a file that takes too long to read a header from is a file with
+   * no dimensions, not a failure to retry.
+   *
+   * Worth being honest about what the race does and does not bound. The
+   * media parser is asynchronous and yields, so the timeout reaches it.
+   * The image reader is synchronous: if it ever looped it would hold the
+   * event loop and no timer would fire. That is why the reader is one
+   * with no published advisory rather than the wider-format alternative
+   * whose current release carries three unfixed infinite-loop advisories,
+   * one of them in the HEIF parser this most wants. The size gate above
+   * bounds the input; the choice of reader bounds the rest.
+   */
+  private async deriveWithTimeout(
+    bytes: Buffer,
+    mimeType: string,
+  ): Promise<DimensionOutcome> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<DimensionOutcome>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ kind: "unreadable", reason: "dimension read timed out" });
+      }, this.opts.itemTimeoutMs);
+    });
+    try {
+      return await Promise.race([deriveDimensions(bytes, mimeType), timeout]);
     } finally {
       if (timer) clearTimeout(timer);
     }

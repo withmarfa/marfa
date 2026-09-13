@@ -3,11 +3,11 @@
   "parent": "core.file",
   "label": "Audio",
   "description": "Recordings, music files, voice memos. Inherits all core.file fields.",
-  "version": 1,
+  "version": 2,
   "fields": {
     "duration": {
       "type": "number",
-      "description": "Length in seconds"
+      "description": "Length in seconds (server enrichment: derived from the file when the client does not supply it)"
     },
     "language": {
       "type": "string",
@@ -15,7 +15,6 @@
       "format": "bcp47"
     }
   },
-  "required": ["duration"],
   "display_hints": {
     "title_field": "title"
   }
