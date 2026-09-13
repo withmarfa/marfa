@@ -11,6 +11,10 @@ export default [
         projectService: {
           allowDefaultProject: [
             "eslint.config.js",
+            // The hosted deployment's shape. Evaluated by the Railway CLI
+            // rather than built by any package here, so it sits under no
+            // package tsconfig for the same reason the configs below do not.
+            ".railway/railway.ts",
             "vitest.config.ts",
             // Imported by every package's vitest config for the shared test
             // and hook budget. Not under any package's tsconfig, for the same
