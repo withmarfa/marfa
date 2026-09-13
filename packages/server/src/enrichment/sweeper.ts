@@ -1,7 +1,12 @@
+import { getTypeSchema, validateProperties } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 import { publish } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
+import {
+  mergeUpdateProperties,
+  resolveIncomingProperties,
+} from "../storage/merge-properties.js";
 import type { OcrEngine } from "./ocr.js";
 import { EXTRACTOR_VERSION, extractText, isEnrichableMime } from "./extract.js";
 
@@ -28,6 +33,34 @@ export interface TextEnrichmentSweeperOptions {
  * as the event that schedules the next sweep. Instance-wide with a
  * cluster-wide job lock, like the retention sweeps it is modeled on.
  */
+/**
+ * The validator's complaint about laying `patch` over `current`, or null
+ * when the merged result is acceptable. Returns null for a type the
+ * registry cannot resolve: no schema is no opinion, not a refusal.
+ */
+function validationRefusal(
+  typeId: string,
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+  spaceId: string | null,
+): string | null {
+  const scope = spaceId ?? undefined;
+  if (!getTypeSchema(typeId, scope)) return null;
+  const merged = mergeUpdateProperties(
+    current,
+    resolveIncomingProperties(typeId, patch, false, scope) ?? {},
+    false,
+    "merge",
+  );
+  const result = validateProperties(typeId, merged, {
+    ...(spaceId == null ? {} : { spaceId }),
+  });
+  if (result.success) return null;
+  return `invalid properties: ${result.errors
+    .map((e) => `${e.field}: ${e.message}`)
+    .join("; ")}`;
+}
+
 export class TextEnrichmentSweeper {
   private interval: ReturnType<typeof setInterval> | null = null;
   private startupTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -57,12 +90,17 @@ export class TextEnrichmentSweeper {
    * row; the candidate query re-offers skipped rows whose stamp differs,
    * so raising the size ceiling or enabling image reading reconsiders
    * what those settings parked. Fields are limited to what changes a
-   * skip/no-skip decision — text truncation changes output, which is what
-   * `EXTRACTOR_VERSION` bumps are for.
+   * skip/no-skip decision.
+   *
+   * `max_text_chars` is one of them. It reads like a pure output setting,
+   * but the write is validated, so a ceiling set above what the type will
+   * accept parks the item instead of storing it, and lowering the ceiling
+   * back has to re-offer exactly those rows.
    */
   private get configSignature(): string {
     return JSON.stringify({
       max_blob_bytes: this.opts.maxBlobBytes,
+      max_text_chars: this.opts.maxTextChars,
       ocr: this.opts.ocr !== null,
     });
   }
@@ -199,12 +237,44 @@ export class TextEnrichmentSweeper {
       if (!fresh) return "skipped";
       if (fresh.properties.blob_ref !== candidate.blob_ref) return "skipped";
 
+      const patch = { extracted_text: outcome.text };
+
+      // Judge the merged result before writing it. Neither store validates
+      // on update, only on create, so a server-internal writer reaching this
+      // door can put a row into a state no caller could have produced, and
+      // did: text longer than the type's string ceiling was written
+      // successfully and refused every later edit of the item, naming a
+      // property nobody had set. Same sequence as the bulk-action runner,
+      // through the same helpers, so there is one rule rather than two.
+      //
+      // Guarded on the schema resolving, because `validateProperties`
+      // reports an absent schema as `Unknown type` rather than as no
+      // opinion: judging unguarded would park every item of a type this
+      // worker's registry does not carry.
+      const refusal = validationRefusal(
+        fresh.type,
+        fresh.properties,
+        patch,
+        candidate.space_id,
+      );
+      if (refusal) {
+        // A skip, never a transient failure. The refusal is a property of
+        // the extractor output and the type, both fixed under a given
+        // configuration, so retrying it would burn the whole attempt budget
+        // to reach the same answer. The config signature is what re-offers
+        // it once a ceiling moves.
+        await recordSkip(refusal);
+        log("warn", "Text enrichment refused by validation", {
+          item_id: candidate.item_id,
+          type: fresh.type,
+          error: refusal,
+        });
+        return "skipped";
+      }
+
       const updated = await storage.items.update(
         candidate.item_id,
-        {
-          properties: { extracted_text: outcome.text },
-          version: fresh.version,
-        },
+        { properties: patch, version: fresh.version },
         candidate.space_id ?? undefined,
       );
       // A conflict response means the item moved between the re-read and

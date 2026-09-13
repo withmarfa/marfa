@@ -992,7 +992,13 @@ const noNullByte = (schema: z.ZodString): z.ZodType =>
 // otherwise small payload). Generous on purpose — they trip on abuse, not
 // on legitimate long-form content; the per-field `maxLength` / `maxItems`
 // overrides raise (or lower) them where a type genuinely needs it.
-const DEFAULT_MAX_STRING_LENGTH = 100_000;
+/**
+ * Exported because a server-side writer that produces a string field has to
+ * bound its output by what this will accept. Enrichment truncated at its own
+ * independently-chosen ceiling and wrote a value the write path then refused,
+ * on an item nobody could edit afterwards.
+ */
+export const DEFAULT_MAX_STRING_LENGTH = 100_000;
 const DEFAULT_MAX_ARRAY_ITEMS = 10_000;
 
 // Build a length-bounded, NUL-rejecting string schema. The `.max()` cap

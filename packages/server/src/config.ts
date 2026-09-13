@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_STRING_LENGTH } from "@withmarfa/shared";
 import type { PermissionBundle } from "@withmarfa/shared";
 import { buildDefaultPermissionBundles } from "./auth/default-bundles.js";
 import {
@@ -272,8 +273,12 @@ export interface AppConfig {
   /** Blobs above this size are skipped without being read. Default
    *  20MB; env override `MARFA_ENRICHMENT_MAX_BLOB_BYTES`. */
   enrichmentMaxBlobBytes?: number;
-  /** Extracted text is truncated to this many characters. Default
-   *  200_000; env override `MARFA_ENRICHMENT_MAX_TEXT_CHARS`. */
+  /** Extracted text is truncated to this many characters. Defaults to the
+   *  validator's own default string ceiling, because text longer than that
+   *  is a value the write path refuses; env override
+   *  `MARFA_ENRICHMENT_MAX_TEXT_CHARS`. Raising it past the ceiling is
+   *  allowed and is not silently clamped: the sweeper validates before it
+   *  writes, so an over-long extraction is parked rather than stored. */
   enrichmentMaxTextChars?: number;
   /** How many times a failing item is retried before the sweeper stops
    *  offering it. Default 3; env override
@@ -1024,9 +1029,14 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_ENRICHMENT_MAX_BLOB_BYTES,
       20 * 1024 * 1024,
     ),
+    // Derived, not restated. These were two independent constants that
+    // happened not to match: enrichment truncated at 200_000 and the
+    // validator refused anything over 100_000, so a long document was
+    // extracted successfully onto an item that could never be written to
+    // again.
     enrichmentMaxTextChars: envNumber(
       process.env.MARFA_ENRICHMENT_MAX_TEXT_CHARS,
-      200_000,
+      DEFAULT_MAX_STRING_LENGTH,
     ),
     enrichmentMaxAttempts: envNumber(
       process.env.MARFA_ENRICHMENT_MAX_ATTEMPTS,

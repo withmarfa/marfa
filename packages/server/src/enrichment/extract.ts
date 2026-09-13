@@ -8,7 +8,7 @@ import type { OcrEngine } from "./ocr.js";
  * item whose row carries an older version, so a bump is a deliberate
  * re-extraction of the whole corpus.
  */
-export const EXTRACTOR_VERSION = 1;
+export const EXTRACTOR_VERSION = 2;
 
 const TEXT_MIMES: ReadonlySet<string> = new Set([
   "text/plain",
