@@ -82,6 +82,17 @@ export interface MarfaAuthOptions {
    *  the auth surface. Defaults to the `baseURL` plus any `corsOrigins`
    *  from `AppConfig`. */
   trustedOrigins?: string[];
+  /** Header carrying the real client address, for deployments where a
+   *  proxy terminates the connection. Better Auth keys its own rate
+   *  limiter on the address it resolves, and reads `x-forwarded-for`
+   *  unless told otherwise; a platform that sends something else instead
+   *  leaves it with no address at all, and it then buckets every caller
+   *  in the world together on one shared key. Mirrors the value the
+   *  client-IP and rate-limit middleware already take, so one setting
+   *  answers for the whole server. Left unset, Better Auth's
+   *  `x-forwarded-for` default stands, which is what an ordinary reverse
+   *  proxy sends, so a self-hoster configures nothing. */
+  trustedProxyHeader?: string | null;
   /** Relying-party name shown to the user during passkey registration.
    *  Defaults to "Marfa". */
   passkeyRpName?: string;
@@ -783,6 +794,18 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       // `false` matches what an unset value already resolves to outside
       // tests, so deployed behavior is unchanged.
       disableOriginCheck: false,
+      // Better Auth resolves a client address for its own rate limiter,
+      // and the limiter is the reason this matters: with no address it
+      // keys every request on one literal string, so three failed
+      // sign-ins from anyone lock out everyone. Its default header is
+      // `x-forwarded-for`, which is what an ordinary reverse proxy sends
+      // and why the fallback is the unset case rather than a named
+      // header. A platform that sends a different one configures it, and
+      // the same value already tells the client-IP and rate-limit
+      // middleware where to look.
+      ...(options.trustedProxyHeader && {
+        ipAddress: { ipAddressHeaders: [options.trustedProxyHeader] },
+      }),
       // Cookies set on /auth/*; the data plane (/items, /edges, etc.)
       // remains bearer-only and does not consume this cookie.
       cookiePrefix: "marfa.auth",

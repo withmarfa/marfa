@@ -529,6 +529,10 @@ export function createApp(
       seedStarterContent: config.seedStarterContent,
       secret: config.authSecret || undefined,
       trustedOrigins,
+      // The same header `clientIpMiddleware` and `rateLimitMiddleware`
+      // read. Better Auth runs a rate limiter of its own and cannot be
+      // told by either of them.
+      trustedProxyHeader: config.trustedProxyHeader ?? null,
       oidcProviders: config.oidcProviders,
       // Rich transport carries the HTML template + idempotency key
       // for log correlation. Falls back to the basic callable for
