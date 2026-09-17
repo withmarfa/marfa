@@ -24,3 +24,6 @@ worktrees/
 _local/
 _tmp/
 _ignore/
+
+# The Rust core workspace: Cargo, Swift and generated Node output, none of it Prettier's.
+core/
