@@ -62,20 +62,23 @@ mint() {
   curl -sS -X POST "${url}/keys" \
     -H "Authorization: Bearer $1" \
     -H 'Content-Type: application/json' \
-    -d '{"label":"core-proof","source":"core-proof"}'
+    -d "{\"label\":\"$2\",\"source\":\"$2\"}"
 }
 
-first="$(mint "${secret}")"
-# The bootstrap answer carries either a working `space_key` or the operator key
-# alone; with the operator key alone, the operator mints the working key.
-key="$(python3 -c 'import json,sys; body=json.load(sys.stdin); print(body.get("space_key",{}).get("key") or "")' <<<"${first}")"
-if [[ -z "${key}" ]]; then
-  operator="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))' <<<"${first}")"
-  [[ -n "${operator}" ]] || fail "bootstrap did not mint a key: ${first}"
-  second="$(mint "${operator}")"
-  key="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))' <<<"${second}")"
-  [[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${second}"
-fi
+read_key() {
+  python3 -c 'import json,sys; print(json.load(sys.stdin).get("key",""))'
+}
+
+# Bootstrap answers with the operator key, which holds no permissions because
+# running the instance sits outside the permission model; the operator mints
+# the key that works. Two source names, because the server refuses a second
+# key under a source display name already in use.
+bootstrap="$(mint "${secret}" core-proof-operator)"
+operator="$(read_key <<<"${bootstrap}")"
+[[ -n "${operator}" ]] || fail "bootstrap did not mint an operator key: ${bootstrap}"
+working="$(mint "${operator}" core-proof)"
+key="$(read_key <<<"${working}")"
+[[ -n "${key}" ]] || fail "the operator key could not mint a working key: ${working}"
 
 env_file="${state}/env"
 {
