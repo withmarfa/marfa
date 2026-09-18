@@ -3,8 +3,8 @@
  * Better Auth catch-all can serve them.
  *
  * The plugin registers two kinds of endpoint. The protocol ones (authorize,
- * token, introspect, revoke, userinfo, end-session, and the registration
- * Marfa fronts) are the surface this server exists to offer. The rest are
+ * token, introspect, revoke, userinfo, end-session, registration and the
+ * device initiation) are the surface this server exists to offer. The rest are
  * the plugin's own management API: reading, widening and deleting a user's
  * consent rows, creating and editing OAuth clients, a public client lookup,
  * and an admin resource registry. Most of it is gated on a signed-in session
@@ -79,9 +79,14 @@ export const REACHABLE_PLUGIN_ENDPOINTS: readonly string[] = [
   // POST and the confirmation step.
   "/oauth2/end-session",
   "/oauth2/end-session/confirm",
-  // Fronted by Marfa's own handler in `routes/oauth-register.ts`, which is
-  // mounted ahead of the catch-all; the plugin's endpoint never runs.
   "/oauth2/register",
+  // The device plugin's initiation endpoint (RFC 8628 §3.1); the exchange is
+  // `/oauth2/token` with the device grant.
+  "/device/code",
+  // Marfa fronts the GET with its verification page in `routes/auth-pages.ts`
+  // and calls the plugin's own verify in-process from the consent screen, so
+  // the plugin's JSON answer never serves over the wire.
+  "/device",
 ];
 
 /**
@@ -89,6 +94,14 @@ export const REACHABLE_PLUGIN_ENDPOINTS: readonly string[] = [
  * the resource routes carry path parameters.
  */
 export const FENCED_PLUGIN_ENDPOINTS: readonly string[] = [
+  // The device plugin's own decision endpoints approve a code as it was
+  // requested, with no consent screen, no narrowing, no projection and no
+  // audit row; Marfa's `POST /auth/device/consent` is the one approver and
+  // reaches them in-process. `/device/token` mints a first-party session for
+  // the code's user, which is a sign-in door this server does not offer.
+  "/device/approve",
+  "/device/deny",
+  "/device/token",
   // Consent: every writer of one of the grant's two records. The accept
   // Marfa performs goes through the plugin in-process, never over the wire.
   "/oauth2/consent",

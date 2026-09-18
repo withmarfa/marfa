@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS `auth_oauth_client` (
 	`enable_end_session` integer,
 	`subject_type` text,
 	`scopes` text,
+	`client_credentials_scopes` text,
 	`application_type` text,
 	`backchannel_logout_session_required` integer,
 	`backchannel_logout_uri` text,
@@ -169,6 +170,23 @@ CREATE TABLE IF NOT EXISTS `auth_oauth_consent` (
 
 CREATE UNIQUE INDEX IF NOT EXISTS `uq_auth_oauth_consent_client_user` ON `auth_oauth_consent` (`client_id`,`user_id`);
 CREATE INDEX IF NOT EXISTS `idx_auth_oauth_consent_reference_id` ON `auth_oauth_consent` (`reference_id`);
+CREATE TABLE IF NOT EXISTS `auth_oauth_device_code` (
+	`id` text PRIMARY KEY NOT NULL,
+	`device_code` text NOT NULL,
+	`user_code` text NOT NULL,
+	`user_id` text,
+	`expires_at` integer NOT NULL,
+	`status` text NOT NULL,
+	`last_polled_at` integer,
+	`polling_interval` integer,
+	`client_id` text,
+	`scope` text,
+	`oauth_client_id` text,
+	`resources` text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS `uq_auth_oauth_device_code_device_code` ON `auth_oauth_device_code` (`device_code`);
+CREATE UNIQUE INDEX IF NOT EXISTS `uq_auth_oauth_device_code_user_code` ON `auth_oauth_device_code` (`user_code`);
 CREATE TABLE IF NOT EXISTS `auth_oauth_refresh_token` (
 	`id` text PRIMARY KEY NOT NULL,
 	`token` text NOT NULL,
@@ -455,26 +473,6 @@ CREATE TABLE IF NOT EXISTS `metadata` (
 	FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE cascade
 );
 
-CREATE TABLE IF NOT EXISTS `oauth_device_codes` (
-	`id` text PRIMARY KEY NOT NULL,
-	`device_code_hash` text NOT NULL,
-	`user_code` text NOT NULL,
-	`client_id` text NOT NULL,
-	`scope` text NOT NULL,
-	`status` text DEFAULT 'pending' NOT NULL,
-	`connection_item_id` text,
-	`expires_at` text NOT NULL,
-	`interval_seconds` integer DEFAULT 5 NOT NULL,
-	`last_polled_at` text,
-	`approved_at` text,
-	`created_at` text NOT NULL,
-	FOREIGN KEY (`connection_item_id`) REFERENCES `items`(`id`) ON UPDATE no action ON DELETE set null
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS `oauth_device_codes_device_code_hash_unique` ON `oauth_device_codes` (`device_code_hash`);
-CREATE UNIQUE INDEX IF NOT EXISTS `oauth_device_codes_user_code_unique` ON `oauth_device_codes` (`user_code`);
-CREATE INDEX IF NOT EXISTS `idx_oauth_device_codes_user_code` ON `oauth_device_codes` (`user_code`);
-CREATE INDEX IF NOT EXISTS `idx_oauth_device_codes_status` ON `oauth_device_codes` (`status`);
 CREATE TABLE IF NOT EXISTS `outbound_webhook_deliveries` (
 	`id` text PRIMARY KEY NOT NULL,
 	`webhook_id` text NOT NULL,

@@ -104,22 +104,26 @@ export async function revokeProjectedGrant(
     // **After the tokens, because this cascade aborts on a throw.** That is
     // the same position `revokeTokensForGrant` gives its own sibling sweep:
     // `revokeAuthorizationCodesForGrant` runs last, once the access tokens,
-    // the refresh tokens and the consent row are already gone. The ordering
-    // argument in the docstring above is about the record, not about which
-    // sweep goes first, and running this one first inverts what a fault on
-    // `oauth_device_codes` costs. A lock, a permissions change or a corrupt
-    // index there would abort before `revokeTokensForGrant` had run, so the
-    // grant would stay active, every bearer and refresh token would survive,
-    // and Disconnect would be permanently non-functional while the app kept
-    // full access. Sweeping last, the same fault still kills every token and
-    // still leaves the record honestly reading active.
+    // the refresh tokens and the consent row are already gone. Running this
+    // one first would invert what a fault on the device-code table costs: a
+    // lock or a corrupt index there would abort before the tokens went, so
+    // the grant would stay active and every bearer would survive while
+    // Disconnect stayed permanently non-functional. Sweeping last, the same
+    // fault still kills every token and still leaves the record honestly
+    // reading active.
     //
-    // Called here rather than from `revokeTokensForGrant` because
-    // `oauth_device_codes` is Marfa's table and the provider store owns the
-    // plugin's. This function is already the single writer for both revoke
-    // doors and already holds the consent lock, so keeping the sweep here
-    // means one writer rather than two that can drift apart.
-    await storage.oauth.deleteDeviceCodesForGrant(opts.itemId);
+    // Keyed on the (client, user) pair the plugin's rows carry once a person
+    // has claimed them, so a pending code nobody has claimed is left alone.
+    if (
+      opts.clientId &&
+      opts.authUserId &&
+      typeof storage.oauthProvider?.deleteDeviceCodesForGrant === "function"
+    ) {
+      await storage.oauthProvider.deleteDeviceCodesForGrant(
+        opts.clientId,
+        opts.authUserId,
+      );
+    }
     // Keys beside the device codes and for the same reason: a key this app
     // minted is standing access that outlives every token above it, so a
     // revocation asked to take them has not happened until they are gone.

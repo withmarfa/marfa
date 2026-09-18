@@ -12,7 +12,7 @@
  *     showing revoked access that still works. The device-code sweep sits
  *     inside that cascade after the tokens, where `revokeTokensForGrant`
  *     puts its own sibling sweep of the authorization codes, so a fault on
- *     `oauth_device_codes` cannot stop the tokens from being dropped.
+ *     `auth_oauth_device_code` cannot stop the tokens from being dropped.
  *   - **The device-consent approval serializes with it.** Approving on a
  *     device is a fourth writer of the same standing grant, and left
  *     outside the consent lock its read-modify-write can straddle a whole
@@ -27,7 +27,7 @@
  * to a real projected grant: initiate, approve, and the
  * `system.connection { kind: "app" }` row exists with the right space.
  */
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
@@ -37,7 +37,7 @@ import {
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { DEVICE_CODE_GRANT_TYPE } from "./auth-pages.js";
+import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 
 // Every test here boots a server, signs a user up and in (two password
 // hashes), and drives at least one full device flow before it asserts
@@ -82,7 +82,13 @@ async function seedClient(c: TestContext): Promise<string> {
     clientId,
     name: "Revoke Test CLI",
     redirectUris,
-    grantTypes: asColumn(["urn:ietf:params:oauth:grant-type:device_code"]),
+    // The refresh grant beside the device grant: the plugin mints a refresh
+    // token for `offline_access` only when the client is registered for it,
+    // and the refresh token is the half the severity argument below rests on.
+    grantTypes: asColumn([
+      "urn:ietf:params:oauth:grant-type:device_code",
+      "refresh_token",
+    ]),
     disabled: false,
     createdAt: now,
     updatedAt: now,
@@ -170,7 +176,7 @@ async function initiateDeviceFlow(
   clientId: string,
   scope: string,
 ): Promise<{ device_code: string; user_code: string; scope: string }> {
-  const res = await request(c.app, "POST", "/auth/device", {
+  const res = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope },
     headers: { origin: ORIGIN },
   });
@@ -188,7 +194,7 @@ function pollDeviceToken(
   deviceCode: string,
   clientId: string,
 ): Promise<Response> {
-  return request(c.app, "POST", "/auth/device/token", {
+  return request(c.app, "POST", "/auth/oauth2/token", {
     form: {
       grant_type: DEVICE_CODE_GRANT_TYPE,
       device_code: deviceCode,
@@ -198,9 +204,69 @@ function pollDeviceToken(
   });
 }
 
-/** The hash `oauth_device_codes` keys on, matching what the route computes. */
-function deviceCodeHash(deviceCode: string): string {
-  return createHash("sha256").update(deviceCode).digest("base64url");
+interface DeviceCodeRow {
+  status: string;
+  userId: string | null;
+  clientId: string | null;
+  expiresAt: Date;
+}
+
+/** The plugin's row for a device code, or null once it has been swept. */
+async function deviceCodeRow(
+  c: TestContext,
+  deviceCode: string,
+): Promise<DeviceCodeRow | null> {
+  const schemaModule = await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    select: () => {
+      from: (t: unknown) => {
+        where: (w: unknown) => Promise<DeviceCodeRow[]>;
+      };
+    };
+  };
+  const rows = await db
+    .select()
+    .from(schemaModule.auth_oauth_device_code)
+    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
+  return rows[0] ?? null;
+}
+
+interface UpdatingDb {
+  update: (t: unknown) => {
+    set: (v: Record<string, unknown>) => {
+      where: (w: unknown) => Promise<unknown>;
+    };
+  };
+}
+
+/** Flip a pending code to approved for a user, the state the plugin's
+ *  approve endpoint leaves, without going through the consent screen. */
+async function approveCodeDirectly(
+  c: TestContext,
+  deviceCode: string,
+  authUserId: string,
+): Promise<void> {
+  const schemaModule = await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as UpdatingDb;
+  await db
+    .update(schemaModule.auth_oauth_device_code)
+    .set({ status: "approved", userId: authUserId })
+    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
+}
+
+/** The plugin holds a poller to its interval, and a poll stamps the row.
+ *  Clear the stamp so a second poll in the same test is answered on the
+ *  code's state rather than with `slow_down`. */
+async function allowRepoll(c: TestContext, deviceCode: string): Promise<void> {
+  const schemaModule = await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as UpdatingDb;
+  await db
+    .update(schemaModule.auth_oauth_device_code)
+    .set({ lastPolledAt: null })
+    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
 }
 
 function approveDeviceFlow(
@@ -614,28 +680,25 @@ describe("revocation reaches outstanding device codes", () => {
     });
     expect(revoked.status).toBe(204);
 
-    const pending = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(second.device_code),
-    );
+    const pending = await deviceCodeRow(c, second.device_code);
     expect(pending?.status).toBe("pending");
-    expect(
-      await c.storage.oauth.approveDeviceCode(pending!.id, grant.id, [
-        "core.note:read",
-      ]),
-    ).toBe(true);
-
-    // The code the poll is about to present: bound to the revoked grant,
-    // still approved, and provably unexpired. The expiry check sits ABOVE
-    // the lifecycle guard and answers 400 as well, so without this the
-    // status code alone could not tell an expiry from a revoke. The
-    // `expires_at` assertion is the one doing that work — the error code
-    // below cannot, because both refusals are 400.
-    const row = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(second.device_code),
+    const authUserId = await authUserIdFor(
+      c,
+      "device-poll-after-revoke@example.com",
     );
+    await approveCodeDirectly(c, second.device_code, authUserId);
+
+    // The code the poll is about to present: approved for the person whose
+    // grant was just revoked, and provably unexpired. The expiry check sits
+    // ABOVE the lifecycle guard and answers 400 as well, so without this the
+    // status code alone could not tell an expiry from a revoke. The
+    // `expiresAt` assertion is the one doing that work — the error code
+    // below cannot, because both refusals are 400.
+    const row = await deviceCodeRow(c, second.device_code);
     expect(row?.status).toBe("approved");
-    expect(row?.connection_item_id).toBe(grant.id);
-    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+    expect(row?.userId).toBe(authUserId);
+    expect(row?.clientId).toBe(clientId);
+    expect(row!.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
     const res = await pollDeviceToken(c, second.device_code, clientId);
     expect(res.status).toBe(400);
@@ -665,22 +728,14 @@ describe("revocation reaches outstanding device codes", () => {
 
     // Present before the revoke, so the assertion after it is about the
     // sweep rather than about a code that was never stored.
-    expect(
-      await c.storage.oauth.findDeviceCodeByHash(
-        deviceCodeHash(flow.device_code),
-      ),
-    ).not.toBeNull();
+    expect(await deviceCodeRow(c, flow.device_code)).not.toBeNull();
 
     const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
       key: c.spaceKey,
     });
     expect(revoked.status).toBe(204);
 
-    expect(
-      await c.storage.oauth.findDeviceCodeByHash(
-        deviceCodeHash(flow.device_code),
-      ),
-    ).toBeNull();
+    expect(await deviceCodeRow(c, flow.device_code)).toBeNull();
 
     // And the poll it would have answered has nothing left to answer from.
     const res = await pollDeviceToken(c, flow.device_code, clientId);
@@ -701,10 +756,10 @@ describe("revocation reaches outstanding device codes", () => {
     expect((await approveDeviceFlow(c, flowA, cookieA)).status).toBe(200);
     const grant = await onlyGrant(c);
 
-    // B is mid-flow on the same client: initiated, not approved, so the row
-    // carries the client and nobody's user. There is no user column on that
-    // table because a pending row is pre-consent, which is exactly why the
-    // sweep keys on the grant item and not on the client.
+    // B is mid-flow on the same client: initiated, not yet claimed on the
+    // consent screen, so the row carries the client and nobody's user. The
+    // sweep keys on the (client, user) pair, which is exactly why B's row
+    // is outside it.
     const flowB = await initiateDeviceFlow(c, clientId, "core.note:read");
 
     const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
@@ -713,11 +768,7 @@ describe("revocation reaches outstanding device codes", () => {
     expect(revoked.status).toBe(204);
 
     // A's code went, so the sweep did run.
-    expect(
-      await c.storage.oauth.findDeviceCodeByHash(
-        deviceCodeHash(flowA.device_code),
-      ),
-    ).toBeNull();
+    expect(await deviceCodeRow(c, flowA.device_code)).toBeNull();
 
     // B's did not, and still answers the way an unapproved code should.
     // Sweeping by client instead would sign B out of a login they are
@@ -732,6 +783,7 @@ describe("revocation reaches outstanding device codes", () => {
     // "still pending" would also be the answer if the code had survived in
     // a state nothing could finish.
     expect((await approveDeviceFlow(c, flowB, cookieB)).status).toBe(200);
+    await allowRepoll(c, flowB.device_code);
     const mintedForB = await pollDeviceToken(c, flowB.device_code, clientId);
     expect(mintedForB.status).toBe(200);
     expect(
@@ -746,7 +798,7 @@ describe("revocation reaches outstanding device codes", () => {
     // rewritten, matching where that function puts its own sibling sweep of
     // the authorization codes. The cascade has no try/catch on purpose, so
     // whichever step throws first is the last step that runs — and swept
-    // first, a persistent fault on `oauth_device_codes` would abort before
+    // first, a persistent fault on `auth_oauth_device_code` would abort before
     // any token was touched, leaving the grant active, every bearer and
     // refresh token live, and Disconnect permanently non-functional while
     // the app kept full access. Swept last, the same fault still kills every
@@ -775,7 +827,7 @@ describe("revocation reaches outstanding device codes", () => {
     // The device-code table is unreachable. Lock contention, a permissions
     // change, a corrupt index — the cause does not matter, only that it
     // persists.
-    c.storage.oauth.deleteDeviceCodesForGrant = () =>
+    c.storage.oauthProvider!.deleteDeviceCodesForGrant = () =>
       Promise.reject(new Error("device code table unavailable"));
 
     const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
@@ -834,15 +886,13 @@ describe("revocation reaches outstanding device codes", () => {
     expect(soft?.properties.status).toBe("active");
 
     // Nothing swept the code — a store-level soft delete does not run
-    // `revokeProjectedGrant` — so it is still approved, still bound, and
-    // still unexpired. The expiry check answers 400 too, so the assertion
-    // rather than the status code is what rules that reading out.
-    const row = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(flow.device_code),
-    );
+    // `revokeProjectedGrant` — so it is still approved, still the person's,
+    // and still unexpired. The expiry check answers 400 too, so the
+    // assertion rather than the status code is what rules that reading out.
+    const row = await deviceCodeRow(c, flow.device_code);
     expect(row?.status).toBe("approved");
-    expect(row?.connection_item_id).toBe(grant.id);
-    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+    expect(row?.userId).toBe(grant.properties.user_id);
+    expect(row!.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
     const res = await pollDeviceToken(c, flow.device_code, clientId);
     expect(res.status).toBe(400);
@@ -855,11 +905,11 @@ describe("revocation reaches outstanding device codes", () => {
   });
 
   it("REGRESSION: a poll refuses an approved code whose grant item was purged", async () => {
-    // `connection_item_id` is a foreign key with `ON DELETE SET NULL` in
-    // both dialects, so a hard purge of the grant item leaves an approved
-    // code pointing at nothing. That is a reachable state rather than a
-    // broken invariant, and it describes a grant that no longer exists, so
-    // it earns the same refusal a revoked one gets rather than a 500.
+    // The plugin's row names the client and the person, not the projection,
+    // so a hard purge of the grant item leaves an approved code whose grant
+    // no longer exists. That is a reachable state rather than a broken
+    // invariant, and it earns the same refusal a revoked one gets rather
+    // than a token minted against nothing.
     ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
@@ -885,13 +935,10 @@ describe("revocation reaches outstanding device codes", () => {
     await c.storage.items.purge(grant.id);
     expect(await c.storage.items.getIncludingTrashed(grant.id)).toBeNull();
 
-    // The foreign key did the rest: the row survived, its grant did not.
-    const row = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(flow.device_code),
-    );
+    // The row survived, its grant did not.
+    const row = await deviceCodeRow(c, flow.device_code);
     expect(row?.status).toBe("approved");
-    expect(row?.connection_item_id).toBeNull();
-    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+    expect(row!.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
     const res = await pollDeviceToken(c, flow.device_code, clientId);
     expect(res.status).toBe(400);

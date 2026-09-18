@@ -34,7 +34,6 @@ import {
   AuthSessionCleaner,
   RateLimitWindowCleaner,
   DcrClientCleaner,
-  DeviceCodeCleaner,
   BlobOrphanCleaner,
   runSpaceCleanup,
 } from "./storage/retention.js";
@@ -337,20 +336,6 @@ async function main() {
     dcrClientCleaner.start();
   }
 
-  // Device codes were written and never swept: pending, denied, approved and
-  // redeemed rows all outlived their expiry indefinitely. Daily, with an
-  // hour's grace past expiry, and deliberately not configurable: a code lives
-  // minutes, so the only thing a knob could tune is how long dead rows sit,
-  // and the DCR reaper's own interval is that job's setting, not this one's.
-  const deviceCodeCleanupIntervalMs = 86_400_000;
-  const deviceCodeCleaner = new DeviceCodeCleaner(
-    storage,
-    deviceCodeCleanupIntervalMs,
-    undefined,
-    storage.coordination,
-  );
-  deviceCodeCleaner.start();
-
   // Storing a blob and creating the item that references it are separate
   // calls, so an item write refused between them leaves bytes registered,
   // charged against the space's quotas and pointed at by nothing. The
@@ -522,7 +507,6 @@ async function main() {
     dcrClientCleaner?.stop();
     revokedGrantPurger?.stop();
     grantInactivityRetirer?.stop();
-    deviceCodeCleaner.stop();
     blobOrphanCleaner?.stop();
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();

@@ -1271,14 +1271,14 @@ async function projectGrantOnConsent(
     // scopes have to stop working.
     //
     // **The device screen offers toggles too, and still merges rather than
-    // narrowing.** It once had none, which is where this contrast came from;
-    // `device-scope-merge.ts` carries the current reasoning and it is a
-    // deliberate difference rather than a leftover — a set arriving smaller
-    // there may be the client asking for less or the person unticking a row,
-    // and nothing at that call site can tell the two apart. What the untick
-    // reaches there is the token that device is issued. Neither surface
-    // narrows without the user having asked, and neither leaves a record
-    // claiming access the user withdrew.
+    // narrowing.** It once had none, which is where this contrast came from,
+    // and the difference is deliberate rather than a leftover — a set
+    // arriving smaller there may be the client asking for less or the person
+    // unticking a row, and nothing at that call site can tell the two apart.
+    // What the untick reaches there is the token that device is issued: the
+    // code is narrowed to the ticked set before the plugin approves it.
+    // Neither surface narrows without the user having asked, and neither
+    // leaves a record claiming access the user withdrew.
     if (priorScopes.some((s) => !grantCoversScope(opts.scopes, s))) {
       const provider = storage.oauthProvider;
       if (typeof provider?.revokeAccessTokensForGrant !== "function") {

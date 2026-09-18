@@ -43,7 +43,9 @@ async function seedClient(c: TestContext): Promise<string> {
     clientId,
     name: "Forgotten App",
     isPublic: true,
-    grantTypes: [DEVICE_GRANT],
+    // The refresh grant too: the plugin mints a refresh token for
+    // `offline_access` only when the client is registered for it.
+    grantTypes: [DEVICE_GRANT, "refresh_token"],
     responseTypes: ["code"],
     tokenEndpointAuthMethod: "none",
     scopes: null,
@@ -76,7 +78,7 @@ async function deviceGrant(
   clientId: string,
   cookie: string,
 ): Promise<string> {
-  const init = await request(c.app, "POST", "/auth/device", {
+  const init = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope: "core.note:read offline_access" },
     headers: { origin: ORIGIN },
   });
@@ -97,7 +99,7 @@ async function deviceGrant(
     headers: { origin: ORIGIN, cookie },
   });
   expect(approve.status).toBe(200);
-  const poll = await request(c.app, "POST", "/auth/device/token", {
+  const poll = await request(c.app, "POST", "/auth/oauth2/token", {
     form: { grant_type: DEVICE_GRANT, device_code, client_id: clientId },
     headers: { origin: ORIGIN },
   });

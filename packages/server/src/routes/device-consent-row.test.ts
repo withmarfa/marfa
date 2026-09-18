@@ -3,9 +3,9 @@
  *
  * A grant is two records: the `system.connection` projection Marfa keeps and
  * the plugin's `auth_oauth_consent` row. The device flow writes the
- * projection itself and issues tokens from Marfa's own table, so it never
- * passed through the plugin's consent endpoint and never left a consent row
- * behind. Neither consent check could then see a device grant, the plugin's
+ * projection itself and approves the code through the plugin's device
+ * endpoint, so it never passes through the plugin's consent endpoint and
+ * used to leave no consent row behind. Neither consent check could then see a device grant, the plugin's
  * exact-membership skip nor Marfa's coverage check: a browser authorize for
  * the same app rendered the consent screen as if the person had never
  * approved it. The revoke cascade deletes the row by pair whether or not one
@@ -132,7 +132,7 @@ async function approveOnDevice(
   cookie: string,
   scope: string,
 ): Promise<void> {
-  const init = await request(c.app, "POST", "/auth/device", {
+  const init = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope },
     headers: { origin: ORIGIN },
   });
@@ -354,11 +354,12 @@ describe("POST /auth/device/consent writes the plugin's consent row", () => {
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "loser@example.com");
     const authUserId = await authUserIdFor(ctx, "loser@example.com");
-    vi.spyOn(ctx.storage.oauth, "approveDeviceCode").mockResolvedValueOnce(
-      false,
-    );
+    vi.spyOn(
+      ctx.storage.oauthProvider!,
+      "narrowDeviceCodeScope",
+    ).mockResolvedValueOnce(false);
 
-    const init = await request(ctx.app, "POST", "/auth/device", {
+    const init = await request(ctx.app, "POST", "/auth/device/code", {
       body: { client_id: clientId, scope: "core.note:read" },
       headers: { origin: ORIGIN },
     });

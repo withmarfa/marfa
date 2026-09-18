@@ -356,16 +356,12 @@ function walkTypeScript(dir: string): string[] {
 describe("call sites that persist a client scope ceiling", () => {
   // `writers` is the number of ceiling-writing calls the file is allowed, so
   // a second one appearing inside a file that is already named still fails.
-  const DOORS: { file: string; writers: number; justification: string }[] = [
-    {
-      file: "src/routes/oauth-register.ts",
-      writers: 1,
-      justification:
-        "Dynamic client registration. The array is the ceiling the third-party " +
-        "client asked for and a security boundary — not a copy of ours, and " +
-        "correctly frozen.",
-    },
-  ];
+  //
+  // Empty: the one Marfa-side writer was the registration handler, and the
+  // provider plugin's own registration writes the ceiling now, outside this
+  // tree. The walk stays so a writer added on this side is named here or
+  // fails, which is the only thing the guard is for.
+  const DOORS: { file: string; writers: number; justification: string }[] = [];
 
   it("discovers every Marfa-side writer, and each is deliberate", () => {
     const root = fileURLToPath(new URL("../..", import.meta.url));

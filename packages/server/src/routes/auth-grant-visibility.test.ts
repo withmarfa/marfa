@@ -126,7 +126,7 @@ async function approveDeviceFlow(
   cookie: string,
   scope: string,
 ): Promise<void> {
-  const init = await request(c.app, "POST", "/auth/device", {
+  const init = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope },
     headers: { origin: ORIGIN },
   });

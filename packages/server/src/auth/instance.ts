@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { betterAuth } from "better-auth";
+import { oauthDeviceAuthorization } from "@better-auth/oauth-provider";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { jwt } from "better-auth/plugins";
 import { createLocalAccountIssuer } from "better-auth/db";
@@ -124,6 +125,27 @@ export interface MarfaAuthSession {
   session: { id: string };
 }
 
+/** What the device plugin answers about a user code. `clientId` and `scope`
+ *  are present only for the person who claimed the code, which is what the
+ *  consent screen renders from. */
+export type DeviceCodeVerdict =
+  | {
+      ok: true;
+      status: "pending" | "approved" | "denied";
+      clientId?: string;
+      scope?: string;
+    }
+  | { ok: false; reason: DeviceCodeRefusal };
+
+/** Why the device plugin refused a step. */
+export type DeviceCodeRefusal =
+  | "invalid_code"
+  | "expired_code"
+  | "already_resolved"
+  | "not_claimed"
+  | "forbidden"
+  | "unauthorized";
+
 /** Narrow public type — covers everything `app.ts` and future routes need
  *  without re-exporting the full Better Auth generic surface (which drags
  *  in zod internal types and breaks portable .d.ts emit). */
@@ -156,6 +178,27 @@ export interface MarfaAuth {
     password: string;
     name?: string;
   }) => Promise<CreateEmailAccountResult>;
+  /**
+   * The device plugin's verification step, in-process. With a session's
+   * headers it claims a pending code for that person, which the plugin
+   * requires before it will approve or deny; with none it only answers the
+   * code's status, so the verification form can check a code without moving
+   * it.
+   */
+  deviceVerify: (
+    userCode: string,
+    headers: Headers,
+  ) => Promise<DeviceCodeVerdict>;
+  /** Approve a claimed, pending device code as the signed-in person. */
+  deviceApprove: (
+    userCode: string,
+    headers: Headers,
+  ) => Promise<{ ok: true } | { ok: false; reason: DeviceCodeRefusal }>;
+  /** Deny a claimed, pending device code as the signed-in person. */
+  deviceDeny: (
+    userCode: string,
+    headers: Headers,
+  ) => Promise<{ ok: true } | { ok: false; reason: DeviceCodeRefusal }>;
   /** Resolves once Better Auth has finished building its context. Never
    *  rejects: a failure is logged and left for the per-request path to
    *  surface. Callers that need a settled instance await this. */
@@ -184,6 +227,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     oauthAccessToken: sqliteSchema.auth_oauth_access_token,
     oauthRefreshToken: sqliteSchema.auth_oauth_refresh_token,
     oauthConsent: sqliteSchema.auth_oauth_consent,
+    deviceCode: sqliteSchema.auth_oauth_device_code,
     jwks: sqliteSchema.auth_jwks,
   };
 
@@ -266,6 +310,20 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
               apiKeySalt: options.apiKeySalt,
               baseURL: options.baseURL,
             }),
+            // The RFC 8628 device grant, as the provider's own extension: it
+            // mints and claims the codes, approves or denies them, and hands
+            // the exchange to the provider's shared issuance at
+            // `/oauth2/token`. Marfa keeps the human half in front of it —
+            // the verification page, the consent screen with its toggles,
+            // the grant projection and the audit row — in `routes/auth-pages`.
+            oauthDeviceAuthorization({
+              expiresIn: "10m",
+              interval: "5s",
+              // Resolved against the auth base URL, which carries the `/auth`
+              // base path; the plugin's default `/device` would land beside
+              // it rather than under it.
+              verificationUri: "/auth/device",
+            }),
           ]
         : []),
     ],
@@ -339,7 +397,95 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     getSession: (params: {
       headers: Headers;
     }) => Promise<MarfaAuthSession | null>;
+    deviceVerify: (params: {
+      query: { user_code: string };
+      headers: Headers;
+    }) => Promise<{
+      user_code: string;
+      status: "pending" | "approved" | "denied";
+      client_id?: string;
+      scope?: string;
+    }>;
+    deviceApprove: (params: {
+      body: { userCode: string };
+      headers: Headers;
+    }) => Promise<{ success: boolean }>;
+    deviceDeny: (params: {
+      body: { userCode: string };
+      headers: Headers;
+    }) => Promise<{ success: boolean }>;
   };
+
+  // The plugin refuses with an `APIError` whose body carries an OAuth error
+  // code and one of its own messages. Read by shape rather than by class,
+  // because the plugin constructs its errors from its own copy of the core
+  // package and an `instanceof` across the two can quietly stop matching.
+  const deviceRefusal = (err: unknown): DeviceCodeRefusal | null => {
+    if (!err || typeof err !== "object" || !("body" in err)) return null;
+    const body = (err as { body?: unknown }).body;
+    if (!body || typeof body !== "object") return null;
+    const code = (body as { error?: unknown }).error;
+    const description = (body as { error_description?: unknown })
+      .error_description;
+    const text = typeof description === "string" ? description : "";
+    switch (code) {
+      case "expired_token":
+        return "expired_code";
+      case "unauthorized":
+        return "unauthorized";
+      case "access_denied":
+        return "forbidden";
+      case "invalid_request":
+        if (/already processed/i.test(text)) return "already_resolved";
+        if (/not been claimed/i.test(text)) return "not_claimed";
+        return "invalid_code";
+      default:
+        return null;
+    }
+  };
+  const deviceVerify = async (
+    userCode: string,
+    headers: Headers,
+  ): Promise<DeviceCodeVerdict> => {
+    try {
+      const answer = await api.deviceVerify({
+        query: { user_code: userCode },
+        headers,
+      });
+      return {
+        ok: true,
+        status: answer.status,
+        ...(answer.client_id !== undefined && { clientId: answer.client_id }),
+        ...(answer.scope !== undefined && { scope: answer.scope }),
+      };
+    } catch (err) {
+      const reason = deviceRefusal(err);
+      if (reason === null) throw err;
+      return { ok: false, reason };
+    }
+  };
+  const deviceDecision =
+    (
+      decide: (params: {
+        body: { userCode: string };
+        headers: Headers;
+      }) => Promise<{ success: boolean }>,
+    ) =>
+    async (
+      userCode: string,
+      headers: Headers,
+    ): Promise<{ ok: true } | { ok: false; reason: DeviceCodeRefusal }> => {
+      try {
+        const answer = await decide({ body: { userCode }, headers });
+        return answer.success
+          ? { ok: true }
+          : { ok: false, reason: "already_resolved" };
+      } catch (err) {
+        const reason = deviceRefusal(err);
+        if (reason === null) throw err;
+        return { ok: false, reason };
+      }
+    };
 
   // Account creation. Deliberately reads the built context rather than
   // calling `api.signUpEmail`: that endpoint answers
@@ -426,6 +572,9 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
     handler: instance.handler,
     api: instance.api,
     getSession: (headers: Headers) => api.getSession({ headers }),
+    deviceVerify,
+    deviceApprove: deviceDecision((params) => api.deviceApprove(params)),
+    deviceDeny: deviceDecision((params) => api.deviceDeny(params)),
     createEmailAccount,
     ready,
     baseURL: options.baseURL,

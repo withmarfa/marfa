@@ -24,13 +24,144 @@ import {
   auth_oauth_consent,
   auth_oauth_refresh_token,
   items,
+  auth_oauth_device_code,
 } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
+import { WriteTracker } from "../write-tracker.js";
 import { isPublicClient } from "../oauth-client-trust.js";
 import { sameScopeSet } from "../consent-scopes.js";
 
 export class SqliteOauthProviderStore implements OauthProviderStore {
   constructor(private db: DrizzleDb) {}
+
+  /**
+   * In-flight tracking for the fire-and-forget `last_used_at` stamp. The
+   * bearer middleware fires the stamp after the response and nothing
+   * awaits it, so without tracking a stamp still in flight when the
+   * connection closes surfaces as an unhandled rejection. Same shape as
+   * the audit store's drain, which fixed the same class.
+   */
+  private readonly stamps = new WriteTracker("oauth-grant-stamp");
+
+  updateLastUsedAt(
+    connectionItemId: string,
+    thresholdMs: number,
+  ): Promise<void> {
+    // Tracked so `close()` can drain an in-flight stamp; the returned
+    // promise never rejects, matching the callers' fire-and-forget use.
+    return this.stamps.track(() =>
+      this.applyLastUsedAt(connectionItemId, thresholdMs),
+    );
+  }
+
+  drain(): Promise<void> {
+    return this.stamps.drain();
+  }
+
+  /**
+   * `json_set` merges `last_used_at` into the `properties` blob in place,
+   * and `json_extract` reads the existing value for the conditional check.
+   * ISO-8601 timestamps sort correctly as text, so the comparison is a
+   * plain `<`.
+   */
+  private async applyLastUsedAt(
+    connectionItemId: string,
+    thresholdMs: number,
+  ): Promise<void> {
+    const nowIso = new Date().toISOString();
+    const cutoffIso = new Date(Date.now() - thresholdMs).toISOString();
+    await this.db
+      .update(items)
+      .set({
+        // jsonb_set, not json_set: json_set returns text and would silently
+        // revert the stored JSONB blob to the old text encoding.
+        properties: sql`jsonb_set(${items.properties}, '$.last_used_at', ${nowIso})`,
+      })
+      .where(
+        and(
+          eq(items.id, connectionItemId),
+          sql`(json_extract(${items.properties}, '$.last_used_at') IS NULL OR json_extract(${items.properties}, '$.last_used_at') < ${cutoffIso})`,
+        ),
+      )
+      .run();
+  }
+
+  async findDeviceCodeGrantKey(deviceCode: string): Promise<{
+    clientId: string;
+    userId: string;
+    hasConsent: boolean;
+  } | null> {
+    // Only an approved code has a grant to be judged against: a pending one
+    // is still the plugin's to answer (`authorization_pending`, or nothing
+    // at all once it is claimed but not yet approved), and a denied one is
+    // its `access_denied`.
+    //
+    // The consent row and the projection both, on both of the projection's
+    // lifecycle axes: a `system.*` soft delete lands the item on `revoked`
+    // and touches nothing inside `properties`, and a purge removes it while
+    // the consent row stands, and a grant no person can reach through the
+    // interface built for revoking it is not one a code may mint against.
+    const rows = await this.db.all<{
+      client_id: string | null;
+      user_id: string | null;
+      consent_id: string | null;
+      grant_id: string | null;
+    }>(sql`
+      SELECT COALESCE(d.oauth_client_id, d.client_id) AS client_id,
+             d.user_id                                 AS user_id,
+             c.id                                      AS consent_id,
+             i.id                                      AS grant_id
+      FROM auth_oauth_device_code d
+      LEFT JOIN auth_oauth_consent c
+        ON c.client_id = COALESCE(d.oauth_client_id, d.client_id)
+       AND c.user_id   = d.user_id
+      LEFT JOIN items i
+        ON i.type = 'system.connection'
+       AND i.state = 'active'
+       AND json_extract(i.properties, '$.kind') = 'app'
+       AND json_extract(i.properties, '$.status') = 'active'
+       AND json_extract(i.properties, '$.client_id') = COALESCE(d.oauth_client_id, d.client_id)
+       AND json_extract(i.properties, '$.user_id') = d.user_id
+      WHERE d.device_code = ${deviceCode}
+        AND d.status = 'approved'
+      LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row?.client_id || !row.user_id) return null;
+    return {
+      clientId: row.client_id,
+      userId: row.user_id,
+      hasConsent: row.consent_id != null && row.grant_id != null,
+    };
+  }
+
+  async narrowDeviceCodeScope(
+    userCode: string,
+    scopes: readonly string[],
+  ): Promise<boolean> {
+    const result = await this.db
+      .update(auth_oauth_device_code)
+      .set({ scope: scopes.join(" ") })
+      .where(
+        and(
+          eq(auth_oauth_device_code.userCode, userCode),
+          eq(auth_oauth_device_code.status, "pending"),
+        ),
+      )
+      .run();
+    return result.rowsAffected > 0;
+  }
+
+  async deleteDeviceCodesForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void> {
+    await this.db.run(sql`
+      DELETE FROM auth_oauth_device_code
+      WHERE user_id = ${authUserId}
+        AND COALESCE(oauth_client_id, client_id) = ${clientId}
+    `);
+  }
 
   async getClientName(clientId: string): Promise<string | undefined> {
     const rows = await this.db
@@ -395,15 +526,6 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     });
   }
 
-  async clientExists(clientId: string): Promise<boolean> {
-    const rows = await this.db
-      .select({ clientId: auth_oauth_client.clientId })
-      .from(auth_oauth_client)
-      .where(eq(auth_oauth_client.clientId, clientId))
-      .limit(1);
-    return rows.length > 0;
-  }
-
   async listGrantItemsForClient(clientId: string): Promise<
     {
       id: string;
@@ -467,9 +589,8 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   async createClient(input: CreateClientInput): Promise<CreateClientResult> {
     const id = generateId();
     const now = new Date();
-    // JSON-encode every string[] field. See PG store for the
-    // upstream-bug context (CreateClientInput doc-block) — SQLite uses
-    // the same column layout (`text` columns holding JSON literals).
+    // JSON-encode every string[] field: the columns are `text` holding JSON
+    // literals, which is what every reader here parses back.
     await this.db.insert(auth_oauth_client).values({
       id,
       clientId: input.clientId,

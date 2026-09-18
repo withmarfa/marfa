@@ -47,8 +47,8 @@ describe("oauth last-used stamp drains at close", () => {
     // Fire-and-forget, exactly as the middleware does. The stamp is
     // space-scoped, so it takes the space the row was written into: a null
     // space matches only a row with no space and would stamp nothing.
-    void ctx.storage.oauth.updateLastUsedAt(id, 30_000);
-    await ctx.storage.oauth.drain();
+    void ctx.storage.oauthProvider!.updateLastUsedAt(id, 30_000);
+    await ctx.storage.oauthProvider!.drain();
 
     const item = await ctx.storage.items.get(id);
     expect(item?.properties.last_used_at).toEqual(expect.any(String));
@@ -60,7 +60,7 @@ describe("oauth last-used stamp drains at close", () => {
 
     // No await between the stamp and close — the exact window the bearer
     // middleware's post-response stamp hits when a context tears down.
-    void ctx.storage.oauth.updateLastUsedAt(id, 30_000);
+    void ctx.storage.oauthProvider!.updateLastUsedAt(id, 30_000);
     await ctx.cleanup();
 
     // Absence has no condition to poll for: give a stray rejection two

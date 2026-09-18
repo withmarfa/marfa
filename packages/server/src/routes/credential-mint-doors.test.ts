@@ -22,11 +22,12 @@
  *
  * The coverage check at the bottom has three legs, because the surface
  * is only half route-table: the published OpenAPI document is reflected
- * for operations whose success response carries secret material, the
- * plain-Hono mint routes (HTML form, device token, DCR) are pinned
- * against the live route table, and the discovery document's grant list
- * is pinned exactly — a plugin upgrade that starts advertising a new
- * grant type fails the pin and forces a door row or a named exclusion.
+ * for operations whose success response carries secret material, the two
+ * doors the provider plugin serves outside the spec (registration and the
+ * device grant) are pinned against the discovery document, and the
+ * discovery document's grant list is pinned exactly — a plugin upgrade
+ * that starts advertising a new grant type fails the pin and forces a
+ * door row or a named exclusion.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -106,10 +107,10 @@ interface MintDoor {
 
 /** Doors that never take a caller-supplied `source`, with the reason. */
 const NO_CALLER_SOURCE: Record<string, string> = {
-  "POST /auth/oauth2/register — an omitted scope is not the allowlist":
+  "POST /auth/oauth2/register — the ceiling is the allowlist and nothing outside it":
     "registers a client, mints no credential row and takes no source",
-  "POST /auth/device/token — nothing mints without an approved grant":
-    "issues against an approved device grant; the source is the grant's",
+  "POST /auth/oauth2/token (device grant) — nothing mints without an approved code":
+    "issues against an approved device code; the source is the grant's",
 };
 
 const DOORS: MintDoor[] = [
@@ -237,11 +238,33 @@ const DOORS: MintDoor[] = [
     },
   },
   {
-    name: "POST /auth/oauth2/register — an omitted scope is not the allowlist",
-    specRoute: null,
+    name: "POST /auth/oauth2/register — the ceiling is the allowlist and nothing outside it",
+    // Spec-visible since the plugin's registration issues a `client_secret`
+    // to a confidential client, so leg 1 reflects it.
+    specRoute: "post /auth/oauth2/register",
     ceiling: async () => {
+      // Over the ceiling: a scope the server does not have is refused, so no
+      // client is ever registered for reach the allowlist never granted.
+      const over = await request(ctx.app, "POST", "/auth/oauth2/register", {
+        body: {
+          application_type: "native",
+          token_endpoint_auth_method: "none",
+          redirect_uris: ["http://localhost/cb"],
+          grant_types: ["authorization_code"],
+          client_name: "mint-door-dcr-over",
+          scope: "core.note:read not.a.type:write",
+        },
+      });
+      expect(over.status).toBe(400);
+
+      // At the ceiling: a scope-less registration is given the allowlist the
+      // server advertises, and nothing beyond it. The plugin's registration
+      // stores that one ceiling for every client, so the consent screen is
+      // the narrowing; `oauth-mint-ceilings.test.ts` pins the rule.
       const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
         body: {
+          application_type: "native",
+          token_endpoint_auth_method: "none",
           redirect_uris: ["http://localhost/cb"],
           grant_types: ["authorization_code"],
           client_name: "mint-door-dcr",
@@ -249,11 +272,19 @@ const DOORS: MintDoor[] = [
       });
       expect(res.status).toBe(201);
       const body = (await res.json()) as { scope: string };
-      // Exact literals — `user.*:write` legitimately rides in the bundle
-      // default and contains "*:write" as a substring.
-      const registered = new Set(body.scope.split(" "));
-      expect(registered.has("*:write")).toBe(false);
-      expect(registered.has("*:read")).toBe(false);
+      const discovery = await request(
+        ctx.app,
+        "GET",
+        "/.well-known/oauth-authorization-server/auth",
+        {},
+      );
+      const advertised = new Set(
+        ((await discovery.json()) as { scopes_supported?: string[] })
+          .scopes_supported ?? [],
+      );
+      for (const scope of body.scope.split(" ").filter(Boolean)) {
+        expect(advertised.has(scope), `${scope} is not advertised`).toBe(true);
+      }
 
       // The one grant with no user in it is not a grant this server has, so
       // no client registers for it and there is no mint door to bound. A
@@ -269,14 +300,14 @@ const DOORS: MintDoor[] = [
     },
   },
   {
-    name: "POST /auth/device/token — nothing mints without an approved grant",
+    name: "POST /auth/oauth2/token (device grant) — nothing mints without an approved code",
     specRoute: null,
     ceiling: async () => {
       // The approved-scope ceiling (token scopes = the literals the user
-      // approved) is pinned end-to-end in device-grant.test.ts; this row
-      // pins the door itself: an unapproved ask mints nothing.
+      // ticked) is pinned end-to-end in device-grant.test.ts; this row
+      // pins the door itself: a code nobody issued mints nothing.
       const res = await ctx.app.fetch(
-        new Request(`${ORIGIN}/auth/device/token`, {
+        new Request(`${ORIGIN}/auth/oauth2/token`, {
           method: "POST",
           headers: {
             "content-type": "application/x-www-form-urlencoded",
@@ -367,16 +398,16 @@ const SECRET_PROPERTIES = new Set([
   "client_secret",
 ]);
 
-/** Plain-Hono mint doors invisible to the OpenAPI reflection. A brand-new
- *  plain-Hono mint route escapes leg 1 by construction — this list plus
- *  the discovery-document pin below are the fences on that side, and the
- *  honest limit is that a new HTML-form mint needs a reviewer to add it
- *  here. Each entry is checked against the live route table so a renamed
- *  route fails as stale rather than silently unpinning. */
-const PINNED_HONO_MINT_ROUTES = [
-  "POST /auth/device/token",
-  "POST /auth/oauth2/register",
-];
+/** Mint doors invisible to the OpenAPI reflection, served by the provider
+ *  plugin and advertised in its discovery document. A brand-new door on
+ *  that side escapes leg 1 by construction — this list plus the grant pin
+ *  below are the fences there, and the honest limit is that a new door
+ *  needs a reviewer to add it here. Each entry is checked against the
+ *  advertised endpoint so a moved door fails as stale rather than
+ *  silently unpinning. */
+const PINNED_ADVERTISED_DOORS: Record<string, RegExp> = {
+  device_authorization_endpoint: /\/auth\/device\/code$/,
+};
 
 describe("every way of asking for a credential is accounted for", () => {
   it("spec-visible secret-bearing operations each have a door row or a stated reason", async () => {
@@ -440,12 +471,17 @@ describe("every way of asking for a credential is accounted for", () => {
     }
   });
 
-  it("the plain-Hono mint routes still exist under their pinned paths", () => {
-    const registered = new Set(
-      ctx.app.routes.map((r) => `${r.method} ${r.path}`),
+  it("the plugin-served doors are still advertised under their pinned paths", async () => {
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/.well-known/oauth-authorization-server/auth",
+      {},
     );
-    for (const route of PINNED_HONO_MINT_ROUTES) {
-      expect(registered.has(route), `stale pin: ${route}`).toBe(true);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    for (const [field, path] of Object.entries(PINNED_ADVERTISED_DOORS)) {
+      expect(body[field], `stale pin: ${field}`).toMatch(path);
     }
   });
 

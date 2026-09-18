@@ -128,7 +128,7 @@ async function deviceGrant(
   cookie: string,
   scope: string,
 ): Promise<TokenResponse> {
-  const initRes = await request(c.app, "POST", "/auth/device", {
+  const initRes = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope },
     headers: { origin: ORIGIN },
   });
@@ -159,7 +159,7 @@ async function pollDeviceToken(
   deviceCode: string,
   clientId: string,
 ): Promise<TokenResponse> {
-  const res = await request(c.app, "POST", "/auth/device/token", {
+  const res = await request(c.app, "POST", "/auth/oauth2/token", {
     form: {
       grant_type: DEVICE_GRANT,
       device_code: deviceCode,

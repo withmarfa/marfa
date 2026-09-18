@@ -21,7 +21,10 @@
  *      access tokens when a stale refresh is detected.
  */
 
-import { oauthProvider } from "@better-auth/oauth-provider";
+import {
+  DEVICE_CODE_GRANT_TYPE,
+  oauthProvider,
+} from "@better-auth/oauth-provider";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import {
   decodeBasicCredentials,
@@ -48,7 +51,7 @@ import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
 import { deriveCustomTypeNamespaces } from "./default-bundles.js";
-import { dcrDefaultScopes, SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
+import { SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 import {
   bundlePublishedScopes,
@@ -399,17 +402,20 @@ export function buildOauthProviderPlugin(
     consentPage: "/auth/authorize",
 
     // ----- Dynamic client registration (RFC 7591) -----
-    // `POST /auth/clients` is a public, no-auth endpoint for the
-    // public-client model (PKCE replaces the client secret as the
-    // binding). The plugin's deprecation note on unauthenticated DCR
+    // The plugin's own `POST /auth/oauth2/register` serves, with no session
+    // required, for the public-client model (PKCE replaces the client secret
+    // as the binding). The plugin's deprecation note on unauthenticated DCR
     // is a future-watch item; revisit if MCP standardizes it.
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
 
     // ----- Scope grammar -----
-    // Default scopes (clients can request these). `clientRegistrationAllowedScopes`
-    // widens to the same set (registration accepts everything). Custom types
-    // registered at runtime require a server restart to surface here.
+    // The allowlist, which is also every registered client's scope ceiling:
+    // the plugin's registration validates a requested `scope` against
+    // `clientRegistrationAllowedScopes` and then stores that whole set on
+    // the row, whatever the request named or omitted, so the consent screen
+    // is the only narrowing. Custom types registered at runtime require a
+    // server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
     // The acceptance set above spans every space's runtime namespace roots,
@@ -421,13 +427,6 @@ export function buildOauthProviderPlugin(
     advertisedMetadata: {
       scopes_supported: buildAllowedScopes(undefined, []),
     },
-    // The ceiling for the one path with no consent screen in front of it,
-    // owned by `auth/mint-ceiling.ts` so the plugin option and the
-    // Marfa-owned DCR mirror cannot drift. Without it the default falls
-    // through to `scopes`, the ENTIRE allowlist with `*:write` included, so
-    // a scope-less registration inherited everything.
-    clientRegistrationDefaultScopes: dcrDefaultScopes(),
-
     // ----- Grants -----
     // **The grants this server has, stated once.** The plugin defaults to
     // its three and dispatches on that list, so leaving it unset and bolting
@@ -438,16 +437,11 @@ export function buildOauthProviderPlugin(
     // list is what `grant_types_supported` publishes and what the endpoint
     // checks before its switch, so the grant is absent rather than declined.
     //
-    // The device-code URN is not here. It is a Marfa route rather than a
-    // plugin grant (`POST /auth/device/token`), so the plugin has no handler
-    // to reach for it, and the discovery document appends it separately. The
-    // plugin's own registration validator does hold a client's `grant_types`
-    // to this list, which would refuse a device-code registration -- and
-    // never runs, because Marfa's `POST /oauth2/register` is mounted ahead of
-    // the plugin's and validates and persists through its own store. The
-    // plugin's client-management endpoints are fenced to 404 separately;
-    // registration is shadowed rather than fenced, which `oauth-plugin-fence`
-    // records.
+    // The device-code URN is not here because it is not the provider's own
+    // grant: `oauthDeviceAuthorization()` registers it as an extension, and
+    // the supported set the token endpoint dispatches on, the registration
+    // validator holds `grant_types` to, and the discovery document publishes
+    // is this list plus every extension grant.
     grantTypes: ["authorization_code", "refresh_token"],
 
     // ----- Token storage -----
@@ -679,6 +673,23 @@ export function buildOauthProjectionPlugin(opts: {
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
             narrowAuthorizeScopes(ctx, storage, liveScopes, bundleScopes),
+          ),
+        },
+        {
+          // The device twin of the narrowing above: catches a stale client
+          // ceiling up to what the device asks for, before the plugin compares
+          // the request against the stored row with exact membership.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/device/code",
+          handler: createAuthMiddleware((ctx: HookCtxLite) =>
+            catchUpDeviceCeiling(ctx, storage, bundleScopes),
+          ),
+        },
+        {
+          // Guards `/oauth2/token` for the device grant: a code whose grant
+          // the user has revoked must not redeem. See `guardDeviceCodeGrant`.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+          handler: createAuthMiddleware((ctx: HookCtxLite) =>
+            guardDeviceCodeGrant(ctx, storage),
           ),
         },
         ...(acceptedResources
@@ -1412,8 +1423,8 @@ async function narrowAuthorizeScopes(
   // with a pinned dependency, and every shape it would add is one the caller
   // already needed the registered redirect URI to reach.
   //
-  // `initDeviceFlow` states the neighboring rule on the device surface:
-  // nothing that writes may run above the checks that clear the request.
+  // `catchUpDeviceCeiling` is the device twin: it moves nothing but the
+  // ceiling, and the plugin's own validation still decides the request.
   //
   // The plugin's `disabled` and `clientAllowsGrant` gates sit BELOW the
   // redirect-URI check in its order and are deliberately not reproduced.
@@ -1481,10 +1492,10 @@ async function narrowAuthorizeScopes(
   }
 
   // **There is deliberately no live-allowlist pass here, and that is the one
-  // place this ordering does not copy the device surface.** `initDeviceFlow`
-  // clears the whole request against the allowlist before its catch-up runs,
-  // because it refuses a request it cannot fully satisfy and so must not move
-  // a row on the way out. This surface narrows instead: a scope for a type
+  // place this ordering does not copy the device surface.** The device
+  // plugin refuses a request it cannot fully satisfy, so the catch-up ahead
+  // of it moves the ceiling and leaves the request alone. This surface
+  // narrows instead: a scope for a type
   // this server has since deleted is dropped from the request below and the
   // authorization still succeeds, which is the entire reason the hook exists.
   // Refusing to act on a request naming one would hand it back untouched, and
@@ -1878,6 +1889,105 @@ async function guardRefreshTokenGrant(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Device grant (before-hooks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Before-hook for `/device/code`: catch the client's stored scope ceiling up
+ * to what this device asks for, before the plugin compares the request
+ * against the row with exact membership.
+ *
+ * The device twin of `narrowAuthorizeScopes`, and narrower on purpose: the
+ * authorize surface narrows a request so a stale scope costs the requester
+ * that scope rather than the authorization, because its error rides a
+ * redirect nobody may render. Here the answer goes straight back to the
+ * machine that asked, which can read it, so the plugin's own refusal of an
+ * uncovered scope stands and only the ceiling moves. `ceiling-catchup.ts`
+ * carries the three bounds on what moves.
+ */
+async function catchUpDeviceCeiling(
+  ctx: HookCtxLite,
+  storage: Storage,
+  bundleScopes: Set<string>,
+): Promise<void> {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  const clientId = body.client_id;
+  const rawScope = body.scope;
+  if (typeof clientId !== "string" || clientId.length === 0) return;
+  const requested =
+    typeof rawScope === "string"
+      ? rawScope.split(" ").filter((s) => s.length > 0)
+      : [];
+  if (requested.length === 0) return;
+  const oauth = storage.oauthProvider;
+  if (!oauth) return;
+  let ceiling: readonly string[] | null;
+  try {
+    const client = await oauth.getClient(clientId);
+    if (!client) return;
+    ceiling = client.scopes;
+  } catch (err) {
+    log("warn", "oauth device ceiling precheck failed", {
+      client_id: clientId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  await catchUpClientScopeCeiling({
+    storage,
+    clientId,
+    requested,
+    ceiling,
+    bundleScopes,
+    surface: "device",
+  });
+}
+
+/**
+ * Before-hook for `/oauth2/token` with the device grant. Refuses a code
+ * whose grant the user has revoked, for the reasons the authorization-code
+ * guard below gives: revocation sweeps the codes, and this holds for a code
+ * approved in the window between the two writes. Fails open on a lookup
+ * error and on a code this store does not recognise, or one nobody has
+ * claimed, which the plugin refuses on its own terms.
+ */
+async function guardDeviceCodeGrant(
+  ctx: HookCtxLite,
+  storage: Storage,
+): Promise<void> {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  if (requestedGrantType(ctx) !== DEVICE_CODE_GRANT_TYPE) return;
+  const code = body.device_code;
+  if (typeof code !== "string" || code.length === 0) return;
+  if (typeof storage.oauthProvider?.findDeviceCodeGrantKey !== "function")
+    return;
+
+  let row: Awaited<
+    ReturnType<NonNullable<Storage["oauthProvider"]>["findDeviceCodeGrantKey"]>
+  >;
+  try {
+    row = await storage.oauthProvider.findDeviceCodeGrantKey(code);
+  } catch (err) {
+    log("warn", "oauth device-code precheck failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  if (!row) return;
+  if (row.hasConsent) return;
+
+  log("info", "oauth device-code refused: grant revoked", {
+    client_id: row.clientId,
+  });
+  throw new APIError("BAD_REQUEST", {
+    error: "invalid_grant",
+    error_description: "The device code is invalid, expired, or revoked.",
+  });
 }
 
 // ---------------------------------------------------------------------------

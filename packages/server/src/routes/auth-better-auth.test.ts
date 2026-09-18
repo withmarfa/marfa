@@ -239,7 +239,7 @@ describe("better-auth /auth/* surface", () => {
       ]),
     );
     expect(body.grant_types_supported).not.toContain("client_credentials");
-    expect(body.device_authorization_endpoint).toMatch(/\/auth\/device$/);
+    expect(body.device_authorization_endpoint).toMatch(/\/auth\/device\/code$/);
   });
 
   it("openid-configuration also advertises the device_code grant", async () => {
@@ -257,7 +257,7 @@ describe("better-auth /auth/* surface", () => {
     expect(body.grant_types_supported).toContain(
       "urn:ietf:params:oauth:grant-type:device_code",
     );
-    expect(body.device_authorization_endpoint).toMatch(/\/auth\/device$/);
+    expect(body.device_authorization_endpoint).toMatch(/\/auth\/device\/code$/);
   });
 
   it("every discovery-doc URL field is prefixed with the configured authBaseUrl", async () => {
@@ -336,7 +336,7 @@ describe("better-auth /auth/* surface", () => {
       expect(
         body.device_authorization_endpoint,
         `${path} device endpoint`,
-      ).toMatch(/\/auth\/device$/);
+      ).toMatch(/\/auth\/device\/code$/);
       expect(
         body.marfa_permission_bundles,
         `${path} permission bundles`,

@@ -8,7 +8,6 @@ import { SqliteTypeStore } from "./type-store.js";
 import { SqliteSearchStore } from "./search-store.js";
 import { SqliteKeyStore } from "./key-store.js";
 import { SqliteBlobStore } from "./blob-store.js";
-import { SqliteOAuthStore } from "./oauth-store.js";
 import { SqliteOauthProviderStore } from "./oauth-provider-store.js";
 import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
@@ -58,7 +57,6 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   const typeStore = new SqliteTypeStore(db);
   const keyStore = new SqliteKeyStore(db);
   const blobStore = new SqliteBlobStore(db);
-  const oauthStore = new SqliteOAuthStore(db);
   const webhookStore = new SqliteWebhookStore(db);
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
   const auditStore = new SqliteAuditStore(db);
@@ -67,6 +65,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
   const edgeStore = new SqliteEdgeStore(db);
   const edgeTypeStore = new SqliteEdgeTypeStore(db);
   const enrichmentStore = new SqliteEnrichmentStore(db);
+  const oauthProviderStore = new SqliteOauthProviderStore(db);
 
   // Awaited for the same reason as the type warmup below: a registry filled
   // after storage is handed back is a registry some request can miss.
@@ -137,10 +136,9 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
     edges: edgeStore,
     edgeTypes: edgeTypeStore,
     enrichment: enrichmentStore,
-    oauth: oauthStore,
     // Thin reader over the @better-auth/oauth-provider plugin's tables
     // for the consent route and projection after-hooks. The plugin owns writes.
-    oauthProvider: new SqliteOauthProviderStore(db),
+    oauthProvider: oauthProviderStore,
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
     audit: auditStore,
@@ -196,7 +194,7 @@ export async function createSqliteStorage(sqlitePath: string): Promise<
       // last-used stamp) before closing the underlying connection, so a
       // late write can't fail against a closed store. Neither drain
       // rejects.
-      await Promise.all([auditStore.drain(), oauthStore.drain()]);
+      await Promise.all([auditStore.drain(), oauthProviderStore.drain()]);
       await close();
     },
   };

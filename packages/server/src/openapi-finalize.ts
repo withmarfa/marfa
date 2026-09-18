@@ -203,7 +203,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Auth"],
       summary: "Register an OAuth client",
       description:
-        "Dynamic Client Registration (RFC 7591). Registers a public OAuth client and returns its issued `client_id`. Unauthenticated. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
+        "Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
       requestBody: {
         required: true,
         content: {
@@ -227,8 +227,15 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                   description: 'Defaults to ["code"].',
                 },
                 client_name: { type: "string" },
+                application_type: {
+                  type: "string",
+                  description: 'Defaults to "web".',
+                },
                 scope: { type: "string" },
-                token_endpoint_auth_method: { type: "string" },
+                token_endpoint_auth_method: {
+                  type: "string",
+                  description: 'Defaults to "client_secret_basic".',
+                },
               },
             },
           },
@@ -243,7 +250,12 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                 type: "object",
                 properties: {
                   client_id: { type: "string" },
+                  client_secret: {
+                    type: "string",
+                    description: "Confidential clients only.",
+                  },
                   client_id_issued_at: { type: "integer" },
+                  scope: { type: "string" },
                   redirect_uris: { type: "array", items: { type: "string" } },
                   grant_types: { type: "array", items: { type: "string" } },
                   response_types: { type: "array", items: { type: "string" } },
@@ -255,7 +267,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         },
         "400": {
           description:
-            "An RFC 7591 error object (invalid_client_metadata or invalid_redirect_uri).",
+            "An RFC 7591 error object (invalid_client_metadata, invalid_redirect_uri or invalid_scope).",
         },
       },
     },

@@ -97,7 +97,7 @@ describe("items.properties is stored natively structured", () => {
       properties: { kind: "app", client_id: "c1", body: "grant" },
       tier: "library",
     });
-    await ctx.storage.oauth.updateLastUsedAt(itemId, 0);
+    await ctx.storage.oauthProvider!.updateLastUsedAt(itemId, 0);
     expect(await storedTypeOf(itemId)).toBe("blob");
     const item = await ctx.storage.items.get(itemId);
     expect(typeof item?.properties.last_used_at).toBe("string");

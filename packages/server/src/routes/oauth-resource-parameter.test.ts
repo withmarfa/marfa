@@ -67,11 +67,16 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
   throw new Error("sign-in: session_token cookie not found");
 }
 
-/** Register through the Marfa-owned DCR endpoint with the person's session
- *  on the request, which is what binds the client to their space. */
+/** Register through the plugin's registration endpoint with the person's
+ *  session on the request. A loopback http redirect is a native client's
+ *  shape, which is what the plugin's registration accepts it for, and the
+ *  plugin registers a confidential client unless told otherwise, so the
+ *  public one this flow exchanges as has to say so. */
 async function registerClient(c: TestContext, cookie: string): Promise<string> {
   const res = await request(c.app, "POST", "/auth/oauth2/register", {
     body: {
+      application_type: "native",
+      token_endpoint_auth_method: "none",
       redirect_uris: [CALLBACK],
       grant_types: ["authorization_code"],
       response_types: ["code"],
@@ -178,7 +183,7 @@ describe("resource parameter on the token endpoint", () => {
     const token = await authorizationCodeGrant(context, clientId, cookie, {
       resource: base,
     });
-    expect(token.status).toBe(200);
+    expect(token.status, JSON.stringify(token.body)).toBe(200);
 
     const accessToken = token.body.access_token as string;
     // The mint must stay in the opaque family the bearer middleware
@@ -202,7 +207,7 @@ describe("resource parameter on the token endpoint", () => {
     );
 
     const token = await authorizationCodeGrant(context, clientId, cookie, {});
-    expect(token.status).toBe(200);
+    expect(token.status, JSON.stringify(token.body)).toBe(200);
     expect((token.body.access_token as string).startsWith("marfa_at_")).toBe(
       true,
     );

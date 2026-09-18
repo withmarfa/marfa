@@ -1,5 +1,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { oauthProvider } from "@better-auth/oauth-provider";
+import {
+  oauthDeviceAuthorization,
+  oauthProvider,
+} from "@better-auth/oauth-provider";
 import {
   createTestContext,
   createTestAccount,
@@ -48,22 +51,25 @@ interface PluginEndpoint {
   serverOnly: boolean;
 }
 
-/** Every path the plugin registers, read off its own endpoint record rather
- *  than from a list somebody typed. Options are the minimum the factory
- *  accepts; the record is a flat literal, so they gate nothing. */
+type EndpointRecord = Record<
+  string,
+  { path: string; options?: { metadata?: { SERVER_ONLY?: boolean } } }
+>;
+
+/** Every path the provider and its device plugin register, read off their
+ *  own endpoint records rather than from a list somebody typed. Options are
+ *  the minimum each factory accepts; the records are flat literals, so they
+ *  gate nothing. */
 function pluginEndpoints(): PluginEndpoint[] {
-  const plugin = oauthProvider({
+  const provider = oauthProvider({
     loginPage: "/auth/sign-in",
     consentPage: "/auth/authorize",
   });
-  const endpoints = (
-    plugin as unknown as {
-      endpoints: Record<
-        string,
-        { path: string; options?: { metadata?: { SERVER_ONLY?: boolean } } }
-      >;
-    }
-  ).endpoints;
+  const device = oauthDeviceAuthorization();
+  const endpoints = {
+    ...(provider as unknown as { endpoints: EndpointRecord }).endpoints,
+    ...(device as unknown as { endpoints: EndpointRecord }).endpoints,
+  };
   const byPath = new Map<string, boolean>();
   for (const endpoint of Object.values(endpoints)) {
     const serverOnly = endpoint.options?.metadata?.SERVER_ONLY === true;
@@ -288,6 +294,8 @@ describe("the plugin's management endpoints are fenced", () => {
     // holds and a reopened door answers as the plugin would, which is
     // exactly what the signature control below is satisfied by.
     expect([...REACHABLE_PLUGIN_ENDPOINTS].sort()).toEqual([
+      "/device",
+      "/device/code",
       "/oauth2/authorize",
       "/oauth2/continue",
       "/oauth2/end-session",
@@ -386,8 +394,8 @@ describe("the plugin's management endpoints are fenced", () => {
     }
 
     // And three of them answer with their own refusals, not a 404: a token
-    // request with no grant, userinfo with no bearer, and Marfa's own
-    // registration handler refusing the content type.
+    // request with no grant, userinfo with no bearer, and the plugin's
+    // registration handler refusing a form-encoded body.
     const token = await request(ctx.app, "POST", "/auth/oauth2/token", {
       form: { grant_type: "refresh_token" },
       headers: { origin: ORIGIN },
@@ -402,8 +410,6 @@ describe("the plugin's management endpoints are fenced", () => {
     const register = await request(ctx.app, "POST", "/auth/oauth2/register", {
       form: { client_name: "x" },
     });
-    expect(register.status).toBe(400);
-    const body = (await register.json()) as { error?: string };
-    expect(body.error).toBe("invalid_client_metadata");
+    expect(register.status).toBe(415);
   });
 });

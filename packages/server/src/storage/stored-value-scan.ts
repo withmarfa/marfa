@@ -146,7 +146,7 @@ export const DELIBERATELY_UNSCANNED: readonly {
   because: string;
 }[] = [
   {
-    table: "oauth_device_codes",
+    table: "auth_oauth_device_code",
     column: "status",
     castType: "OAuthDeviceCodeStatus",
     because:

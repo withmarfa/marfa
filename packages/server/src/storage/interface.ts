@@ -1160,154 +1160,6 @@ export interface WebhookDeliveryStore {
 }
 
 // ---------------------------------------------------------------------------
-// OAuth store
-//
-// This store is scoped to the device-flow state machine and OAuth-grant
-// last_used stamping. The OAuth-protocol surfaces (clients / codes / tokens)
-// are owned by the @better-auth/oauth-provider plugin tables (`auth_oauth_*`);
-// read helpers live on `OauthProviderStore` below.
-// ---------------------------------------------------------------------------
-
-export interface OAuthStore {
-  // ----- Device Authorization Grant (RFC 8628) -----
-
-  /** Insert a new device-code row. Caller hashes `device_code` and supplies
-   *  the unique `user_code`; both are stored verbatim. Used by the
-   *  initiate endpoint. */
-  createDeviceCode(input: {
-    deviceCodeHash: string;
-    userCode: string;
-    clientId: string;
-    scope: string;
-    expiresAt: string;
-    intervalSeconds: number;
-  }): Promise<import("@withmarfa/shared").OAuthDeviceCode>;
-
-  /** Lookup by SHA-256 of the device_code. Used by the polling endpoint.
-   *  Returns null if the row doesn't exist; expired rows are returned
-   *  with `status: "pending"` (caller checks `expires_at` to decide). */
-  findDeviceCodeByHash(
-    hash: string,
-  ): Promise<import("@withmarfa/shared").OAuthDeviceCode | null>;
-
-  /** Lookup by user_code. Used by the verification page. */
-  findDeviceCodeByUserCode(
-    userCode: string,
-  ): Promise<import("@withmarfa/shared").OAuthDeviceCode | null>;
-
-  /** Stamp `last_polled_at`. Used by the polling endpoint to detect
-   *  `slow_down` (client polled inside the interval window). */
-  markDeviceCodePolled(id: string, now: string): Promise<void>;
-
-  /** Flip status to `approved`, set `connection_item_id` and `approved_at`,
-   *  and rewrite `scope` to the set the person actually approved. Returns
-   *  false if the row was not pending.
-   *
-   *  **The scope rewrite is what keeps the screen and the token agreeing.**
-   *  The row's scopes are what the device asked for, and the approval screen
-   *  offers those as toggles, so a person can approve less. The token step
-   *  reads this row and the standing grant, and the grant merges upward on a
-   *  re-approval — so both of its inputs still carried an unticked scope, and
-   *  the untick was a silent no-op for anything the standing grant already
-   *  held. After approval the row's only remaining purpose is issuing that
-   *  token, so what it should record is what may be issued. */
-  approveDeviceCode(
-    id: string,
-    connectionItemId: string,
-    approvedScopes: readonly string[],
-  ): Promise<boolean>;
-
-  /** Flip status to `denied`. Returns false if the row was not pending. */
-  denyDeviceCode(id: string): Promise<boolean>;
-
-  /**
-   * Flip status from `approved` to `redeemed`. Returns false if the row was
-   * not approved, which is what a second poll with the same code sees.
-   *
-   * A device code is exchanged once. RFC 8628 §3.5 has the client stop
-   * polling on success, but nothing stopped the server answering again: an
-   * approved row stayed approved for the rest of its TTL, so a code that
-   * leaked from a device's logs or a shared terminal could be exchanged a
-   * second time for a second live pair, and with `offline_access` a second
-   * refresh token, minted after the device had its own. The flip is a
-   * conditional update on the status column, so two polls racing for the
-   * same code see one winner and the other is refused.
-   */
-  redeemDeviceCode(id: string): Promise<boolean>;
-
-  /**
-   * Delete every device-code row whose `expires_at` is before `cutoffIso`,
-   * whatever its status. Returns the number of rows deleted.
-   *
-   * Rows were never removed once written: a pending code that nobody
-   * approved, a denied one, an approved one whose grant lives on, and now a
-   * redeemed one all sat in the table for as long as the deployment did. An
-   * expired row answers nothing to any caller, so the sweep is safe at any
-   * cutoff at or past expiry; the retention job passes one an hour past.
-   */
-  deleteDeviceCodesExpiredBefore(cutoffIso: string): Promise<number>;
-
-  /**
-   * Delete every device code bound to a projected grant, so revoking that
-   * grant leaves nothing behind that can still be exchanged for a token.
-   *
-   * **Keyed on `connection_item_id`, never on `client_id`.** The table
-   * carries a client id and no user column, because a pending row is
-   * pre-consent and the user it will belong to is genuinely unknown. A
-   * sweep by client would therefore delete every OTHER user's in-flight
-   * device login for that client, turning one person's revoke into a
-   * denial of service across everyone using the same app. The foreign key
-   * reaches exactly the approved codes bound to the grant being revoked.
-   *
-   * A pending code for the same client survives, and that is correct
-   * rather than a gap: approving one runs the grant projection, which is a
-   * fresh consent the user has just given.
-   */
-  deleteDeviceCodesForGrant(connectionItemId: string): Promise<void>;
-
-  /**
-   * Delete every device code for a client, pending ones included. Only the
-   * client delete calls this: the client is going, so a pending code for it
-   * can never be approved, and keeping the per-grant sweep keyed on the
-   * projection is what stops any other path reaching other users' codes.
-   * Returns the number of rows deleted.
-   */
-  deleteDeviceCodesForClient(clientId: string): Promise<number>;
-
-  /**
-   * Conditional `last_used_at` stamp on the underlying `system.connection`
-   * (kind: app) for an OAuth grant. Mirrors `KeyStore.updateLastUsed` in
-   * shape: the WHERE clause only writes when the existing
-   * `properties.last_used_at` is NULL or older than `now - thresholdMs`,
-   * so the row is updated at most once per `thresholdMs` regardless of
-   * how many instances call concurrently.
-   *
-   * The auth middleware layers a per-process in-memory cache on top to
-   * skip the DB round-trip when the calling instance has already stamped
-   * inside the window — that cache is a first-line short-circuit, not
-   * the authoritative throttle. Cluster-wide debounce comes from the
-   * conditional UPDATE here.
-   *
-   * Best-effort: callers swallow errors. The middleware-side cache mark
-   * already prevents a stampede; storage failures must never break the
-   * auth path.
-   */
-  updateLastUsedAt(
-    connectionItemId: string,
-    thresholdMs: number,
-  ): Promise<void>;
-
-  /**
-   * Resolves once every in-flight `updateLastUsedAt` stamp has settled.
-   * The stamp is fire-and-forget from the bearer middleware, so `close()`
-   * drains it the way the audit store drains its writes — a stamp still
-   * opening a connection when the pool ends is otherwise an unhandled
-   * rejection.
-   */
-  drain(): Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
 // @better-auth/oauth-provider read helpers
 // ---------------------------------------------------------------------------
 
@@ -1381,30 +1233,13 @@ export interface OauthClientRow {
 }
 
 /**
- * Input to `OauthProviderStore.createClient`, used by Marfa's
- * `POST /auth/oauth2/register` override (which fronts the plugin's DCR
- * endpoint — see `routes/oauth-register.ts`).
- *
- * The override exists because:
- *
- * 1. The plugin's DCR (`POST /auth/oauth2/register`) hardcodes a Zod enum
- *    of three grant types and rejects the device-code URN at validation
- *    time — there's no config knob to widen it (verified in
- *    `@better-auth/oauth-provider@1.6.13`).
- * 2. The plugin's DCR write path goes through Better Auth's Drizzle
- *    adapter, which sets `supportsArrays: true` for the `pg` provider
- *    (verified in `@better-auth/drizzle-adapter@1.6.13`). The adapter then
- *    passes JS arrays directly
- *    into the `text` columns (`scopes`, `redirect_uris`, `grant_types`,
- *    `response_types`, etc.). Postgres coerces those to comma-joined
- *    strings on write; on read, the plugin's `schemaToOAuth` calls
- *    `scopes?.join(" ")` on a string → `TypeError`, surfaced as HTTP 500.
- *    The Marfa schema is intentionally `text` (JSON-encoded string), not
- *    `text[]` — Marfa's own `mintTokenPair` write path uses
- *    `JSON.stringify` and the read helpers (`getClient`,
- *    `validateAccessToken`) `safeJsonParse` on the way back out. The
- *    plugin DCR is the only Better-Auth-internal writer to
- *    `auth_oauth_client`, so routing around it is sufficient.
+ * Input to `OauthProviderStore.createClient`: a client row written directly,
+ * with the JSON-encoded string[] columns the rest of Marfa's write paths
+ * use. The product writer of `auth_oauth_client` is the provider plugin's
+ * own `POST /auth/oauth2/register`; this is the seam the tests use to put a
+ * client in front of the endpoints that registration would not produce (a
+ * stale ceiling, a confidential client with a known secret, a client
+ * registered for a grant the server no longer issues).
  */
 export interface CreateClientInput {
   /** The new client's business key (returned to the caller). */
@@ -1684,15 +1519,10 @@ export interface OauthProviderStore {
    *  so the bearer middleware resolves them uniformly. */
   mintTokenPair(input: MintTokenPairInput): Promise<void>;
   /** Insert a row into `auth_oauth_client` with JSON-encoded string[]
-   *  columns matching the rest of Marfa's write paths (see
-   *  `CreateClientInput` for the upstream-bug context). Used exclusively
-   *  by the Marfa-owned `POST /auth/oauth2/register` route in
-   *  `routes/oauth-register.ts`; the plugin's own DCR endpoint is NOT
-   *  exercised on Marfa deployments. */
+   *  columns matching the rest of Marfa's write paths. The plugin's
+   *  registration is the product writer; see `CreateClientInput` for what
+   *  this seam is for. */
   createClient(input: CreateClientInput): Promise<CreateClientResult>;
-  /** Existence check on `(clientId)` for the registration route to surface
-   *  a clean 409 instead of a unique-violation. */
-  clientExists(clientId: string): Promise<boolean>;
   /**
    * Every `system.connection { kind: "app" }` projection carrying this
    * client id, whatever either lifecycle axis says. The
@@ -1768,6 +1598,82 @@ export interface OauthProviderStore {
    * A row with zero grants is dead whoever registered it.
    */
   deleteGrantlessClientsOlderThan(cutoffIso: string): Promise<number>;
+  /**
+   * Conditional `last_used_at` stamp on the underlying `system.connection`
+   * (kind: app) for an OAuth grant. Mirrors `KeyStore.updateLastUsed` in
+   * shape: the WHERE clause only writes when the existing
+   * `properties.last_used_at` is NULL or older than `now - thresholdMs`,
+   * so the row is updated at most once per `thresholdMs` regardless of
+   * how many callers race.
+   *
+   * The auth middleware layers a per-process in-memory cache on top to
+   * skip the DB round-trip when it has already stamped inside the window —
+   * that cache is a first-line short-circuit, not the authoritative
+   * throttle. The conditional UPDATE here is.
+   *
+   * Best-effort: callers swallow errors. The middleware-side cache mark
+   * already prevents a stampede; storage failures must never break the
+   * auth path.
+   */
+  updateLastUsedAt(
+    connectionItemId: string,
+    thresholdMs: number,
+  ): Promise<void>;
+  /**
+   * Resolves once every in-flight `updateLastUsedAt` stamp has settled.
+   * The stamp is fire-and-forget from the bearer middleware, so `close()`
+   * drains it the way the audit store drains its writes — a stamp still
+   * opening a connection when the database closes is otherwise an
+   * unhandled rejection.
+   */
+  drain(): Promise<void>;
+  /**
+   * Resolve an approved device code to the grant it belongs to, and say
+   * whether that grant is still consented and its projection live on both
+   * lifecycle axes. A code in any other state resolves to null, because
+   * until it is approved there is no grant to judge it against. The device twin of `findAuthorizationCodeGrantKey`,
+   * backing the same exchange-time refusal: revoking a grant sweeps its
+   * device codes, and this is the check that holds for a code approved in
+   * the window between the two writes, for a grant soft-deleted out of the
+   * active state, and for one whose projection was purged.
+   *
+   * Returns null for a code this store does not recognise, or one no person
+   * has claimed yet, which the caller passes through to the plugin.
+   */
+  findDeviceCodeGrantKey(deviceCode: string): Promise<{
+    clientId: string;
+    userId: string;
+    hasConsent: boolean;
+  } | null>;
+  /**
+   * Rewrite a pending device code's `scope` to the set the person ticked.
+   *
+   * The plugin approves a code as it was requested and issues the token for
+   * the row's scope, so a narrowing on the consent screen has to reach the
+   * row before the approval does. Conditional on the row still being
+   * pending; returns false when it was not.
+   */
+  narrowDeviceCodeScope(
+    userCode: string,
+    scopes: readonly string[],
+  ): Promise<boolean>;
+  /**
+   * Delete every device code claimed by this user for this client, so
+   * revoking the grant leaves nothing behind that can still be exchanged
+   * for a token.
+   *
+   * **Keyed on the (client, user) pair, never on the client alone.** A
+   * pending code nobody has claimed carries no user, so a sweep by client
+   * would delete every other person's in-flight device login for that app,
+   * turning one revoke into a denial of service across everyone using it.
+   * A pending code for the same client that this user has not claimed
+   * survives, and that is correct rather than a gap: approving it runs the
+   * grant projection, which is a fresh consent the user has just given.
+   */
+  deleteDeviceCodesForGrant(
+    clientId: string,
+    authUserId: string,
+  ): Promise<void>;
 }
 
 // `OauthProviderStore.updateGrantScopes` was dropped. The re-consent path
@@ -2689,7 +2595,6 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   blobs: BlobStore;
   edges: EdgeStore;
   edgeTypes: EdgeTypeStore;
-  oauth: OAuthStore;
   /** Thin lookup helpers over the @better-auth/oauth-provider plugin's
    *  tables (`auth_oauth_client`, `auth_oauth_consent`). Used by the
    *  consent route + grant-projection after-hooks. Optional — test

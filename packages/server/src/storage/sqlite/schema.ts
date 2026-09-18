@@ -284,58 +284,6 @@ export const blobs = sqliteTable("blobs", {
   created_at: text("created_at").notNull(),
 });
 
-// ---------------------------------------------------------------------------
-// oauth_device_codes — Device Authorization Grant (RFC 8628)
-//
-// OAuth client + token storage is owned by the @better-auth/oauth-provider
-// plugin (auth_oauth_client + auth_oauth_access_token +
-// auth_oauth_refresh_token). See migration 0048_drop_legacy_oauth.sql.
-// ---------------------------------------------------------------------------
-
-export const oauthDeviceCodes = sqliteTable(
-  "oauth_device_codes",
-  {
-    id: text("id").primaryKey(),
-    /** SHA-256 of the raw device_code returned to the polling client.
-     *  Uniqueness lets validateToken-style lookups stay constant-time. */
-    device_code_hash: text("device_code_hash").notNull().unique(),
-    /** Short, low-entropy code displayed to the human (XXXX-XXXX shape).
-     *  Unique while the row is `pending`; once approved, redeemed or
-     *  denied the row stays until the cleanup job deletes it an hour past
-     *  expiry, and no new pending row may reuse the value meanwhile
-     *  (enforced by a unique index over the natural key). */
-    user_code: text("user_code").notNull().unique(),
-    /** Stores the @better-auth/oauth-provider client_id business key
-     *  (auth_oauth_client.client_id) as a plain string — application-
-     *  enforced integrity, consistent with the plugin's own cross-table
-     *  references (no FK). */
-    client_id: text("client_id").notNull(),
-    /** Space-separated list of requested scopes. Stored verbatim;
-     *  parsed via parseScope at consent / token time. */
-    scope: text("scope").notNull(),
-    /** Lifecycle: pending → approved → redeemed, or pending → denied.
-     *  Nothing writes an expired status: a row past `expires_at` is refused
-     *  by the token step and deleted by the cleanup job an hour later,
-     *  whatever its status. */
-    status: text("status").notNull().default("pending"),
-    /** Set when status transitions to `approved`. References the
-     *  system.connection (kind: app) created on approval. */
-    connection_item_id: text("connection_item_id").references(() => items.id, {
-      onDelete: "set null",
-    }),
-    expires_at: text("expires_at").notNull(),
-    interval_seconds: integer("interval_seconds").notNull().default(5),
-    /** Used by the polling endpoint to detect `slow_down` violations. */
-    last_polled_at: text("last_polled_at"),
-    approved_at: text("approved_at"),
-    created_at: text("created_at").notNull(),
-  },
-  (table) => [
-    index("idx_oauth_device_codes_user_code").on(table.user_code),
-    index("idx_oauth_device_codes_status").on(table.status),
-  ],
-);
-
 // The instance's type registrations, the shipped set included.
 export const customTypes = sqliteTable(
   "custom_types",
@@ -816,6 +764,9 @@ export const auth_oauth_client = sqliteTable(
     subjectType: text("subject_type"),
     /** JSON-encoded string[] — Better Auth adapter serializes */
     scopes: text("scopes"),
+    // The plugin's registration writes the client-credentials ceiling on
+    // every client it creates, empty for the ones this server registers.
+    clientCredentialsScopes: text("client_credentials_scopes"),
     // 1.7 additions, nullable so a 1.6 build serves this schema without
     // noticing. Arrays store as text on this dialect.
     applicationType: text("application_type"),
@@ -998,6 +949,35 @@ export const auth_oauth_consent = sqliteTable(
 // JWT signing keys. One row per rotation; the most recent non-expired
 // row is the active signer. Used by the @better-auth/jwt plugin which
 // the oauth-provider needs for id_token issuance.
+// The Device Authorization Grant (RFC 8628), owned by the OAuth provider's
+// device plugin (`oauthDeviceAuthorization`): it creates the row, claims it
+// for the signed-in person, approves or denies it, and consumes it at the
+// token endpoint. Marfa reads it for the consent screen and narrows `scope`
+// to what the person ticked before approving. `oauth_client_id` and
+// `resources` are the provider grant's own fields; the rest is the device
+// plugin's model.
+export const auth_oauth_device_code = sqliteTable(
+  "auth_oauth_device_code",
+  {
+    id: text("id").primaryKey(),
+    deviceCode: text("device_code").notNull(),
+    userCode: text("user_code").notNull(),
+    userId: text("user_id"),
+    expiresAt: integer("expires_at", { mode: "timestamp" }).notNull(),
+    status: text("status").notNull(),
+    lastPolledAt: integer("last_polled_at", { mode: "timestamp" }),
+    pollingInterval: integer("polling_interval"),
+    clientId: text("client_id"),
+    scope: text("scope"),
+    oauthClientId: text("oauth_client_id"),
+    resources: text("resources"),
+  },
+  (table) => [
+    uniqueIndex("uq_auth_oauth_device_code_device_code").on(table.deviceCode),
+    uniqueIndex("uq_auth_oauth_device_code_user_code").on(table.userCode),
+  ],
+);
+
 export const auth_jwks = sqliteTable("auth_jwks", {
   id: text("id").primaryKey(),
   publicKey: text("public_key").notNull(),

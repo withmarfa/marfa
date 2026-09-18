@@ -34,8 +34,7 @@ import { keyRoutes } from "./routes/keys.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { adminPlatformTypeRoutes } from "./routes/admin-platform-types.js";
-import { authRoutes, DEVICE_CODE_GRANT_TYPE } from "./routes/auth-pages.js";
-import { oauthRegisterRoutes } from "./routes/oauth-register.js";
+import { authRoutes } from "./routes/auth-pages.js";
 import { oauthPluginFenceRoutes } from "./routes/oauth-plugin-fence.js";
 import {
   oauthProviderAuthServerMetadata,
@@ -289,20 +288,17 @@ export function createApp(
           // Insertion order matters: the middleware iterates and
           // takes the FIRST `path.startsWith(prefix)` match, so
           // place more-specific prefixes ahead of broader siblings
-          // (e.g. `/auth/device/token` MUST precede `/auth/device`).
+          // (e.g. `/auth/device/code` MUST precede `/auth/device`).
           //
           // Auth-endpoint caps calibrated for realistic human retry
           // patterns plus iterative smoke testing. The global default
           // (1000/window) bounds anything else.
           //
-          // Device-flow polling (`/auth/device/token`) gets its own
-          // budget independent of the sign-in / token-exchange paths:
-          // RFC 8628's default 5-second poll interval means a single
-          // in-flight device flow burns 12 calls/minute, so 60/min
-          // accommodates ~5 concurrent flows without sharing budget
-          // with `/auth/oauth2/token`.
-          //
-          "/auth/device/token": 60,
+          // Device-flow polling goes to `/auth/oauth2/token` with the
+          // device grant and shares that endpoint's budget: RFC 8628's
+          // default 5-second poll interval means one in-flight device flow
+          // burns 12 calls/minute.
+          "/auth/device/code": 30,
           "/auth/device": 30,
           "/auth/sign-in/email": 30,
           "/auth/sign-in": 30,
@@ -393,25 +389,10 @@ export function createApp(
   // actual endpoint paths (e.g. `/auth/oauth2/token`, `/auth/jwks`).
   //
   // The plugin also answers `/auth/.well-known/*` on its own basePath, and its
-  // document is **not** the same as the one below — it is the unaugmented one,
-  // described in the next paragraph. Every URL a client can derive is therefore
-  // registered here ahead of the `/auth/*` catch-all, so Hono answers first and
-  // one document is served everywhere. An unregistered derivation reaches the
-  // plugin instead and returns a document that passes every check a client
-  // makes — the issuer matches, because the URL really does belong to this
-  // issuer — while silently omitting the device-code grant. A device-flow
-  // client discovering there concludes the server does not support device flow.
-  // That is a worse failure than the bare-root one this block used to have,
-  // where at least the issuer mismatch named the problem.
-  //
-  // The plugin's helper does NOT advertise the device-code grant type or the
-  // `device_authorization_endpoint` field (RFC 8628 §4) by default. Marfa owns
-  // the device-flow surface at `/auth/device` + `/auth/device/token`, so we
-  // wrap the plugin's response and inject both before returning. Passing the
-  // device-code URN via the plugin's `grantTypes` config causes its token
-  // endpoint to 400 with `unsupported_grant_type` — the plugin has no case
-  // branch for it. Augmenting the metadata here keeps the plugin's token
-  // endpoint behavior intact.
+  // document is the unaugmented one. Every URL a client can derive is
+  // registered here ahead of the `/auth/*` catch-all, so Hono answers first
+  // and one document is served everywhere: the plugin's, with the `none`
+  // revocation method and the permission bundles added below.
   if (auth) {
     // Cast once into the shape both helpers want — they each declare a
     // narrow `api` requirement (`getOAuthServerConfig` vs `getOpenIdConfig`).
@@ -425,7 +406,6 @@ export function createApp(
     const openidConfigMeta = oauthProviderOpenIdConfigMetadata(authForHelpers);
     const augmentMetadata = async (
       handler: (req: Request) => Promise<Response>,
-      baseURL: string,
       req: Request,
     ): Promise<Response> => {
       const upstream = await handler(req);
@@ -438,27 +418,6 @@ export function createApp(
       } catch {
         return upstream;
       }
-      // Inject the device-code URN into `grant_types_supported`
-      // (idempotent — guards against the plugin starting to advertise
-      // it natively in a future version).
-      //
-      // Nothing here removes the client-credentials grant. The plugin is
-      // configured with the grants this server has, so it never publishes
-      // one; a filter here would be a second answer to the same question,
-      // and the shape where the two disagree is a document advertising a
-      // grant the token endpoint refuses.
-      const URN = DEVICE_CODE_GRANT_TYPE;
-      const grantsRaw = payload.grant_types_supported;
-      const grants = Array.isArray(grantsRaw)
-        ? grantsRaw.filter((g): g is string => typeof g === "string")
-        : [];
-      if (!grants.includes(URN)) grants.push(URN);
-      payload.grant_types_supported = grants;
-      // RFC 8628 §4: `device_authorization_endpoint` advertises the
-      // device-authorization request endpoint. Marfa's lives at
-      // `${authBaseUrl}/auth/device` (initiation; the polled token
-      // exchange happens at `/auth/device/token`).
-      payload.device_authorization_endpoint = `${baseURL.replace(/\/+$/, "")}/auth/device`;
       // RFC 8414 §2: the revocation endpoint admits a public client presenting
       // its `client_id` alone, which is how every client this server issues
       // revokes. The plugin advertises only the confidential methods there
@@ -505,16 +464,16 @@ export function createApp(
     // — and cost several releases of dead sign-in in one app before anyone
     // read the two identifiers side by side. A 404 names its own cause.
     app.get("/.well-known/oauth-authorization-server/auth", (c) =>
-      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(authServerMeta, c.req.raw),
     );
     app.get("/.well-known/openid-configuration/auth", (c) =>
-      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(openidConfigMeta, c.req.raw),
     );
     app.get("/auth/.well-known/openid-configuration", (c) =>
-      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(openidConfigMeta, c.req.raw),
     );
     app.get("/auth/.well-known/oauth-authorization-server", (c) =>
-      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(authServerMeta, c.req.raw),
     );
     // RFC 9728: the resource-server metadata a bearer challenge points at.
     app.route("/", oauthProtectedResourceRoutes(config));
@@ -539,7 +498,7 @@ export function createApp(
   app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/admin", adminPlatformTypeRoutes(storage));
   app.route("/export", exportRoutes(storage, blobBackend));
-  app.route("/auth", authRoutes(storage, config.apiKeySalt, auth, oidcSigner));
+  app.route("/auth", authRoutes(storage, auth, oidcSigner));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
   // so this explicit GET handler wins over the plugin's own endpoints under
@@ -553,19 +512,6 @@ export function createApp(
       authBaseUrl: config.authBaseUrl,
     }),
   );
-  // Marfa-owned DCR endpoint. Sits in front of the plugin's
-  // `/auth/oauth2/register` because: (1) the plugin's body schema rejects
-  // the device-code URN at validation time, and (2) the plugin's write path
-  // through Better Auth's Drizzle adapter mishandles `string[]` columns on
-  // the PG provider. See `routes/oauth-register.ts` for the upstream source
-  // references.
-  if (storage.oauthProvider) {
-    app.route(
-      "/auth",
-      oauthRegisterRoutes(storage.oauthProvider, config.corsOrigins),
-    );
-  }
-
   // The plugin's management endpoints — consent rows, clients, the resource
   // registry — answer 404 here before the catch-all can serve them. Marfa's
   // own routes are the only writers of a grant's two records; the reasoning

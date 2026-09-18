@@ -158,7 +158,7 @@ export function touchLastUsedCache(
  * `oauth:<connection_item_id>`; values are millisecond timestamps.
  *
  * **First-line short-circuit, not the floor.** The DB layer uses a
- * conditional UPDATE in `OAuthStore.updateLastUsedAt`, writing only
+ * conditional UPDATE in `OauthProviderStore.updateLastUsedAt`, writing only
  * when the existing `properties.last_used_at` is older than
  * `DEBOUNCE_MS`. That makes the debounce authoritative across
  * instances. This in-memory cache stays to skip a DB round-trip when
@@ -174,7 +174,7 @@ const oauthLastUsedCache = new Map<string, number>();
  *   1. Module-scoped in-memory cache (`oauthLastUsedCache`) — skips
  *      the DB round-trip when this instance has already stamped
  *      inside `DEBOUNCE_MS`.
- *   2. DB-side conditional UPDATE in `OAuthStore.updateLastUsedAt` —
+ *   2. DB-side conditional UPDATE in `OauthProviderStore.updateLastUsedAt` —
  *      collapses concurrent writes from any number of instances to at
  *      most one row write per `DEBOUNCE_MS` per grant.
  *
@@ -182,8 +182,7 @@ const oauthLastUsedCache = new Map<string, number>();
  *
  * Used by:
  *   - `authMiddleware` for every authenticated bearer-bearing request.
- *   - The `/auth/oauth2/token` (authorization_code + refresh_token) and
- *     `/auth/device/token` handlers, which issue tokens without
+ *   - The `/auth/oauth2/token` handlers, which issue tokens without
  *     resolving a bearer through the middleware.
  */
 export async function stampOAuthGrantLastUsed(
@@ -196,7 +195,10 @@ export async function stampOAuthGrantLastUsed(
   if (now - lastTracked <= DEBOUNCE_MS) return;
   touchLastUsedCache(oauthLastUsedCache, cacheKey, now);
   try {
-    await storage.oauth.updateLastUsedAt(connectionItemId, DEBOUNCE_MS);
+    await storage.oauthProvider?.updateLastUsedAt(
+      connectionItemId,
+      DEBOUNCE_MS,
+    );
   } catch {
     // Best-effort; the cache mark above prevents a stampede.
   }
@@ -240,7 +242,7 @@ export async function stampOAuthGrantLastUsedByGrantKey(
       authUserId: opts.authUserId,
     });
     if (!itemId) return;
-    await storage.oauth.updateLastUsedAt(itemId, DEBOUNCE_MS);
+    await storage.oauthProvider?.updateLastUsedAt(itemId, DEBOUNCE_MS);
   } catch {
     // Best-effort; the cache mark above prevents a stampede.
   }
