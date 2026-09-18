@@ -27,7 +27,12 @@ root:
 # Boot the server in this checkout on SQLite, mint its first key, write an env file
 pnpm marfa:up
 
-# Correctness + compliance + sync against it
+# Build the device under test. The device fixtures drive this binary, and
+# `marfa:up` does not build it: it boots a server, and the device is not one.
+(cd ../core && cargo build -p marfa-cli)
+export MARFA_DEVICE_BIN="$PWD/../core/target/debug/marfa"
+
+# Correctness, compliance, the server's write contract and the device's half
 set -a; . .marfa-state/env; set +a
 pnpm test:conformance
 
@@ -111,7 +116,7 @@ src/
   client/         — typed HTTP client for the Marfa API
   generators/     — synthetic test data generators
   utils/          — test context, teardown, event-stream helpers
-  device/         — the scripted server, the adapter protocol, the CLI adapter
+  device/         — the scripted server, the wire-shape builders, the adapter protocol, the CLI adapter
   suites/
     correctness/  — functional correctness tests
     compliance/   — spec adherence tests
