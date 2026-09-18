@@ -65,7 +65,6 @@ export interface ParentChainMessages {
 export function assertParentChain(
   typeId: string,
   parentId: string,
-  spaceId: string | undefined,
   messages: ParentChainMessages,
   /**
    * How many levels of subtype sit below `typeId`, which the resulting chain
@@ -87,7 +86,7 @@ export function assertParentChain(
     if (current === typeId) {
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, messages.circular());
     }
-    const parent = getTypeSchema(current, spaceId);
+    const parent = getTypeSchema(current);
     if (!parent) {
       throw new MarfaError(
         ErrorCode.VALIDATION_ERROR,

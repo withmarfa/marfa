@@ -106,7 +106,6 @@ describe("GET /items/stats?by=type", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      ctx.spaceId,
     );
 
     const byType = await stats(raw, "?by=type");

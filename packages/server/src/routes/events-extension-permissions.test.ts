@@ -43,7 +43,7 @@ beforeAll(async () => {
   // does not install one.
   initEventLog(ctx.storage.eventLog);
   const suffix = Math.random().toString(36).slice(2, 10);
-  scopedKey = await mintSpaceKey(ctx, ctx.spaceId, {
+  scopedKey = await mintSpaceKey(ctx, {
     label: `extperm-${suffix}`,
     source: `extperm-${suffix}`,
     type_permissions: { "*": "write" },
@@ -171,7 +171,7 @@ describe("an OAuth-derived subscriber", () => {
   let hosted: TestContext;
 
   beforeAll(async () => {
-    hosted = await createTestContext({ authMode: "hosted" });
+    hosted = await createTestContext({});
     initEventLog(hosted.storage.eventLog);
   });
 
@@ -188,9 +188,6 @@ describe("an OAuth-derived subscriber", () => {
     // widens that. The stream therefore shows them no extension data — which
     // is what a REST read already does, and is the point: an app gets what the
     // user granted it, not what the user could see.
-    const spaces = hosted.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const space = await spaces.create("oauth-stream-space");
     // The option seeds the backing user row the grant is FK-bound to.
     // A real type grant, so the token clears the stream's type filter and
     // the only thing left to narrow the frame is the extension map. With
@@ -199,13 +196,13 @@ describe("an OAuth-derived subscriber", () => {
     const { token } = await seedOauthBearer(
       hosted.storage,
       ["core.note:read"],
-      { spaceId: space.id, seedUserRow: true },
+      {},
     );
 
-    const item = await hosted.storage.items.create(
-      { type: "core.note", properties: { body: "an oauth item" } },
-      space.id,
-    );
+    const item = await hosted.storage.items.create({
+      type: "core.note",
+      properties: { body: "an oauth item" },
+    });
     // Distinctive values, so an assertion that they are absent cannot be
     // satisfied — or defeated — by a substring of the item itself.
     await hosted.storage.metadata.setExtension(item.id, "mine", {
@@ -241,7 +238,6 @@ describe("an OAuth-derived subscriber", () => {
         is_operator: false,
       },
       hashApiKey(writerKey, TEST_API_KEY_SALT),
-      space.id,
     );
     const write = await request(
       hosted.app,
@@ -354,7 +350,6 @@ describe("the replay's shape guard", () => {
     return ctx.storage.eventLog.append({
       event_type: eventType,
       item_id: itemId,
-      space_id: ctx.spaceId,
       payload,
     });
   }

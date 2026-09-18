@@ -44,7 +44,7 @@
  * source of truth with nothing keeping it honest, and it would go stale in
  * precisely the case that matters.
  */
-import { DELETION_STATES, ITEM_STATES, TIERS } from "@withmarfa/shared";
+import { ITEM_STATES, TIERS } from "@withmarfa/shared";
 import { log } from "../middleware/logger.js";
 
 /** One column, and the set of values this build can interpret in it. */
@@ -99,12 +99,6 @@ export const SCANNED_COLUMNS: readonly ScannedColumn[] = [
     allowed: TIERS,
   },
   {
-    table: "auth_user",
-    column: "deletion_state",
-    castType: "DeletionState",
-    allowed: DELETION_STATES,
-  },
-  {
     table: "items",
     column: "state",
     castType: "ItemState",
@@ -152,18 +146,7 @@ export const DELIBERATELY_UNSCANNED: readonly {
   because: string;
 }[] = [
   {
-    table: "spaces",
-    column: "status",
-    castType: "SpaceStatus",
-    because:
-      "Closed. Zero bare casts remain: every read goes through " +
-      "`storage/stored-space-status.ts`, which recognizes rather than " +
-      "asserts and leans to `suspended`, and `middleware/space-suspension.ts` " +
-      "reaches the column through it. A count would report on a column that " +
-      "no longer has the failure mode.",
-  },
-  {
-    table: "oauth_device_codes",
+    table: "auth_oauth_device_code",
     column: "status",
     castType: "OAuthDeviceCodeStatus",
     because:
@@ -270,8 +253,8 @@ export interface UnrecognizedStoredValue {
  * whose reader contract this otherwise copies, has only two — nothing
  * recorded yet, or nothing found — and no failure path at all. This has a
  * third: looked and could not read. The scenario is the one the feature
- * exists for. A newer image meets a database whose migration has not
- * landed, Postgres raises `42703` on the missing column, the catch fires,
+ * exists for. A newer build meets a database whose migration has not
+ * landed, the query fails on the missing column, the catch fires,
  * and without this flag `/health` serves exactly what a healthy instance
  * serves.
  *

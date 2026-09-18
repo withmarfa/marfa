@@ -3,7 +3,6 @@ export { loadConfig } from "./config.js";
 export type { AppConfig } from "./config.js";
 export type { Storage } from "./storage/interface.js";
 export { createSqliteStorage } from "./storage/sqlite/index.js";
-export { createPgStorage } from "./storage/pg/index.js";
 export { FilesystemBlobBackend } from "./storage/blob-backend.js";
 export { S3BlobBackend } from "./storage/blob-s3.js";
 export type { BlobBackend } from "./storage/blob-backend.js";
@@ -23,7 +22,7 @@ export {
 // that needs any of those turns the log on itself, and resets it
 // afterwards: the wiring is module-global, so it outlives the app it was
 // turned on for.
-export { initEventLog, __resetCycleDetectionForTests } from "./pubsub.js";
+export { initEventLog, __resetEventLogForTests } from "./pubsub.js";
 // Exposed for the same reason as the two above. `createApp` does not print
 // the bootstrap secret — the server's own boot does — so an app built from
 // `createApp` alone has an unbootstrapped instance with no secret on it and

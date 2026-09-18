@@ -23,13 +23,9 @@
  * a single consent operation, so waiting is bounded by the operation in
  * front.
  *
- * **Two layers.** The in-process queue below fully covers one process,
- * which is the whole of a SQLite deployment by construction. On Postgres
- * a cross-process backend (`setConsentLockBackend`, wired by index.ts to
- * a blocking session-scoped advisory lock) is composed INSIDE the queue,
- * so the lock holds across every process while local callers still
- * serialize without touching the database twice — and the checked write
- * in `setConsentScopes` stays as the final belt underneath both.
+ * The in-process queue below fully covers one process, which is the whole
+ * deployment, and the checked write in `setConsentScopes` stays as the
+ * final belt underneath it.
  */
 
 /**
@@ -42,28 +38,6 @@ const inFlight = new Map<string, Promise<void>>();
 /** Both parts are percent-encoded, so no pair of ids can collide. */
 function lockKey(clientId: string, authUserId: string): string {
   return `${encodeURIComponent(clientId)}:${encodeURIComponent(authUserId)}`;
-}
-
-/**
- * Cross-process extension of this lock. The in-process queue below fully
- * covers a single process; run two against one database and a revoked
- * permission can silently come back (see the module doc). A backend set
- * here is composed INSIDE the in-process queue, so on Postgres the lock
- * holds across every process while local callers still serialize without
- * touching the database twice. SQLite deployments set none: one process
- * is the deployment there.
- */
-export type ConsentLockBackend = <T>(
-  key: string,
-  fn: () => Promise<T>,
-) => Promise<T>;
-
-let crossProcessBackend: ConsentLockBackend | null = null;
-
-export function setConsentLockBackend(
-  backend: ConsentLockBackend | null,
-): void {
-  crossProcessBackend = backend;
 }
 
 /**
@@ -114,8 +88,7 @@ export async function withConsentLock<T>(
   depth.set(key, (depth.get(key) ?? 0) + 1);
   if (predecessor) await predecessor;
   try {
-    const backend = crossProcessBackend;
-    return backend ? await backend(key, fn) : await fn();
+    return await fn();
   } finally {
     release();
     if (inFlight.get(key) === held) inFlight.delete(key);

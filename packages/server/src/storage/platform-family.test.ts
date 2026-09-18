@@ -32,7 +32,7 @@ function schema(id: string): TypeSchema {
 
 function row(part: Partial<LoadedType> & { id: string }): LoadedType {
   const { id, ...rest } = part;
-  return { space_id: "", schema: schema(id), origin: "platform", ...rest };
+  return { schema: schema(id), origin: "platform", ...rest };
 }
 
 function families(rows: ReturnType<typeof projectPlatformRows>) {

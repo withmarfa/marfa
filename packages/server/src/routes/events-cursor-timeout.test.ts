@@ -43,14 +43,11 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-const SPACE_ID = "events-cursor-timeout-space";
-
 function spaceKey(): ApiKey {
   return {
     id: "key_events_cursor_timeout",
     name: "events cursor timeout",
     key_hash: "unused",
-    space_id: SPACE_ID,
     // The rank this fixture used to carry admitted it past its own maps, so
     // the map has to say what the rank granted silently.
     type_permissions: { "*": "read" },
@@ -136,17 +133,12 @@ function wake(itemId: string): void {
       type: "core.note",
       properties: {},
     } as unknown as ItemEventWithId["item"],
-    spaceId: SPACE_ID,
-    originatingConnectionId: null,
-    hopCount: 0,
   });
 }
 
 describe("GET /events — the cursor announcement is bounded", () => {
   it("announces nothing and releases the hold when the head read outruns its budget", async () => {
     const app = makeApp(withStalledHeadRead(ctx.storage), {
-      rlsEnforce: false,
-      pgClient: null,
       headReadTimeoutMs: 150,
     });
     const open = await openStream(app);
@@ -177,8 +169,6 @@ describe("GET /events — the cursor announcement is bounded", () => {
     // announces for reasons of its own, which is the same result and a
     // different fact.
     const app = makeApp(ctx.storage, {
-      rlsEnforce: false,
-      pgClient: null,
       headReadTimeoutMs: 150,
     });
     const open = await openStream(app);

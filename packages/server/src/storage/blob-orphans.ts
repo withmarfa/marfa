@@ -28,10 +28,6 @@ export interface BlobSweepResult {
 export interface BlobSweepOptions {
   storage: Storage;
   blobBackend: BlobBackend;
-  /** Bounds the item scan to one space. Undefined scans every space,
-   *  which is what an operator-key caller and the scheduled job both
-   *  want: a hash is removed everywhere or not at all. */
-  spaceId?: string;
   /** Report without deleting. */
   dryRun: boolean;
   /** ISO 8601. Only consider hashes whose every row was registered
@@ -48,7 +44,7 @@ const SCAN_PAGE = 200;
 export async function sweepUnreferencedBlobs(
   options: BlobSweepOptions,
 ): Promise<BlobSweepResult> {
-  const { storage, blobBackend, spaceId, dryRun, registeredBefore } = options;
+  const { storage, blobBackend, dryRun, registeredBefore } = options;
 
   const candidates =
     registeredBefore === undefined
@@ -71,7 +67,6 @@ export async function sweepUnreferencedBlobs(
   let hasMore = true;
   while (hasMore) {
     const page = await storage.items.list({
-      spaceId,
       all_states: true,
       limit: SCAN_PAGE,
       cursor,
@@ -110,9 +105,7 @@ export async function sweepUnreferencedBlobs(
   if (!dryRun) {
     for (const hash of orphaned) {
       await blobBackend.delete(hash);
-      // The caller has authority over every space, so a hash nothing
-      // references anywhere loses all of its per-space rows.
-      await storage.blobs.removeAllForHash(hash);
+      await storage.blobs.remove(hash);
     }
   }
 

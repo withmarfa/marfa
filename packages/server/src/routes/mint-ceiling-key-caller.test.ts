@@ -43,7 +43,6 @@ async function mintNarrow(): Promise<string> {
       is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    "spc_ceiling",
   );
   return raw;
 }
@@ -82,7 +81,6 @@ describe("a creator whose own map carries denials", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      "spc_ceiling",
     );
     contentReadKey = raw;
   });

@@ -4,22 +4,16 @@
  * forever, so on an extracted corpus it has to cost nothing — and it once
  * shipped as a full scan plus a sort behind a comment claiming otherwise.
  *
- * Both checks capture the SQL the real store issues (via a Drizzle logger
+ * The check captures the SQL the real store issues (via a Drizzle logger
  * wrapped around the same connection) and ask the database how it would
  * run it. That the store inlines its type/state literals is load-bearing:
- * a bound parameter defeats the partial-index implication proof — always
- * on SQLite, under a generic plan on Postgres.
+ * a bound parameter defeats the partial-index implication proof.
  */
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createClient } from "@libsql/client";
 import { drizzle as drizzleSqlite } from "drizzle-orm/libsql";
-import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
-import type { Sql } from "postgres";
 import { SqliteEnrichmentStore } from "./sqlite/enrichment-store.js";
-import { SCHEMA_SQL } from "./sqlite/schema-sql.generated.js";
-import { PgEnrichmentStore } from "./pg/enrichment-store.js";
-import { createTestContext } from "../test-utils.js";
-import type { TestContext } from "../test-utils.js";
+import { SCHEMA_SQL } from "./sqlite/connection.js";
 
 interface CapturedQuery {
   sql: string;
@@ -71,51 +65,5 @@ describe("sqlite candidate query plan", () => {
     } finally {
       client.close();
     }
-  });
-});
-
-const isPg = process.env.DB_DIALECT === "pg";
-
-describe.skipIf(!isPg)("postgres candidate query plan", () => {
-  let ctx: TestContext;
-
-  beforeAll(async () => {
-    ctx = await createTestContext();
-  });
-
-  afterAll(async () => {
-    await ctx.cleanup();
-  });
-
-  it("is served by the partial index even under a generic plan", async () => {
-    const client = ctx.storage.pgClient as Sql;
-    const captured: CapturedQuery[] = [];
-    const db = drizzlePg(client, { logger: capturingLogger(captured) });
-    const store = new PgEnrichmentStore(db as never);
-    await store.listCandidates(1, 3, 8, SIGNATURE);
-
-    const query = captured.at(-1);
-    expect(query).toBeDefined();
-
-    // Force the generic plan, the steady state a prepared statement
-    // reaches in production. A custom plan sees the bound values and can
-    // prove the partial-index predicate from them, so explaining with
-    // params would pass even for a query whose literals were bound — the
-    // exact regression this test exists to refuse.
-    const text = await client.begin(async (tx) => {
-      await tx.unsafe("SET LOCAL plan_cache_mode = force_generic_plan");
-      await tx.unsafe(`PREPARE candidate_plan_probe AS ${query!.sql}`);
-      const args = query!.params
-        .map((p) => (typeof p === "number" ? String(p) : `'${String(p)}'`))
-        .join(", ");
-      const rows = await tx.unsafe(
-        `EXPLAIN (FORMAT TEXT) EXECUTE candidate_plan_probe(${args})`,
-      );
-      return rows
-        .map((r) => String((r as Record<string, unknown>)["QUERY PLAN"]))
-        .join("\n");
-    });
-    expect(text).toContain("idx_items_enrichment_candidates");
-    expect(text).not.toContain("Seq Scan on items");
   });
 });

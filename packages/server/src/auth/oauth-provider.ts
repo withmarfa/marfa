@@ -14,15 +14,17 @@
  *      (acceptable tradeoff; documented).
  *   2. `buildOauthProviderPlugin(...)` — constructs the plugin with
  *      opaque tokens hashed via Marfa's `hashApiKey(t, salt)`, the
- *      `marfa_at_` / `marfa_rt_` prefixes, space binding via
- *      `clientReference` + `postLogin.consentReferenceId`, and OIDC
- *      custom claims for profile + email + space_id.
+ *      `marfa_at_` / `marfa_rt_` prefixes, and OIDC custom claims for
+ *      profile + email.
  *   3. `buildOauthProjectionPlugin(...)` — the before-hook that
  *      defends against refresh-token replay by pre-emptively revoking
  *      access tokens when a stale refresh is detected.
  */
 
-import { oauthProvider } from "@better-auth/oauth-provider";
+import {
+  DEVICE_CODE_GRANT_TYPE,
+  oauthProvider,
+} from "@better-auth/oauth-provider";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import {
   decodeBasicCredentials,
@@ -49,11 +51,7 @@ import type { PermissionBundle } from "@withmarfa/shared";
 import type { Storage } from "../storage/interface.js";
 import { getPermissionBundles } from "../config.js";
 import { deriveCustomTypeNamespaces } from "./default-bundles.js";
-import {
-  NO_GRANT_SPACE_MESSAGE,
-  resolveSpaceIdForAuthUser,
-} from "./grant-space.js";
-import { dcrDefaultScopes, SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
+import { SESSION_CRITICAL_SCOPES } from "./mint-ceiling.js";
 import { log } from "../middleware/logger.js";
 import {
   bundlePublishedScopes,
@@ -370,8 +368,8 @@ export interface OauthProviderOptions {
    *  `hashApiKey(token, salt)` returns identical output, letting the
    *  middleware look up `auth_oauth_access_token.token` directly. */
   apiKeySalt: string;
-  /** The Storage handle. Threaded into clientReference + custom-claim
-   *  callbacks and the grant-projection after-hooks. */
+  /** The Storage handle. Threaded into the custom-claim callbacks and the
+   *  grant-projection after-hooks. */
   storage: Storage;
   /** Base URL for the issuer (used in id_token claims). */
   baseURL: string;
@@ -392,7 +390,9 @@ function makeTokenHasher(salt: string) {
  * configuration. Used as one entry in the better-auth `plugins: [...]`
  * array in `instance.ts`.
  */
-export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
+export function buildOauthProviderPlugin(
+  opts: OauthProviderOptions,
+): ReturnType<typeof oauthProvider> {
   const tokenHasher = makeTokenHasher(opts.apiKeySalt);
   const allowedScopes = buildAllowedScopes();
 
@@ -402,63 +402,20 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     consentPage: "/auth/authorize",
 
     // ----- Dynamic client registration (RFC 7591) -----
-    // `POST /auth/clients` is a public, no-auth endpoint for the
-    // public-client model (PKCE replaces the client secret as the
-    // binding). The plugin's deprecation note on unauthenticated DCR
+    // The plugin's own `POST /auth/oauth2/register` serves, with no session
+    // required, for the public-client model (PKCE replaces the client secret
+    // as the binding). The plugin's deprecation note on unauthenticated DCR
     // is a future-watch item; revisit if MCP standardizes it.
     allowDynamicClientRegistration: true,
     allowUnauthenticatedClientRegistration: true,
 
-    // ----- Space binding -----
-    // `clientReference` is invoked at CLIENT-REGISTRATION time. The
-    // returned value is written to `auth_oauth_client.reference_id`
-    // and is immutable for the life of the client. Used for things
-    // like "list all clients a space has registered."
-    clientReference: async ({ user }) => {
-      if (!user) return undefined;
-      return resolveSpaceIdForAuthUser(opts.storage, user.id);
-    },
-
-    // `postLogin.consentReferenceId` is invoked at TOKEN-ISSUANCE
-    // time (verified in @better-auth/oauth-provider@1.6.13). The return
-    // value is written to
-    // `auth_oauth_access_token.reference_id` for every minted token.
-    //
-    // The bearer middleware reads that column as the per-token
-    // `space_id`:
-    //
-    //   middleware/auth.ts:325:
-    //     const oauthSpaceId = oauthToken.referenceId ?? undefined;
-    //
-    // Without this callback, `reference_id` is NULL on every issued
-    // token → the bearer middleware sees `space_id=undefined` →
-    // keys-mode behavior → multi-space scoping breaks. With it, each
-    // token is bound to the consenting user's space at issuance, so
-    // the same client can serve users from different spaces without
-    // cross-space leakage.
-    //
-    // The plugin's `postLogin` config wraps an OPTIONAL account-
-    // selection flow (multi-account UX); Marfa has single-account-per-
-    // session, so `shouldRedirect` always returns false and the
-    // `/auth/post-login` page is never hit. We only wire this block
-    // for the `consentReferenceId` field.
-    //
-    // Keys mode resolves too, to the instance's one space. It used to
-    // answer `undefined` here and mint a NULL `reference_id`, which the
-    // bearer middleware then admitted as a principal the storage layer
-    // applies no space predicate to. A token that still arrives unbound is
-    // refused rather than promoted.
-    postLogin: {
-      page: "/auth/post-login",
-      shouldRedirect: () => false,
-      consentReferenceId: async ({ user }) =>
-        resolveSpaceIdForAuthUser(opts.storage, user.id),
-    },
-
     // ----- Scope grammar -----
-    // Default scopes (clients can request these). `clientRegistrationAllowedScopes`
-    // widens to the same set (registration accepts everything). Custom types
-    // registered at runtime require a server restart to surface here.
+    // The allowlist, which is also every registered client's scope ceiling:
+    // the plugin's registration validates a requested `scope` against
+    // `clientRegistrationAllowedScopes` and then stores that whole set on
+    // the row, whatever the request named or omitted, so the consent screen
+    // is the only narrowing. Custom types registered at runtime require a
+    // server restart to surface here.
     scopes: allowedScopes,
     clientRegistrationAllowedScopes: allowedScopes,
     // The acceptance set above spans every space's runtime namespace roots,
@@ -470,13 +427,6 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     advertisedMetadata: {
       scopes_supported: buildAllowedScopes(undefined, []),
     },
-    // The ceiling for the one path with no consent screen in front of it,
-    // owned by `auth/mint-ceiling.ts` so the plugin option and the
-    // Marfa-owned DCR mirror cannot drift. Without it the default falls
-    // through to `scopes`, the ENTIRE allowlist with `*:write` included, so
-    // a scope-less registration inherited everything.
-    clientRegistrationDefaultScopes: dcrDefaultScopes(),
-
     // ----- Grants -----
     // **The grants this server has, stated once.** The plugin defaults to
     // its three and dispatches on that list, so leaving it unset and bolting
@@ -487,16 +437,11 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // list is what `grant_types_supported` publishes and what the endpoint
     // checks before its switch, so the grant is absent rather than declined.
     //
-    // The device-code URN is not here. It is a Marfa route rather than a
-    // plugin grant (`POST /auth/device/token`), so the plugin has no handler
-    // to reach for it, and the discovery document appends it separately. The
-    // plugin's own registration validator does hold a client's `grant_types`
-    // to this list, which would refuse a device-code registration -- and
-    // never runs, because Marfa's `POST /oauth2/register` is mounted ahead of
-    // the plugin's and validates and persists through its own store. The
-    // plugin's client-management endpoints are fenced to 404 separately;
-    // registration is shadowed rather than fenced, which `oauth-plugin-fence`
-    // records.
+    // The device-code URN is not here because it is not the provider's own
+    // grant: `oauthDeviceAuthorization()` registers it as an extension, and
+    // the supported set the token endpoint dispatches on, the registration
+    // validator holds `grant_types` to, and the discovery document publishes
+    // is this list plus every extension grant.
     grantTypes: ["authorization_code", "refresh_token"],
 
     // ----- Token storage -----
@@ -524,11 +469,10 @@ export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
     // NOT call (it reads `auth_oauth_access_token` directly + joins
     // `system.connection`). Kept anyway so external resource servers
     // introspecting Marfa-issued tokens get a usable claim set.
-    customAccessTokenClaims: ({ user, scopes, referenceId }) => {
+    customAccessTokenClaims: ({ user, scopes }) => {
       const claims: Record<string, unknown> = {
         scope: scopes.join(" "),
       };
-      if (referenceId) claims.space_id = referenceId;
       if (user) claims.user_id = user.id;
       return claims;
     },
@@ -672,12 +616,7 @@ export function buildOauthProjectionPlugin(opts: {
   // differently-filtered sets is two ceilings.
   const bundleScopes = bundlePublishedScopes(getPermissionBundles());
   const acceptedResources = baseURL
-    ? new Set(
-        [
-          stripTrailingSlash(baseURL),
-          `${stripTrailingSlash(baseURL)}/mcp`,
-        ].filter((v) => v.length > 0),
-      )
+    ? new Set([stripTrailingSlash(baseURL)].filter((v) => v.length > 0))
     : undefined;
   return {
     id: "marfa-oauth-projection" as const,
@@ -734,6 +673,23 @@ export function buildOauthProjectionPlugin(opts: {
           matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/authorize",
           handler: createAuthMiddleware((ctx: HookCtxLite) =>
             narrowAuthorizeScopes(ctx, storage, liveScopes, bundleScopes),
+          ),
+        },
+        {
+          // The device twin of the narrowing above: catches a stale client
+          // ceiling up to what the device asks for, before the plugin compares
+          // the request against the stored row with exact membership.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/device/code",
+          handler: createAuthMiddleware((ctx: HookCtxLite) =>
+            catchUpDeviceCeiling(ctx, storage, bundleScopes),
+          ),
+        },
+        {
+          // Guards `/oauth2/token` for the device grant: a code whose grant
+          // the user has revoked must not redeem. See `guardDeviceCodeGrant`.
+          matcher: (ctx: HookCtxLite) => ctx.path === "/oauth2/token",
+          handler: createAuthMiddleware((ctx: HookCtxLite) =>
+            guardDeviceCodeGrant(ctx, storage),
           ),
         },
         ...(acceptedResources
@@ -949,7 +905,6 @@ interface RevokeResolution {
     clientId: string;
     userId: string;
     revoked: boolean;
-    referenceId: string | null;
   };
   /** The hash the row was found under, so the after-hook can ask whether
    *  the plugin deleted it. */
@@ -1158,35 +1113,18 @@ async function cascadeClientRevoke(
       // records have to follow.
     }
 
-    // **The token names the bucket, unless it names none.** A refresh token
-    // minted before a grant's space resolved carries a NULL reference, and
-    // the migration that moves a stranded projection into the space the
-    // resolver now answers does not rewrite the token rows behind it. A
-    // lookup keyed on the token alone would then miss the row that moved,
-    // and this cascade would report an ended grant over a live one on the
-    // security page — the silent revoke this whole change exists to close,
-    // arriving through the one surface that reads the space off a token
-    // rather than off the account. Asking the resolver for that case is what
-    // every other caller of the question does.
-    const spaceId =
-      row.referenceId ?? (await resolveSpaceIdForAuthUser(storage, row.userId));
     grantItemId = await provider.findGrantItemId({
-      spaceId: spaceId ?? null,
       clientId: row.clientId,
       authUserId: row.userId,
     });
-    const item = grantItemId
-      ? await storage.items.get(grantItemId, spaceId)
-      : null;
+    const item = grantItemId ? await storage.items.get(grantItemId) : null;
     await revokeProjectedGrant(storage, {
       itemId: item ? item.id : null,
       properties: item?.properties,
-      spaceId,
       clientId: row.clientId,
       authUserId: row.userId,
     });
     auditGrantRevoked(storage, {
-      spaceId,
       clientId: row.clientId,
       authUserId: row.userId,
       grantItemId: item ? item.id : null,
@@ -1485,8 +1423,8 @@ async function narrowAuthorizeScopes(
   // with a pinned dependency, and every shape it would add is one the caller
   // already needed the registered redirect URI to reach.
   //
-  // `initDeviceFlow` states the neighboring rule on the device surface:
-  // nothing that writes may run above the checks that clear the request.
+  // `catchUpDeviceCeiling` is the device twin: it moves nothing but the
+  // ceiling, and the plugin's own validation still decides the request.
   //
   // The plugin's `disabled` and `clientAllowsGrant` gates sit BELOW the
   // redirect-URI check in its order and are deliberately not reproduced.
@@ -1554,10 +1492,10 @@ async function narrowAuthorizeScopes(
   }
 
   // **There is deliberately no live-allowlist pass here, and that is the one
-  // place this ordering does not copy the device surface.** `initDeviceFlow`
-  // clears the whole request against the allowlist before its catch-up runs,
-  // because it refuses a request it cannot fully satisfy and so must not move
-  // a row on the way out. This surface narrows instead: a scope for a type
+  // place this ordering does not copy the device surface.** The device
+  // plugin refuses a request it cannot fully satisfy, so the catch-up ahead
+  // of it moves the ceiling and leaves the request alone. This surface
+  // narrows instead: a scope for a type
   // this server has since deleted is dropped from the request below and the
   // authorization still succeeds, which is the entire reason the hook exists.
   // Refusing to act on a request naming one would hand it back untouched, and
@@ -1689,7 +1627,6 @@ async function narrowAuthorizeScopes(
   // guessing would be worse than the null the audit store already admits
   // for system-initiated rows. The client is the subject here anyway.
   void storage.audit.log({
-    space_id: null,
     action: "auth.scopes.narrowed",
     resource_type: "oauth_client",
     resource_id: clientId,
@@ -1929,27 +1866,6 @@ async function guardRefreshTokenGrant(
     });
   }
   if (!row.revoked) {
-    // **An active refresh token with no space rotates into another one with
-    // no space.** The plugin carries the presented token's `reference_id`
-    // forward verbatim rather than re-resolving it, so a token minted before
-    // a grant's space resolved mints its replacement exactly as unbound, and
-    // the bearer middleware refuses that on every request with nothing naming
-    // the cause. Refused here instead, in the field a client reads. This is
-    // the one grant type that reaches a mint without passing through a code,
-    // so the authorization-code guard below never sees it.
-    //
-    // Only the NULL case. A token carrying a real space keeps it even if the
-    // account has since moved: the token's own binding is the grant, and
-    // re-resolving here would refuse a credential that works.
-    if (row.referenceId === null) {
-      log("info", "oauth refresh refused: the grant carries no space", {
-        client_id: row.clientId,
-      });
-      throw new APIError("BAD_REQUEST", {
-        error: "invalid_grant",
-        error_description: NO_GRANT_SPACE_MESSAGE,
-      });
-    }
     return; // active — let the plugin rotate
   }
 
@@ -1973,6 +1889,105 @@ async function guardRefreshTokenGrant(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+// ---------------------------------------------------------------------------
+// Device grant (before-hooks)
+// ---------------------------------------------------------------------------
+
+/**
+ * Before-hook for `/device/code`: catch the client's stored scope ceiling up
+ * to what this device asks for, before the plugin compares the request
+ * against the row with exact membership.
+ *
+ * The device twin of `narrowAuthorizeScopes`, and narrower on purpose: the
+ * authorize surface narrows a request so a stale scope costs the requester
+ * that scope rather than the authorization, because its error rides a
+ * redirect nobody may render. Here the answer goes straight back to the
+ * machine that asked, which can read it, so the plugin's own refusal of an
+ * uncovered scope stands and only the ceiling moves. `ceiling-catchup.ts`
+ * carries the three bounds on what moves.
+ */
+async function catchUpDeviceCeiling(
+  ctx: HookCtxLite,
+  storage: Storage,
+  bundleScopes: Set<string>,
+): Promise<void> {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  const clientId = body.client_id;
+  const rawScope = body.scope;
+  if (typeof clientId !== "string" || clientId.length === 0) return;
+  const requested =
+    typeof rawScope === "string"
+      ? rawScope.split(" ").filter((s) => s.length > 0)
+      : [];
+  if (requested.length === 0) return;
+  const oauth = storage.oauthProvider;
+  if (!oauth) return;
+  let ceiling: readonly string[] | null;
+  try {
+    const client = await oauth.getClient(clientId);
+    if (!client) return;
+    ceiling = client.scopes;
+  } catch (err) {
+    log("warn", "oauth device ceiling precheck failed", {
+      client_id: clientId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  await catchUpClientScopeCeiling({
+    storage,
+    clientId,
+    requested,
+    ceiling,
+    bundleScopes,
+    surface: "device",
+  });
+}
+
+/**
+ * Before-hook for `/oauth2/token` with the device grant. Refuses a code
+ * whose grant the user has revoked, for the reasons the authorization-code
+ * guard below gives: revocation sweeps the codes, and this holds for a code
+ * approved in the window between the two writes. Fails open on a lookup
+ * error and on a code this store does not recognise, or one nobody has
+ * claimed, which the plugin refuses on its own terms.
+ */
+async function guardDeviceCodeGrant(
+  ctx: HookCtxLite,
+  storage: Storage,
+): Promise<void> {
+  const body = ctx.body;
+  if (!body || typeof body !== "object") return;
+  if (requestedGrantType(ctx) !== DEVICE_CODE_GRANT_TYPE) return;
+  const code = body.device_code;
+  if (typeof code !== "string" || code.length === 0) return;
+  if (typeof storage.oauthProvider?.findDeviceCodeGrantKey !== "function")
+    return;
+
+  let row: Awaited<
+    ReturnType<NonNullable<Storage["oauthProvider"]>["findDeviceCodeGrantKey"]>
+  >;
+  try {
+    row = await storage.oauthProvider.findDeviceCodeGrantKey(code);
+  } catch (err) {
+    log("warn", "oauth device-code precheck failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return;
+  }
+  if (!row) return;
+  if (row.hasConsent) return;
+
+  log("info", "oauth device-code refused: grant revoked", {
+    client_id: row.clientId,
+  });
+  throw new APIError("BAD_REQUEST", {
+    error: "invalid_grant",
+    error_description: "The device code is invalid, expired, or revoked.",
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2042,50 +2057,6 @@ async function guardAuthorizationCodeGrant(
 
   // Unknown code: not ours to judge. The plugin returns the spec error.
   if (!row) return;
-
-  // **The last place a grant with no space can be stopped, and the only one
-  // that covers every path to a code.** The consent route refuses before it
-  // mints one, but the plugin answers `/oauth2/authorize` itself when a
-  // standing consent already covers the request and redirects to the callback
-  // without that route running at all. An account whose space stops resolving
-  // after it consented reaches the exchange by that path, and the token minted
-  // for it would carry no space and be refused on every request, with nothing
-  // telling anybody why.
-  //
-  // Refused here rather than in a before-hook on the authorize endpoint,
-  // because a before-hook has no session: Better Auth resolves one inside the
-  // endpoint. The code has already reached the client's callback by this
-  // point, so this does not spare the redirect; what it spares is a
-  // credential that mints and then reaches nothing, and it names the cause
-  // where a client is listening.
-  //
-  // Bracketed because this one check does not share the function's fail-open
-  // rule and the difference has to be visible: an unreadable answer is not
-  // permission to mint, so a blip refuses with a retryable code rather than
-  // falling through to a token nothing will accept.
-  let codeGrantSpaceId: string | undefined;
-  try {
-    codeGrantSpaceId = await resolveSpaceIdForAuthUser(storage, row.userId);
-  } catch (err) {
-    log("warn", "oauth authorization-code space lookup failed", {
-      client_id: row.clientId,
-      error: err instanceof Error ? err.message : String(err),
-    });
-    throw new APIError("SERVICE_UNAVAILABLE", {
-      error: "temporarily_unavailable",
-      error_description:
-        "The space this grant belongs to could not be read. Try again.",
-    });
-  }
-  if (codeGrantSpaceId === undefined) {
-    log("info", "oauth authorization-code refused: no space for the account", {
-      client_id: row.clientId,
-    });
-    throw new APIError("BAD_REQUEST", {
-      error: "invalid_grant",
-      error_description: NO_GRANT_SPACE_MESSAGE,
-    });
-  }
 
   if (row.hasConsent) return;
 

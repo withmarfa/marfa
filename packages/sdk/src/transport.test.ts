@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { HttpTransport } from "./transport.js";
+import { HttpTransport, type TokenProviderLike } from "./transport.js";
 import {
   ForbiddenError,
   MarfaError,
@@ -7,9 +7,6 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "./errors.js";
-import { StoredTokenProvider } from "./auth/token-provider.js";
-import { InMemoryTokenStorage } from "./auth/storage.js";
-import { OAuthError } from "./auth/errors.js";
 
 // ---------------------------------------------------------------------------
 // Adversarial coverage for HttpTransport — transport-layer edge cases that
@@ -416,24 +413,19 @@ describe("HttpTransport — no silent retry", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Refresh on 401 — exercised through the real StoredTokenProvider.
+// Refresh on 401 — exercised through a provider that behaves like one.
 //
-// A stub provider that mints a new token on every call would make a broken
-// transport look correct: the retry picks up a fresh credential whether or not
-// anything forced a renewal. Everything below drives the shipping provider
-// against a mock OAuth token endpoint, seeded with an access token whose clock
-// expiry is an hour out, so the proactive-refresh window never fires and
-// reacting to the 401 is the only route to recovery.
+// A stub that mints a new token on every call would make a broken transport
+// look correct: the retry picks up a fresh credential whether or not anything
+// forced a renewal. The provider below holds one token pair, exchanges the
+// refresh token at a mock token endpoint only when `refresh()` is called,
+// single-flights concurrent exchanges, persists the rotated pair, and latches
+// shut once an exchange is refused — the contract `TokenProviderLike` states
+// and the transport's recovery relies on. The seeded access token is not
+// expired by any clock, so reacting to the 401 is the only route to recovery.
 // ---------------------------------------------------------------------------
 
-const ISSUER = "http://auth.test";
-const TOKEN_ENDPOINT = `${ISSUER}/auth/oauth2/token`;
-const AUTH_ENDPOINTS = {
-  token: TOKEN_ENDPOINT,
-  authorize: `${ISSUER}/auth/oauth2/authorize`,
-  deviceAuthorize: `${ISSUER}/auth/device`,
-  as: { issuer: ISSUER, token_endpoint: TOKEN_ENDPOINT },
-};
+const TOKEN_ENDPOINT = "http://auth.test/auth/oauth2/token";
 const STORAGE_KEY = "marfa.auth.tokens:transport-test";
 const SEEDED_ACCESS_TOKEN = "seeded_at";
 const SEEDED_REFRESH_TOKEN = "seeded_rt";
@@ -441,8 +433,6 @@ const SEEDED_REFRESH_TOKEN = "seeded_rt";
 function tokenEndpointSuccess(access: string, refresh: string): Response {
   return makeJsonResponse(200, {
     access_token: access,
-    // RFC 6749 requires it and the library enforces it; the real server
-    // sends "Bearer", so the double does too.
     token_type: "Bearer",
     refresh_token: refresh,
     expires_in: 3600,
@@ -459,9 +449,64 @@ function sentBearer(init?: RequestInit): string | undefined {
   return headers?.Authorization;
 }
 
+/** Thrown by the provider once a refresh has been refused: the grant is
+ *  gone, and no later call reaches the network. */
+class LatchedProviderError extends Error {}
+
+interface TokenPair {
+  access_token: string;
+  refresh_token: string;
+}
+
+class TestTokenProvider implements TokenProviderLike {
+  private inflight: Promise<string> | null = null;
+  private latched = false;
+
+  constructor(
+    private readonly storage: Map<string, string>,
+    private readonly fetchImpl: typeof globalThis.fetch,
+    private readonly onSignOut: () => void,
+  ) {}
+
+  private current(): TokenPair {
+    if (this.latched) throw new LatchedProviderError("signed out");
+    const raw = this.storage.get(STORAGE_KEY);
+    if (raw === undefined) throw new LatchedProviderError("no tokens held");
+    return JSON.parse(raw) as TokenPair;
+  }
+
+  getAccessToken(): Promise<string> {
+    return Promise.resolve(this.current().access_token);
+  }
+
+  refresh(): Promise<string> {
+    this.inflight ??= this.exchange().finally(() => {
+      this.inflight = null;
+    });
+    return this.inflight;
+  }
+
+  private async exchange(): Promise<string> {
+    const { refresh_token } = this.current();
+    const res = await this.fetchImpl(TOKEN_ENDPOINT, {
+      method: "POST",
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token }),
+    });
+    if (!res.ok) {
+      this.latched = true;
+      this.storage.delete(STORAGE_KEY);
+      this.onSignOut();
+      throw new LatchedProviderError("refresh refused");
+    }
+    const body = (await res.json()) as TokenPair;
+    this.storage.set(STORAGE_KEY, JSON.stringify(body));
+    return body.access_token;
+  }
+}
+
 interface AuthFixture {
   transport: HttpTransport;
-  storage: InMemoryTokenStorage;
+  storage: Map<string, string>;
   /** Bearer header seen on each API call, in order. */
   apiCalls: (string | undefined)[];
   /** `Idempotency-Key` seen on each API call, in order. */
@@ -471,17 +516,17 @@ interface AuthFixture {
   signOuts: number[];
 }
 
-async function makeAuthFixture(options: {
+function makeAuthFixture(options: {
   /** Whether the API accepts a given access token; anything else gets 401. */
   accepts: (accessToken: string) => boolean;
   /** Token-endpoint response for each exchange. */
   tokenResponse: () => Response;
-}): Promise<AuthFixture> {
+}): AuthFixture {
   const apiCalls: (string | undefined)[] = [];
   const idempotencyKeys: (string | undefined)[] = [];
   const tokenExchanges: string[] = [];
   const signOuts: number[] = [];
-  const storage = new InMemoryTokenStorage();
+  const storage = new Map<string, string>();
 
   const fetchImpl: typeof globalThis.fetch = (input, init) => {
     const url =
@@ -492,9 +537,6 @@ async function makeAuthFixture(options: {
           : input.url;
 
     if (url === TOKEN_ENDPOINT) {
-      // `fetch` accepts either a pre-encoded string or URLSearchParams,
-      // and the caller's choice is not the transport's business — so the
-      // double reads both rather than assuming one.
       const raw = init?.body;
       const form =
         raw instanceof URLSearchParams
@@ -521,25 +563,17 @@ async function makeAuthFixture(options: {
     );
   };
 
-  await storage.set(
+  storage.set(
     STORAGE_KEY,
     JSON.stringify({
       access_token: SEEDED_ACCESS_TOKEN,
       refresh_token: SEEDED_REFRESH_TOKEN,
-      access_expires_at: Date.now() + 3_600_000,
-      scope: "core.note:read",
     }),
   );
 
-  const provider = new StoredTokenProvider({
-    issuer: ISSUER,
-    clientId: "test-client",
-    storage,
-    storageKey: STORAGE_KEY,
-    fetch: fetchImpl,
-    endpoints: AUTH_ENDPOINTS,
-  });
-  provider.onSignOut(() => signOuts.push(1));
+  const provider = new TestTokenProvider(storage, fetchImpl, () =>
+    signOuts.push(1),
+  );
 
   const transport = new HttpTransport({
     baseUrl: "http://example.test",
@@ -559,7 +593,7 @@ async function makeAuthFixture(options: {
 
 describe("HttpTransport — refresh on 401", () => {
   it("recovers a clock-valid but server-revoked token with one refresh and one retry", async () => {
-    const fixture = await makeAuthFixture({
+    const fixture = makeAuthFixture({
       accepts: (token) => token === "fresh_at",
       tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
     });
@@ -578,7 +612,7 @@ describe("HttpTransport — refresh on 401", () => {
   });
 
   it("persists the rotated tokens so the next request starts from the new pair", async () => {
-    const fixture = await makeAuthFixture({
+    const fixture = makeAuthFixture({
       accepts: (token) => token === "fresh_at",
       tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
     });
@@ -595,7 +629,7 @@ describe("HttpTransport — refresh on 401", () => {
   });
 
   it("collapses concurrent 401s onto a single token exchange", async () => {
-    const fixture = await makeAuthFixture({
+    const fixture = makeAuthFixture({
       accepts: (token) => token === "fresh_at",
       tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
     });
@@ -615,7 +649,7 @@ describe("HttpTransport — refresh on 401", () => {
   });
 
   it("fails fast on a dead refresh token — one exchange, then no traffic at all", async () => {
-    const fixture = await makeAuthFixture({
+    const fixture = makeAuthFixture({
       accepts: () => false,
       tokenResponse: () => tokenEndpointFailure("invalid_grant", 400),
     });
@@ -629,18 +663,18 @@ describe("HttpTransport — refresh on 401", () => {
       // these never reach the network.
       await expect(
         fixture.transport.request("GET", "/items"),
-      ).rejects.toBeInstanceOf(OAuthError);
+      ).rejects.toBeInstanceOf(LatchedProviderError);
     }
 
     expect(fixture.apiCalls).toHaveLength(1);
     expect(fixture.tokenExchanges).toStrictEqual([SEEDED_REFRESH_TOKEN]);
     expect(fixture.signOuts).toHaveLength(1);
-    expect(await fixture.storage.get(STORAGE_KEY)).toBeNull();
+    expect(fixture.storage.get(STORAGE_KEY)).toBeUndefined();
   });
 
   it("stops forcing exchanges once a refresh has failed to clear the 401", async () => {
     let issued = 0;
-    const fixture = await makeAuthFixture({
+    const fixture = makeAuthFixture({
       accepts: () => false,
       tokenResponse: () => {
         issued += 1;
@@ -667,7 +701,7 @@ describe("HttpTransport — refresh on 401", () => {
   it("resumes refreshing on 401 once a request has succeeded again", async () => {
     let accepted = "nothing-yet";
     let issued = 0;
-    const fixture = await makeAuthFixture({
+    const fixture = makeAuthFixture({
       accepts: (token) => token === accepted,
       tokenResponse: () => {
         issued += 1;
@@ -730,7 +764,7 @@ describe("Idempotency-Key", () => {
     // first attempt's key. Minting a fresh one there would turn a renewed
     // credential into a duplicate write, which is exactly the failure the
     // header exists to remove — and nothing else in the SDK would notice.
-    const fixture = await makeAuthFixture({
+    const fixture = makeAuthFixture({
       accepts: (token) => token === "fresh_at",
       tokenResponse: () => tokenEndpointSuccess("fresh_at", "rotated_rt"),
     });

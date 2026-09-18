@@ -28,22 +28,14 @@ const CLIENT = "client_under_test";
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {
   await ctx.cleanup();
 });
 
-function spaces() {
-  if (!ctx.storage.spaces) {
-    throw new Error("hosted-mode storage missing space store");
-  }
-  return ctx.storage.spaces;
-}
-
 async function seedKey(
-  spaceId: string,
   label: string,
   clientId: string | undefined,
 ): Promise<string> {
@@ -62,38 +54,30 @@ async function seedKey(
       oauth_client_id: clientId,
     },
     hashApiKey(`marfa_k1_${label}_${suffix}`, TEST_API_KEY_SALT),
-    spaceId,
   );
   return stored.id;
 }
 
-/** One active grant for `CLIENT` in `spaceId`, plus a key that app made and a
- *  key the person made.
- *
- *  Seeded into a named space rather than into none: the caller that revokes
- *  the grant is bound to a space, so a grant written outside one is a row it
- *  cannot see. */
-async function seedSpace(spaceId: string) {
-  const grant = await ctx.storage.items.create(
-    {
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: CLIENT,
-        user_id: "auth_user_under_test",
-        scopes: ["core.note:read"],
-        status: "active",
-        granted_at: new Date().toISOString(),
-      },
-      source: "test/app-key-revoke",
+/** One active grant for `CLIENT`, plus a key that app made and a key the
+ *  person made. */
+async function seedSpace() {
+  const grant = await ctx.storage.items.create({
+    type: "system.connection",
+    tier: "library",
+    state: "active",
+    properties: {
+      kind: "app",
+      client_id: CLIENT,
+      user_id: "auth_user_under_test",
+      scopes: ["core.note:read"],
+      status: "active",
+      granted_at: new Date().toISOString(),
     },
-    spaceId,
-  );
-  const appKeyId = await seedKey(spaceId, "app-made", CLIENT);
-  const ownKeyId = await seedKey(spaceId, "own", undefined);
-  return { spaceId, grant, appKeyId, ownKeyId };
+    source: "test/app-key-revoke",
+  });
+  const appKeyId = await seedKey("app-made", CLIENT);
+  const ownKeyId = await seedKey("own", undefined);
+  return { grant, appKeyId, ownKeyId };
 }
 
 /** Whether a key is still live. `list` excludes revoked and expired rows. */
@@ -104,7 +88,7 @@ async function isLive(id: string): Promise<boolean> {
 
 describe("revoking an app's grant", () => {
   it("leaves the app's keys alone when nothing asked for them", async () => {
-    const { grant, appKeyId, ownKeyId } = await seedSpace(ctx.spaceId);
+    const { grant, appKeyId, ownKeyId } = await seedSpace();
 
     const res = await request(ctx.app, "DELETE", `/auth/grants/${grant.id}`, {
       key: ctx.spaceKey,
@@ -116,7 +100,7 @@ describe("revoking an app's grant", () => {
   });
 
   it("takes them when the door is asked to", async () => {
-    const { grant, appKeyId, ownKeyId } = await seedSpace(ctx.spaceId);
+    const { grant, appKeyId, ownKeyId } = await seedSpace();
 
     const res = await request(
       ctx.app,
@@ -132,28 +116,8 @@ describe("revoking an app's grant", () => {
     expect(await isLive(ownKeyId)).toBe(true);
   });
 
-  it("does not reach a second space the same app is connected to", async () => {
-    const first = await seedSpace(ctx.spaceId);
-    // A second space the same app is connected to. The caller never holds a
-    // credential in it, which is the point: the sweep must stop at the space
-    // the grant it was handed lives in.
-    const elsewhere = await spaces().create("sweep-not-here-space");
-    const second = await seedSpace(elsewhere.id);
-
-    const res = await request(
-      ctx.app,
-      "DELETE",
-      `/auth/grants/${first.grant.id}?revoke_keys=true`,
-      { key: ctx.spaceKey },
-    );
-    expect(res.status).toBe(204);
-
-    expect(await isLive(first.appKeyId)).toBe(false);
-    expect(await isLive(second.appKeyId)).toBe(true);
-  });
-
   it("revokes the grant itself either way", async () => {
-    const { grant } = await seedSpace(ctx.spaceId);
+    const { grant } = await seedSpace();
     const res = await request(
       ctx.app,
       "DELETE",
@@ -161,7 +125,7 @@ describe("revoking an app's grant", () => {
       { key: ctx.spaceKey },
     );
     expect(res.status).toBe(204);
-    const after = await ctx.storage.items.get(grant.id, undefined);
+    const after = await ctx.storage.items.get(grant.id);
     expect(after?.properties.status).toBe("revoked");
   });
 });

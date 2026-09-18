@@ -185,7 +185,7 @@ describe("moving a corpus through the bulk door", () => {
     // the type being left and nothing else. It has to be bound to that space
     // to see the types registered there at all, and the type map is then the
     // only thing left that can refuse the move.
-    const rawKey = await mintSpaceKey(ctx, ctx.spaceId, {
+    const rawKey = await mintSpaceKey(ctx, {
       label: "retype-scoped",
       type_permissions: { "user.origin_log": "write" },
     });

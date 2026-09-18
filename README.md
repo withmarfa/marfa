@@ -4,18 +4,14 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 ## Packages
 
-| Package                                                | Description                                                 |
-| ------------------------------------------------------ | ----------------------------------------------------------- |
-| [`@withmarfa/types`](./packages/types)                 | Core type + edge JSON schemas; emits the runtime registries |
-| [`@withmarfa/shared`](./packages/shared)               | Wire types, Zod validation schemas, error codes             |
-| [`@withmarfa/server`](./packages/server)               | Hono HTTP server with SQLite and Postgres support           |
-| [`@withmarfa/sdk`](./packages/sdk)                     | TypeScript HTTP client                                      |
-| [`@withmarfa/webhooks`](./packages/webhooks)           | Inbound-webhook signature verification (Web Crypto only)    |
-| [`@withmarfa/runtime-sdk`](./packages/runtime-sdk)     | SDK consumed by integrations                                |
-| [`@withmarfa/runtime-test`](./packages/runtime-test)   | Test harness mirroring `runtime-sdk`                        |
-| [`@withmarfa/sync-manifest`](./packages/sync-manifest) | The manifest the sync client installs against               |
+| Package                                  | Description                                                 |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| [`@withmarfa/types`](./packages/types)   | Core type + edge JSON schemas; emits the runtime registries |
+| [`@withmarfa/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes             |
+| [`@withmarfa/server`](./packages/server) | Hono HTTP server on SQLite                                  |
+| [`@withmarfa/sdk`](./packages/sdk)       | TypeScript HTTP client                                      |
 
-`@withmarfa/shared`, `@withmarfa/sdk`, `@withmarfa/webhooks`, `@withmarfa/runtime-sdk` and `@withmarfa/runtime-test` publish to npm; the rest stay private.
+`@withmarfa/shared` and `@withmarfa/sdk` publish to npm; the rest stay private.
 
 ## Quick start
 
@@ -26,7 +22,7 @@ pnpm install
 pnpm test
 ```
 
-Run the server locally with SQLite (no Postgres required):
+Run the server locally:
 
 ```bash
 cd packages/server

@@ -1,11 +1,11 @@
 import type {
   AuthSessionStore,
-  CoordinationStore,
   ItemStore,
+  SettingsStore,
   Storage,
-  SpaceStore,
 } from "./interface.js";
 import type { SpaceConfig } from "@withmarfa/shared";
+import { readSpaceConfig } from "./space-config.js";
 import type { BlobBackend } from "./blob-backend.js";
 import { log } from "../middleware/logger.js";
 import { logJobTickFailure } from "./job-tick.js";
@@ -15,27 +15,17 @@ import { revokeProjectedGrant } from "../auth/grant-lifecycle.js";
 const MS_PER_DAY = 86_400_000;
 
 /**
- * Optional per-space fan-out wiring shared by both retention jobs. When
- * provided, the job:
- *   1. Lists every space via `spaces.list()`.
- *   2. For each space, resolves the effective retention (the space's
- *      `SpaceConfig` override field, falling back to the instance default).
- *   3. Runs a space-scoped sweep with that effective retention.
- *   4. Also runs the NULL-space sweep at the instance default — catches
- *      rows with no space scope.
- *   5. Sums the deleted counts.
- *
- * Each per-space + the NULL sweep are gated by a per-space coordination
- * lock (`<jobName>:<space-id-or-null>`) so multi-instance deployments run
- * each sweep once cluster-wide per tick.
+ * Optional instance-config wiring shared by the retention jobs. When
+ * provided, a tick resolves the effective retention from the instance
+ * configuration (`SpaceConfig`'s override field, falling back to the
+ * instance default) and runs one sweep with it.
  */
 export interface SpaceFanout {
-  spaces: SpaceStore;
+  settings: SettingsStore;
   /**
-   * Field on `SpaceConfig` that holds the per-space retention
-   * override. The fan-out reads `config[configField]` and treats `0`
-   * as "disable for this space" (matches env-default semantics for
-   * `TRASH_RETENTION_DAYS=0`).
+   * Field on `SpaceConfig` that holds the retention override. The tick
+   * reads `config[configField]` and treats `0` as "disabled" (matches
+   * env-default semantics for `TRASH_RETENTION_DAYS=0`).
    */
   configField: keyof Pick<
     SpaceConfig,
@@ -56,15 +46,9 @@ export interface SpaceFanout {
  * the deployment running with no trash purge by setting the env var to 0.
  * The default at the config layer is 60.
  *
- * When a `coordination` store is supplied, each tick is gated by a named
- * advisory lock so multi-instance deployments run the purge once per
- * tick cluster-wide instead of once per instance.
- *
- * When `fanout` is supplied, a single `runOnce()` tick fans out across
- * every space + a NULL-bucket sweep, honoring per-space
- * `trash_retention_days` overrides from `SpaceConfig`. When `fanout` is
- * omitted the job runs a single unscoped sweep using the instance default.
- * Single-space self-hosts that never wire `spaces` get the simpler path.
+ * When `fanout` is supplied, a `runOnce()` tick honors the
+ * `trash_retention_days` override from the instance configuration. When
+ * `fanout` is omitted the job sweeps at the instance default.
  *
  * **This sweep announces nothing, and neither do its two siblings below.**
  * Every other path that removes a row publishes `item.purged`, and every
@@ -91,7 +75,6 @@ export class TrashPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
     private fanout?: SpaceFanout,
   ) {}
 
@@ -125,13 +108,11 @@ export class TrashPurger {
     return this.fanout
       ? runSpaceFanout({
           jobName: "trash-purge",
-          coordination: this.coordination,
           fanout: this.fanout,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
-          sweep: (cutoff, spaceId) =>
-            this.items.purgeTrashedOlderThan(cutoff, spaceId),
+          sweep: (cutoff) => this.items.purgeTrashedOlderThan(cutoff),
         })
       : this.runOnceGlobal();
   }
@@ -152,14 +133,8 @@ export class TrashPurger {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.fanout
-        ? await this.runOnce()
-        : this.coordination
-          ? await this.coordination.withJobLock("trash-purge", () =>
-              this.runOnce(),
-            )
-          : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Trash purge", {
           deleted,
           retentionDays: this.retentionDays,
@@ -185,9 +160,9 @@ export class TrashPurger {
  * activity items against 805 of everything else before this landed, and was
  * still above six thousand five days later.
  *
- * Same shape as `TrashPurger` above: a per-space fan-out honoring
- * `activity_retention_days` overrides, falling back to a single unscoped
- * sweep when `spaces` is not wired.
+ * Same shape as `TrashPurger` above: honors the `activity_retention_days`
+ * override when the instance configuration is wired, and sweeps at the
+ * instance default otherwise.
  *
  * **This job bounds the rows; it does not decide whether a run deserves
  * one.** That is the integration's call, and the authoring guide carries
@@ -232,7 +207,6 @@ export class RevokedGrantPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -269,12 +243,8 @@ export class RevokedGrantPurger {
   private async poll(): Promise<void> {
     if (this.stopped) return;
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("revoked-grant-purge", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Revoked grant tombstones purged", { deleted });
       }
     } catch (err) {
@@ -306,8 +276,7 @@ export class RevokedGrantPurger {
  * falls to `DcrClientCleaner`. Nothing here reaches into either.
  *
  * Instance-wide: the window is a property of the deployment rather than of
- * space policy. Cluster-wide coordination lock keyed
- * `"grant-inactivity-retire"`.
+ * space policy.
  */
 /** Grants retired by one tick; the remainder wait for the next. */
 const RETIRE_PER_TICK = 500;
@@ -322,7 +291,6 @@ export class GrantInactivityRetirer {
     private inactivityDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -359,12 +327,10 @@ export class GrantInactivityRetirer {
     // aborts on a fault by design, and a persistent fault on one row would
     // otherwise stall the sweep at that row every day.
     for (const grant of inactive.slice(0, RETIRE_PER_TICK)) {
-      const spaceId = grant.spaceId ?? undefined;
       try {
         await revokeProjectedGrant(this.storage, {
           itemId: grant.id,
           properties: grant.properties,
-          spaceId,
           clientId: grant.clientId ?? undefined,
           authUserId: grant.authUserId ?? undefined,
         });
@@ -383,7 +349,6 @@ export class GrantInactivityRetirer {
       // a retirement the projection's own `revoked_at` records. This row is
       // the only record of why, so it is written first of the two.
       void this.storage.audit.log({
-        space_id: grant.spaceId,
         action: "auth.grant.retired",
         resource_type: "oauth_grant",
         resource_id: grant.clientId ?? grant.id,
@@ -411,12 +376,8 @@ export class GrantInactivityRetirer {
   private async poll(): Promise<void> {
     if (this.stopped) return;
     try {
-      const retired = this.coordination
-        ? await this.coordination.withJobLock("grant-inactivity-retire", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (retired !== undefined && retired > 0) {
+      const retired = await this.runOnce();
+      if (retired > 0) {
         log("info", "Inactive grants retired", {
           retired,
           inactivityDays: this.inactivityDays,
@@ -438,7 +399,6 @@ export class ActivityPurger {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
     private fanout?: SpaceFanout,
   ) {}
 
@@ -464,13 +424,11 @@ export class ActivityPurger {
     return this.fanout
       ? runSpaceFanout({
           jobName: "activity-purge",
-          coordination: this.coordination,
           fanout: this.fanout,
           nowFn: this.nowFn,
           instanceDefault: this.retentionDays,
           unitMs: MS_PER_DAY,
-          sweep: (cutoff, spaceId) =>
-            this.items.purgeActivityOlderThan(cutoff, spaceId),
+          sweep: (cutoff) => this.items.purgeActivityOlderThan(cutoff),
         })
       : this.runOnceGlobal();
   }
@@ -491,14 +449,8 @@ export class ActivityPurger {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.fanout
-        ? await this.runOnce()
-        : this.coordination
-          ? await this.coordination.withJobLock("activity-purge", () =>
-              this.runOnce(),
-            )
-          : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Activity purge", {
           deleted,
           retentionDays: this.retentionDays,
@@ -517,11 +469,7 @@ export class ActivityPurger {
  * (browser-side ephemeral cookies vanish on tab close, but the server-side
  * row stays around until the sweep catches up).
  *
- * Instance-wide — `auth_session` carries no `space_id` column and the
- * deletion criterion is purely time-based, so the per-space fan-out shape
- * used by retention-window jobs doesn't apply. Cluster-wide coordination
- * lock keyed `"auth-session-cleanup"` keeps multi-instance deployments
- * running once per tick.
+ * Instance-wide: the deletion criterion is purely time-based.
  */
 export class AuthSessionCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -532,7 +480,6 @@ export class AuthSessionCleaner {
     private store: AuthSessionStore,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -566,126 +513,12 @@ export class AuthSessionCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("auth-session-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Auth session cleanup", { deleted });
       }
     } catch (err) {
       logJobTickFailure("Auth session cleanup", err, this.stopped);
-    }
-  }
-}
-
-/**
- * Hard-delete accounts that have sat in `pending_deletion` past the grace
- * window. Pattern mirrors `AuthSessionCleaner` (instance-wide sweep,
- * cluster-wide coordination lock). Two-layer locking:
- *
- *   - Outer lock `account-deletion-purge` gates the whole tick so
- *     multi-instance deployments don't double-list the due set.
- *   - Per-account inner lock (`account-delete:<auth_user_id>`) inside
- *     the loop. Coordinates between purger ticks across instances; on
- *     its own this lock does NOT block a cancel route (the cancel
- *     never takes it).
- *
- * **Cancel-vs-cascade race.** The cancel route does not acquire the
- * per-account lock — so the lock alone cannot prevent a cancel landing
- * between `listPendingDeletionDue` and `deleteAccountCascade`. The
- * mitigation lives inside the cascade itself: `SELECT ... FOR UPDATE` on
- * the `auth_user` row + a re-check that `deletion_state === 'pending_deletion'`
- * AND `pending_deletion_at < cutoffIso` before any writes. A concurrent
- * cancel either commits before the cascade acquires the row lock (cascade
- * re-reads the fresh `active` state and short-circuits) or blocks behind
- * the cascade's row lock until the cascade commits. The `boolean` return
- * counts actually-purged accounts (a short-circuited cascade returns
- * `false`).
- *
- * `graceDays <= 0` disables the job — operator override for self-hosts
- * that don't want a grace window.
- */
-export class PendingDeletePurger {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
-  constructor(
-    private storage: Storage,
-    private graceDays: number,
-    private intervalMs: number,
-    private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
-  ) {}
-
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 15_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test-driven entry point. Returns the number of accounts purged
-   *  this tick. */
-  async runOnce(): Promise<number> {
-    if (this.graceDays <= 0) return 0;
-    const accountLifecycle = this.storage.accountLifecycle;
-    if (!accountLifecycle) return 0;
-    const cutoff = new Date(
-      this.nowFn().getTime() - this.graceDays * MS_PER_DAY,
-    ).toISOString();
-    const due = await accountLifecycle.listPendingDeletionDue(cutoff);
-    let purged = 0;
-    for (const row of due) {
-      // The per-account lock keeps two purger instances from racing on the
-      // same row. The cascade's in-transaction re-check is what guards
-      // against a concurrent cancel. Use the cascade's boolean return to
-      // track whether the row was actually purged (vs. short-circuited
-      // because the user cancelled between list + cascade).
-      const cascadeRan = this.coordination
-        ? await this.coordination.withJobLock(
-            `account-delete:${row.auth_user_id}`,
-            () => this.storage.deleteAccountCascade(row.auth_user_id, cutoff),
-          )
-        : await this.storage.deleteAccountCascade(row.auth_user_id, cutoff);
-      if (cascadeRan === true) purged += 1;
-    }
-    return purged;
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const purged = this.coordination
-        ? await this.coordination.withJobLock("account-deletion-purge", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (purged !== undefined && purged > 0) {
-        log("info", "Pending-delete purge", {
-          purged,
-          graceDays: this.graceDays,
-        });
-      }
-    } catch (err) {
-      logJobTickFailure("Pending-delete purge", err, this.stopped);
     }
   }
 }
@@ -696,9 +529,7 @@ export class PendingDeletePurger {
  * the GC just keeps the table from growing unboundedly across the long tail
  * of one-shot windows (e.g. a single IP that hit `/auth/sign-up` once).
  *
- * Instance-wide, not space-scoped — the table has no `space_id` column.
- * Cluster-wide coordination lock keyed `"rate-limit-cleanup"` keeps
- * multi-instance deployments running once per tick.
+ * Instance-wide.
  */
 export class RateLimitWindowCleaner {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -709,7 +540,6 @@ export class RateLimitWindowCleaner {
     private storage: Storage,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -742,91 +572,12 @@ export class RateLimitWindowCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("rate-limit-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Rate-limit window cleanup", { deleted });
       }
     } catch (err) {
       logJobTickFailure("Rate-limit window cleanup", err, this.stopped);
-    }
-  }
-}
-
-/**
- * Sweeps expired device-code rows.
- *
- * `oauth_device_codes` was written to and never deleted from, except by the
- * revoke cascade for the codes bound to the grant being revoked. A pending
- * code nobody approved, a denied one, an approved one whose grant lives on
- * and a redeemed one all sat in the table for as long as the deployment
- * did. An expired row answers nothing to any caller, so the sweep is safe
- * at any cutoff past expiry; this one waits an hour past it, so a row a
- * poll just refused as expired is still there to read if the refusal is
- * being looked into. Instance-wide, like the other sweeps over auth
- * tables; cluster-wide coordination lock keyed `"device-code-cleanup"`.
- */
-export class DeviceCodeCleaner {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
-  constructor(
-    private storage: Storage,
-    private intervalMs: number,
-    private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
-  ) {}
-
-  /** How far past expiry a row has to be before the sweep takes it. */
-  static readonly GRACE_MS = 60 * 60 * 1000;
-
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 25_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point — deletes rows expired more than the grace ago. */
-  async runOnce(): Promise<number> {
-    const cutoff = new Date(
-      this.nowFn().getTime() - DeviceCodeCleaner.GRACE_MS,
-    ).toISOString();
-    return this.storage.oauth.deleteDeviceCodesExpiredBefore(cutoff);
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("device-code-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
-        log("info", "Device code cleanup", { deleted });
-      }
-    } catch (err) {
-      logJobTickFailure("Device code cleanup", err, this.stopped);
     }
   }
 }
@@ -849,8 +600,7 @@ export class DeviceCodeCleaner {
  * grant check is space-agnostic — a client with zero grants is dead
  * regardless of which space registered it — so this is an instance-wide
  * sweep (like `AuthSessionCleaner` / `RateLimitWindowCleaner`), not a
- * per-space fan-out. Cluster-wide coordination lock keyed
- * `"dcr-client-cleanup"`.
+ * per-space fan-out.
  *
  * `retentionDays <= 0` disables the job — the operator can leave the
  * deployment running with no DCR reaper by setting the env var to 0.
@@ -865,7 +615,6 @@ export class DcrClientCleaner {
     private retentionDays: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -906,12 +655,8 @@ export class DcrClientCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("dcr-client-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "DCR client cleanup", {
           deleted,
           retentionDays: this.retentionDays,
@@ -941,7 +686,7 @@ export class DcrClientCleaner {
  * Instance-wide, like the other sweeps with no per-space fan-out: a hash
  * is deleted from the backend once and loses every space's row, so the
  * question "does anything reference this" has to be asked across all of
- * them. Cluster-wide coordination lock keyed `"blob-cleanup"`.
+ * them.
  *
  * `graceMs <= 0` disables the job. A zero window would sweep a blob the
  * instant it is unreferenced, which is the defect rather than a
@@ -958,7 +703,6 @@ export class BlobOrphanCleaner {
     private graceMs: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -1000,12 +744,8 @@ export class BlobOrphanCleaner {
 
   private async poll(): Promise<void> {
     try {
-      const removed = this.coordination
-        ? await this.coordination.withJobLock("blob-cleanup", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (removed !== undefined && removed > 0) {
+      const removed = await this.runOnce();
+      if (removed > 0) {
         log("info", "Blob cleanup", { removed, graceMs: this.graceMs });
       }
     } catch (err) {
@@ -1034,9 +774,8 @@ export class BlobOrphanCleaner {
  *      credentials — a week of post-revocation visibility is plenty.
  *
  * Instance-wide, not space-scoped — expiry is a property of the row, not
- * of space policy. Cluster-wide coordination lock keyed
- * `"runtime-credential-reap"`. Disabled by wiring (interval `0` skips
- * construction in `index.ts`), matching the other cleaners.
+ * of space policy. Disabled by wiring (interval `0` skips construction in
+ * `index.ts`), matching the other cleaners.
  */
 /**
  * Hard-deletes revoked ordinary API keys once their revocation is old
@@ -1072,7 +811,6 @@ export class RevokedKeyReaper {
     private storage: Storage,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -1108,12 +846,8 @@ export class RevokedKeyReaper {
 
   private async poll(): Promise<void> {
     try {
-      const deleted = this.coordination
-        ? await this.coordination.withJobLock("revoked-key-reap", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (deleted !== undefined && deleted > 0) {
+      const deleted = await this.runOnce();
+      if (deleted > 0) {
         log("info", "Revoked key reap", { deleted });
       }
     } catch (err) {
@@ -1122,184 +856,43 @@ export class RevokedKeyReaper {
   }
 }
 
-export class RuntimeCredentialReaper {
-  private interval: ReturnType<typeof setInterval> | null = null;
-  private startupTimeout: ReturnType<typeof setTimeout> | null = null;
-  private stopped = false;
-
-  /** Post-revocation retention before hard delete. Fixed rather than
-   *  env-tunable: the window exists for operator inspection, not policy. */
-  static readonly REVOKED_RETENTION_MS = 7 * MS_PER_DAY;
-
-  constructor(
-    private storage: Storage,
-    /** Default runtime-credential TTL — drives the legacy (NULL
-     *  `expires_at`) cutoff of TTL + one-TTL grace. */
-    private defaultTtlMs: number,
-    private intervalMs: number,
-    private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
-  ) {}
-
-  start(): void {
-    this.stopped = false;
-    this.startupTimeout = setTimeout(() => void this.poll(), 30_000);
-    this.interval = setInterval(() => void this.poll(), this.intervalMs);
-  }
-
-  stop(): void {
-    this.stopped = true;
-    if (this.startupTimeout) {
-      clearTimeout(this.startupTimeout);
-      this.startupTimeout = null;
-    }
-    if (this.interval) {
-      clearInterval(this.interval);
-      this.interval = null;
-    }
-  }
-
-  /** Test entry point — runs the three passes once and reports counts. */
-  async runOnce(): Promise<{
-    expired: number;
-    legacy: number;
-    deleted: number;
-  }> {
-    const now = this.nowFn();
-    const nowIso = now.toISOString();
-    const legacyCutoff = new Date(
-      now.getTime() - 2 * this.defaultTtlMs,
-    ).toISOString();
-    const deleteCutoff = new Date(
-      now.getTime() - RuntimeCredentialReaper.REVOKED_RETENTION_MS,
-    ).toISOString();
-    const expired =
-      await this.storage.keys.revokeExpiredRuntimeCredentials(nowIso);
-    const legacy =
-      await this.storage.keys.revokeRuntimeCredentialsWithoutExpiryOlderThan(
-        legacyCutoff,
-        nowIso,
-      );
-    const deleted =
-      await this.storage.keys.deleteRevokedRuntimeCredentialsOlderThan(
-        deleteCutoff,
-      );
-    return { expired, legacy, deleted };
-  }
-
-  /** Test entry point for the scheduled path — the lock handshake and the
-   *  error swallowing only exist here, not in `runOnce`. */
-  async pollForTest(): Promise<void> {
-    return this.poll();
-  }
-
-  /** Scheduler entry point — see TrashPurger.runScheduled. */
-  runScheduled(): Promise<void> {
-    return this.poll();
-  }
-
-  /** Test seam: whether `start()` has live timers pending. */
-  scheduledForTest(): boolean {
-    return this.interval !== null || this.startupTimeout !== null;
-  }
-
-  private async poll(): Promise<void> {
-    try {
-      const counts = this.coordination
-        ? await this.coordination.withJobLock("runtime-credential-reap", () =>
-            this.runOnce(),
-          )
-        : await this.runOnce();
-      if (
-        counts !== undefined &&
-        counts.expired + counts.legacy + counts.deleted > 0
-      ) {
-        log("info", "Runtime credential reap", counts);
-      }
-    } catch (err) {
-      logJobTickFailure("Runtime credential reap", err, this.stopped);
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Per-space fan-out helper
 // ---------------------------------------------------------------------------
 
-/**
- * Shared fan-out runner. Used by `TrashPurger` for the unit-of-days delete
- * job (and exposed via {@link runSpaceCleanup} for the audit + event-log
- * jobs which live inline in `index.ts`).
- *
- * For each space + the NULL-space bucket, resolves an effective retention
- * (per-space override OR `instanceDefault`) and runs a space-scoped sweep
- * with `cutoff = now - retention * unitMs`. A value of `0` for the effective
- * retention is the documented "disable for this scope" sentinel and skips
- * the sweep without an error.
- *
- * Each per-space invocation grabs `coordination.withJobLock` on a
- * space-specific key (`<jobName>:<space-id-or-_no_space>`) so two server
- * instances racing the same tick don't double-process a space.
- */
+/** The retention a job runs at: the instance configuration's override for
+ *  the job's field when one is set, the instance default otherwise. */
+async function effectiveRetention(
+  fanout: SpaceFanout,
+  instanceDefault: number,
+): Promise<number> {
+  const config = await readSpaceConfig(fanout.settings);
+  const override = config?.[fanout.configField];
+  return typeof override === "number" ? override : instanceDefault;
+}
+
+/** One sweep at the effective retention. */
 async function runSpaceFanout(opts: {
   jobName: string;
-  coordination: CoordinationStore | undefined;
   fanout: SpaceFanout;
   nowFn: () => Date;
   instanceDefault: number;
   unitMs: number;
-  sweep: (cutoff: string, spaceId: string | null) => Promise<number>;
+  sweep: (cutoff: string) => Promise<number>;
 }): Promise<number> {
-  const spaces = await opts.fanout.spaces.list();
-  let total = 0;
-  for (const space of spaces) {
-    const config = await opts.fanout.spaces.getConfig(space.id);
-    const override = config?.[opts.fanout.configField];
-    const effective =
-      typeof override === "number" ? override : opts.instanceDefault;
-    if (effective <= 0) continue;
-    const cutoff = new Date(
-      opts.nowFn().getTime() - effective * opts.unitMs,
-    ).toISOString();
-    const deleted = await runOneScope(
-      opts.coordination,
-      `${opts.jobName}:${space.id}`,
-      () => opts.sweep(cutoff, space.id),
-    );
-    if (deleted) total += deleted;
-  }
-  // NULL-space scope — rows with
-  // no space scope. Always uses the instance default, which is the
-  // retention self-hosts get when they never configure per-space
-  // overrides.
-  if (opts.instanceDefault > 0) {
-    const cutoff = new Date(
-      opts.nowFn().getTime() - opts.instanceDefault * opts.unitMs,
-    ).toISOString();
-    const deleted = await runOneScope(
-      opts.coordination,
-      `${opts.jobName}:_no_space`,
-      () => opts.sweep(cutoff, null),
-    );
-    if (deleted) total += deleted;
-  }
-  return total;
-}
-
-async function runOneScope(
-  coordination: CoordinationStore | undefined,
-  lockKey: string,
-  sweep: () => Promise<number>,
-): Promise<number | undefined> {
-  if (!coordination) return sweep();
-  return coordination.withJobLock(lockKey, sweep);
+  const effective = await effectiveRetention(opts.fanout, opts.instanceDefault);
+  if (effective <= 0) return 0;
+  const cutoff = new Date(
+    opts.nowFn().getTime() - effective * opts.unitMs,
+  ).toISOString();
+  return opts.sweep(cutoff);
 }
 
 /**
- * Fan-out runner for the audit + event-log cleanup jobs that live inline in
- * `index.ts`. Same shape as the in-class fan-out above but exposed for
- * callsites that don't have their own Purger class. Returns the total number
- * of rows deleted across every scope swept this tick.
+ * Cleanup runner for the audit + event-log jobs that live inline in
+ * `index.ts`. Same shape as the in-class runner above but exposed for
+ * callsites that don't have their own Purger class. Returns the number of
+ * rows deleted this tick.
  *
  * `unitMs` is `MS_PER_DAY` for the audit job (retention is in days) and
  * `3_600_000` for the event-log job (retention is in hours); passed in by
@@ -1307,41 +900,14 @@ async function runOneScope(
  */
 export async function runSpaceCleanup(opts: {
   jobName: string;
-  coordination: CoordinationStore | undefined;
   fanout: SpaceFanout | undefined;
   instanceDefault: number;
   unitMs: number;
-  /** Cleanup sweep — `spaceId === null` means "rows where space_id IS NULL". */
-  sweep: (retention: number, spaceId?: string | null) => Promise<number>;
+  sweep: (retention: number) => Promise<number>;
 }): Promise<number> {
-  if (!opts.fanout) {
-    if (opts.instanceDefault <= 0) return 0;
-    const fn = (): Promise<number> => opts.sweep(opts.instanceDefault);
-    if (!opts.coordination) return fn();
-    return (await opts.coordination.withJobLock(opts.jobName, fn)) ?? 0;
-  }
-  const spaces = await opts.fanout.spaces.list();
-  let total = 0;
-  for (const space of spaces) {
-    const config = await opts.fanout.spaces.getConfig(space.id);
-    const override = config?.[opts.fanout.configField];
-    const effective =
-      typeof override === "number" ? override : opts.instanceDefault;
-    if (effective <= 0) continue;
-    const deleted = await runOneScope(
-      opts.coordination,
-      `${opts.jobName}:${space.id}`,
-      () => opts.sweep(effective, space.id),
-    );
-    if (deleted) total += deleted;
-  }
-  if (opts.instanceDefault > 0) {
-    const deleted = await runOneScope(
-      opts.coordination,
-      `${opts.jobName}:_no_space`,
-      () => opts.sweep(opts.instanceDefault, null),
-    );
-    if (deleted) total += deleted;
-  }
-  return total;
+  const effective = opts.fanout
+    ? await effectiveRetention(opts.fanout, opts.instanceDefault)
+    : opts.instanceDefault;
+  if (effective <= 0) return 0;
+  return opts.sweep(effective);
 }

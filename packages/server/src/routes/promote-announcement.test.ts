@@ -20,7 +20,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { initEventLog, __resetCycleDetectionForTests } from "../pubsub.js";
+import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 
 let ctx: TestContext;
 
@@ -33,7 +33,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  __resetCycleDetectionForTests();
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 
@@ -60,17 +60,12 @@ async function promoteAMirror(): Promise<{
   mirrorId: string;
   promotedId: string;
 }> {
-  const mirror = await ctx.storage.items.create(
-    {
-      type: "core.note",
-      properties: { body: "upstream copy" },
-      source: "integration:promote-announcement",
-      source_id: `mirror-${String(Date.now())}-${String(Math.random())}`,
-    },
-    // The space the promoting credential works in. A mirror written with no
-    // space lands in the space-less bucket, where the door cannot resolve it.
-    ctx.spaceId,
-  );
+  const mirror = await ctx.storage.items.create({
+    type: "core.note",
+    properties: { body: "upstream copy" },
+    source: "integration:promote-announcement",
+    source_id: `mirror-${String(Date.now())}-${String(Math.random())}`,
+  });
   const cursor = await logCursor();
   const res = await request(ctx.app, "POST", `/items/${mirror.id}/promote`, {
     key: ctx.spaceKey,

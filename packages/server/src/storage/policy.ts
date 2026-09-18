@@ -21,9 +21,8 @@ import type {
 } from "@withmarfa/shared";
 
 /**
- * A space-scoped type lookup: resolves a type id to its schema, or undefined.
- * Inheritance chains walk through this so a custom type's ancestors resolve in
- * the same space scope. Callers pass `(id) => getTypeSchema(id, spaceId)`.
+ * A type lookup: resolves a type id to its schema, or undefined. Inheritance
+ * chains walk through this. Callers pass `(id) => getTypeSchema(id)`.
  */
 export type TypeResolver = (id: string) => TypeSchema | undefined;
 

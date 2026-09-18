@@ -1,8 +1,11 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { oauthProvider } from "@better-auth/oauth-provider";
+import {
+  oauthDeviceAuthorization,
+  oauthProvider,
+} from "@better-auth/oauth-provider";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -48,22 +51,25 @@ interface PluginEndpoint {
   serverOnly: boolean;
 }
 
-/** Every path the plugin registers, read off its own endpoint record rather
- *  than from a list somebody typed. Options are the minimum the factory
- *  accepts; the record is a flat literal, so they gate nothing. */
+type EndpointRecord = Record<
+  string,
+  { path: string; options?: { metadata?: { SERVER_ONLY?: boolean } } }
+>;
+
+/** Every path the provider and its device plugin register, read off their
+ *  own endpoint records rather than from a list somebody typed. Options are
+ *  the minimum each factory accepts; the records are flat literals, so they
+ *  gate nothing. */
 function pluginEndpoints(): PluginEndpoint[] {
-  const plugin = oauthProvider({
+  const provider = oauthProvider({
     loginPage: "/auth/sign-in",
     consentPage: "/auth/authorize",
   });
-  const endpoints = (
-    plugin as unknown as {
-      endpoints: Record<
-        string,
-        { path: string; options?: { metadata?: { SERVER_ONLY?: boolean } } }
-      >;
-    }
-  ).endpoints;
+  const device = oauthDeviceAuthorization();
+  const endpoints = {
+    ...(provider as unknown as { endpoints: EndpointRecord }).endpoints,
+    ...(device as unknown as { endpoints: EndpointRecord }).endpoints,
+  };
   const byPath = new Map<string, boolean>();
   for (const endpoint of Object.values(endpoints)) {
     const serverOnly = endpoint.options?.metadata?.SERVER_ONLY === true;
@@ -80,14 +86,7 @@ function pluginEndpoints(): PluginEndpoint[] {
 /** Sign up + verify + sign in; returns the session cookie (`name=value`). */
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Fence Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Fence Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -105,10 +104,8 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
   return match[1];
 }
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 interface InsertingDb {
@@ -121,7 +118,7 @@ interface InsertingDb {
 }
 
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -142,11 +139,9 @@ async function authUserIdFor(c: TestContext, email: string): Promise<string> {
 /** A client row for the consent row to point at, and something a successful
  *  `create-client` or `delete-client` would visibly change. */
 async function seedClient(c: TestContext): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as InsertingDb;
-  const isPg = c.storage.betterAuthDialect === "pg";
-  const asColumn = (v: readonly string[]): unknown =>
-    isPg ? [...v] : JSON.stringify(v);
+  const asColumn = (v: readonly string[]): unknown => JSON.stringify(v);
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const now = new Date();
   const op = db.insert(schema.auth_oauth_client).values({
@@ -174,7 +169,7 @@ async function seedConsent(
   clientId: string,
   authUserId: string,
 ): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as InsertingDb;
   const now = new Date();
   const id = `cons_${Math.random().toString(36).slice(2)}`;
@@ -182,10 +177,7 @@ async function seedConsent(
     id,
     clientId,
     userId: authUserId,
-    scopes:
-      c.storage.betterAuthDialect === "pg"
-        ? SEEDED_SCOPES
-        : JSON.stringify(SEEDED_SCOPES),
+    scopes: JSON.stringify(SEEDED_SCOPES),
     consentGiven: true,
     createdAt: now,
     updatedAt: now,
@@ -201,7 +193,7 @@ async function consentScopes(
   clientId: string,
   authUserId: string,
 ): Promise<string[][]> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -227,7 +219,7 @@ async function consentScopes(
 }
 
 async function countClients(c: TestContext): Promise<number> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as {
     select: () => { from: (table: unknown) => Promise<unknown[]> };
   };
@@ -302,6 +294,8 @@ describe("the plugin's management endpoints are fenced", () => {
     // holds and a reopened door answers as the plugin would, which is
     // exactly what the signature control below is satisfied by.
     expect([...REACHABLE_PLUGIN_ENDPOINTS].sort()).toEqual([
+      "/device",
+      "/device/code",
       "/oauth2/authorize",
       "/oauth2/continue",
       "/oauth2/end-session",
@@ -340,7 +334,7 @@ describe("the plugin's management endpoints are fenced", () => {
   });
 
   it("a signed-in session gets the Marfa 404 on every fenced path in both spellings, and neither its consent row nor the client table moves", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "fence@example.com");
     const authUserId = await authUserIdFor(ctx, "fence@example.com");
     const clientId = await seedClient(ctx);
@@ -370,7 +364,7 @@ describe("the plugin's management endpoints are fenced", () => {
   });
 
   it("the signature is the fence's alone, and every reachable path answers as itself", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "control@example.com");
 
     // An unknown `/auth/*` path is refused by the catch-all with a bare 404
@@ -400,8 +394,8 @@ describe("the plugin's management endpoints are fenced", () => {
     }
 
     // And three of them answer with their own refusals, not a 404: a token
-    // request with no grant, userinfo with no bearer, and Marfa's own
-    // registration handler refusing the content type.
+    // request with no grant, userinfo with no bearer, and the plugin's
+    // registration handler refusing a form-encoded body.
     const token = await request(ctx.app, "POST", "/auth/oauth2/token", {
       form: { grant_type: "refresh_token" },
       headers: { origin: ORIGIN },
@@ -416,8 +410,6 @@ describe("the plugin's management endpoints are fenced", () => {
     const register = await request(ctx.app, "POST", "/auth/oauth2/register", {
       form: { client_name: "x" },
     });
-    expect(register.status).toBe(400);
-    const body = (await register.json()) as { error?: string };
-    expect(body.error).toBe("invalid_client_metadata");
+    expect(register.status).toBe(415);
   });
 });

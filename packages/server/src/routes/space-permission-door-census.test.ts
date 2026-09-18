@@ -119,12 +119,6 @@ function spacePermissionWithin(
       lines[i] ?? "",
     );
     if (direct) return direct[1] ?? null;
-    // `resolveSpaceCaller` takes its capability as a required argument
-    // rather than calling `requireSpacePermission` at the site, so that a new
-    // surface behind it cannot be added without answering the question. The
-    // literal is on its own line among the arguments.
-    const viaResolver = /^\s*"(space\.[a-z_]+)",\s*$/.exec(lines[i] ?? "");
-    if (viaResolver) return viaResolver[1] ?? null;
     for (const [name, permission] of Object.entries(GATE_HELPERS)) {
       if ((lines[i] ?? "").includes(`${name}(`)) return permission;
     }
@@ -153,12 +147,6 @@ function census(): Site[] {
   const out: Site[] = [];
   for (const file of readdirSync(ROUTES_DIR).sort()) {
     if (!file.endsWith(".ts") || file.endsWith(".test.ts")) continue;
-    // The resolver is not a surface — it answers which space a request acts
-    // in, ahead of the pages that are surfaces — and it takes its permission
-    // as a parameter, so there is no literal here to attribute. Everything it
-    // admits is counted at the call site instead, which is where the literal
-    // is written.
-    if (file === "_space-caller.ts") continue;
     const lines = readFileSync(join(ROUTES_DIR, file), "utf8").split("\n");
     lines.forEach((text, i) => {
       // Comments mention these names; a line that is only a comment is not a
@@ -168,13 +156,8 @@ function census(): Site[] {
       // The open paren rather than `(c)`, so a call Prettier has wrapped onto
       // the next line is still seen. The identifier and its paren stay
       // together; the argument does not.
-      // The two shapes that still name a permission: the gate itself, and the
-      // shared resolver, which takes its permission as a required argument so
-      // that a new surface behind it cannot be added without answering the
-      // question.
       const consultsPermission =
         text.includes("requireSpacePermission(") ||
-        text.includes("resolveSpaceCaller(") ||
         Object.keys(GATE_HELPERS).some((name) => text.includes(`${name}(`));
       if (!consultsPermission) return;
       if (insideGateHelper(lines, i + 1)) return;
@@ -195,7 +178,7 @@ describe("every administrative door consults a space permission", () => {
   it("finds the surface at all, so an empty census cannot pass", () => {
     // A scanner that stops matching reports a clean sweep. This is what makes
     // the assertions below mean something.
-    expect(sites.length).toBeGreaterThan(30);
+    expect(sites.length).toBeGreaterThan(15);
   });
 
   it("reads a permission off every site it counts", () => {
@@ -206,31 +189,6 @@ describe("every administrative door consults a space permission", () => {
       .filter((s) => s.spacePermission === null)
       .map((s) => `${s.file}:${String(s.line)} ${s.handler}`);
     expect(unattributed).toEqual([]);
-  });
-
-  it("sees every file that admits through the shared resolver", () => {
-    // **The scanner going blind is the failure this catches.** Sites reached
-    // through `resolveSpaceCaller` contain none of the strings the other
-    // rules grep for, so before it was taught to look for the resolver they
-    // were absent from the census entirely — not gated, not ungated, not
-    // anything. Five doors sat in that gap, one of them the `GET` twin of a
-    // door gated in this same change. An absence reads as a clean sweep, so it
-    // has to be asserted against the tree rather than trusted.
-    const viaResolver = readdirSync(ROUTES_DIR)
-      .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))
-      .filter((f) =>
-        readFileSync(join(ROUTES_DIR, f), "utf8").includes(
-          "resolveSpaceCaller(",
-        ),
-      )
-      .filter((f) => f !== "_space-caller.ts");
-    expect(viaResolver.length).toBeGreaterThan(0);
-    for (const file of viaResolver) {
-      expect(
-        sites.some((s) => s.file === file && s.spacePermission !== null),
-        `${file} admits through the resolver but the census sees no gated door in it`,
-      ).toBe(true);
-    }
   });
 
   it("matches the surface exactly, in both directions", () => {
@@ -256,20 +214,11 @@ describe("every administrative door consults a space permission", () => {
     const expected: Record<string, Record<string, number>> = {
       "audit.ts": { "space.audit_read": 1 },
       "auth-pages.ts": { "space.app_grants": 2 },
-      "connection-configure.ts": { "space.connections": 2 },
-      "connection-leased-tokens.ts": { "space.connections": 1 },
-      "connection-mapping.ts": { "space.connections": 3 },
-      "connection-proxy.ts": { "space.upstream_access": 1 },
       "bulk.ts": { "space.item_purge": 1 },
-      "connections.ts": { "space.connections": 10 },
-      "credentials.ts": { "space.credentials": 3 },
       "edge-types.ts": { "space.schema": 1 },
-      "inbound-webhooks.ts": { "space.connections": 1 },
-      "integrations.ts": { "space.connections": 2 },
       "items.ts": { "space.item_purge": 1 },
       "keys.ts": { "space.keys": 4 },
-      "oauth-callback.ts": { "space.credentials": 2 },
-      "spaces.ts": { "space.settings": 2, "space.usage": 1 },
+      "spaces.ts": { "space.settings": 2 },
       "types.ts": { "space.schema": 2 },
       "webhooks.ts": { "space.webhooks": 6 },
     };

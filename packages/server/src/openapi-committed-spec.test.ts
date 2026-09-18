@@ -47,6 +47,6 @@ describe("the committed OpenAPI spec", () => {
     const generated = await buildPublishedOpenAPISpec();
     const paths =
       (generated as { paths?: Record<string, unknown> }).paths ?? {};
-    expect(Object.keys(paths).length).toBeGreaterThan(50);
+    expect(Object.keys(paths).length).toBeGreaterThan(40);
   });
 });

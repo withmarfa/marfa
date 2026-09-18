@@ -21,48 +21,27 @@ const _coreRegistry = new Map<string, EdgeTypeSchema>(
   ALL_EDGE_TYPES.map((schema) => [schema.id, schema]),
 );
 
-/**
- * Custom edge types are space-scoped. The outer key is the owning space's
- * id; each space gets its own inner id→schema map. A custom edge type
- * registered by space A is therefore invisible to space B's lookups —
- * the isolation that keeps one space's relationship vocabulary out of
- * another's. The sentinel `NULL_SPACE` key holds custom edge types with no
- * space (the platform-registered set) so the
- * keys-mode flow is unaffected.
- */
-const _customBySpace = new Map<string, Map<string, EdgeTypeSchema>>();
-
-// Sentinel for custom edge types with no owning space — the platform
-// self-hosts and platform-registered types. An empty string can't collide
-// with a real space id (ids are non-empty), so it's a safe bucket key.
-const NULL_SPACE = "";
-
-function spaceKey(spaceId: string | null | undefined): string {
-  return spaceId ?? NULL_SPACE;
-}
+/** Custom edge types registered on this instance, keyed by id. One bucket:
+ *  a registration is visible to every caller. */
+const _customRegistry = new Map<string, EdgeTypeSchema>();
 
 /**
  * The core edge-type registry — the eight global edge types by identifier.
  * Custom (space-scoped) edge types are NOT exposed here; consumers that need
- * the full set for a space call `listEdgeTypes(spaceId)`. The OAuth scope
+ * the full set for a space call `listEdgeTypes()`. The OAuth scope
  * allow-list reads this for the static core-scope enumeration.
  */
 export const EDGE_TYPE_REGISTRY: ReadonlyMap<string, EdgeTypeSchema> =
   _coreRegistry;
 
-/**
- * Resolves an edge-type schema for a given space. Core edge types resolve
- * globally; custom edge types resolve only within their owning space. A
- * lookup with no `spaceId` sees core types plus the null-space bucket
- * (the platform-registered set), never another space's custom types.
- */
+/** Resolves an edge-type schema: the shipped set, then the instance's own
+ *  registrations. */
 export function getEdgeTypeSchema(
   edgeTypeId: string,
-  spaceId?: string | null,
 ): EdgeTypeSchema | undefined {
   const core = _coreRegistry.get(edgeTypeId);
   if (core) return core;
-  return _customBySpace.get(spaceKey(spaceId))?.get(edgeTypeId);
+  return _customRegistry.get(edgeTypeId);
 }
 
 /**
@@ -78,41 +57,23 @@ export function isCoreEdgeType(edgeTypeId: string): boolean {
 }
 
 /**
- * Registers a custom edge-type schema into the space's overlay. Core edge
- * types are never registered here (they live in the global map); callers
- * filter them out before calling. `spaceId` is the owning space — omit it
- * only for the null-space bucket (the platform-registered set).
+ * Registers a custom edge-type schema. Core edge types are never registered
+ * here (they live in the global map); callers filter them out before calling.
  */
-export function registerEdgeTypeSchema(
-  schema: EdgeTypeSchema,
-  spaceId?: string | null,
-): void {
-  const key = spaceKey(spaceId);
-  let bucket = _customBySpace.get(key);
-  if (!bucket) {
-    bucket = new Map<string, EdgeTypeSchema>();
-    _customBySpace.set(key, bucket);
-  }
+export function registerEdgeTypeSchema(schema: EdgeTypeSchema): void {
+  const bucket = _customRegistry;
   bucket.set(schema.id, schema);
 }
 
 /** Removes a custom edge-type schema from the space's overlay. */
-export function unregisterEdgeTypeSchema(
-  id: string,
-  spaceId?: string | null,
-): void {
-  _customBySpace.get(spaceKey(spaceId))?.delete(id);
+export function unregisterEdgeTypeSchema(id: string): void {
+  _customRegistry.delete(id);
 }
 
-/**
- * Lists every edge type visible to a space: the global core set plus that
- * space's own custom edge types. With no `spaceId`, returns core plus the
- * null-space bucket — never another space's custom types.
- */
-export function listEdgeTypes(spaceId?: string | null): EdgeTypeSchema[] {
-  const custom = _customBySpace.get(spaceKey(spaceId));
-  if (!custom) return [..._coreRegistry.values()];
-  return [..._coreRegistry.values(), ...custom.values()];
+/** Lists every edge type: the shipped core set plus the instance's own
+ *  custom edge types. */
+export function listEdgeTypes(): EdgeTypeSchema[] {
+  return [..._coreRegistry.values(), ..._customRegistry.values()];
 }
 
 // ---------------------------------------------------------------------------
@@ -142,14 +103,13 @@ export function listEdgeTypes(spaceId?: string | null): EdgeTypeSchema[] {
 export function satisfiesEdgeConstraint(
   typeId: string,
   constraints: readonly string[],
-  spaceId?: string | null,
 ): boolean {
   if (constraints.length === 0) return true;
   if (constraints.includes("*")) return true;
   // Unknown item types can't be reasoned about — fail closed. Resolve within
   // the space so a custom item type used as an edge endpoint is recognized
   // (core/system types resolve regardless of space).
-  if (!getTypeSchema(typeId, spaceId)) return false;
+  if (!getTypeSchema(typeId)) return false;
   for (const allowed of constraints) {
     if (allowed === "*") return true;
     if (isRoleConstraint(allowed)) {
@@ -158,10 +118,10 @@ export function satisfiesEdgeConstraint(
       // predates the role or was written past them, and refusing the write is
       // the fail-closed answer.
       const role = roleFromConstraint(allowed);
-      if (role !== undefined && typeHasRole(typeId, role, spaceId)) return true;
+      if (role !== undefined && typeHasRole(typeId, role)) return true;
       continue;
     }
-    if (isSubtypeOf(typeId, allowed, spaceId)) return true;
+    if (isSubtypeOf(typeId, allowed)) return true;
   }
   return false;
 }

@@ -347,26 +347,6 @@ describe("the server sends the headers the spec declares", () => {
       expect(res.headers.get("Content-Length")).toBe("18");
     });
 
-    it("sends them on the placeholder SVG", async () => {
-      // Public and unauthenticated, and a plain route because its body is
-      // SVG rather than JSON. Both reasons keep it out of the specification
-      // and neither changes what a caller needs to correlate it with a log.
-      const res = await request(
-        ctx.app,
-        "GET",
-        "/profile/placeholder/probe",
-        {},
-      );
-      expect(res.status).toBe(200);
-      assertUniversal(res, "GET /profile/placeholder/{filename}");
-      expect(res.headers.get("Content-Type")).toBe("image/svg+xml");
-      // Its own caching headers are not in the prepared bag, so the merge
-      // must leave them alone.
-      expect(res.headers.get("Cache-Control")).toBe(
-        "public, max-age=86400, immutable",
-      );
-    });
-
     it("sends them on the SSE stream", async () => {
       const res = await request(ctx.app, "GET", "/events", {
         key: ctx.spaceKey,

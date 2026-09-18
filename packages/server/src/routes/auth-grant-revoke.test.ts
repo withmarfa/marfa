@@ -12,7 +12,7 @@
  *     showing revoked access that still works. The device-code sweep sits
  *     inside that cascade after the tokens, where `revokeTokensForGrant`
  *     puts its own sibling sweep of the authorization codes, so a fault on
- *     `oauth_device_codes` cannot stop the tokens from being dropped.
+ *     `auth_oauth_device_code` cannot stop the tokens from being dropped.
  *   - **The device-consent approval serializes with it.** Approving on a
  *     device is a fourth writer of the same standing grant, and left
  *     outside the consent lock its read-modify-write can straddle a whole
@@ -27,17 +27,17 @@
  * to a real projected grant: initiate, approve, and the
  * `system.connection { kind: "app" }` row exists with the right space.
  */
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForConsentLockDepth,
   TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { DEVICE_CODE_GRANT_TYPE } from "./auth-pages.js";
+import { DEVICE_CODE_GRANT_TYPE } from "@better-auth/oauth-provider";
 
 // Every test here boots a server, signs a user up and in (two password
 // hashes), and drives at least one full device flow before it asserts
@@ -65,10 +65,7 @@ async function seedClient(c: TestContext): Promise<string> {
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -77,8 +74,7 @@ async function seedClient(c: TestContext): Promise<string> {
       };
     };
   };
-  const asColumn = (v: readonly string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? [...v] : JSON.stringify(v);
+  const asColumn = (v: readonly string[]): unknown => JSON.stringify(v);
   const redirectUris = asColumn([`${ORIGIN}/callback`]);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
@@ -86,7 +82,13 @@ async function seedClient(c: TestContext): Promise<string> {
     clientId,
     name: "Revoke Test CLI",
     redirectUris,
-    grantTypes: asColumn(["urn:ietf:params:oauth:grant-type:device_code"]),
+    // The refresh grant beside the device grant: the plugin mints a refresh
+    // token for `offline_access` only when the client is registered for it,
+    // and the refresh token is the half the severity argument below rests on.
+    grantTypes: asColumn([
+      "urn:ietf:params:oauth:grant-type:device_code",
+      "refresh_token",
+    ]),
     disabled: false,
     createdAt: now,
     updatedAt: now,
@@ -106,10 +108,7 @@ async function seedAccessToken(
   scopes: string[],
 ): Promise<string> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -124,11 +123,9 @@ async function seedAccessToken(
     token: tokenHash,
     clientId,
     userId: authUserId,
-    referenceId: null,
     expiresAt: new Date(Date.now() + 3600_000),
     createdAt: new Date(),
-    scopes:
-      c.storage.betterAuthDialect === "pg" ? scopes : JSON.stringify(scopes),
+    scopes: JSON.stringify(scopes),
   });
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
   return tokenHash;
@@ -137,11 +134,7 @@ async function seedAccessToken(
 /** Sign up + verify + sign in; returns the session cookie header value. */
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Tester" },
-    headers: { origin: ORIGIN },
-  });
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Tester");
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -158,10 +151,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 
 /** The Better Auth user id for a signed-up email. */
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -186,7 +176,7 @@ async function initiateDeviceFlow(
   clientId: string,
   scope: string,
 ): Promise<{ device_code: string; user_code: string; scope: string }> {
-  const res = await request(c.app, "POST", "/auth/device", {
+  const res = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope },
     headers: { origin: ORIGIN },
   });
@@ -204,7 +194,7 @@ function pollDeviceToken(
   deviceCode: string,
   clientId: string,
 ): Promise<Response> {
-  return request(c.app, "POST", "/auth/device/token", {
+  return request(c.app, "POST", "/auth/oauth2/token", {
     form: {
       grant_type: DEVICE_CODE_GRANT_TYPE,
       device_code: deviceCode,
@@ -214,9 +204,69 @@ function pollDeviceToken(
   });
 }
 
-/** The hash `oauth_device_codes` keys on, matching what the route computes. */
-function deviceCodeHash(deviceCode: string): string {
-  return createHash("sha256").update(deviceCode).digest("base64url");
+interface DeviceCodeRow {
+  status: string;
+  userId: string | null;
+  clientId: string | null;
+  expiresAt: Date;
+}
+
+/** The plugin's row for a device code, or null once it has been swept. */
+async function deviceCodeRow(
+  c: TestContext,
+  deviceCode: string,
+): Promise<DeviceCodeRow | null> {
+  const schemaModule = await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as {
+    select: () => {
+      from: (t: unknown) => {
+        where: (w: unknown) => Promise<DeviceCodeRow[]>;
+      };
+    };
+  };
+  const rows = await db
+    .select()
+    .from(schemaModule.auth_oauth_device_code)
+    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
+  return rows[0] ?? null;
+}
+
+interface UpdatingDb {
+  update: (t: unknown) => {
+    set: (v: Record<string, unknown>) => {
+      where: (w: unknown) => Promise<unknown>;
+    };
+  };
+}
+
+/** Flip a pending code to approved for a user, the state the plugin's
+ *  approve endpoint leaves, without going through the consent screen. */
+async function approveCodeDirectly(
+  c: TestContext,
+  deviceCode: string,
+  authUserId: string,
+): Promise<void> {
+  const schemaModule = await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as UpdatingDb;
+  await db
+    .update(schemaModule.auth_oauth_device_code)
+    .set({ status: "approved", userId: authUserId })
+    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
+}
+
+/** The plugin holds a poller to its interval, and a poll stamps the row.
+ *  Clear the stamp so a second poll in the same test is answered on the
+ *  code's state rather than with `slow_down`. */
+async function allowRepoll(c: TestContext, deviceCode: string): Promise<void> {
+  const schemaModule = await import("../storage/sqlite/schema.js");
+  const { eq } = await import("drizzle-orm");
+  const db = c.storage.betterAuthDb as UpdatingDb;
+  await db
+    .update(schemaModule.auth_oauth_device_code)
+    .set({ lastPolledAt: null })
+    .where(eq(schemaModule.auth_oauth_device_code.deviceCode, deviceCode));
 }
 
 function approveDeviceFlow(
@@ -244,9 +294,9 @@ async function onlyGrant(c: TestContext) {
   return items.data[0]!;
 }
 
-describe("POST /auth/grants/:id/revoke — the record never overstates the revoke", () => {
+describe("DELETE /auth/grants/:id — the record never overstates the revoke", () => {
   it("REGRESSION: a cascade that fails leaves the grant reading active, because it is", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "revoke-cascade@example.com");
@@ -267,20 +317,12 @@ describe("POST /auth/grants/:id/revoke — the record never overstates the revok
     provider.revokeTokensForGrant = () =>
       Promise.reject(new Error("token store unavailable"));
 
-    const res = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      {
-        headers: { origin: ORIGIN, cookie },
-      },
-    );
+    const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
 
-    // Told the truth, and told it on the page the user is already on.
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location") ?? "").toContain(
-      "notice=grant_revoke_failed",
-    );
+    // Told the truth: the cascade refused, and so did the door.
+    expect(res.status).toBe(500);
 
     // The record still describes the access the app really has, and the
     // token that access runs on is still there to be described.
@@ -295,7 +337,7 @@ describe("POST /auth/grants/:id/revoke — the record never overstates the revok
 
 describe("POST /auth/device/consent — the approval serializes with a revoke", () => {
   it("REGRESSION: an approval in flight cannot put back a grant revoked while it ran", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-vs-revoke@example.com");
@@ -333,9 +375,9 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
     const approving = approveDeviceFlow(c, second, cookie);
     await reached;
 
-    // Meanwhile the user revokes the app from /auth/security.
-    const revoking = request(c.app, "POST", `/auth/grants/${grant.id}/revoke`, {
-      headers: { origin: ORIGIN, cookie },
+    // Meanwhile the app is revoked through the grants door.
+    const revoking = request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
     });
     // The revoke has to be queued on the lock before the approval is let
     // go. It does not get past the lock — that is the point — but a revoke
@@ -351,9 +393,7 @@ describe("POST /auth/device/consent — the approval serializes with a revoke", 
 
     const [approveRes, revokeRes] = await Promise.all([approving, revoking]);
     expect(approveRes.status).toBe(200);
-    expect(revokeRes.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    expect(revokeRes.status).toBe(204);
 
     // The revoke ran second and is what the record has to reflect. With
     // the approval's read-modify-write outside the lock it lands after
@@ -385,10 +425,7 @@ async function seedAuthorizationCode(
   identifier?: string,
 ): Promise<string> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -428,10 +465,7 @@ async function seedConsent(
   authUserId: string,
 ): Promise<void> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -445,10 +479,7 @@ async function seedConsent(
     id: `cons_${Math.random().toString(36).slice(2)}`,
     clientId,
     userId: authUserId,
-    scopes:
-      c.storage.betterAuthDialect === "pg"
-        ? ["core.note:read"]
-        : JSON.stringify(["core.note:read"]),
+    scopes: JSON.stringify(["core.note:read"]),
     consentGiven: true,
     createdAt: now,
     updatedAt: now,
@@ -458,7 +489,7 @@ async function seedConsent(
 
 describe("revocation reaches outstanding authorization codes", () => {
   it("REGRESSION: revoking a grant deletes its outstanding codes", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const email = `codes-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
@@ -482,7 +513,7 @@ describe("revocation reaches outstanding authorization codes", () => {
   });
 
   it("REGRESSION: a code whose grant is revoked cannot be redeemed", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const email = `exch-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
@@ -522,7 +553,7 @@ describe("revocation reaches outstanding authorization codes", () => {
     //
     // So this one drives the endpoint. The seeded identifier is the hashed
     // code, because that is what the guard looks up.
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const email = `guard-${Math.random().toString(36).slice(2, 8)}@cyzr.me`;
     await signInUser(ctx, email);
     const authUserId = await authUserIdFor(ctx, email);
@@ -573,7 +604,7 @@ describe("revocation reaches outstanding authorization codes", () => {
  * the terminal step performs passes on a revoked grant: revocation leaves
  * the scope list verbatim on the row it flips.
  *
- * Both tests revoke through `POST /auth/grants/:id/revoke` rather than
+ * Both tests revoke through `DELETE /auth/grants/:id` rather than
  * writing the item directly. A store write bypasses `revokeProjectedGrant`
  * entirely, which is where the sweep lives, so a test that took the short
  * route would exercise the poll-time guard alone while reading as though it
@@ -581,7 +612,7 @@ describe("revocation reaches outstanding authorization codes", () => {
  */
 describe("revocation reaches outstanding device codes", () => {
   it("REGRESSION: a poll after a revoke does not mint, though the device code has not expired", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-poll-after-revoke@example.com");
@@ -644,38 +675,30 @@ describe("revocation reaches outstanding device codes", () => {
       "core.note:read offline_access",
     );
 
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
 
-    const pending = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(second.device_code),
-    );
+    const pending = await deviceCodeRow(c, second.device_code);
     expect(pending?.status).toBe("pending");
-    expect(
-      await c.storage.oauth.approveDeviceCode(pending!.id, grant.id, [
-        "core.note:read",
-      ]),
-    ).toBe(true);
-
-    // The code the poll is about to present: bound to the revoked grant,
-    // still approved, and provably unexpired. The expiry check sits ABOVE
-    // the lifecycle guard and answers 400 as well, so without this the
-    // status code alone could not tell an expiry from a revoke. The
-    // `expires_at` assertion is the one doing that work — the error code
-    // below cannot, because both refusals are 400.
-    const row = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(second.device_code),
+    const authUserId = await authUserIdFor(
+      c,
+      "device-poll-after-revoke@example.com",
     );
+    await approveCodeDirectly(c, second.device_code, authUserId);
+
+    // The code the poll is about to present: approved for the person whose
+    // grant was just revoked, and provably unexpired. The expiry check sits
+    // ABOVE the lifecycle guard and answers 400 as well, so without this the
+    // status code alone could not tell an expiry from a revoke. The
+    // `expiresAt` assertion is the one doing that work — the error code
+    // below cannot, because both refusals are 400.
+    const row = await deviceCodeRow(c, second.device_code);
     expect(row?.status).toBe("approved");
-    expect(row?.connection_item_id).toBe(grant.id);
-    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+    expect(row?.userId).toBe(authUserId);
+    expect(row?.clientId).toBe(clientId);
+    expect(row!.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
     const res = await pollDeviceToken(c, second.device_code, clientId);
     expect(res.status).toBe(400);
@@ -694,7 +717,7 @@ describe("revocation reaches outstanding device codes", () => {
   });
 
   it("REGRESSION: revoking a grant deletes the device codes approved against it", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-codes-swept@example.com");
@@ -705,27 +728,14 @@ describe("revocation reaches outstanding device codes", () => {
 
     // Present before the revoke, so the assertion after it is about the
     // sweep rather than about a code that was never stored.
-    expect(
-      await c.storage.oauth.findDeviceCodeByHash(
-        deviceCodeHash(flow.device_code),
-      ),
-    ).not.toBeNull();
+    expect(await deviceCodeRow(c, flow.device_code)).not.toBeNull();
 
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
 
-    expect(
-      await c.storage.oauth.findDeviceCodeByHash(
-        deviceCodeHash(flow.device_code),
-      ),
-    ).toBeNull();
+    expect(await deviceCodeRow(c, flow.device_code)).toBeNull();
 
     // And the poll it would have answered has nothing left to answer from.
     const res = await pollDeviceToken(c, flow.device_code, clientId);
@@ -736,7 +746,7 @@ describe("revocation reaches outstanding device codes", () => {
   });
 
   it("leaves another user's pending device code for the same client alone", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookieA = await signInUser(c, "device-sweep-a@example.com");
@@ -746,28 +756,19 @@ describe("revocation reaches outstanding device codes", () => {
     expect((await approveDeviceFlow(c, flowA, cookieA)).status).toBe(200);
     const grant = await onlyGrant(c);
 
-    // B is mid-flow on the same client: initiated, not approved, so the row
-    // carries the client and nobody's user. There is no user column on that
-    // table because a pending row is pre-consent, which is exactly why the
-    // sweep keys on the grant item and not on the client.
+    // B is mid-flow on the same client: initiated, not yet claimed on the
+    // consent screen, so the row carries the client and nobody's user. The
+    // sweep keys on the (client, user) pair, which is exactly why B's row
+    // is outside it.
     const flowB = await initiateDeviceFlow(c, clientId, "core.note:read");
 
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie: cookieA } },
-    );
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
 
     // A's code went, so the sweep did run.
-    expect(
-      await c.storage.oauth.findDeviceCodeByHash(
-        deviceCodeHash(flowA.device_code),
-      ),
-    ).toBeNull();
+    expect(await deviceCodeRow(c, flowA.device_code)).toBeNull();
 
     // B's did not, and still answers the way an unapproved code should.
     // Sweeping by client instead would sign B out of a login they are
@@ -782,6 +783,7 @@ describe("revocation reaches outstanding device codes", () => {
     // "still pending" would also be the answer if the code had survived in
     // a state nothing could finish.
     expect((await approveDeviceFlow(c, flowB, cookieB)).status).toBe(200);
+    await allowRepoll(c, flowB.device_code);
     const mintedForB = await pollDeviceToken(c, flowB.device_code, clientId);
     expect(mintedForB.status).toBe(200);
     expect(
@@ -796,13 +798,13 @@ describe("revocation reaches outstanding device codes", () => {
     // rewritten, matching where that function puts its own sibling sweep of
     // the authorization codes. The cascade has no try/catch on purpose, so
     // whichever step throws first is the last step that runs — and swept
-    // first, a persistent fault on `oauth_device_codes` would abort before
+    // first, a persistent fault on `auth_oauth_device_code` would abort before
     // any token was touched, leaving the grant active, every bearer and
     // refresh token live, and Disconnect permanently non-functional while
     // the app kept full access. Swept last, the same fault still kills every
     // token, and the record still honestly reads active because the user's
     // revoke did not entirely land.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-sweep-throws@example.com");
@@ -825,19 +827,13 @@ describe("revocation reaches outstanding device codes", () => {
     // The device-code table is unreachable. Lock contention, a permissions
     // change, a corrupt index — the cause does not matter, only that it
     // persists.
-    c.storage.oauth.deleteDeviceCodesForGrant = () =>
+    c.storage.oauthProvider!.deleteDeviceCodesForGrant = () =>
       Promise.reject(new Error("device code table unavailable"));
 
-    const res = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(res.status).toBe(302);
-    expect(res.headers.get("location") ?? "").toContain(
-      "notice=grant_revoke_failed",
-    );
+    const res = await request(c.app, "DELETE", `/auth/grants/${grant.id}`, {
+      key: c.spaceKey,
+    });
+    expect(res.status).toBe(500);
 
     // The property the ordering buys: the token cascade had already run, so
     // the access the user asked to withdraw is gone even though the sweep
@@ -861,7 +857,7 @@ describe("revocation reaches outstanding device codes", () => {
     // the interface built for revoking it — while its `status` still says
     // `active`. The status half of the guard passes on this row; only the
     // state half refuses it.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-grant-soft-deleted@example.com");
@@ -882,26 +878,21 @@ describe("revocation reaches outstanding device codes", () => {
       200,
     );
 
-    await c.storage.items.delete(grant.id, grant.space_id ?? undefined);
+    await c.storage.items.delete(grant.id);
 
     // Exactly the disagreement described: one axis moved, the other did not.
-    const soft = await c.storage.items.getIncludingTrashed(
-      grant.id,
-      grant.space_id ?? undefined,
-    );
+    const soft = await c.storage.items.getIncludingTrashed(grant.id);
     expect(soft?.state).toBe("revoked");
     expect(soft?.properties.status).toBe("active");
 
     // Nothing swept the code — a store-level soft delete does not run
-    // `revokeProjectedGrant` — so it is still approved, still bound, and
-    // still unexpired. The expiry check answers 400 too, so the assertion
-    // rather than the status code is what rules that reading out.
-    const row = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(flow.device_code),
-    );
+    // `revokeProjectedGrant` — so it is still approved, still the person's,
+    // and still unexpired. The expiry check answers 400 too, so the
+    // assertion rather than the status code is what rules that reading out.
+    const row = await deviceCodeRow(c, flow.device_code);
     expect(row?.status).toBe("approved");
-    expect(row?.connection_item_id).toBe(grant.id);
-    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+    expect(row?.userId).toBe(grant.properties.user_id);
+    expect(row!.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
     const res = await pollDeviceToken(c, flow.device_code, clientId);
     expect(res.status).toBe(400);
@@ -914,12 +905,12 @@ describe("revocation reaches outstanding device codes", () => {
   });
 
   it("REGRESSION: a poll refuses an approved code whose grant item was purged", async () => {
-    // `connection_item_id` is a foreign key with `ON DELETE SET NULL` in
-    // both dialects, so a hard purge of the grant item leaves an approved
-    // code pointing at nothing. That is a reachable state rather than a
-    // broken invariant, and it describes a grant that no longer exists, so
-    // it earns the same refusal a revoked one gets rather than a 500.
-    ctx = await createTestContext({ authAllowSignup: true });
+    // The plugin's row names the client and the person, not the projection,
+    // so a hard purge of the grant item leaves an approved code whose grant
+    // no longer exists. That is a reachable state rather than a broken
+    // invariant, and it earns the same refusal a revoked one gets rather
+    // than a token minted against nothing.
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const cookie = await signInUser(c, "device-grant-purged@example.com");
@@ -940,20 +931,14 @@ describe("revocation reaches outstanding device codes", () => {
 
     // The purge route's own two steps: soft delete first, because purge
     // refuses an item that has not been soft-deleted.
-    const spaceId = grant.space_id ?? undefined;
-    await c.storage.items.delete(grant.id, spaceId);
-    await c.storage.items.purge(grant.id, spaceId);
-    expect(
-      await c.storage.items.getIncludingTrashed(grant.id, spaceId),
-    ).toBeNull();
+    await c.storage.items.delete(grant.id);
+    await c.storage.items.purge(grant.id);
+    expect(await c.storage.items.getIncludingTrashed(grant.id)).toBeNull();
 
-    // The foreign key did the rest: the row survived, its grant did not.
-    const row = await c.storage.oauth.findDeviceCodeByHash(
-      deviceCodeHash(flow.device_code),
-    );
+    // The row survived, its grant did not.
+    const row = await deviceCodeRow(c, flow.device_code);
     expect(row?.status).toBe("approved");
-    expect(row?.connection_item_id).toBeNull();
-    expect(new Date(row!.expires_at).getTime()).toBeGreaterThan(Date.now());
+    expect(row!.expiresAt.getTime()).toBeGreaterThan(Date.now());
 
     const res = await pollDeviceToken(c, flow.device_code, clientId);
     expect(res.status).toBe(400);
@@ -975,10 +960,7 @@ function hashCode(code: string): string {
 async function countAuthorizationCodes(
   c: TestContext,
 ): Promise<Map<string, number>> {
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     select: () => {
       from: (t: unknown) => Promise<{ value: string }[]>;
@@ -1007,10 +989,7 @@ async function dropConsent(
   clientId: string,
   authUserId: string,
 ): Promise<void> {
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     delete: (t: unknown) => {

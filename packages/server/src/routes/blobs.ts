@@ -3,15 +3,7 @@ import { createRoute, z } from "@hono/zod-openapi";
 import { MarfaError, ErrorCode, isValidBlobHash } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { withPreparedHeaders } from "../prepared-headers.js";
-import { resolveBlobForSpace } from "../storage/blob-reader.js";
-import type { ResolvedBlob } from "../storage/blob-reader.js";
-import {
-  requireAuth,
-  requireOperatorKey,
-  hasOperatorAuthority,
-} from "../middleware/auth.js";
-import type { ApiKey } from "@withmarfa/shared";
-import { reserveQuota } from "../middleware/quota.js";
+import { requireAuth, requireOperatorKey } from "../middleware/auth.js";
 import { log } from "../middleware/logger.js";
 import type { Storage } from "../storage/interface.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
@@ -309,23 +301,6 @@ const reconcileBlobsRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-/**
- * A reader's view of a blob, keyed on whether the credential is confined to
- * a space. The rule itself lives in `storage/blob-reader.ts`, shared with the
- * export path, which had the same shape and the old behavior.
- */
-async function resolveBlobForReader(
-  storage: Storage,
-  apiKey: ApiKey,
-  hash: string,
-): Promise<ResolvedBlob | null> {
-  return resolveBlobForSpace(
-    storage,
-    hasOperatorAuthority(apiKey) ? undefined : (apiKey.space_id ?? ""),
-    hash,
-  );
-}
-
 export function blobRoutes(
   storage: Storage,
   blobBackend: BlobBackend,
@@ -392,7 +367,7 @@ export function blobRoutes(
     // on disk that the registration then refuses would leak them, since
     // nothing sweeps an unregistered blob — and content addressing means a
     // later legitimate upload of the same bytes finds them already there.
-    const blobSpaceId = c.get("apiKey")?.space_id ?? "";
+    //
     // Content addressing makes `existed` decide two things at once: whether
     // these bytes need writing, and whether a later refusal has anything to
     // undo. The second answer is only true while no other request can be
@@ -408,21 +383,7 @@ export function blobRoutes(
       }
       try {
         await storage.runInTransaction(async () => {
-          await reserveQuota(c, storage, [
-            { resource: "blobs", increment: 1 },
-            { resource: "storage_bytes", increment: data.length },
-          ]);
-          // Register the metadata row scoped to the caller's space. Empty-
-          // string sentinel for instance-wide and operator-key
-          // uploads. Different spaces uploading the same hash bytes get
-          // separate rows; the storage backend dedupes the physical file.
-          await storage.blobs.register(
-            hash,
-            mimeType,
-            data.length,
-            hash,
-            blobSpaceId,
-          );
+          await storage.blobs.register(hash, mimeType, data.length, hash);
         });
       } catch (err) {
         // Refused, or the registration failed. An unregistered blob is
@@ -450,7 +411,6 @@ export function blobRoutes(
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "blob.upload",
       resource_type: "blob",
@@ -475,7 +435,7 @@ export function blobRoutes(
   // whoever owns this route; noting it is what stops the next reader
   // assuming it runs.
   router.on("HEAD", "/:hash", async (c) => {
-    const apiKey = requireAuth(c);
+    requireAuth(c);
 
     let hash = c.req.param("hash");
     if (!hash.startsWith("sha256:")) {
@@ -485,8 +445,7 @@ export function blobRoutes(
       return new Response(null, { status: 400 });
     }
 
-    // Space-scoped lookup. Cross-space probes return 404.
-    const record = await resolveBlobForReader(storage, apiKey, hash);
+    const record = await storage.blobs.get(hash);
     if (!record) {
       return new Response(null, { status: 404 });
     }
@@ -502,7 +461,7 @@ export function blobRoutes(
 
   // GET /blobs/:hash — download blob binary
   router.openapi(getBlobRoute, async (c) => {
-    const apiKey = requireAuth(c);
+    requireAuth(c);
 
     let hash = c.req.valid("param").hash;
     if (!hash.startsWith("sha256:")) {
@@ -512,8 +471,7 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    // Space-scoped lookup. Cross-space probes return 404.
-    const record = await resolveBlobForReader(storage, apiKey, hash);
+    const record = await storage.blobs.get(hash);
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
@@ -537,7 +495,7 @@ export function blobRoutes(
 
   // GET /blobs/:hash/url — presigned download URL
   router.openapi(getBlobUrlRoute, async (c) => {
-    const apiKey = requireAuth(c);
+    requireAuth(c);
 
     if (!blobBackend.getPresignedUrl) {
       throw new MarfaError(
@@ -554,8 +512,7 @@ export function blobRoutes(
       throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid blob hash");
     }
 
-    // Space-scoped lookup. Cross-space probes return 404.
-    const record = await resolveBlobForReader(storage, apiKey, hash);
+    const record = await storage.blobs.get(hash);
     if (!record) {
       throw new MarfaError(ErrorCode.BLOB_NOT_FOUND, "Blob not found");
     }
@@ -576,7 +533,6 @@ export function blobRoutes(
     const result = await sweepUnreferencedBlobs({
       storage,
       blobBackend,
-      spaceId: c.get("apiKey")?.space_id,
       dryRun,
     });
 
@@ -645,7 +601,6 @@ export function blobRoutes(
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "blob.reconcile",
       resource_type: "blob",

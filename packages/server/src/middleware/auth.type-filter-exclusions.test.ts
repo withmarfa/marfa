@@ -12,7 +12,7 @@
  * `auth.type-filter-agreement.test.ts`, which is the acceptance; these are
  * the unit assertions underneath it. Asserting on a `GET /items` response
  * instead would prove nothing either way: the storage layer's own space
- * fence and Postgres RLS can hide system rows independently, so the route
+ * fence can hide system rows independently, so the route
  * passes with the filter broken.
  *
  * How a sign-in's granted scopes reach this same map is not the subject
@@ -27,17 +27,11 @@ import {
 import type { ApiKey, TypePermission } from "@withmarfa/shared";
 import { checkTypeAccess, computeTypeFilter } from "./auth.js";
 
-const OWN_SPACE = "space-own";
-
 // An ordinary space key: the permission map is the only thing that decides,
 // because nothing bypasses it.
-function spaceKey(
-  type_permissions: Record<string, TypePermission>,
-  spaceId: string = OWN_SPACE,
-): ApiKey {
+function spaceKey(type_permissions: Record<string, TypePermission>): ApiKey {
   return {
     id: "k1",
-    space_id: spaceId,
     label: "test",
     source: "test",
     default_tier: "library",
@@ -194,21 +188,5 @@ describe("computeTypeFilter — explicit no-access entries", () => {
     const b = computeTypeFilter(undefined);
     expect(a).not.toBe(b);
     expect(a.excluded).not.toBe(b.excluded);
-  });
-
-  it("is independent of the space, because the space fence is not its job", () => {
-    // The old filter enumerated `listTypes(space)`, so it could not name
-    // another space's type — a property of the enumeration rather than a
-    // security boundary. Cross-space isolation is `spaceCondition` in both
-    // item stores plus Postgres RLS, and both still apply. Pinned so the
-    // removal of the enumeration is not later read as having dropped a
-    // fence that lived somewhere else all along.
-    const perms: Record<string, TypePermission> = {
-      [GLOBAL_TYPE_WILDCARD]: "read",
-      "system.credential": "none",
-    };
-    expect(computeTypeFilter(spaceKey(perms, "space-own"))).toEqual(
-      computeTypeFilter(spaceKey(perms, "space-other")),
-    );
   });
 });

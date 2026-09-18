@@ -19,7 +19,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MockInstance } from "vitest";
-import { DELETION_STATES, ITEM_STATES, TIERS } from "@withmarfa/shared";
+import { ITEM_STATES, TIERS } from "@withmarfa/shared";
 import {
   SCANNED_COLUMNS,
   scanStoredValues,
@@ -28,7 +28,6 @@ import {
   type ColumnValueCounts,
   type StoredValueCount,
 } from "./stored-value-scan.js";
-import { pgStoredValueCounts } from "./pg/stored-value-counts.js";
 import { sqliteStoredValueCounts } from "./sqlite/stored-value-counts.js";
 import { createTestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
@@ -256,7 +255,6 @@ describe("scanStoredValues", () => {
         ?.allowed;
 
     expect(allowedFor("api_keys", "default_tier")).toBe(TIERS);
-    expect(allowedFor("auth_user", "deletion_state")).toBe(DELETION_STATES);
     expect(allowedFor("items", "state")).toBe(ITEM_STATES);
     // The entry a cast-keyed roster could never have found: this column
     // was narrowed by comparison against two hardcoded literals rather
@@ -293,9 +291,7 @@ describe("the query the boot runs", () => {
     // queries agree.
     const ctx = await createTestContext();
     try {
-      const dialect = process.env.DB_DIALECT ?? "sqlite";
       const store = ctx.storage as unknown as {
-        __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
         __sqliteAll?: (q: string) => Promise<unknown[]>;
         __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
       };
@@ -305,19 +301,13 @@ describe("the query the boot runs", () => {
       const plant = `UPDATE api_keys SET default_tier = 'junk_tier'
                       WHERE id = (SELECT id FROM api_keys LIMIT 1)`;
 
-      let counts: ColumnValueCounts;
-      if (dialect === "pg") {
-        const query = store.__pgClient;
-        if (!query) throw new Error("pg escape hatch missing");
-        await query(plant);
-        counts = pgStoredValueCounts((sql) => query(sql));
-      } else {
-        const run = store.__sqliteRun;
-        const all = store.__sqliteAll;
-        if (!run || !all) throw new Error("sqlite escape hatches missing");
-        await run(plant, []);
-        counts = sqliteStoredValueCounts((sql) => all(sql));
-      }
+      const run = store.__sqliteRun;
+      const all = store.__sqliteAll;
+      if (!run || !all) throw new Error("sqlite escape hatches missing");
+      await run(plant, []);
+      const counts: ColumnValueCounts = sqliteStoredValueCounts((sql) =>
+        all(sql),
+      );
 
       const found = await scanStoredValues(counts);
 

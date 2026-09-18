@@ -2,11 +2,9 @@
  * Detect a primary-key collision on a table's `id`.
  *
  * Happens when a caller supplies an explicit `id` that already exists.
- * The space-scoped pre-checks a route makes miss the case where the id
- * belongs to ANOTHER space — every one of these primary keys is `id`
- * alone, not `(space_id, id)` — so the insert trips the constraint.
- * Callers surface it as a clean `CONFLICT` (409) instead of an opaque
- * 500.
+ * A route's pre-checks can race a concurrent insert of the same id, so
+ * the insert trips the constraint. Callers surface it as a clean
+ * `CONFLICT` (409) instead of an opaque 500.
  *
  * Drizzle wraps the libsql error: the outer Error carries a "Failed
  * query" message with `code: undefined`, while the `cause` carries

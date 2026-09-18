@@ -7,7 +7,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 import { compareProperties } from "./mirror-reconcile.js";
 
 describe("compareProperties", () => {
@@ -53,27 +52,12 @@ describe("compareProperties", () => {
 });
 
 let ctx: TestContext;
-let ownerKey: string;
 let memberKey: string;
 
 const MIRROR_SOURCE = "integration:acme.reconcile";
 
 beforeAll(async () => {
   ctx = await createTestContext();
-
-  ownerKey = `marfa_k1_reconcile_owner_${String(Math.random()).slice(2)}`;
-  await ctx.storage.keys.createRuntimeCredential(
-    {
-      label: "reconcile-owner",
-      source: `reconcile-owner-${String(Math.random()).slice(2)}`,
-      type_permissions: { "core.bookmark": "write" },
-      connection_id: "conn_mirror_reconcile",
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      item_source: MIRROR_SOURCE,
-    },
-    hashApiKey(ownerKey, "test-salt"),
-    ctx.spaceId,
-  );
 
   // A credential holding only what the reconcile itself needs, rather than
   // the file's own: reconciliation is a user gesture, so the suite exercises
@@ -94,16 +78,30 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
+/**
+ * An integration's mirror of an external record, written through the store:
+ * nothing this server mints can be the owning integration, so the store is
+ * the only writer a mirror has.
+ */
 async function createMirror(
   sourceId: string,
   properties: Record<string, unknown>,
 ): Promise<string> {
-  const res = await request(ctx.app, "POST", "/items", {
-    key: ownerKey,
-    body: { type: "core.bookmark", source_id: sourceId, properties },
+  const row = await ctx.storage.items.create({
+    type: "core.bookmark",
+    source: MIRROR_SOURCE,
+    source_id: sourceId,
+    properties,
   });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { item: { id: string } }).item.id;
+  return row.id;
+}
+
+/** The upstream moves: the owning integration re-syncs its mirror. */
+async function resyncMirror(
+  id: string,
+  properties: Record<string, unknown>,
+): Promise<void> {
+  await ctx.storage.items.update(id, { properties, null_clears: true });
 }
 
 describe("GET /items/{id}/reconcile", () => {
@@ -130,14 +128,7 @@ describe("GET /items/{id}/reconcile", () => {
       body: { properties: { title: "My title", note: "mine alone" } },
     });
     // The upstream moves, and clears a field.
-    await request(ctx.app, "POST", "/items", {
-      key: ownerKey,
-      body: {
-        type: "core.bookmark",
-        source_id: sourceId,
-        properties: { title: "Renamed upstream", body: null },
-      },
-    });
+    await resyncMirror(mirrorId, { title: "Renamed upstream", body: null });
 
     const res = await request(
       ctx.app,

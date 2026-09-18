@@ -8,7 +8,6 @@ import {
   requireSpacePermission,
   requireAuth,
 } from "../middleware/auth.js";
-import { reserveQuota } from "../middleware/quota.js";
 import type { Storage } from "../storage/interface.js";
 import {
   createOpenAPIRouter,
@@ -515,8 +514,7 @@ export function webhookRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(createWebhookRoute, async (c) => {
-    // `space.webhooks` only. Storage filters by key.space_id, so cross-space
-    // attempts return WEBHOOK_NOT_FOUND rather than 403.
+    // `space.webhooks` only.
     const key = requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     refuseNarrowCredential(key);
@@ -536,21 +534,16 @@ export function webhookRoutes(storage: Storage) {
     }
 
     const webhook = await storage.runInTransaction(async () => {
-      await reserveQuota(c, storage, [{ resource: "webhooks", increment: 1 }]);
-      return storage.outboundWebhooks.create(
-        {
-          url: body.url,
-          events: body.events,
-          type_filter: body.type_filter ?? undefined,
-          secret: body.secret ?? undefined,
-        },
-        key.space_id,
-      );
+      return storage.outboundWebhooks.create({
+        url: body.url,
+        events: body.events,
+        type_filter: body.type_filter ?? undefined,
+        secret: body.secret ?? undefined,
+      });
     });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.create",
       resource_type: "webhook",
@@ -560,9 +553,9 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(listWebhooksRoute, async (c) => {
-    const key = requireAuth(c);
+    requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
-    const webhooks = await storage.outboundWebhooks.list(key.space_id);
+    const webhooks = await storage.outboundWebhooks.list();
     return c.json(
       {
         webhooks: webhooks.map((w) => ({
@@ -575,10 +568,10 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(getWebhookRoute, async (c) => {
-    const key = requireAuth(c);
+    requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     const { id } = c.req.valid("param");
-    const webhook = await storage.outboundWebhooks.get(id, key.space_id);
+    const webhook = await storage.outboundWebhooks.get(id);
     if (!webhook) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -595,7 +588,7 @@ export function webhookRoutes(storage: Storage) {
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
 
-    const existing = await storage.outboundWebhooks.get(id, key.space_id);
+    const existing = await storage.outboundWebhooks.get(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -620,7 +613,6 @@ export function webhookRoutes(storage: Storage) {
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.update",
       resource_type: "webhook",
@@ -639,7 +631,7 @@ export function webhookRoutes(storage: Storage) {
     refuseNarrowCredential(key);
     const { id } = c.req.valid("param");
 
-    const existing = await storage.outboundWebhooks.get(id, key.space_id);
+    const existing = await storage.outboundWebhooks.get(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }
@@ -647,7 +639,6 @@ export function webhookRoutes(storage: Storage) {
     await storage.outboundWebhooks.delete(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "webhook.delete",
       resource_type: "webhook",
@@ -657,12 +648,12 @@ export function webhookRoutes(storage: Storage) {
   });
 
   router.openapi(listDeliveriesRoute, async (c) => {
-    const key = requireAuth(c);
+    requireAuth(c);
     requireSpacePermission(c, "space.webhooks");
     const { id } = c.req.valid("param");
     const { limit } = c.req.valid("query");
 
-    const existing = await storage.outboundWebhooks.get(id, key.space_id);
+    const existing = await storage.outboundWebhooks.get(id);
     if (!existing) {
       throw new MarfaError(ErrorCode.WEBHOOK_NOT_FOUND, "Webhook not found");
     }

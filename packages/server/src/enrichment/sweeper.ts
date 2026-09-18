@@ -45,13 +45,12 @@ export interface TextEnrichmentSweeperOptions {
  */
 function derivableDimensionFields(
   typeId: string,
-  spaceId: string | null,
   mime: string,
 ): DimensionField[] {
   if (!isDimensionMime(mime)) return [];
   let fields;
   try {
-    fields = getResolvedFields(typeId, spaceId ?? undefined);
+    fields = getResolvedFields(typeId);
   } catch {
     // An unresolvable inheritance chain is the type registry's problem to
     // report, not a reason to fail a derivation over.
@@ -70,19 +69,15 @@ function validationRefusal(
   typeId: string,
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
-  spaceId: string | null,
 ): string | null {
-  const scope = spaceId ?? undefined;
-  if (!getTypeSchema(typeId, scope)) return null;
+  if (!getTypeSchema(typeId)) return null;
   const merged = mergeUpdateProperties(
     current,
-    resolveIncomingProperties(typeId, patch, false, scope) ?? {},
+    resolveIncomingProperties(typeId, patch, false) ?? {},
     false,
     "merge",
   );
-  const result = validateProperties(typeId, merged, {
-    ...(spaceId == null ? {} : { spaceId }),
-  });
+  const result = validateProperties(typeId, merged);
   if (result.success) return null;
   return `invalid properties: ${result.errors
     .map((e) => `${e.field}: ${e.message}`)
@@ -182,7 +177,6 @@ export class TextEnrichmentSweeper {
 
   private async processOne(candidate: {
     item_id: string;
-    space_id: string | null;
     type: string;
     blob_ref: string;
     mime_type: string;
@@ -205,7 +199,6 @@ export class TextEnrichmentSweeper {
     ) => {
       await storage.enrichment.upsert({
         item_id: candidate.item_id,
-        space_id: candidate.space_id,
         blob_ref: candidate.blob_ref,
         extractor_version: EXTRACTOR_VERSION,
         status,
@@ -241,7 +234,6 @@ export class TextEnrichmentSweeper {
       });
       const derivable = derivableDimensionFields(
         candidate.type,
-        candidate.space_id,
         candidate.mime_type,
       );
       if (!wantsText && derivable.length === 0) {
@@ -249,10 +241,7 @@ export class TextEnrichmentSweeper {
         return "skipped";
       }
 
-      const meta = await storage.blobs.get(
-        candidate.blob_ref,
-        candidate.space_id ?? "",
-      );
+      const meta = await storage.blobs.get(candidate.blob_ref);
       if (!meta) {
         await recordTransient("blob metadata missing");
         return "failed";
@@ -324,10 +313,7 @@ export class TextEnrichmentSweeper {
       // both the write and the bookkeeping must describe the item as it is
       // now, not as the candidate row had it. A gone or re-pointed item
       // gets nothing recorded — the next tick sees the current shape.
-      const fresh = await storage.items.get(
-        candidate.item_id,
-        candidate.space_id ?? undefined,
-      );
+      const fresh = await storage.items.get(candidate.item_id);
       if (!fresh) return "skipped";
       if (fresh.properties.blob_ref !== candidate.blob_ref) return "skipped";
 
@@ -337,7 +323,6 @@ export class TextEnrichmentSweeper {
       // candidate row was read.
       const freshFields = derivableDimensionFields(
         fresh.type,
-        fresh.space_id ?? candidate.space_id,
         candidate.mime_type,
       );
       const keeps = (field: string): boolean =>
@@ -374,12 +359,7 @@ export class TextEnrichmentSweeper {
       // reports an absent schema as `Unknown type` rather than as no
       // opinion: judging unguarded would park every item of a type this
       // worker's registry does not carry.
-      const refusal = validationRefusal(
-        fresh.type,
-        fresh.properties,
-        kept,
-        candidate.space_id,
-      );
+      const refusal = validationRefusal(fresh.type, fresh.properties, kept);
       if (refusal) {
         // A skip, never a transient failure. The refusal is a property of
         // the extractor output and the type, both fixed under a given
@@ -395,11 +375,10 @@ export class TextEnrichmentSweeper {
         return "skipped";
       }
 
-      const updated = await storage.items.update(
-        candidate.item_id,
-        { properties: kept, version: fresh.version },
-        candidate.space_id ?? undefined,
-      );
+      const updated = await storage.items.update(candidate.item_id, {
+        properties: kept,
+        version: fresh.version,
+      });
       // A conflict response means the item moved between the re-read and
       // the write. Nothing recorded: the row is re-offered next tick and
       // judged against whatever the item has become.
@@ -422,7 +401,6 @@ export class TextEnrichmentSweeper {
         type: "updated",
         item: updated,
         metadata,
-        spaceId: candidate.space_id ?? undefined,
       });
       return textError === null ? "extracted" : "failed";
     } catch (err) {
@@ -507,19 +485,16 @@ export class TextEnrichmentSweeper {
     }
   }
 
-  /** Scheduler entry point: the same locked, logged tick the timer path
-   *  drives — `runOnce()` alone is the bare test seam and has neither. */
+  /** Scheduler entry point: the same logged tick the timer path drives —
+   *  `runOnce()` alone is the bare test seam and has no logging. */
   runScheduled(): Promise<void> {
     return this.poll();
   }
 
   private async poll(): Promise<void> {
     try {
-      const result = await this.opts.storage.coordination.withJobLock(
-        "enrichment-sweep",
-        () => this.runOnce(),
-      );
-      if (result && result.extracted + result.failed > 0) {
+      const result = await this.runOnce();
+      if (result.extracted + result.failed > 0) {
         log("info", "Text enrichment sweep", result);
       }
     } catch (err) {

@@ -7,8 +7,8 @@
  * a deliberate, consumer-facing shape:
  *
  *   1. Sets an ordered, described top-level `tags` list (resources first).
- *   2. Strips platform-internal operations (admin, lease-broker plumbing,
- *      server metrics, blob maintenance, by-id space quotas). They still
+ *   2. Strips platform-internal operations (archive restore, server
+ *      metrics, blob maintenance). They still
  *      serve — they are simply not part of the public reference.
  *   3. Injects the two consumer routes defined as plain Hono handlers
  *      (the SSE stream and OAuth dynamic client registration), which the
@@ -87,10 +87,9 @@ const PUBLIC_TAGS = [
     description: "Full-text and filtered search across items.",
   },
   { name: "Keys", description: "API key management." },
-  { name: "Profile", description: "The calling user's profile." },
   {
     name: "Spaces",
-    description: "Configuration and quotas for the calling space.",
+    description: "Configuration for the calling space.",
   },
   {
     name: "Connections",
@@ -123,8 +122,7 @@ const PUBLIC_TAGS = [
   },
   {
     name: "Auth",
-    description:
-      "The signed-in user's account and OAuth dynamic client registration.",
+    description: "Sign-in and OAuth dynamic client registration.",
   },
 ];
 
@@ -134,14 +132,6 @@ const PUBLIC_TAGS = [
  * A new internal route adds its operationId here.
  */
 const INTERNAL_OPERATION_IDS = new Set<string>([
-  // admin.ts — operator-key space operations
-  "adminListSpaces",
-  "adminGetSpace",
-  "adminSuspendSpace",
-  "adminUnsuspendSpace",
-  "adminGetSpaceMetrics",
-  "adminListSpaceKeys",
-  "adminPurgePendingDeletions",
   // admin-archive.ts
   "adminRestoreArchive",
   // metrics.ts — server metrics
@@ -149,10 +139,6 @@ const INTERNAL_OPERATION_IDS = new Set<string>([
   // blobs.ts — operator maintenance
   "cleanupBlobs",
   "reconcileBlobs",
-  // spaces.ts — operator key, by space id (self-service /me/quotas stays
-  // public)
-  "getSpaceQuotas",
-  "updateSpaceQuotas",
 ]);
 
 /**
@@ -217,7 +203,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
       tags: ["Auth"],
       summary: "Register an OAuth client",
       description:
-        "Dynamic Client Registration (RFC 7591). Registers a public OAuth client and returns its issued `client_id`. Unauthenticated. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
+        "Dynamic Client Registration (RFC 7591), served by the authorization server's provider. Registers an OAuth client and returns its issued `client_id`. Unauthenticated. A registration is a `web` client unless `application_type` says `native`: a web client's redirect URIs must be https off the loopback, a native client may use http on `localhost`, `127.0.0.1` or `[::1]`. A client is confidential and issued a `client_secret` unless `token_endpoint_auth_method` is `none`. A requested `scope` is validated against the server's allowlist, and the registered ceiling is that whole allowlist whatever was requested; the consent screen is where a grant is narrowed. The `client_credentials` grant is not supported: a machine caller uses an API key, which the keys surface can list, narrow and revoke.",
       requestBody: {
         required: true,
         content: {
@@ -241,8 +227,15 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                   description: 'Defaults to ["code"].',
                 },
                 client_name: { type: "string" },
+                application_type: {
+                  type: "string",
+                  description: 'Defaults to "web".',
+                },
                 scope: { type: "string" },
-                token_endpoint_auth_method: { type: "string" },
+                token_endpoint_auth_method: {
+                  type: "string",
+                  description: 'Defaults to "client_secret_basic".',
+                },
               },
             },
           },
@@ -257,7 +250,12 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
                 type: "object",
                 properties: {
                   client_id: { type: "string" },
+                  client_secret: {
+                    type: "string",
+                    description: "Confidential clients only.",
+                  },
                   client_id_issued_at: { type: "integer" },
+                  scope: { type: "string" },
                   redirect_uris: { type: "array", items: { type: "string" } },
                   grant_types: { type: "array", items: { type: "string" } },
                   response_types: { type: "array", items: { type: "string" } },
@@ -269,7 +267,7 @@ export const EXTRA_PATHS: Record<string, Record<string, unknown>> = {
         },
         "400": {
           description:
-            "An RFC 7591 error object (invalid_client_metadata or invalid_redirect_uri).",
+            "An RFC 7591 error object (invalid_client_metadata, invalid_redirect_uri or invalid_scope).",
         },
       },
     },
@@ -355,7 +353,7 @@ const RESPONSE_HEADER_COMPONENTS: Record<string, unknown> = {
   },
   "Retry-After": {
     description:
-      "Seconds to wait before retrying, sent with the rate limiter's own refusal. Derived from the time left in the window rather than a fixed backoff, so a client that honors it needs no backoff of its own. A `429` carrying `quota_exceeded` is the other kind of refusal and carries no `Retry-After`: a quota is not a window that reopens, and waiting does not clear it.",
+      "Seconds to wait before retrying, sent with the rate limiter's refusal. Derived from the time left in the window rather than a fixed backoff, so a client that honors it needs no backoff of its own.",
     schema: { type: "integer" },
   },
   "Idempotency-Replayed": {
@@ -384,7 +382,7 @@ const UNIVERSAL_RESPONSE_HEADERS = [
  */
 const RATE_LIMITED_RESPONSE = {
   description:
-    "Refused for rate or quota. `rate_limited` is the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. `quota_exceeded` is a space quota on a stored resource, carrying `details.resource`, `details.limit` and `details.current`; it is not a window, so it carries no `Retry-After` and waiting does not clear it. The limiter is only mounted on a deployment that enables rate limiting; the quota refusal is always reachable on the routes that reserve one.",
+    "Refused by the request limiter: the credential has spent its allowance for the current window, and `Retry-After` says how long to wait. The limiter is only mounted on a deployment that enables rate limiting.",
   content: {
     "application/json": {
       schema: {
@@ -393,24 +391,8 @@ const RATE_LIMITED_RESPONSE = {
           error: {
             type: "object",
             properties: {
-              // Both codes the server maps to 429. Declaring only the
-              // limiter's made a generated client reject a real quota
-              // refusal, which is the failure this whole change exists to
-              // stop — a client learning the contract from the server
-              // rather than from the specification.
-              code: {
-                type: "string",
-                enum: ["rate_limited", "quota_exceeded"],
-              },
+              code: { type: "string", enum: ["rate_limited"] },
               message: { type: "string" },
-              details: {
-                type: "object",
-                properties: {
-                  resource: { type: "string" },
-                  limit: { type: "integer" },
-                  current: { type: "integer" },
-                },
-              },
             },
             required: ["code", "message"],
           },

@@ -17,7 +17,6 @@ import * as logger from "../middleware/logger.js";
 
 function row(part: Partial<CustomTypeRow> & { id: string }): CustomTypeRow {
   return {
-    space_id: "",
     schema: JSON.stringify({ id: part.id, version: 1, fields: {} }),
     origin: "user",
     family: null,

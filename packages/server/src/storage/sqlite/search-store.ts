@@ -43,12 +43,29 @@ export class SqliteSearchStore implements SearchStore {
     itemId: string,
     properties: Record<string, unknown>,
     typeId?: string,
-    spaceId?: string,
   ): Promise<void> {
-    const text = extractSearchableText(properties, typeId, spaceId);
+    const text = extractSearchableText(properties, typeId);
+    // The tags come off the sidecar in the same statement, so a re-index
+    // after a properties write keeps what a tag write put there.
     await this.db.run(sql`
-      INSERT INTO items_fts(item_id, title, body, description, name, extra)
-      VALUES (${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra})
+      INSERT INTO items_fts(item_id, title, body, description, name, extra, tags)
+      VALUES (
+        ${itemId}, ${text.title}, ${text.body}, ${text.description}, ${text.name}, ${text.extra},
+        COALESCE(
+          (SELECT group_concat(je.value, ' ')
+             FROM metadata m, json_each(m.tags) je
+            WHERE m.item_id = ${itemId}),
+          ''
+        )
+      )
+    `);
+  }
+
+  async setTags(itemId: string, tags: readonly string[]): Promise<void> {
+    // An update rather than a delete and re-insert: the text columns are
+    // not at hand here, and an FTS5 table with its own content takes one.
+    await this.db.run(sql`
+      UPDATE items_fts SET tags = ${tags.join(" ")} WHERE item_id = ${itemId}
     `);
   }
 
@@ -62,11 +79,6 @@ export class SqliteSearchStore implements SearchStore {
     const offset = filters.offset ?? 0;
     const conditions: string[] = [];
     const params: unknown[] = [escapedQuery];
-
-    if (filters.spaceId) {
-      conditions.push("AND i.space_id = ?");
-      params.push(filters.spaceId);
-    }
 
     if (filters.state) {
       conditions.push("AND i.state = ?");
@@ -83,7 +95,6 @@ export class SqliteSearchStore implements SearchStore {
       // listing gets the same set.
       const { global, exact, descendantPattern, extraTypes } = typeSubtreeToSql(
         filters.type,
-        filters.spaceId ?? null,
       );
       if (!global && exact && descendantPattern) {
         const clauses = ["i.type = ?", "i.type LIKE ? ESCAPE '\\'"];
@@ -105,7 +116,7 @@ export class SqliteSearchStore implements SearchStore {
       conditions.push("AND i.type NOT LIKE 'system.%'");
     }
 
-    // The Postgres store's twin, and deliberately the same expression:
+    // The item store's twin, and deliberately the same expression:
     // `COALESCE(timestamp, created_at)`, inclusive, normalized to the
     // stored width before a lexical text comparison sees it.
     const timestampAfter = normalizeTimeBound(
@@ -165,13 +176,7 @@ export class SqliteSearchStore implements SearchStore {
       }
     }
 
-    const sourceLever = sourceFilterToRawSql(
-      filters.source_filter,
-      "sqlite",
-      "i",
-      1,
-      filters.spaceId ?? null,
-    );
+    const sourceLever = sourceFilterToRawSql(filters.source_filter, "i");
     if (sourceLever) {
       conditions.push(`AND ${sourceLever.clause}`);
       params.push(...sourceLever.params);
@@ -179,13 +184,7 @@ export class SqliteSearchStore implements SearchStore {
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const { clause, params: filterParams } = filterToRawSql(
-        expr,
-        "sqlite",
-        "i",
-        1,
-        filters.spaceId,
-      );
+      const { clause, params: filterParams } = filterToRawSql(expr, "i");
       conditions.push(`AND ${clause}`);
       params.push(...filterParams);
     }
@@ -201,7 +200,7 @@ export class SqliteSearchStore implements SearchStore {
         i.id, i.type, i.state, json(i.properties) AS properties,
         i.created_at, i.updated_at,
         i.timestamp, i.source, i.source_id, i.version,
-        i.schema_version, i.device, i.tier, i.space_id,
+        i.schema_version, i.device, i.tier,
         i.capture_latitude, i.capture_longitude,
         m.item_id AS meta_item_id, m.tags, m.extensions
       FROM items_fts fts

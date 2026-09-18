@@ -1,13 +1,10 @@
 /**
  * Periodic GC of terminal bulk_action_jobs rows. Mirrors the
- * RateLimitWindowCleaner pattern — single-process timer, coordination
- * lock for multi-instance safety, retention window measured against
- * `finished_at`.
+ * RateLimitWindowCleaner pattern — single-process timer, retention window
+ * measured against `finished_at`.
  */
 import { log } from "../middleware/logger.js";
-import type { CoordinationStore, Storage } from "../storage/interface.js";
-
-const COORDINATION_KEY = "bulk_action_jobs_gc";
+import type { Storage } from "../storage/interface.js";
 
 export class BulkActionJobGcSweeper {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -17,7 +14,6 @@ export class BulkActionJobGcSweeper {
     private retentionMs: number,
     private intervalMs: number,
     private nowFn: () => Date = () => new Date(),
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -42,19 +38,10 @@ export class BulkActionJobGcSweeper {
       this.nowFn().getTime() - this.retentionMs,
     ).toISOString();
 
-    const sweep = async (): Promise<number> => {
-      const deleted = await this.storage.bulkActionJobs.gcExpired(cutoff);
-      if (deleted > 0) {
-        log("info", "bulk_action_jobs_gc.swept", { deleted, cutoff });
-      }
-      return deleted;
-    };
-
-    if (this.coordination) {
-      return (
-        (await this.coordination.withJobLock(COORDINATION_KEY, sweep)) ?? 0
-      );
+    const deleted = await this.storage.bulkActionJobs.gcExpired(cutoff);
+    if (deleted > 0) {
+      log("info", "bulk_action_jobs_gc.swept", { deleted, cutoff });
     }
-    return sweep();
+    return deleted;
   }
 }

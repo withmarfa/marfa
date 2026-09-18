@@ -31,19 +31,12 @@ import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {
   await ctx.cleanup();
 });
-
-function spaces() {
-  if (!ctx.storage.spaces) {
-    throw new Error("hosted-mode storage missing space store");
-  }
-  return ctx.storage.spaces;
-}
 
 interface ErrorBody {
   error: { code: string };
@@ -51,14 +44,10 @@ interface ErrorBody {
 
 describe("POST /webhooks and a credential narrower than its space", () => {
   it("refuses a session holding a subset of the space", async () => {
-    const space = await spaces().create("scoped-webhook-space");
     const { token } = await seedOauthBearer(
       ctx.storage,
       ["space.keys", "space.webhooks"],
-      {
-        spaceId: space.id,
-        seedUserRow: true,
-      },
+      {},
     );
 
     // The space permission gate admits it — that is the point. The refusal
@@ -87,7 +76,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
     // The update door re-points `url` and rewrites `events`, so admitting
     // a scoped credential there would let it take over a subscription it
     // could not have created.
-    const space = await spaces().create("scoped-webhook-update-space");
 
     // Registered by a credential reaching the whole space, as intended.
     const suffix = Math.random().toString(36).slice(2, 8);
@@ -101,7 +89,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
         is_operator: false,
       },
       hashApiKey(`marfa_k1_whadmin_${suffix}`, TEST_API_KEY_SALT),
-      space.id,
     );
     expect(adminKey.id).toBeTruthy();
 
@@ -115,10 +102,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
     const { token } = await seedOauthBearer(
       ctx.storage,
       ["space.keys", "space.webhooks"],
-      {
-        spaceId: space.id,
-        seedUserRow: true,
-      },
+      {},
     );
     // The space permission gate admits it, so the refusal below comes from the
     // credential's content reach. The create test asserts the same.
@@ -140,7 +124,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
     // rationale: the row belongs to the space, and an app holding a
     // subset of it must not be able to silence deliveries the space
     // depends on.
-    const space = await spaces().create("scoped-webhook-delete-space");
     const suffix = Math.random().toString(36).slice(2, 8);
     const raw = `marfa_k1_whdel_${suffix}`;
     await ctx.storage.keys.create(
@@ -153,7 +136,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      space.id,
     );
     const created = await request(ctx.app, "POST", "/webhooks", {
       key: raw,
@@ -165,10 +147,7 @@ describe("POST /webhooks and a credential narrower than its space", () => {
     const { token } = await seedOauthBearer(
       ctx.storage,
       ["space.keys", "space.webhooks"],
-      {
-        spaceId: space.id,
-        seedUserRow: true,
-      },
+      {},
     );
     expect(
       (await request(ctx.app, "GET", "/keys", { key: token })).status,
@@ -193,7 +172,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
   it("admits a credential that reaches the whole space", async () => {
     // The control. Without it the refusal above is satisfied by a door
     // that refuses everyone.
-    const space = await spaces().create("unscoped-webhook-space");
     const suffix = Math.random().toString(36).slice(2, 8);
     const raw = `marfa_k1_whok_${suffix}`;
     await ctx.storage.keys.create(
@@ -206,7 +184,6 @@ describe("POST /webhooks and a credential narrower than its space", () => {
         is_operator: false,
       },
       hashApiKey(raw, TEST_API_KEY_SALT),
-      space.id,
     );
 
     const res = await request(ctx.app, "POST", "/webhooks", {

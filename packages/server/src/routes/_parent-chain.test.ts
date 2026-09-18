@@ -20,9 +20,6 @@ import {
   assertParentChain,
 } from "./_parent-chain.js";
 
-const SPACE = "space-parent-chain-test";
-const OTHER_SPACE = "space-parent-chain-other";
-
 /** `acme.a0` has no parent; each `acme.aN` inherits from `acme.a(N-1)`. */
 const CHAIN_LENGTH = MAX_REGISTRATION_CHAIN_DEPTH + 1;
 const link = (n: number): string => `acme.a${String(n)}`;
@@ -37,20 +34,17 @@ const MESSAGES = {
 
 beforeAll(() => {
   for (let n = 0; n < CHAIN_LENGTH; n++) {
-    registerTypeSchema(
-      {
-        id: link(n),
-        version: 1,
-        ...(n > 0 ? { parent: link(n - 1) } : {}),
-        fields: {},
-      },
-      SPACE,
-    );
+    registerTypeSchema({
+      id: link(n),
+      version: 1,
+      ...(n > 0 ? { parent: link(n - 1) } : {}),
+      fields: {},
+    });
   }
 });
 
 afterAll(() => {
-  for (let n = 0; n < CHAIN_LENGTH; n++) unregisterTypeSchema(link(n), SPACE);
+  for (let n = 0; n < CHAIN_LENGTH; n++) unregisterTypeSchema(link(n));
 });
 
 describe("the depth a registered chain may reach", () => {
@@ -60,7 +54,6 @@ describe("the depth a registered chain may reach", () => {
       assertParentChain(
         "acme.new",
         link(MAX_REGISTRATION_CHAIN_DEPTH - 1),
-        SPACE,
         MESSAGES,
       );
     }).not.toThrow();
@@ -71,7 +64,6 @@ describe("the depth a registered chain may reach", () => {
       assertParentChain(
         "acme.new",
         link(MAX_REGISTRATION_CHAIN_DEPTH),
-        SPACE,
         MESSAGES,
       );
     }).toThrow(`too-deep:${String(MAX_REGISTRATION_CHAIN_DEPTH)}`);
@@ -85,13 +77,13 @@ describe("a chain that reaches back to the type being registered", () => {
     // checked first, so a loop that only closes past the cap reports as too
     // deep instead, which is what both doors did before this was shared.
     expect(() => {
-      assertParentChain(link(5), link(9), SPACE, MESSAGES);
+      assertParentChain(link(5), link(9), MESSAGES);
     }).toThrow("circular");
   });
 
   it("reports a cycle when a type names itself as its parent", () => {
     expect(() => {
-      assertParentChain(link(3), link(3), SPACE, MESSAGES);
+      assertParentChain(link(3), link(3), MESSAGES);
     }).toThrow("circular");
   });
 });
@@ -99,7 +91,7 @@ describe("a chain that reaches back to the type being registered", () => {
 describe("a parent that does not resolve", () => {
   it("names the ancestor that could not be found", () => {
     expect(() => {
-      assertParentChain("acme.new", "acme.absent", SPACE, MESSAGES);
+      assertParentChain("acme.new", "acme.absent", MESSAGES);
     }).toThrow("unknown:acme.absent given:acme.absent");
   });
 
@@ -108,25 +100,19 @@ describe("a parent that does not resolve", () => {
   // parent, which resolves perfectly well. Each door now has both ids and
   // phrases the two cases apart.
   it("carries the unresolvable ancestor and the parent it was given", () => {
-    registerTypeSchema(
-      { id: "acme.orphan", version: 1, parent: "acme.absent", fields: {} },
-      SPACE,
-    );
+    registerTypeSchema({
+      id: "acme.orphan",
+      version: 1,
+      parent: "acme.absent",
+      fields: {},
+    });
     try {
       expect(() => {
-        assertParentChain("acme.new", "acme.orphan", SPACE, MESSAGES);
+        assertParentChain("acme.new", "acme.orphan", MESSAGES);
       }).toThrow("unknown:acme.absent given:acme.orphan");
     } finally {
-      unregisterTypeSchema("acme.orphan", SPACE);
+      unregisterTypeSchema("acme.orphan");
     }
-  });
-});
-
-describe("the space a parent resolves in", () => {
-  it("does not see a type registered by another space", () => {
-    expect(() => {
-      assertParentChain("acme.new", link(0), OTHER_SPACE, MESSAGES);
-    }).toThrow(`unknown:${link(0)} given:${link(0)}`);
   });
 });
 
@@ -142,24 +128,21 @@ describe("the registration cap against the registry's own backstop", () => {
     // registration produces. It is not the deepest a chain can get: a
     // re-parent grows one without ever registering past the cap.
     const deepest = "acme.deepest";
-    registerTypeSchema(
-      {
-        id: deepest,
-        version: 1,
-        parent: link(MAX_REGISTRATION_CHAIN_DEPTH - 1),
-        fields: { own: { type: "string", description: "Own field" } },
-      },
-      SPACE,
-    );
+    registerTypeSchema({
+      id: deepest,
+      version: 1,
+      parent: link(MAX_REGISTRATION_CHAIN_DEPTH - 1),
+      fields: { own: { type: "string", description: "Own field" } },
+    });
     try {
-      const fields = getResolvedFields(deepest, SPACE);
+      const fields = getResolvedFields(deepest);
       // Asserting the result, not just the absence of a throw: an unknown
       // type resolves to `undefined` without throwing, so `not.toThrow()`
       // alone would pass against a type that never registered.
       expect(fields).toBeDefined();
       expect(fields).toHaveProperty("own");
     } finally {
-      unregisterTypeSchema(deepest, SPACE);
+      unregisterTypeSchema(deepest);
     }
   });
 });

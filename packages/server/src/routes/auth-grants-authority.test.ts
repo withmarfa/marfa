@@ -22,81 +22,58 @@
  */
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { createTestContext, request } from "../test-utils.js";
+import { createTestContext, mintSpaceKey, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { SpacePermission } from "@withmarfa/shared";
 
 let ctx: TestContext;
 
 beforeEach(async () => {
-  ctx = await createTestContext({ authMode: "hosted" });
+  ctx = await createTestContext({});
 });
 
 afterEach(async () => {
   await ctx.cleanup();
 });
 
-function spaces() {
-  if (!ctx.storage.spaces) {
-    throw new Error("hosted-mode storage missing space store");
-  }
-  return ctx.storage.spaces;
-}
-
-/** A space holding one active app grant, plus keys holding different permissions in it. */
+/** One active app grant, plus keys holding different permissions. */
 async function seedSpaceWithGrant() {
-  const space = await spaces().create("grants-authority-space");
-  const grant = await ctx.storage.items.create(
-    {
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: "client_under_test",
-        user_id: "auth_user_under_test",
-        scopes: ["core.note:read"],
-        status: "active",
-        granted_at: new Date().toISOString(),
-      },
-      source: "test/grants-authority",
+  const grant = await ctx.storage.items.create({
+    type: "system.connection",
+    tier: "library",
+    state: "active",
+    properties: {
+      kind: "app",
+      client_id: "client_under_test",
+      user_id: "auth_user_under_test",
+      scopes: ["core.note:read"],
+      status: "active",
+      granted_at: new Date().toISOString(),
     },
-    space.id,
-  );
+    source: "test/grants-authority",
+  });
 
-  // Mint through the real route so the credential is exactly what an
-  // operator's own key would be, permission maps and all.
-  const mint = async (
+  const mint = (
     name: string,
     spacePermissions: SpacePermission[],
   ): Promise<string> => {
     const suffix = Math.random().toString(36).slice(2, 10);
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/admin/spaces/${space.id}/keys`,
-      {
-        key: ctx.operatorKey,
-        body: {
-          label: `grants-authority-${name}-${suffix}`,
-          source: `grants-authority-${name}-${suffix}`,
-          space_permissions: spacePermissions,
-          default_tier: "library",
-          // Deliberately narrow: the point is that a credential scoped to
-          // one read on one type still reached an account-management
-          // surface.
-          type_permissions: { "core.note": "read" },
-          extension_permissions: {},
-          edge_permissions: {},
-        },
-      },
-    );
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { key: string };
-    return body.key;
+    return mintSpaceKey(ctx, {
+      label: `grants-authority-${name}-${suffix}`,
+      source: `grants-authority-${name}-${suffix}`,
+      space_permissions: spacePermissions,
+      default_tier: "library",
+      // Deliberately narrow: the point is that a credential scoped to
+      // one read on one type still reached an account-management
+      // surface.
+      type_permissions: { "core.note": "read" },
+      extension_permissions: {},
+      edge_permissions: {},
+      metadata_permissions: {},
+    });
   };
 
-  return { space, grant, mint };
+  return { grant, mint };
 }
 
 describe("the bearer grants API refuses a key without `space.app_grants`", () => {
@@ -120,7 +97,7 @@ describe("the bearer grants API refuses a key without `space.app_grants`", () =>
     expect(res.status).toBe(403);
 
     // The grant is untouched: a refused revoke must not half-apply.
-    const after = await ctx.storage.items.get(grant.id, undefined);
+    const after = await ctx.storage.items.get(grant.id);
     expect(after?.properties.status).toBe("active");
   });
 

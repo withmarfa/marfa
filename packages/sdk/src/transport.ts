@@ -7,9 +7,8 @@ import {
   ForbiddenError,
 } from "./errors.js";
 
-/** Minimal TokenProvider shape — keeps this transport file independent
- *  of the @withmarfa/sdk/auth subpath so the data root doesn't drag the
- *  auth bundle into headless consumers. */
+/** Minimal TokenProvider shape. The transport names only what it needs of
+ *  a provider, so an OAuth client of any shape can sit behind it. */
 export interface TokenProviderLike {
   getAccessToken(): Promise<string>;
   /** Forces a renewal and returns the new access token, single-flighted so

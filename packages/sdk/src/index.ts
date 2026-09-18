@@ -29,7 +29,6 @@ export type {
   CreateWithAttachmentsInput,
   CreateWithAttachmentsAttachment,
   CreateWithAttachmentsResult,
-  SpaceApiKeySummary,
   DriftedPlatformType,
   SecureStorage,
   Occurrence,
@@ -82,7 +81,7 @@ export { defineType } from "./define-type.js";
 // Local type-graph cache. Registers a `client.types.list()` payload into the
 // shared registry so `validateProperties` answers the way the server does
 // without a round trip — the piece a durable client needs to check a write
-// against a space's custom types before it queues one.
+// against the instance's custom types before it queues one.
 //
 // `validateProperties` is re-exported beside it deliberately, and it is the
 // only runtime value this file takes from `@withmarfa/shared` rather than a
@@ -93,9 +92,14 @@ export { defineType } from "./define-type.js";
 // other, and every type comes back unknown with nothing anywhere reporting an
 // error. Exporting both from one entry point is what makes that unreachable
 // through the documented usage.
-export { hydrateTypeRegistry, validateProperties } from "@withmarfa/shared";
+export {
+  hydrateTypeRegistry,
+  validateProperties,
+  // The registry's two readers, from the same instance for the same reason.
+  getResolvedFields,
+  getTypeSchema,
+} from "@withmarfa/shared";
 export type {
-  HydrateTypeRegistryOptions,
   TypeRegistryHydration,
   // The return type of the function above. Exporting the value without the
   // type it returns leaves a consumer naming it by reaching into the other
@@ -129,12 +133,5 @@ export type {
   ItemState,
   MergePolicy,
   MergeStrategy,
-  Profile,
-  UpdateProfileInput,
-  Space,
-  SpaceStatus,
-  SpaceMetrics,
-  SpaceActivityEntry,
-  SpaceQuota,
 } from "@withmarfa/shared";
 export type { TypeSchema } from "@withmarfa/shared";

@@ -7,10 +7,8 @@
  * the perf vs per-item transactions; the SQL inside the transaction
  * can stay per-row.
  *
- * Authorization: the worker passes the job's `space_id` explicitly
- * to every storage method. RLS, if enforced, is belt-and-braces —
- * matched_ids were resolved at job-create-time inside a request
- * context with full type-permission narrowing.
+ * Authorization: matched_ids were resolved at job-create-time inside a
+ * request context with full type-permission narrowing.
  *
  * Every chunk publishes what it wrote, on every action. The publish is
  * what appends to the event log, and the log is what a client rebuilding
@@ -44,7 +42,6 @@ export interface ChunkOutcome {
 
 export interface RunChunkContext {
   storage: Storage;
-  spaceId: string | null;
   /** The full BulkActionInput sent to `POST /items/bulk-actions`. */
   input: BulkActionInput;
   /** Ids the worker has assigned to this chunk. */
@@ -78,7 +75,6 @@ export async function runChunk(ctx: RunChunkContext): Promise<ChunkOutcome> {
 
 async function runTransitionChunk({
   storage,
-  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -101,9 +97,7 @@ async function runTransitionChunk({
         // reaching this loop can name a connection, and a refusal here
         // could never fire. `bulk-action-spares-live-connections.test.ts`
         // asserts the outcome that narrowing produces instead.
-        moved.push(
-          await storage.items.transition(id, input.state, spaceId ?? undefined),
-        );
+        moved.push(await storage.items.transition(id, input.state));
         succeeded.push(id);
       } catch (err) {
         errors.push(toErrorEntry(id, err));
@@ -114,7 +108,6 @@ async function runTransitionChunk({
     await publish({
       type: "state_changed",
       item,
-      ...(spaceId != null && { spaceId }),
       enableFanout: fansOutFor(input),
     });
   }
@@ -123,7 +116,6 @@ async function runTransitionChunk({
 
 async function runPurgeChunk({
   storage,
-  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -149,9 +141,7 @@ async function runPurgeChunk({
     // which sent every id down the not-found branch below while `bulkPurge`
     // deleted them anyway — and took the blob-hash collection with it, so the
     // hashes a purged item referenced were never reported for collection.
-    const found = await storage.items.getMany(ids, spaceId ?? undefined, {
-      includeTrashed: true,
-    });
+    const found = await storage.items.getMany(ids, { includeTrashed: true });
     // No live-connection refusal, for the reason the transition chunk
     // carries: the door's reserved-namespace narrowing means a
     // `system.connection` never reaches this runner's match set.
@@ -164,20 +154,12 @@ async function runPurgeChunk({
     // they removed, which is what the announcement below names.
     try {
       cascaded.push(
-        ...(await storage.edges.deleteBySourceBatch(
-          ids,
-          undefined,
-          spaceId ?? undefined,
-        )),
-        ...(await storage.edges.deleteByTargetBatch(
-          ids,
-          undefined,
-          spaceId ?? undefined,
-        )),
+        ...(await storage.edges.deleteBySourceBatch(ids)),
+        ...(await storage.edges.deleteByTargetBatch(ids)),
       );
-      const purged = await storage.items.bulkPurge(ids, spaceId ?? undefined);
+      const purged = await storage.items.bulkPurge(ids);
       // Ids in `found` were in-scope and purged; ids absent from the map
-      // weren't found in the space and surface as not-found errors.
+      // weren't found and surface as not-found errors.
       for (const id of found.keys()) succeeded.push(id);
       for (const id of ids) {
         if (!found.has(id)) {
@@ -233,7 +215,6 @@ async function runPurgeChunk({
       await publishEdge({
         type: "edge_deleted",
         edge,
-        ...(spaceId != null && { spaceId }),
         enableFanout: fansOutFor(input),
       });
     }
@@ -241,7 +222,6 @@ async function runPurgeChunk({
       await publish({
         type: "purged",
         item,
-        ...(spaceId != null && { spaceId }),
         enableFanout: fansOutFor(input),
       });
     }
@@ -251,7 +231,6 @@ async function runPurgeChunk({
 
 async function runUpdateTagsChunk({
   storage,
-  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -301,11 +280,9 @@ async function runUpdateTagsChunk({
   // in that window arrives here trashed. The same omission has now cost the
   // purge runner a four-thousand-row miscount; see `getMany`'s own comment.
   if (changed.size > 0) {
-    const items = await storage.items.getMany(
-      [...changed.keys()],
-      spaceId ?? undefined,
-      { includeTrashed: true },
-    );
+    const items = await storage.items.getMany([...changed.keys()], {
+      includeTrashed: true,
+    });
     for (const [id, metadata] of changed) {
       const item = items.get(id);
       if (!item) {
@@ -323,7 +300,6 @@ async function runUpdateTagsChunk({
         type: "metadata_changed",
         item,
         metadata,
-        ...(spaceId != null && { spaceId }),
         enableFanout: fansOutFor(input),
       });
     }
@@ -333,7 +309,6 @@ async function runUpdateTagsChunk({
 
 async function runUpdateTierChunk({
   storage,
-  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -346,11 +321,7 @@ async function runUpdateTierChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        const result = await storage.items.update(
-          id,
-          { tier: input.tier },
-          spaceId ?? undefined,
-        );
+        const result = await storage.items.update(id, { tier: input.tier });
         if ("error" in result) {
           errors.push({
             id,
@@ -366,13 +337,12 @@ async function runUpdateTierChunk({
       }
     }
   });
-  await publishUpdated(updated, spaceId, input);
+  await publishUpdated(updated, input);
   return { succeeded, errors };
 }
 
 async function runUpdatePropertiesChunk({
   storage,
-  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -402,22 +372,15 @@ async function runUpdatePropertiesChunk({
         // reports an absent schema as `Unknown type` rather than as no
         // opinion, so judging unguarded would refuse every row of a type
         // this worker's registry does not carry.
-        const before = await storage.items.get(id, spaceId ?? undefined);
-        if (before && getTypeSchema(before.type, spaceId ?? undefined)) {
+        const before = await storage.items.get(id);
+        if (before && getTypeSchema(before.type)) {
           const merged = mergeUpdateProperties(
             before.properties,
-            resolveIncomingProperties(
-              before.type,
-              input.patch,
-              false,
-              spaceId ?? undefined,
-            ) ?? {},
+            resolveIncomingProperties(before.type, input.patch, false) ?? {},
             false,
             "merge",
           );
-          const validation = validateProperties(before.type, merged, {
-            ...(spaceId == null ? {} : { spaceId }),
-          });
+          const validation = validateProperties(before.type, merged);
           if (!validation.success) {
             // Errored per row rather than thrown for the chunk: this route's
             // established answer is that one unreachable row must not fail an
@@ -433,11 +396,9 @@ async function runUpdatePropertiesChunk({
             continue;
           }
         }
-        const result = await storage.items.update(
-          id,
-          { properties: input.patch },
-          spaceId ?? undefined,
-        );
+        const result = await storage.items.update(id, {
+          properties: input.patch,
+        });
         if ("error" in result) {
           errors.push({
             id,
@@ -453,13 +414,12 @@ async function runUpdatePropertiesChunk({
       }
     }
   });
-  await publishUpdated(updated, spaceId, input);
+  await publishUpdated(updated, input);
   return { succeeded, errors };
 }
 
 async function runUpdateTimestampChunk({
   storage,
-  spaceId,
   input,
   ids,
 }: RunChunkContext): Promise<ChunkOutcome> {
@@ -472,11 +432,9 @@ async function runUpdateTimestampChunk({
   await storage.runInTransaction(async () => {
     for (const id of ids) {
       try {
-        const result = await storage.items.update(
-          id,
-          { timestamp: input.timestamp },
-          spaceId ?? undefined,
-        );
+        const result = await storage.items.update(id, {
+          timestamp: input.timestamp,
+        });
         if ("error" in result) {
           errors.push({
             id,
@@ -492,7 +450,7 @@ async function runUpdateTimestampChunk({
       }
     }
   });
-  await publishUpdated(updated, spaceId, input);
+  await publishUpdated(updated, input);
   return { succeeded, errors };
 }
 
@@ -508,14 +466,12 @@ function fansOutFor(input: BulkActionInput): boolean {
 /** The `item.updated` announcement the three property-shaped chunks share. */
 async function publishUpdated(
   items: Item[],
-  spaceId: string | null,
   input: BulkActionInput,
 ): Promise<void> {
   for (const item of items) {
     await publish({
       type: "updated",
       item,
-      ...(spaceId != null && { spaceId }),
       enableFanout: fansOutFor(input),
     });
   }

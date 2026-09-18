@@ -13,12 +13,6 @@ const AuditEntrySchema = z.object({
   id: z.string(),
   timestamp: z.string(),
   key_id: z.string().nullable(),
-  /**
-   * Space scope. Stamped at write time from the calling api key's
-   * `space_id`. Null for system-initiated audits and for the operator key,
-   * which is the only credential that may carry no space.
-   */
-  space_id: z.string().nullable(),
   action: z.string(),
   resource_type: z.string(),
   resource_id: z.string().nullable(),
@@ -110,22 +104,10 @@ export function auditRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(listAuditRoute, async (c) => {
-    // Space-bounded, not platform-only: the single storage call below is
-    // filtered by the caller's own space, so a space-bound caller reading
-    // its own space's trail stays inside its own data.
     requireAuth(c);
     requireSpacePermission(c, "space.audit_read");
     const { action, resource_type, resource_id, since, until, limit, cursor } =
       c.req.valid("query");
-
-    // The caller's own space, always. `space.audit_read` is a space
-    // permission and the operator key, the only credential that can be
-    // space-less, holds none of the eleven, so the gate above has already
-    // refused anything without a space to read. The `?? null` is how the
-    // store spells "no space filter" and is not a path this door takes: a
-    // space-less caller reading every row is a shape the permission model
-    // no longer contains.
-    const callerSpaceId = c.get("apiKey")?.space_id ?? null;
 
     const result = await storage.audit.list({
       action,
@@ -135,7 +117,6 @@ export function auditRoutes(storage: Storage) {
       until,
       limit,
       cursor,
-      space_id: callerSpaceId,
     });
 
     return c.json(result, 200);

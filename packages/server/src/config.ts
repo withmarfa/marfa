@@ -6,7 +6,6 @@ import {
   parseTrustedProxyHeader,
 } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
-import { isSamePgEndpoint, pgEndpointLabel } from "./storage/pg/endpoint.js";
 
 /**
  * Numeric env-var read with explicit "missing or empty → default" semantics.
@@ -25,32 +24,6 @@ export function envNumber(raw: string | undefined, fallback: number): number {
   return raw !== undefined && raw !== "" ? Number(raw) : fallback;
 }
 
-/**
- * How the endpoint `DATABASE_URL` points at multiplexes connections.
- *
- * `session` — one client link maps 1:1 to a real backend for its lifetime.
- * True of a direct Postgres connection and of a session-mode pooler.
- *
- * `transaction` — a pooler (PgBouncer, Neon's `-pooler` endpoint) hands out a
- * backend per transaction, so session-level state set outside a transaction
- * lands on whichever backend served that statement and is inherited by later,
- * unrelated queries. Streaming RLS sets exactly that kind of state, so this
- * mode requires a separate direct endpoint to reserve from.
- */
-export type DbPoolMode = "session" | "transaction";
-
-/**
- * Every role `MARFA_PROCESS_ROLE` may name, in one place because more than
- * one thing has to enumerate them: `parseProcessRole` accepts exactly these,
- * and `/health` builds the set of `application_name` labels it recognizes by
- * running each of them through `pgApplicationName`. A role added here reaches
- * both; a role added to only one of them would connect under a label the
- * reading cannot attribute.
- */
-export const PROCESS_ROLES = ["web", "worker", "both"] as const;
-
-export type ProcessRole = (typeof PROCESS_ROLES)[number];
-
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
    *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
@@ -59,53 +32,7 @@ export interface AppConfig {
    *  non-production. `loadConfig` always populates it. */
   isProduction?: boolean;
   port: number;
-  storageDialect: "sqlite" | "pg";
   sqlitePath: string;
-  databaseUrl: string;
-  /**
-   * Direct (session-mode) Postgres URL for streaming RLS, from
-   * `MARFA_DATABASE_URL_DIRECT`. Streaming issues a session-level `SET ROLE`,
-   * which must run on a connection that owns its backend outright. Required
-   * when `dbPoolMode` is `transaction`; unset is fine otherwise, and streaming
-   * then reuses the main client.
-   */
-  databaseUrlDirect?: string;
-  /**
-   * What kind of endpoint `databaseUrl` points at, from `MARFA_DB_POOL_MODE`.
-   * Defaults to `session`, which is what a self-host talking straight to
-   * Postgres has. Hosted deployments behind a transaction-mode pooler declare
-   * `transaction`, which makes `databaseUrlDirect` mandatory. Optional on the
-   * type so test contexts constructing `AppConfig` literals compile; readers
-   * treat `undefined` as `session`, and `loadConfig` always populates it.
-   */
-  dbPoolMode?: DbPoolMode;
-  /**
-   * What this process does, from `MARFA_PROCESS_ROLE`. `web` serves HTTP
-   * (API, SSE, webhook receipt, consent); `worker` runs the pg-boss
-   * consumers (scheduled jobs, integration dispatch, enrichment, bulk
-   * actions) behind a minimal health endpoint; `both` is the default and
-   * the single-container self-host shape. Coordination goes through
-   * Postgres, so any mix of roles against one database is valid — which
-   * is also why a role other than `both` requires the pg dialect.
-   * Optional on the type so test contexts constructing `AppConfig`
-   * literals compile; readers treat `undefined` as `both`.
-   */
-  processRole?: ProcessRole;
-  /**
-   * Public-to-this-deployment URL the local integration substrate's
-   * handlers write back through, from `MARFA_API_URL`. Defaults to
-   * `http://localhost:<port>`, which is correct whenever the web tier
-   * shares the process (`both`) — a split worker container points this
-   * at the web service instead.
-   */
-  apiUrl?: string;
-  /**
-   * Main Postgres pool cap, from `MARFA_DB_POOL_SIZE` (default 10). The
-   * session/streaming pool follows as `min(this, 5)`. Exists so a split
-   * deployment can budget web + worker under a managed tier's connection
-   * ceiling; the arithmetic lives in the deployment's env template.
-   */
-  dbPoolSize?: number;
   blobPath: string;
   blobBackend: "fs" | "s3";
   /** Maximum blob upload size in bytes. Uploads exceeding this are rejected
@@ -141,21 +68,8 @@ export interface AppConfig {
    *  populates it, and readers fall back to `getPermissionBundles()`. */
   permissionBundles?: PermissionBundle[];
   cdnBaseUrl: string;
-  authMode: "hosted" | "keys";
   rateLimitEnabled: boolean;
   enableHsts: boolean;
-  /**
-   * When `true`, wraps each space-bounded Postgres request in a
-   * transaction with `SET LOCAL ROLE marfa_app` and
-   * `SET LOCAL marfa.space_id = '<id>'` so RLS policies enforce
-   * space isolation at the DB layer (defense-in-depth beneath the
-   * application-layer scoping). Defaults to `true`. See
-   * `packages/server/CLAUDE.md` under "Postgres RLS".
-   *
-   * Optional on the type so test contexts that construct AppConfig
-   * literals continue to compile.
-   */
-  rlsEnforce?: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
   /** Days a `system.activity` item survives before the purger drops it.
@@ -166,8 +80,8 @@ export interface AppConfig {
    *  runs that found nothing to do, so this is the fastest-growing item
    *  type on a space with connections and nothing aged it out before.
    *
-   *  Optional on the type for the same reason `rlsEnforce` is: a dozen
-   *  test contexts build `AppConfig` literals, and a required field with
+   *  Optional on the type because a dozen test contexts build
+   *  `AppConfig` literals, and a required field with
    *  a sensible default would churn every one of them to say what the
    *  default already says. */
   activityRetentionDays?: number;
@@ -232,13 +146,6 @@ export interface AppConfig {
    *  86_400_000 (24h); env override `MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS`.
    *  Optional on the type; `index.ts` applies the 24h fallback. */
   dcrClientCleanupIntervalMs?: number;
-  /** Grace window (days) between `auth.account.delete_confirmed` and
-   *  the hard-delete cascade. `0` disables the purger entirely. Env
-   *  override `MARFA_ACCOUNT_DELETION_GRACE_DAYS`. Default 30. */
-  accountDeletionGraceDays?: number;
-  /** Cadence (ms) for the pending-delete purger sweep. Env override
-   *  `MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS`. Default 1h. */
-  accountDeletionPurgeIntervalMs?: number;
   /** Cadence (ms) for the unreferenced-blob sweep. A full pass over the
    *  item corpus and the version history, so this is deliberately slow:
    *  default 86_400_000 (24h); env override
@@ -257,18 +164,6 @@ export interface AppConfig {
    *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
    *  applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
-  /** Cadence (ms) for the runtime-credential reaper: revokes runtime
-   *  credentials past `expires_at`, drains legacy rows minted before
-   *  expiry stamping, and hard-deletes revoked rows older than seven
-   *  days. `0` disables the job. Default 3_600_000 (1h); env override
-   *  `MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS`. */
-  runtimeCredentialReaperIntervalMs?: number;
-  /** Cadence (ms) of the pass that moves connections onto the newest
-   *  registered manifest version where doing so widens no grant. `0`
-   *  disables it, which leaves drift to be cleared by hand and so leaves
-   *  the drift number permanently non-zero. Default 3_600_000 (1h); env
-   *  override `MARFA_CONNECTION_UPGRADE_INTERVAL_MS`. */
-  connectionUpgradeIntervalMs?: number;
   /** Deterministic text extraction from file blobs. On unless
    *  `MARFA_ENRICHMENT_ENABLED=false`: extraction is what makes an
    *  uploaded document findable, so an operator opts out rather than in. */
@@ -344,35 +239,9 @@ export interface AppConfig {
    *  (and port). Drives cookie domains and the OAuth issuer field on the
    *  discovery doc. Defaults to `http://localhost:<port>` if unset. */
   authBaseUrl: string;
-  /** When `true`, the email + password sign-up endpoint is enabled.
-   *  Default `false` — single-user self-hosted instances enable this
-   *  only for the initial admin account. */
-  authAllowSignup: boolean;
-  /** Whether the remote MCP surface is mounted at `/mcp`. Default on:
-   *  every instance gets the agent surface unless the operator opts out. */
-  mcpEnabled: boolean;
-  /** Toolsets the remote MCP surface exposes (comma-list: standard,
-   *  admin, all). Defaults to `standard`; credentials still gate every
-   *  call, so widening this widens offering, not access. */
-  mcpToolsets?: string;
-  /** When `true`, a fresh sign-up's space is seeded with a few starter
-   *  items (a welcome note, a docs bookmark, a first task, one connecting
-   *  edge) so the space isn't empty on first open. Default `false`: self-host
-   *  and conformance get empty spaces; hosted deployments flip it on. */
-  seedStarterContent: boolean;
   /** Shared secret for cookie signing. Required in production; falls back
    *  to a per-process ephemeral secret in dev. */
   authSecret: string;
-  /** Explicit override for `requireEmailVerification`. When `undefined`,
-   *  the auth layer auto-detects from the configured email transport (on
-   *  for `cloudflare`/`smtp`, off for `none`/missing). When set, takes
-   *  precedence — primarily a test hook (env-driven config never sets it). */
-  authRequireEmailVerification?: boolean;
-  /** Federated OIDC providers (Google / GitHub / Authentik / etc.) wired
-   *  into the generic-oauth plugin. Parsed from the `MARFA_OIDC_PROVIDERS`
-   *  env var (JSON array of `{ providerId, clientId, clientSecret,
-   *  discoveryUrl?, scopes? }`). */
-  oidcProviders: OidcProviderConfig[];
   /** Default per-credential rate limit, requests per `rateLimitWindowMs`
    *  window. Read from `RATE_LIMIT_REQUESTS` (default 1000). Wired through
    *  the rate-limit middleware so there's a single env-read site. */
@@ -394,71 +263,6 @@ export interface AppConfig {
    *  OpenAPI spec keeps a separate, semantically-distinct
    *  API-contract version. */
   versionSha?: string;
-  /**
-   * Default per-space quota ceilings. NULL = unlimited (no enforcement).
-   * Each is read from a corresponding env var (`MARFA_DEFAULT_QUOTA_*`);
-   * per-space overrides via `space_quotas` rows take precedence.
-   * Optional on the type so existing test contexts continue to compile.
-   */
-  defaultQuotaItems?: number | null;
-  defaultQuotaWebhooks?: number | null;
-  defaultQuotaBlobs?: number | null;
-  defaultQuotaStorageBytes?: number | null;
-  defaultQuotaRatePerMinute?: number | null;
-  /**
-   * Email transport configuration.
-   *
-   * - `emailBackend` — `cloudflare | smtp | none`. Default `none` —
-   *   email-dependent flows (forgot-password, magic-link, email-verify)
-   *   return `email_transport_not_configured` until an operator picks
-   *   a backend. The factory + boot guard at `src/email/index.ts`
-   *   constructs the right transport at startup.
-   * - `emailFrom` — visible sender, e.g. `Marfa <hello@mail.marfa.so>`.
-   *   For the Cloudflare backend the domain MUST end in `@mail.marfa.so`
-   *   (the verified Cloudflare Email sending domain) —
-   *   `senderDomainCheck` enforces this at boot. Apex `marfa.so` has
-   *   no DKIM and would fail SPF.
-   * - `emailReplyTo` — monitored Reply-To. Optional; recommend a
-   *   real inbox so user replies don't bounce silently.
-   * - `cloudflareAccountId` / `cloudflareEmailApiToken` — Cloudflare
-   *   Email backend creds.
-   * - `smtpHost` / `smtpPort` / `smtpUser` / `smtpPass` /
-   *   `smtpSecure` — SMTP backend creds (self-host fallback).
-   */
-  emailBackend?: "cloudflare" | "smtp" | "none";
-  emailFrom?: string;
-  emailReplyTo?: string;
-  cloudflareAccountId?: string;
-  cloudflareEmailApiToken?: string;
-  smtpHost?: string;
-  smtpPort?: number;
-  smtpUser?: string;
-  smtpPass?: string;
-  smtpSecure?: boolean;
-  /**
-   * Worker threads per integration on the local substrate
-   * (`MARFA_INTEGRATION_WORKER_THREADS`). Sets the executor's
-   * per-integration pool size. Every thread holds its own resource-limit
-   * budget in memory, so raising this is a deployment sizing decision,
-   * not a free throughput dial. Optional: unset keeps the executor's
-   * default of 2.
-   */
-  integrationWorkerThreads?: number;
-  /**
-   * How many integration dispatches this process runs at once on the local
-   * substrate (`MARFA_INTEGRATION_DISPATCH_CONCURRENCY`). Optional: unset
-   * keeps the supervisor's default of 2.
-   *
-   * Sized against the session connection pool, not against throughput. A
-   * dispatch holds a reserved session connection for its whole run, and
-   * **that pool holds at most five connections whatever anything is set
-   * to**: it is `Math.min(maxPoolSize ?? 10, 5)`, so `MARFA_DB_POOL_SIZE`
-   * can only lower it. Those five are shared with streaming reads, the
-   * consent lock and every other job lock, so raising this is a decision
-   * about who else goes without rather than a dial with a matching pool
-   * setting. It should also not exceed `MARFA_INTEGRATION_WORKER_THREADS`.
-   */
-  integrationDispatchConcurrency?: number;
   /**
    * OpenTelemetry configuration. The instrumentation bootstrap
    * (`src/instrumentation.ts`) reads its toggle + exporter config from the
@@ -505,25 +309,11 @@ export interface AppConfig {
   /** Heartbeat cadence in ms (`MARFA_HEARTBEAT_INTERVAL_MS`, default
    *  60000). Ignored while `heartbeatUrl` is unset. */
   heartbeatIntervalMs?: number;
-  /** How long boot waits for the database before giving up
-   *  (`MARFA_DB_STARTUP_WAIT_MS`, default 90000; `0` = fail fast).
-   *  Covers the slow-Postgres-after-reboot case that otherwise turns a
-   *  supervised server into a crash loop. Only connection-shaped
-   *  failures wait; misconfiguration still fails immediately. */
-  dbStartupWaitMs?: number;
   /** Ceiling on concurrent SSE viewers per server instance
    *  (`MARFA_SSE_MAX_VIEWERS`, default 0 = uncapped). A deliberate
    *  memory bound: viewers hold no database connection, so any limit is
    *  a stated choice rather than a pool artifact. */
   sseMaxViewers?: number;
-}
-
-export interface OidcProviderConfig {
-  providerId: string;
-  clientId: string;
-  clientSecret: string;
-  discoveryUrl?: string;
-  scopes?: string[];
 }
 
 const DEFAULT_SALT = "dev-salt-change-in-production";
@@ -537,23 +327,6 @@ const DEFAULT_EVENT_LOG_RETENTION_HOURS = 168;
  * and we'd rather run the server with sensible retention than fail boot.
  * Exported for direct unit testing.
  */
-/**
- * Parses a quota env var. Returns null for unset / empty (the
- * "unlimited" sentinel) and a parsed integer otherwise. Negative or
- * non-integer values log a warning and fall back to null.
- */
-function parseQuotaEnv(raw: string | undefined): number | null {
-  if (raw === undefined || raw === "") return null;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0 || !Number.isInteger(parsed)) {
-    console.warn(
-      `Invalid quota env value "${raw}", treating as unlimited (null).`,
-    );
-    return null;
-  }
-  return parsed;
-}
-
 export function parseEventLogRetentionHours(raw: string | undefined): number {
   if (raw === undefined || raw === "") return DEFAULT_EVENT_LOG_RETENTION_HOURS;
   const parsed = Number(raw);
@@ -766,134 +539,10 @@ export function getPermissionBundles(): PermissionBundle[] {
   );
 }
 
-/**
- * Parse `MARFA_DB_POOL_MODE`. Unset → `session`, so a self-host connecting
- * straight to Postgres is unaffected by the guard below.
- *
- * Unlike the other enum parsers in this file, an unrecognized value throws
- * rather than warning and falling back. The fallback here is the permissive
- * mode, and resolving a typo to it would silently re-open exactly the
- * misconfiguration this setting exists to close.
- */
-export function parseDbPoolMode(raw: string | undefined): DbPoolMode {
-  if (raw === undefined || raw === "") return "session";
-  if (raw === "session" || raw === "transaction") return raw;
-  throw new Error(
-    `Unknown MARFA_DB_POOL_MODE=${raw}. Legal values: session | transaction.`,
-  );
-}
-
-function parseProcessRole(raw: string | undefined): ProcessRole {
-  const value = raw?.trim().toLowerCase();
-  if (value === undefined || value === "") return "both";
-  if ((PROCESS_ROLES as readonly string[]).includes(value))
-    return value as ProcessRole;
-  // A typo silently defaulting to `both` would run every consumer twice
-  // across a split deployment, so an unknown value refuses to boot.
-  throw new Error(
-    `Unknown MARFA_PROCESS_ROLE=${raw ?? ""}. Legal values: ${PROCESS_ROLES.join(" | ")}.`,
-  );
-}
-
-function parseApiUrl(raw: string | undefined): string | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  // The worker's handlers spend this on every write-back; a malformed
-  // value surfaces there as an opaque fetch failure at dispatch time, so
-  // it refuses at boot instead, matching the sibling knobs.
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error(`MARFA_API_URL is not a valid URL: ${raw}`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(
-      `MARFA_API_URL must be http or https, got ${parsed.protocol}//`,
-    );
-  }
-  return raw;
-}
-
-function parseDbPoolSize(raw: string | undefined): number | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  const parsed = Number(raw);
-  // The pool cap is a connection-budget control; a NaN or non-positive
-  // value silently falling back to the default would blow exactly the
-  // budget it exists to hold, so it refuses to boot instead.
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(
-      `MARFA_DB_POOL_SIZE must be a positive integer, got ${raw}.`,
-    );
-  }
-  return parsed;
-}
-
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
   const authSecret = process.env.MARFA_AUTH_SECRET ?? "";
-  const storageDialect = process.env.DB_DIALECT === "pg" ? "pg" : "sqlite";
-  const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
-  const processRole = parseProcessRole(process.env.MARFA_PROCESS_ROLE);
-  const dbPoolSize = parseDbPoolSize(process.env.MARFA_DB_POOL_SIZE);
-  const apiUrl = parseApiUrl(process.env.MARFA_API_URL);
-
-  // The split's coordination is all Postgres: pg-boss pins scheduled and
-  // dispatch work to whichever process registered the workers, pg_notify
-  // replicates events between processes, and the consent lock's
-  // cross-process backend is an advisory lock. SQLite has none of that, so
-  // a role other than `both` there would silently run half a deployment.
-  if (processRole !== "both" && storageDialect !== "pg") {
-    throw new Error(
-      `MARFA_PROCESS_ROLE=${processRole} requires DB_DIALECT=pg. ` +
-        "Role-split deployments coordinate through Postgres; SQLite runs one process with the default role (both).",
-    );
-  }
-  const databaseUrl = process.env.DATABASE_URL ?? "";
-  // Trimmed here so every consumer sees the same value the guards below
-  // judged: createConnection trims its copy, and an untrimmed
-  // whitespace-only value passing this check would hand downstream
-  // consumers (the pg-boss endpoint choice) a string that is truthy and
-  // useless.
-  const databaseUrlDirect = (
-    process.env.MARFA_DATABASE_URL_DIRECT ?? ""
-  ).trim();
-
-  if (storageDialect === "pg" && dbPoolMode === "transaction") {
-    // Fail closed. Streaming RLS issues a session-level `SET ROLE marfa_app`;
-    // over a transaction-mode pooler that role strands on a shared backend and
-    // is inherited by later, unrelated queries, including Better Auth's session
-    // reads on tables the role holds no grant on. Falling back to the pooled
-    // client when the direct endpoint is missing is a silent downgrade from
-    // "isolated" to "leaks across the whole instance", so refuse to start
-    // instead. Disabling streaming RLS as the fallback would be no better: that
-    // trades a visible outage for an invisible loss of space isolation.
-    if (databaseUrlDirect === "") {
-      throw new Error(
-        "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +
-          "Streaming RLS sets a session-level role, which strands on a shared backend " +
-          "over a transaction-mode pooler; point this at the direct (unpooled) " +
-          "endpoint of the same database as DATABASE_URL.",
-      );
-    }
-    // Presence is not directness. The two hosts are resolved from adjacent
-    // variable names in the deploy tooling, and on Neon they differ by the
-    // six characters of the `-pooler` suffix, so the plausible misconfiguration
-    // is not "unset" but "set to the pooled endpoint again" — which satisfies
-    // every other signal (a distinct client, a `direct` boot log) while
-    // reproducing the outage exactly.
-    if (isSamePgEndpoint(databaseUrl, databaseUrlDirect)) {
-      throw new Error(
-        "MARFA_DATABASE_URL_DIRECT points at the same endpoint as DATABASE_URL " +
-          `(${pgEndpointLabel(databaseUrlDirect)}), so it is the pooled one. ` +
-          "Streaming RLS needs an endpoint that owns its backend outright; a " +
-          "session-level SET ROLE over a transaction-mode pooler strands on a " +
-          "shared backend. On Neon the direct host is the pooled host without " +
-          "the `-pooler` suffix.",
-      );
-    }
-  }
-
   if (process.env.NODE_ENV === "production") {
     if (!apiKeySalt || apiKeySalt === DEFAULT_SALT) {
       throw new Error(
@@ -925,14 +574,7 @@ export function loadConfig(): AppConfig {
   return {
     isProduction: process.env.NODE_ENV === "production",
     port,
-    storageDialect,
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
-    databaseUrl,
-    databaseUrlDirect,
-    dbPoolMode,
-    processRole,
-    ...(apiUrl !== undefined && { apiUrl }),
-    ...(dbPoolSize !== undefined && { dbPoolSize }),
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
     maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),
@@ -951,13 +593,8 @@ export function loadConfig(): AppConfig {
     corsOrigins: corsRaw ? corsRaw.split(",").map((s) => s.trim()) : [],
     permissionBundles: getPermissionBundles(),
     cdnBaseUrl: process.env.CDN_BASE_URL ?? "",
-    authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
-    // RLS enforces by default; explicit opt-out is `MARFA_RLS_ENFORCE=false`.
-    // SQLite is unaffected — the middleware skips when `storage.pgDb` is
-    // undefined regardless of this flag.
-    rlsEnforce: process.env.MARFA_RLS_ENFORCE !== "false",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
     revokedGrantRetentionDays: envNumber(
       process.env.MARFA_REVOKED_GRANT_RETENTION_DAYS,
@@ -1016,14 +653,6 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_DCR_CLIENT_CLEANUP_INTERVAL_MS,
       86_400_000,
     ),
-    accountDeletionGraceDays: envNumber(
-      process.env.MARFA_ACCOUNT_DELETION_GRACE_DAYS,
-      30,
-    ),
-    accountDeletionPurgeIntervalMs: envNumber(
-      process.env.MARFA_ACCOUNT_DELETION_PURGE_INTERVAL_MS,
-      3_600_000,
-    ),
     rateLimitCleanupIntervalMs: envNumber(
       process.env.MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS,
       3_600_000,
@@ -1066,14 +695,6 @@ export function loadConfig(): AppConfig {
     enrichmentOcrEnabled: process.env.MARFA_ENRICHMENT_OCR_ENABLED !== "false",
     enrichmentTessdataDir:
       process.env.MARFA_ENRICHMENT_TESSDATA_DIR ?? "./data/tessdata",
-    runtimeCredentialReaperIntervalMs: envNumber(
-      process.env.MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS,
-      3_600_000,
-    ),
-    connectionUpgradeIntervalMs: envNumber(
-      process.env.MARFA_CONNECTION_UPGRADE_INTERVAL_MS,
-      3_600_000,
-    ),
     bulkActionJobRetentionMs: envNumber(
       process.env.MARFA_BULK_ACTION_JOB_RETENTION_MS,
       7 * 24 * 3_600_000,
@@ -1107,45 +728,12 @@ export function loadConfig(): AppConfig {
     ),
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
-    authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",
-    mcpEnabled: process.env.MARFA_MCP_ENABLED !== "false",
-    mcpToolsets: process.env.MARFA_MCP_TOOLSETS,
-    seedStarterContent: process.env.MARFA_SEED_STARTER_CONTENT === "true",
     authSecret,
-    oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),
     rateLimitDefaultLimit: envNumber(process.env.RATE_LIMIT_REQUESTS, 1000),
     rateLimitWindowMs: envNumber(process.env.RATE_LIMIT_WINDOW_MS, 60_000),
     rateLimitAggregateMultiplier: envNumber(
       process.env.RATE_LIMIT_AGGREGATE_MULTIPLIER,
       4,
-    ),
-    defaultQuotaItems: parseQuotaEnv(process.env.MARFA_DEFAULT_QUOTA_ITEMS),
-    defaultQuotaWebhooks: parseQuotaEnv(
-      process.env.MARFA_DEFAULT_QUOTA_WEBHOOKS,
-    ),
-    defaultQuotaBlobs: parseQuotaEnv(process.env.MARFA_DEFAULT_QUOTA_BLOBS),
-    defaultQuotaStorageBytes: parseQuotaEnv(
-      process.env.MARFA_DEFAULT_QUOTA_STORAGE_BYTES,
-    ),
-    defaultQuotaRatePerMinute: parseQuotaEnv(
-      process.env.MARFA_DEFAULT_QUOTA_RATE_PER_MINUTE,
-    ),
-    emailBackend: parseEmailBackend(process.env.MARFA_EMAIL_BACKEND),
-    emailFrom: process.env.MARFA_EMAIL_FROM ?? "",
-    emailReplyTo: process.env.MARFA_EMAIL_REPLY_TO ?? "",
-    cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID ?? "",
-    cloudflareEmailApiToken: process.env.CLOUDFLARE_EMAIL_API_TOKEN ?? "",
-    smtpHost: process.env.MARFA_SMTP_HOST ?? "",
-    smtpPort: envNumber(process.env.MARFA_SMTP_PORT, 587),
-    smtpUser: process.env.MARFA_SMTP_USER ?? "",
-    smtpPass: process.env.MARFA_SMTP_PASS ?? "",
-    smtpSecure: process.env.MARFA_SMTP_SECURE === "true",
-    integrationWorkerThreads: parseIntegrationWorkerThreads(
-      process.env.MARFA_INTEGRATION_WORKER_THREADS,
-    ),
-    integrationDispatchConcurrency: parsePositiveIntegerEnv(
-      process.env.MARFA_INTEGRATION_DISPATCH_CONCURRENCY,
-      "MARFA_INTEGRATION_DISPATCH_CONCURRENCY",
     ),
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
@@ -1168,7 +756,6 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_HEARTBEAT_INTERVAL_MS,
       60_000,
     ),
-    dbStartupWaitMs: envNumber(process.env.MARFA_DB_STARTUP_WAIT_MS, 90_000),
     sseMaxViewers: parseSseMaxViewers(process.env.MARFA_SSE_MAX_VIEWERS),
   };
 }
@@ -1208,82 +795,4 @@ export function parsePositiveIntegerEnv(
     throw new Error(`${name} must be a positive integer, got "${raw}".`);
   }
   return Number(trimmed);
-}
-
-/**
- * Parse `MARFA_INTEGRATION_WORKER_THREADS`. Unset → undefined, which
- * keeps the executor's own default. Anything that is not a positive
- * integer throws at boot rather than warning: a NaN or zero pool size
- * would pre-warm no worker threads and leave every dispatch waiting on
- * a slot that never comes, a hang far harder to read than a refusal
- * naming the variable.
- */
-export function parseIntegrationWorkerThreads(
-  raw: string | undefined,
-): number | undefined {
-  return parsePositiveIntegerEnv(raw, "MARFA_INTEGRATION_WORKER_THREADS");
-}
-
-/**
- * Parses `MARFA_EMAIL_BACKEND`. Unset / unknown → `none` (the
- * fail-loud-on-send default). Legal values: `cloudflare | smtp | none`.
- */
-function parseEmailBackend(
-  raw: string | undefined,
-): "cloudflare" | "smtp" | "none" {
-  if (raw === "cloudflare" || raw === "smtp" || raw === "none") return raw;
-  if (raw && raw.length > 0) {
-    console.warn(
-      `Unknown MARFA_EMAIL_BACKEND=${raw}; falling back to "none". ` +
-        `Legal values: cloudflare | smtp | none.`,
-    );
-  }
-  return "none";
-}
-
-function parseOidcProviders(raw: string | undefined): OidcProviderConfig[] {
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) {
-      console.warn(
-        "MARFA_OIDC_PROVIDERS must be a JSON array, falling back to no federated providers",
-      );
-      return [];
-    }
-    const out: OidcProviderConfig[] = [];
-    for (const entry of parsed) {
-      if (
-        entry &&
-        typeof entry === "object" &&
-        typeof (entry as { providerId?: unknown }).providerId === "string" &&
-        typeof (entry as { clientId?: unknown }).clientId === "string" &&
-        typeof (entry as { clientSecret?: unknown }).clientSecret === "string"
-      ) {
-        const e = entry as Record<string, unknown>;
-        out.push({
-          providerId: e.providerId as string,
-          clientId: e.clientId as string,
-          clientSecret: e.clientSecret as string,
-          discoveryUrl:
-            typeof e.discoveryUrl === "string" ? e.discoveryUrl : undefined,
-          scopes: Array.isArray(e.scopes)
-            ? (e.scopes as unknown[]).filter(
-                (s): s is string => typeof s === "string",
-              )
-            : undefined,
-        });
-      } else {
-        console.warn(
-          "MARFA_OIDC_PROVIDERS entry missing providerId/clientId/clientSecret, skipping",
-        );
-      }
-    }
-    return out;
-  } catch {
-    console.warn(
-      "MARFA_OIDC_PROVIDERS is not valid JSON, falling back to no federated providers",
-    );
-    return [];
-  }
 }

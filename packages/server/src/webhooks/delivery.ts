@@ -273,10 +273,6 @@ export class WebhookConsumer {
       try {
         for await (const event of subscribe()) {
           if (!this.running) break;
-          // Replicated events were already dispatched by the process that
-          // published them; enqueuing again here would deliver every
-          // webhook once per process.
-          if (event.remote) continue;
           // A write whose caller declined fan-out is logged and streamed
           // like any other; what it does not do is call out.
           if (!fansOut(event)) continue;
@@ -295,8 +291,6 @@ export class WebhookConsumer {
       try {
         for await (const event of subscribeEdges()) {
           if (!this.running) break;
-          // Same reasoning as the item loop: the origin process dispatched.
-          if (event.remote) continue;
           if (!fansOut(event)) continue;
           void this.dispatchEdge(event);
         }
@@ -326,8 +320,6 @@ export class WebhookConsumer {
     const eventName = toWebhookEvent(event.type);
     const matching = webhooks.filter((w) => {
       if (!w.events.includes(eventName)) return false;
-      // Compared as nulls, for the reason the item path gives.
-      if ((w.space_id ?? null) !== (event.spaceId ?? null)) return false;
       // Edge events don't carry an item type; any type_filter skips them.
       if (w.type_filter) return false;
       return true;
@@ -371,13 +363,6 @@ export class WebhookConsumer {
     const matching = webhooks.filter((w) => {
       // Must subscribe to this event type
       if (!w.events.includes(eventName)) return false;
-      // Space isolation, compared as nulls rather than as truthiness. The
-      // lenient form skipped the test entirely when either side was falsy, so
-      // an event published without a space matched **every** webhook in every
-      // space and delivered another account's item payload to all of them.
-      // Nothing publishes unscoped over a spaced row any more, but a guard
-      // that only holds while its callers are correct is not a guard.
-      if ((w.space_id ?? null) !== (event.spaceId ?? null)) return false;
       // Type filter — if the webhook has a type_filter, the item type must match
       if (
         w.type_filter &&

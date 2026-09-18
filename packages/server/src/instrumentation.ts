@@ -5,7 +5,7 @@
  *   prod: `node --import ./dist/instrumentation.js dist/index.js`
  *   dev:  `tsx  --import ./src/instrumentation.ts  src/index.ts`
  * ESM hoists `import` statements, so calling an init function at the top of
- * `index.ts` would run AFTER index.ts's own imports (`node:http`, `postgres`,
+ * `index.ts` would run AFTER index.ts's own imports (`node:http`,
  * `@hono/node-server`, ...) have already been evaluated — too late for HTTP
  * auto-instrumentation to patch them. A `--import` preload finishes (its
  * top-level await is awaited) before the main entry loads.

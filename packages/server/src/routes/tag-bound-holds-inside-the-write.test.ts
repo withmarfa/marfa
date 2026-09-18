@@ -13,15 +13,12 @@ import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
  * item each read a set under the bound, each pass, and the merged result is
  * over it with nothing refused and nothing reported.
  *
- * Both stores now check inside the transaction that computes the merged set,
- * on the same read the write uses, and the Postgres store takes the row lock
- * its own `mutateExtension` already documents as load-bearing for exactly
- * this shape: "the extensions map is one JSON column, so a plain read-then-
+ * The store now checks inside the transaction that computes the merged set,
+ * on the same read the write uses, which its own `mutateExtension` already
+ * documents as load-bearing for exactly this shape: "the extensions map is one JSON column, so a plain read-then-
  * write lets a concurrent writer commit in between and lose one of the two
  * updates." Tags are the same one JSON column.
  */
-
-const dialect = process.env.DB_DIALECT ?? "sqlite";
 
 let ctx: TestContext;
 
@@ -48,10 +45,7 @@ function tags(prefix: string, n: number): string[] {
 }
 
 describe("the tag bound is enforced where the tags are written", () => {
-  // The deterministic guard. It does not exercise the race at all, which is
-  // the point: it fails on the unfixed store on every run and every dialect,
-  // where the concurrency test below can pass by luck. Deleting this as
-  // redundant to the expressive one leaves nothing that reliably reddens.
+  // The deterministic guard: it fails on the unfixed store on every run.
   it("refuses a merge whose result is over the bound, at the store", async () => {
     const id = await createNote("bound at the store, merge");
     const under = MAX_TAGS_PER_ITEM - 10;
@@ -81,43 +75,6 @@ describe("the tag bound is enforced where the tags are written", () => {
   // The statement of intent, and the one that catches the lost update the
   // bound was only a symptom of.
   //
-  // Both calls are well inside the bound, so neither can be refused for it.
-  // What is asserted is that a call reporting success actually wrote: on the
-  // unlocked Postgres store both transactions read the empty set, the second
-  // overwrites the first, and one caller's tags are gone with a resolved
-  // promise in hand. The row lock is what closes that, and this is what
-  // observes it.
-  //
-  // **Postgres only, and not as a convenience.** The libsql driver holds one
-  // connection, so two overlapping `db.transaction` calls interleave their
-  // BEGIN and COMMIT on it and leave the session wedged — the next
-  // transaction anywhere in the process fails on a savepoint. That is a
-  // driver misuse rather than a race, so running it there would assert
-  // nothing about the code and would poison every test after it. It is also
-  // the defect's own boundary: SQLite admits one writer, which is why the
-  // Postgres store needed a lock and the SQLite one did not.
-  it.skipIf(dialect !== "pg")(
-    "loses no tags when two writes reach one item at once",
-    async () => {
-      const id = await createNote("two writers, one item");
-      const first = tags("first", 10);
-      const second = tags("second", 10);
-
-      // Promise.all rather than allSettled: both are well inside the bound,
-      // so neither may be refused, and allSettled would absorb the reason a
-      // rejection carried and report only a count.
-      await Promise.all([
-        ctx.storage.metadata.addTags(id, first),
-        ctx.storage.metadata.addTags(id, second),
-      ]);
-
-      const survived = await ctx.storage.metadata.get(id);
-      for (const tag of [...first, ...second]) {
-        expect(survived.tags).toContain(tag);
-      }
-    },
-  );
-
   // The bound itself, off by nothing. Every case above clears it by ten or
   // more, so flipping any of the four comparisons to `>=` would leave them
   // all green.

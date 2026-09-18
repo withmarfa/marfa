@@ -46,6 +46,58 @@ describe("GET /search happy path", () => {
   });
 });
 
+describe("GET /search indexes tags", () => {
+  it("finds an item by a tag that appears nowhere in its text, from the moment the tag is set", async () => {
+    const tag = `wombatry${String(Date.now())}`;
+    const created = await request(ctx.app, "POST", "/items", {
+      key: ctx.spaceKey,
+      body: {
+        type: "core.note",
+        properties: { body: "Nothing in this body names the tag." },
+      },
+    });
+    expect(created.status).toBe(201);
+    const { item } = (await created.json()) as { item: { id: string } };
+
+    const before = await request(ctx.app, "GET", `/search?q=${tag}`, {
+      key: ctx.spaceKey,
+    });
+    expect(((await before.json()) as { results: unknown[] }).results).toEqual(
+      [],
+    );
+
+    const tagged = await request(ctx.app, "POST", `/items/${item.id}/tags`, {
+      key: ctx.spaceKey,
+      body: { tags: [tag] },
+    });
+    expect(tagged.status).toBe(200);
+
+    const found = await request(ctx.app, "GET", `/search?q=${tag}`, {
+      key: ctx.spaceKey,
+    });
+    expect(found.status).toBe(200);
+    const results = (
+      (await found.json()) as { results: { item: { id: string } }[] }
+    ).results;
+    expect(results.map((r) => r.item.id)).toEqual([item.id]);
+
+    // And gone once the tag is: the index follows the sidecar both ways.
+    const untagged = await request(
+      ctx.app,
+      "DELETE",
+      `/items/${item.id}/tags/${tag}`,
+      { key: ctx.spaceKey },
+    );
+    expect(untagged.status).toBe(200);
+    const after = await request(ctx.app, "GET", `/search?q=${tag}`, {
+      key: ctx.spaceKey,
+    });
+    expect(((await after.json()) as { results: unknown[] }).results).toEqual(
+      [],
+    );
+  });
+});
+
 describe("GET /search library filter", () => {
   // Use a unique whole-word token shared by both items so the FTS query
   // matches them directly. Tokenization is whitespace-based, so
@@ -242,10 +294,10 @@ describe("GET /search?include=system", () => {
     // store indexes it for search on the way in, which is all this pair needs
     // — the claim under test is what the read surface does with the row, not
     // how it got there.
-    const device = await ctx.storage.items.create(
-      { type: "system.device", properties: { name: word, kind: "laptop" } },
-      ctx.spaceId,
-    );
+    const device = await ctx.storage.items.create({
+      type: "system.device",
+      properties: { name: word, kind: "laptop" },
+    });
     return { noteId: n.id, deviceId: device.id };
   }
 

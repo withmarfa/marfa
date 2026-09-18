@@ -166,12 +166,17 @@ describe("GET /edges — the door the published rename points at", () => {
     expect(res.status).toBe(400);
   });
 
-  it("refuses the two retired names it never carried", async () => {
+  it("refuses the two retired names it never carried, naming the one filter it has", async () => {
     // This door never had `since` / `until`, so there was nothing to
     // refuse and no refusal was written — while the release notes describe
     // the rename as covering it. A client migrating as instructed sent one
     // here and got a silently unfiltered page at 200 with a good cursor.
-    for (const [oldName, replacement] of [
+    //
+    // The refusal names `updated_after` and never the renamed filter: an
+    // edge has no item time, so `timestamp_after` does not exist here
+    // either, and a message naming it would send the caller to a parameter
+    // this door strips in silence (the case below).
+    for (const [oldName, renamed] of [
       ["since", "timestamp_after"],
       ["until", "timestamp_before"],
     ] as const) {
@@ -182,10 +187,12 @@ describe("GET /edges — the door the published rename points at", () => {
         { key: ctx.spaceKey },
       );
       expect(res.status).toBe(400);
-      const body = (await res.json()) as { error: { message: string } };
-      // The specific message, not the general one: a retired name has a
-      // replacement to name and the caller needs it.
-      expect(body.error.message).toContain(replacement);
+      const body = (await res.json()) as {
+        error: { message: string; details?: { use?: unknown } };
+      };
+      expect(body.error.message).toContain("updated_after");
+      expect(body.error.message).not.toContain(renamed);
+      expect(body.error.details?.use).toBe("updated_after");
     }
   });
 

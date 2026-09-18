@@ -93,7 +93,6 @@ export function resolveStateFilter(raw: string | undefined): {
 
 export const EdgeSchema = z.object({
   id: z.string(),
-  space_id: z.string().nullable().optional(),
   source_id: z.string(),
   target_id: z.string(),
   edge_type: z.string(),
@@ -121,35 +120,10 @@ export const ItemSchema = z.object({
   state: ItemStateEnum,
   /** Optional — `system.*` items have no tier. */
   tier: z.enum(["library", "feed"]).optional(),
-  /**
-   * Space scope. Storage queries are space-scoped at the SQL layer, so
-   * for ordinary callers this always matches the caller's own space. The
-   * field is informational; cross-space infrastructure (the reactive-run
-   * bridge) reads this off the row to gate fanout. Mirrors the
-   * `Edge.space_id` shape.
-   */
-  space_id: z.string().nullable().optional(),
   version: z.number(),
   schema_version: z.number().int(),
   source: z.string(),
   source_id: z.string().optional(),
-  /**
-   * Derived per read, never stored: whether the integration named in
-   * `source` still has a live connection in this space. Present only on an
-   * item an integration wrote — for anything else the question does not
-   * arise, so absence means "not applicable" rather than "no". See
-   * `_orphaned.ts` for why this is a second axis rather than a fourth
-   * `state`.
-   *
-   * **Scope of that reading: REST responses carrying an item.** The `GET
-   * /events` stream does not carry this field, because it cannot carry the
-   * change it describes — removing a connection publishes no item events, so
-   * an item never becomes orphaned *on the stream*. A client merging stream
-   * frames over a read must therefore keep the value it read rather than
-   * treating its absence in a frame as `false` or as "no integration wrote
-   * this", and must re-read to refresh it.
-   */
-  orphaned: z.boolean().optional(),
   device: z.string().optional(),
   capture_latitude: z.number().optional(),
   capture_longitude: z.number().optional(),
@@ -204,21 +178,6 @@ export const VersionSchema = z.object({
 });
 
 /**
- * A space's quota row. Answered by the space's own quota route and by the
- * admin view of the same row, which is why it is here: the two are one
- * shape, and declaring it twice let them describe the same row differently.
- */
-export const QuotaSchema = z.object({
-  space_id: z.string(),
-  items_limit: z.number().int().nullable(),
-  webhooks_limit: z.number().int().nullable(),
-  blobs_limit: z.number().int().nullable(),
-  storage_bytes_limit: z.number().int().nullable(),
-  rate_per_minute_limit: z.number().int().nullable(),
-  updated_at: z.string().nullable(),
-});
-
-/**
  * The single-item read response. The base shape (`item` with outbound `edges`
  * hydrated, plus `metadata`) is always present; the three optional blocks are
  * opt-in via `?include=` and widen the 1-hop neighborhood the caller gets in
@@ -251,6 +210,31 @@ export const ItemDetailSchema = z.object({
   neighbors_omitted: z.number().int().optional(),
   versions: z.array(VersionSchema).optional(),
 });
+
+/**
+ * The three schema-enforcement levers, one shape built twice: permissive for
+ * every read and for a key's override, strict for the instance config's
+ * write. `.strict()` does not recurse, so the outer object refusing an
+ * unknown key while `enforcement` accepted one would leave a silent drop a
+ * level down, on the block where a dropped key means a rule nobody is
+ * enforcing; taking the strictness as a parameter is what stops the two
+ * drifting.
+ */
+export const enforcementSchema = (strict: boolean) => {
+  const obj = strict ? z.strictObject : z.object;
+  const typeList = z.array(z.string());
+  const typesAndSources = { types: typeList, sources: z.array(z.string()) };
+  return obj({
+    strict_mode: obj({ types: typeList }).optional(),
+    source_allowlist: obj(typesAndSources).optional(),
+    source_filter: obj(typesAndSources).optional(),
+  });
+};
+
+/** A key's per-credential override: the same levers, permissive. */
+export const EnforcementOverrideSchema = enforcementSchema(false).describe(
+  "Per-credential schema-enforcement override. A lever set here wins over the instance config for this credential, lever by lever; absent, the key inherits the instance config.",
+);
 
 /**
  * An API key as a create route answers it.
@@ -295,6 +279,7 @@ export const KeyResponseSchema = z.object({
   profile_permissions: z
     .record(z.string(), z.enum(["read", "write"]))
     .optional(),
+  enforcement_override: EnforcementOverrideSchema.optional(),
   created_at: z.string(),
   last_used_at: z.string().nullable(),
 });

@@ -24,9 +24,8 @@
 // declared one, so expanding grants put the list query and the single-item gate
 // into disagreement in the fail-open direction.
 //
-// Resolving the declared half needs the registry, and the registry is
-// space-scoped because custom types are. Hence the optional `spaceId` on
-// `typeSubtreeToSql`: omit it and it behaves exactly as before.
+// Resolving the declared half needs the registry, which holds the
+// instance's own registrations beside the shipped set.
 
 import {
   declaredDescendantsOutsideNamespace,
@@ -124,14 +123,9 @@ export interface TypePatternSql {
   extraTypes: string[];
 }
 
-/**
- * `undefined` means the caller resolves names only, so the registry is never
- * consulted and the result is empty. `null` is a real scope — the null-space
- * bucket the platform set registers into — and does resolve.
- */
-function declaredExtras(root: string, spaceId?: string | null): string[] {
-  if (spaceId === undefined) return [];
-  return declaredDescendantsOutsideNamespace(root, spaceId);
+/** The types that declare their way under `root` from outside its name. */
+function declaredExtras(root: string): string[] {
+  return declaredDescendantsOutsideNamespace(root);
 }
 
 function escapeLikeLiteral(value: string): string {
@@ -184,10 +178,7 @@ export function typePatternToSql(pattern: string): TypePatternSql {
  * - `core.entity`     → `{ exact: "core.entity", descendantPattern: "core.entity.%" }`
  * - `core.entity.*`   → identical to the line above
  */
-export function typeSubtreeToSql(
-  type: string,
-  spaceId?: string | null,
-): TypePatternSql {
+export function typeSubtreeToSql(type: string): TypePatternSql {
   if (type === GLOBAL_TYPE_WILDCARD) {
     return {
       global: true,
@@ -201,7 +192,7 @@ export function typeSubtreeToSql(
     global: false,
     exact: root,
     descendantPattern: `${escapeLikeLiteral(root)}.%`,
-    extraTypes: declaredExtras(root, spaceId),
+    extraTypes: declaredExtras(root),
   };
 }
 
@@ -222,14 +213,9 @@ export function typeSubtreeToSql(
  * into a set. `declaredDescendantsOutsideNamespace`, which the SQL side uses,
  * is *defined* as the types whose `isSubtypeOf` reaches the root, so a
  * membership test against that list and this call answer the same question —
- * but the list costs a pass over the space's whole vocabulary and this costs
+ * but the list costs a pass over the whole vocabulary and this costs
  * a walk up one chain. A query resolves the filter once and wants the set; a
  * stream resolves it per event and wants the predicate.
- *
- * `spaceId` reads exactly as it does for {@link typeSubtreeToSql}:
- * `undefined` means the caller resolves names only and the declared
- * clause is skipped, `null` is the real null-space scope a platform
- * self-host registers into, and a string is that space.
  *
  * Ordered cheapest first, and the ordering is load-bearing rather than
  * cosmetic. Both name clauses are string comparisons, so a filter naming a
@@ -244,21 +230,12 @@ export function typeSubtreeToSql(
 export function typeAnswersSubtreeFilter(
   type: string,
   filter: string,
-  spaceId?: string | null,
 ): boolean {
   if (filter === GLOBAL_TYPE_WILDCARD) return true;
   const root = subtreeWildcardRoot(filter) ?? filter;
   if (type === root) return true;
   if (type.startsWith(`${root}.`)) return true;
-  // The same three-way reading of `spaceId` that `declaredExtras` gives
-  // the SQL side, and it has to be stated rather than inherited:
-  // `resolveSchema` treats `undefined` and `null` alike, so without this
-  // line a caller omitting the argument would resolve declared parentage
-  // where `typeSubtreeToSql` resolves none — the two disagreeing about
-  // the same filter, which is the one thing this function exists to
-  // prevent. `undefined` means names only; `null` is a real scope.
-  if (spaceId === undefined) return false;
-  return isSubtypeOf(type, root, spaceId);
+  return isSubtypeOf(type, root);
 }
 
 // ---------------------------------------------------------------------------

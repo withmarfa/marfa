@@ -10,10 +10,7 @@
  * next page, and rows are skipped or delivered twice with no signal.
  *
  * `assertCursorKey` is what refuses that, and it had no test anywhere on
- * either dialect for either listing. This file is that test. It runs at the
- * route level so the same cases cover SQLite under `pnpm test` and Postgres
- * under `DB_DIALECT=pg`, which is where the two stores' identical
- * key computations are actually compared.
+ * either listing. This file is that test, at the route level.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";

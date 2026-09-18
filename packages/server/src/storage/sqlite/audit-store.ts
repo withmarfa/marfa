@@ -1,11 +1,4 @@
-/* eslint-disable no-restricted-syntax -- Not yet on the shared space
- * fence. `storage/space-condition.ts` is the one spelling of it, and
- * this store predates it; the rule covers every store so a new file is
- * covered by default, which leaves the existing ones needing a line
- * that says so. Normalizing one is a change of its own: an absent space
- * has to be read call site by call site, and reading it wrong is the
- * defect the helper exists for. Delete this line when you do. */
-import { eq, and, desc, lt, or, gte, lte, isNull, like } from "drizzle-orm";
+import { eq, and, desc, lt, or, gte, lte, like } from "drizzle-orm";
 import {
   DEFAULT_PAGE_LIMIT,
   MAX_PAGE_LIMIT,
@@ -37,7 +30,6 @@ function rowToEntry(row: typeof auditLog.$inferSelect): AuditEntry {
     id: row.id,
     timestamp: row.timestamp,
     key_id: row.key_id ?? null,
-    space_id: row.space_id ?? null,
     action: row.action,
     resource_type: row.resource_type,
     resource_id: row.resource_id ?? null,
@@ -63,7 +55,6 @@ export class SqliteAuditStore implements AuditStore {
       id: generateId(),
       timestamp: new Date().toISOString(),
       key_id: entry.key_id ?? null,
-      space_id: entry.space_id ?? null,
       action: entry.action,
       resource_type: entry.resource_type,
       resource_id: entry.resource_id ?? null,
@@ -108,7 +99,6 @@ export class SqliteAuditStore implements AuditStore {
     until?: string;
     limit?: number;
     cursor?: string;
-    space_id?: string | null;
   }): Promise<PaginatedResult<AuditEntry>> {
     const limit = Math.max(
       MIN_PAGE_LIMIT,
@@ -131,14 +121,6 @@ export class SqliteAuditStore implements AuditStore {
     if (filters.until) {
       conditions.push(lte(auditLog.timestamp, filters.until));
     }
-    // Space scope: when the caller is space-scoped (filter explicitly
-    // set), restrict to rows with matching `space_id`. When omitted,
-    // no space filter is applied — operator-key reads on self-hosted,
-    // plus the cleanup job which is currently global.
-    if (filters.space_id !== undefined && filters.space_id !== null) {
-      conditions.push(eq(auditLog.space_id, filters.space_id));
-    }
-
     if (filters.cursor) {
       const { v, id } = decodeCursor(filters.cursor);
       const cursorClause = or(
@@ -172,25 +154,14 @@ export class SqliteAuditStore implements AuditStore {
     return { data, cursor: nextCursor, has_more: hasMore };
   }
 
-  async cleanup(
-    retentionDays: number,
-    spaceId?: string | null,
-  ): Promise<number> {
+  async cleanup(retentionDays: number): Promise<number> {
     const cutoff = new Date(
       Date.now() - retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
-    // Three filter shapes (see PgAuditStore.cleanup).
-    const spaceClause =
-      spaceId === undefined
-        ? undefined
-        : spaceId === null
-          ? isNull(auditLog.space_id)
-          : eq(auditLog.space_id, spaceId);
-    const where =
-      spaceClause === undefined
-        ? lt(auditLog.timestamp, cutoff)
-        : and(lt(auditLog.timestamp, cutoff), spaceClause);
-    const result = await this.db.delete(auditLog).where(where).run();
+    const result = await this.db
+      .delete(auditLog)
+      .where(lt(auditLog.timestamp, cutoff))
+      .run();
     return result.rowsAffected;
   }
 

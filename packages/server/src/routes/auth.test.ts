@@ -47,9 +47,7 @@ describe("bootstrap mode", () => {
     const blobBackend = new FilesystemBlobBackend(join(freshTmpDir, "blobs"));
     const app = createApp(storage, blobBackend, {
       port: 0,
-      storageDialect: "sqlite",
       sqlitePath: "",
-      databaseUrl: "",
       blobPath: "",
       blobBackend: "fs",
       maxBlobSize: 50 * 1024 * 1024,
@@ -62,7 +60,6 @@ describe("bootstrap mode", () => {
       apiKeySalt: "test-salt",
       corsOrigins: [],
       cdnBaseUrl: "",
-      authMode: "keys",
       rateLimitEnabled: false,
       enableHsts: false,
       auditRetentionDays: 90,
@@ -79,13 +76,9 @@ describe("bootstrap mode", () => {
       errorWebhookUrl: "",
       trustedProxyCidrs: [],
       authBaseUrl: "http://localhost:0",
-      authAllowSignup: true,
-      seedStarterContent: false,
       authSecret: "test-auth-secret",
-      oidcProviders: [],
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
-      mcpEnabled: false,
     });
 
     // The one unauthenticated write in the product is bound to the host: the

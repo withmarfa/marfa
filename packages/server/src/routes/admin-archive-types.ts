@@ -70,12 +70,8 @@ export interface ArchiveTypeResult {
  * Manifest registration is not one of them and checks nothing, which is a
  * gap in that path rather than in this one.
  */
-function assertParentChainResolves(
-  typeId: string,
-  parentId: string,
-  spaceId: string | undefined,
-): void {
-  assertParentChain(typeId, parentId, spaceId, {
+function assertParentChainResolves(typeId: string, parentId: string): void {
+  assertParentChain(typeId, parentId, {
     tooDeep: (maxDepth) =>
       `Archive type "${typeId}" has an inheritance chain deeper than ${String(maxDepth)}`,
     circular: () => `Archive type "${typeId}" declares a circular parent chain`,
@@ -102,11 +98,8 @@ function sameSchema(a: unknown, b: unknown): boolean {
  * no longer validates is left un-normalized and will simply compare
  * unequal, which is the right answer: it is not the archive's schema.
  */
-function normalizeForCompare(
-  schema: TypeSchema,
-  spaceId: string | undefined,
-): TypeSchema {
-  const result = validateTypeSchema(schema, spaceId);
+function normalizeForCompare(schema: TypeSchema): TypeSchema {
+  const result = validateTypeSchema(schema);
   return result.success ? result.data : schema;
 }
 
@@ -122,11 +115,10 @@ function normalizeForCompare(
  * hostile archive fails loudly instead of half-landing:
  *
  * - **`origin: "platform"`.** `projectPlatformRows` filters `origin !== "platform"`
- *   and does not filter `space_id`, over a `loadCustomTypes()` that reads the
- *   whole table. On a self-host a restore writes into `space_id = ""`, the same
- *   bucket the platform seed uses, so a replayed `platform` claim would seed an
- *   attacker-chosen type into the global registry at the next boot, resolving for
- *   every space, undeletable, and `default_on` in every space's connected bundle.
+ *   over a `loadCustomTypes()` that reads the whole table. A restore writes
+ *   into the same table the platform seed uses, so a replayed `platform` claim
+ *   would seed an attacker-chosen type into the registry at the next boot,
+ *   undeletable, and `default_on` in the connected bundle.
  *   A delayed fuse: `create` writes the space overlay now and nothing manifests
  *   until a restart.
  * - **`family: "core"` or `"system"`.** Family decides membership of the content
@@ -140,7 +132,6 @@ function normalizeForCompare(
 function provenanceFor(
   entry: ArchiveTypeEntry,
   typeId: string,
-  publisherHandle: PublisherHandleCheck,
 ): TypeProvenance {
   const raw = entry.provenance;
   if (raw === undefined || raw === null || typeof raw !== "object") {
@@ -183,18 +174,10 @@ function provenanceFor(
   if (claimed.origin === "user") {
     // `user` earns a read AND write wildcard over the whole namespace
     // root, which makes it the one claim in this file worth more than the
-    // two refused above. Honoring it unchecked turns a restore into a way
-    // to buy what `POST /types` sells only to the holder of a handle:
-    // that route binds publisher-tier registration to owning the handle,
-    // and this path has never had the same check.
-    //
-    // Degraded rather than refused, deliberately. Refusing would reject
-    // legitimate archives too, a space's own backup restored somewhere
-    // its handle does not resolve among them, and the rule stated for the
-    // bundles applies here: putting a type nowhere is an omission rather
-    // than a narrowing. The type still restores and its root is still
-    // offerable, without the half nobody could verify.
-    if (!publisherHandle.permits(typeId)) return { origin: "unknown" };
+    // two refused above. It is honored as claimed: there are no user
+    // accounts and so no handle system to check a publisher-tier id
+    // against, and the only party a refusal could stop is the
+    // deployment's own operator, who holds the restore door.
     return { origin: "user" };
   }
 
@@ -203,38 +186,10 @@ function provenanceFor(
   return { origin: "unknown" };
 }
 
-/**
- * Whether a claimed `user` origin is one this space could have made itself.
- *
- * Mirrors the binding `POST /types` applies: the publisher tier is the only
- * one whose first segment is a claimable handle, so registering there means
- * holding that exact handle. The rule binds only in hosted mode, because
- * keys mode has no user accounts and so no handle system to check against,
- * and the only party a refusal could stop there is the deployment's own
- * operator.
- */
-interface PublisherHandleCheck {
-  permits(typeId: string): boolean;
-}
-
-function publisherHandleCheck(
-  authMode: "keys" | "hosted",
-  handle: string | null,
-): PublisherHandleCheck {
-  return {
-    permits(typeId: string): boolean {
-      if (authMode !== "hosted") return true;
-      if (classifyNamespace(typeId) !== "publisher") return true;
-      return handle !== null && typeId.split(".")[0] === handle;
-    },
-  };
-}
-
-function parseTypeEntries(
-  entries: ArchiveTypeEntry[],
-  spaceId: string | undefined,
-  publisherHandle: PublisherHandleCheck,
-): { types: PendingType[]; edgeTypes: EdgeTypeSchema[] } {
+function parseTypeEntries(entries: ArchiveTypeEntry[]): {
+  types: PendingType[];
+  edgeTypes: EdgeTypeSchema[];
+} {
   const types: PendingType[] = [];
   const edgeTypes: EdgeTypeSchema[] = [];
 
@@ -260,7 +215,7 @@ function parseTypeEntries(
           { namespace: tier },
         );
       }
-      const result = validateTypeSchema(entry.custom_type, spaceId);
+      const result = validateTypeSchema(entry.custom_type);
       if (!result.success) {
         throw new MarfaError(
           ErrorCode.INVALID_SCHEMA,
@@ -270,7 +225,7 @@ function parseTypeEntries(
       }
       types.push({
         schema: result.data,
-        provenance: provenanceFor(entry, raw.id, publisherHandle),
+        provenance: provenanceFor(entry, raw.id),
       });
       continue;
     }
@@ -343,20 +298,8 @@ function parseTypeEntries(
 export async function registerArchiveTypes(
   storage: Storage,
   entries: ArchiveTypeEntry[],
-  spaceId: string | undefined,
-  authMode: "keys" | "hosted",
 ): Promise<ArchiveTypeResult> {
-  // Resolved once for the batch rather than per entry: it is one row, it
-  // cannot change while the batch is parsed, and the parse is synchronous.
-  const handle =
-    authMode === "hosted" && spaceId && storage.users
-      ? ((await storage.users.getBySpaceId(spaceId))?.handle ?? null)
-      : null;
-  const { types, edgeTypes } = parseTypeEntries(
-    entries,
-    spaceId,
-    publisherHandleCheck(authMode, handle),
-  );
+  const { types, edgeTypes } = parseTypeEntries(entries);
 
   if (types.length > MAX_ARCHIVE_TYPES) {
     throw new MarfaError(
@@ -373,13 +316,13 @@ export async function registerArchiveTypes(
 
   // What this space has registered is a question about this database,
   // not about the in-memory registry: the registry is process state
-  // seeded at boot and can hold entries this space never wrote. The rows
+  // seeded at boot and can hold entries this instance never wrote. The rows
   // are what a restore is reconciling against.
   const existingTypes = new Map(
-    (await storage.types.listCustom(spaceId)).map((s) => [s.id, s]),
+    (await storage.types.listCustom()).map((s) => [s.id, s]),
   );
   const existingEdgeTypes = new Map(
-    (await storage.edgeTypes.list(spaceId)).map((s) => [s.id, s]),
+    (await storage.edgeTypes.list()).map((s) => [s.id, s]),
   );
 
   const conflicts: string[] = [];
@@ -389,9 +332,7 @@ export async function registerArchiveTypes(
     const existing = existingTypes.get(entry.schema.id);
     if (!existing) {
       typesToWrite.push(entry);
-    } else if (
-      sameSchema(normalizeForCompare(existing, spaceId), entry.schema)
-    ) {
+    } else if (sameSchema(normalizeForCompare(existing), entry.schema)) {
       // A row that is already here keeps the provenance it already has.
       // Re-restoring an archive must stay a no-op, and rewriting the
       // column would let a second restore of an older copy walk a row
@@ -435,18 +376,18 @@ export async function registerArchiveTypes(
       const entry = pending[i];
       if (!entry) continue;
       const schema = entry.schema;
-      if (schema.parent && !getTypeSchema(schema.parent, spaceId)) continue;
+      if (schema.parent && !getTypeSchema(schema.parent)) continue;
       if (schema.parent) {
-        assertParentChainResolves(schema.id, schema.parent, spaceId);
+        assertParentChainResolves(schema.id, schema.parent);
       }
-      // `types.create` registers into the space overlay as part of the
-      // write, so nothing here calls the registry directly.
+      // `types.create` registers into the registry as part of the write, so
+      // nothing here calls it directly.
       //
       // Provenance is passed rather than defaulted. Defaulting is what made
       // an archive round trip launder a connected service's type into the
       // person's own: the column defaults to `user`, and `user` is the one
       // the consent screen offers a read-and-write wildcard over.
-      await storage.types.create(schema, spaceId, entry.provenance);
+      await storage.types.create(schema, entry.provenance);
       written.push(entry);
       pending.splice(i, 1);
       progress = true;
@@ -460,10 +401,10 @@ export async function registerArchiveTypes(
   }
 
   for (const schema of edgeTypesToWrite) {
-    await storage.edgeTypes.create(schema, spaceId);
+    await storage.edgeTypes.create(schema);
     // The edge-type store does not touch the registry, so the route
     // registers separately and this has to as well.
-    registerEdgeTypeSchema(schema, spaceId);
+    registerEdgeTypeSchema(schema);
   }
 
   return {

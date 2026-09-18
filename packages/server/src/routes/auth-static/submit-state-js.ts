@@ -4,7 +4,7 @@
  *
  * Served from `GET /auth/static/submit-state.js` (see `auth-static.ts`
  * mounts). Inlined as a TypeScript template literal (same pattern as
- * `password-toggle-js.ts` / `passkey-js.ts`) so tsup bundles it into `dist/`
+ * `password-toggle-js.ts` / `auth-css.ts`) so tsup bundles it into `dist/`
  * with no separate static-asset copy step.
  *
  * Two responsibilities, in order, on a form's `submit` event:

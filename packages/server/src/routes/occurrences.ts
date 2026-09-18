@@ -95,19 +95,14 @@
  *     does not order against a `Z` one as text.
  */
 import { createRoute, z } from "@hono/zod-openapi";
-import {
-  MarfaError,
-  ErrorCode,
-  isValidTypePattern,
-  matchesTypeFilter,
-} from "@withmarfa/shared";
+import { MarfaError, ErrorCode, matchesTypeFilter } from "@withmarfa/shared";
 import type { Item } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
 import { requireAuth, getTypeFilter } from "../middleware/auth.js";
 import type { ItemFilters, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { ItemSchema } from "./_schemas.js";
-import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
+import { assertTypeFilter } from "./_type-filter.js";
 import {
   expandSeries,
   RecurrenceExpansionError,
@@ -470,7 +465,6 @@ interface WindowSeed {
  */
 async function scanEvents<T>(
   storage: Storage,
-  spaceId: string | undefined,
   types: readonly string[],
   budget: ScanBudget,
   narrowing: EventScanNarrowing,
@@ -481,7 +475,6 @@ async function scanEvents<T>(
     let cursor: string | undefined;
     do {
       const page = await storage.items.list({
-        spaceId,
         type,
         state: "active",
         limit: EVENT_PAGE_SIZE,
@@ -637,12 +630,10 @@ function projectWindow(item: Item): WindowSeed | undefined {
  */
 export async function gatherSeriesSeeds(
   storage: Storage,
-  spaceId: string | undefined,
   types: readonly string[],
 ): Promise<RecurrenceSeries[]> {
   const scanned = await scanEvents(
     storage,
-    spaceId,
     types,
     { scanned: 0 },
     { hasProperty: "recurrence" },
@@ -663,14 +654,13 @@ export async function gatherSeriesSeeds(
  */
 async function fetchItemsBatched(
   storage: Storage,
-  spaceId: string | undefined,
   ids: readonly string[],
 ): Promise<Map<string, Item>> {
   const unique = [...new Set(ids)];
   const out = new Map<string, Item>();
   for (let i = 0; i < unique.length; i += ID_BATCH_SIZE) {
     const slice = unique.slice(i, i + ID_BATCH_SIZE);
-    for (const [id, item] of await storage.items.getMany(slice, spaceId)) {
+    for (const [id, item] of await storage.items.getMany(slice)) {
       if (item.state !== "active") continue;
       out.set(id, item);
     }
@@ -979,8 +969,6 @@ export function occurrenceRoutes(
 
   router.openapi(occurrencesRoute, async (c) => {
     requireAuth(c);
-    const credential = c.get("apiKey");
-    const spaceId = credential?.space_id;
     const query = c.req.valid("query");
 
     const from = readInstant(query.from, "from");
@@ -1000,12 +988,10 @@ export function occurrenceRoutes(
         { from: query.from, to: query.to, max_days: MAX_WINDOW_DAYS },
       );
     }
-    if (query.type !== undefined && !isValidTypePattern(query.type)) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "Invalid type identifier",
-      );
-    }
+    // The same judgement `/items`, `/search` and `/export` make: the global
+    // wildcard and a malformed pattern are refused, and a concrete id nobody
+    // has registered is `unknown_type` rather than an empty window.
+    assertTypeFilter(query.type);
 
     // The caller's own type permissions still decide what is readable;
     // this route narrows to event types on top of that rather than
@@ -1056,7 +1042,6 @@ export function occurrenceRoutes(
     // about which rules matter.
     const seriesScan = await scanEvents(
       storage,
-      spaceId,
       wanted,
       budget,
       { hasProperty: "recurrence" },
@@ -1069,7 +1054,6 @@ export function occurrenceRoutes(
     // a ghost back on the calendar at a slot nobody is at.
     const exceptionSeeds = await scanEvents(
       storage,
-      spaceId,
       wanted,
       budget,
       { hasProperty: "original_starts_at" },
@@ -1081,7 +1065,6 @@ export function occurrenceRoutes(
     // above, so this is the one pass whose size a caller can influence.
     const windowSeeds = await scanEvents(
       storage,
-      spaceId,
       wanted,
       budget,
       {
@@ -1344,7 +1327,6 @@ export function occurrenceRoutes(
     // the ids are deduplicated on the way in.
     const shownById = await fetchItemsBatched(
       storage,
-      spaceId,
       pending.map((occurrence) => occurrence.item_id),
     );
 
@@ -1438,21 +1420,9 @@ export function occurrenceRoutes(
     }
 
     results.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
-    // One resolution for the whole window — see `_orphaned.ts`. A calendar
-    // is the surface where this matters most: an events corpus is usually
-    // somebody else's, mirrored, and a disconnected calendar that keeps
-    // rendering looks current right up until somebody misses a meeting.
-    // The same row can occur many times in one window, so the scope is
-    // resolved from the distinct rows and applied to the occurrences.
-    const orphanScope = await resolveOrphanScope(storage, [
-      ...shownById.values(),
-    ]);
     return c.json(
       {
-        data: results.map((occurrence) => ({
-          ...occurrence,
-          item: withOrphanState(occurrence.item, orphanScope),
-        })),
+        data: results,
         window: { from: from.toISOString(), to: to.toISOString() },
         scan: {
           events_read: budget.scanned,

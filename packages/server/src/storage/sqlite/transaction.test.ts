@@ -34,22 +34,16 @@ describe("SqliteStorage.runInTransaction", () => {
   it("rolls back every write inside an async transaction body when the body throws", async () => {
     await expect(
       storage.runInTransaction(async () => {
-        await storage.items.create(
-          {
-            id: "019d1111-1111-7111-a111-111111111111",
-            type: "core.note",
-            properties: { body: "rollback-alpha" },
-          },
-          undefined,
-        );
-        await storage.items.create(
-          {
-            id: "019d1111-1111-7111-a111-111111111112",
-            type: "core.note",
-            properties: { body: "rollback-bravo" },
-          },
-          undefined,
-        );
+        await storage.items.create({
+          id: "019d1111-1111-7111-a111-111111111111",
+          type: "core.note",
+          properties: { body: "rollback-alpha" },
+        });
+        await storage.items.create({
+          id: "019d1111-1111-7111-a111-111111111112",
+          type: "core.note",
+          properties: { body: "rollback-bravo" },
+        });
         throw new Error("force rollback");
       }),
     ).rejects.toThrow(/force rollback/);
@@ -64,22 +58,16 @@ describe("SqliteStorage.runInTransaction", () => {
 
   it("commits every write when the transaction body resolves", async () => {
     await storage.runInTransaction(async () => {
-      await storage.items.create(
-        {
-          id: "019d2222-2222-7222-a222-222222222221",
-          type: "core.note",
-          properties: { body: "commit-alpha" },
-        },
-        undefined,
-      );
-      await storage.items.create(
-        {
-          id: "019d2222-2222-7222-a222-222222222222",
-          type: "core.note",
-          properties: { body: "commit-bravo" },
-        },
-        undefined,
-      );
+      await storage.items.create({
+        id: "019d2222-2222-7222-a222-222222222221",
+        type: "core.note",
+        properties: { body: "commit-alpha" },
+      });
+      await storage.items.create({
+        id: "019d2222-2222-7222-a222-222222222222",
+        type: "core.note",
+        properties: { body: "commit-bravo" },
+      });
     });
 
     const a = await storage.items.get("019d2222-2222-7222-a222-222222222221");

@@ -62,7 +62,6 @@ export async function assertEdgesCanBeCreated(
   edgeStore: EdgeStore,
   itemStore: ItemStore,
   proposals: EdgeProposal[],
-  opts: { space_id?: string } = {},
 ): Promise<EdgeTypeSchema[]> {
   if (proposals.length === 0) return [];
 
@@ -74,10 +73,7 @@ export async function assertEdgesCanBeCreated(
   }
   const resolved: ResolvedProposal[] = [];
   for (const p of proposals) {
-    // Resolve the edge-type schema within the caller's space: core types are
-    // global, custom types resolve only for their owning space. A space that
-    // references another space's custom edge type sees "unknown edge type".
-    const schema = getEdgeTypeSchema(p.edge_type, opts.space_id);
+    const schema = getEdgeTypeSchema(p.edge_type);
     if (!schema) {
       throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
@@ -100,7 +96,7 @@ export async function assertEdgesCanBeCreated(
     itemIds.add(p.source_id);
     itemIds.add(p.target_id);
   }
-  const itemMap = await itemStore.getMany(Array.from(itemIds), opts.space_id);
+  const itemMap = await itemStore.getMany(Array.from(itemIds));
   for (const { p, schema } of resolved) {
     const source = itemMap.get(p.source_id);
     const target = itemMap.get(p.target_id);
@@ -121,13 +117,7 @@ export async function assertEdgesCanBeCreated(
     // omitting the space only ever mattered for a constraint naming a
     // space-registered type — which no core edge had until `in-collection`,
     // and which every custom edge type naming a custom type has always had.
-    if (
-      !satisfiesEdgeConstraint(
-        source.type,
-        schema.source_type_constraints,
-        opts.space_id,
-      )
-    ) {
+    if (!satisfiesEdgeConstraint(source.type, schema.source_type_constraints)) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow source type "${source.type}"`,
@@ -138,13 +128,7 @@ export async function assertEdgesCanBeCreated(
         },
       );
     }
-    if (
-      !satisfiesEdgeConstraint(
-        target.type,
-        schema.target_type_constraints,
-        opts.space_id,
-      )
-    ) {
+    if (!satisfiesEdgeConstraint(target.type, schema.target_type_constraints)) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
         `Edge "${p.edge_type}" does not allow target type "${target.type}"`,
@@ -157,11 +141,7 @@ export async function assertEdgesCanBeCreated(
     }
     if (
       p.edge_type === COLLECTION_EDGE_TYPE &&
-      satisfiesEdgeConstraint(
-        source.type,
-        schema.target_type_constraints,
-        opts.space_id,
-      )
+      satisfiesEdgeConstraint(source.type, schema.target_type_constraints)
     ) {
       throw new MarfaError(
         ErrorCode.EDGE_CONSTRAINT_VIOLATION,
@@ -177,9 +157,7 @@ export async function assertEdgesCanBeCreated(
   }
 
   // Step 4 + 5: pre-fetch existence + cardinality counts in grouped queries.
-  // Fence every store read to the caller's space so duplicate/cardinality
-  // checks never fold in another space's edges.
-  const existsSet = await edgeStore.existsExactBatch(proposals, opts.space_id);
+  const existsSet = await edgeStore.existsExactBatch(proposals);
 
   const needSourceCount = new Map<
     string,
@@ -216,14 +194,8 @@ export async function assertEdgesCanBeCreated(
     }
   }
   const [sourceCounts, targetCounts] = await Promise.all([
-    edgeStore.countsBySourceBatch(
-      Array.from(needSourceCount.values()),
-      opts.space_id,
-    ),
-    edgeStore.countsByTargetBatch(
-      Array.from(needTargetCount.values()),
-      opts.space_id,
-    ),
+    edgeStore.countsBySourceBatch(Array.from(needSourceCount.values())),
+    edgeStore.countsByTargetBatch(Array.from(needTargetCount.values())),
   ]);
 
   // In-batch accumulators — each proposal that passes validation counts
@@ -343,7 +315,6 @@ export async function assertEdgesCanBeCreated(
           p.target_id,
           outboundCache,
           pending,
-          opts.space_id,
         )
       ) {
         throw new MarfaError(
@@ -380,21 +351,15 @@ export async function assertEdgeCanBeCreated(
     source_id: string;
     target_id: string;
     edge_type: string;
-    space_id?: string;
   },
 ): Promise<EdgeTypeSchema> {
-  const schemas = await assertEdgesCanBeCreated(
-    edgeStore,
-    itemStore,
-    [
-      {
-        source_id: input.source_id,
-        target_id: input.target_id,
-        edge_type: input.edge_type,
-      },
-    ],
-    { space_id: input.space_id },
-  );
+  const schemas = await assertEdgesCanBeCreated(edgeStore, itemStore, [
+    {
+      source_id: input.source_id,
+      target_id: input.target_id,
+      edge_type: input.edge_type,
+    },
+  ]);
   const [only] = schemas;
   if (!only) {
     throw new Error(
@@ -427,7 +392,6 @@ async function wouldCreateCycle(
   proposedTarget: string,
   outboundCache: Map<string, Edge[]>,
   pendingEdges: { source_id: string; target_id: string }[],
-  spaceId?: string,
 ): Promise<boolean> {
   const visited = new Set<string>();
   const frontier: string[] = [proposedTarget];
@@ -442,7 +406,7 @@ async function wouldCreateCycle(
     if (next === proposedSource) return true;
     let outbound = outboundCache.get(next);
     if (!outbound) {
-      outbound = await edgeStore.listOutboundOfType(next, edgeType, spaceId);
+      outbound = await edgeStore.listOutboundOfType(next, edgeType);
       outboundCache.set(next, outbound);
     }
     for (const e of outbound) {
@@ -462,7 +426,6 @@ async function wouldCreateCycle(
 /** Lightweight row-shape → Edge helper, dialect-agnostic. */
 export function rowToEdge(row: {
   id: string;
-  space_id: string | null;
   source_id: string;
   target_id: string;
   edge_type: string;
@@ -482,7 +445,6 @@ export function rowToEdge(row: {
   }
   return {
     id: row.id,
-    space_id: row.space_id,
     source_id: row.source_id,
     target_id: row.target_id,
     edge_type: row.edge_type,

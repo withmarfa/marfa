@@ -89,7 +89,6 @@ async function seedClient(
     scopes: opts.scopes === null ? null : [...opts.scopes],
     redirectUris: [...opts.redirectUris],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }
@@ -145,7 +144,7 @@ async function authorizeAnonymously(
 
 describe("the authorize ceiling catch-up writes only behind a registered redirect URI", () => {
   it("does not widen the stored ceiling for a request naming an unregistered redirect URI", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const union = bundleUnion();
     // The fixture has to be one the catch-up would otherwise act on, or the
     // test passes for the wrong reason. Both halves are asserted rather than
@@ -210,7 +209,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // The feature is reordered, not removed. A client that has aged out of
     // the registry still self-heals, and the audit trail still says which
     // surface moved the row.
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],
@@ -246,7 +245,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // comparison. RFC 8252 §7.3 lets a native app bind an ephemeral loopback
     // port, so the port it registered is almost never the port it listens on
     // — and those are precisely the clients whose registrations go stale.
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],
@@ -274,7 +273,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // Both halves of the fixture are load-bearing: the bundle-published
     // literals are what a catch-up widens by, and the unknown one is on no
     // allowlist, so it is the thing that must not appear.
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const union = bundleUnion();
     const unknown = "core.nonexistent.type:read";
     expect(buildAllowedScopes()).not.toContain(unknown);
@@ -331,7 +330,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
 
   for (const [name, extra] of refusedAboveRedirectCheck) {
     it(`does not widen the stored ceiling for ${name}`, async () => {
-      ctx = await createTestContext({ authMode: "hosted" });
+      ctx = await createTestContext({});
       const union = bundleUnion();
       const clientId = await seedClient(ctx, {
         scopes: [SEEDED_SCOPE],
@@ -359,7 +358,7 @@ describe("the authorize ceiling catch-up writes only behind a registered redirec
     // The plugin's own first gate. An implicit-flow request is
     // `unsupported_response_type` there, and there is no grant in it worth
     // moving a registration row for.
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const union = bundleUnion();
     const clientId = await seedClient(ctx, {
       scopes: [SEEDED_SCOPE],

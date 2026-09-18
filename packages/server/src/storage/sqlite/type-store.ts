@@ -8,7 +8,6 @@ import {
 } from "@withmarfa/shared";
 import type { SeededPlatformType, TypeSchema } from "@withmarfa/shared";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import { spaceSentinelCondition } from "../space-condition.js";
 import type { LoadedType, TypeProvenance, TypeStore } from "../interface.js";
 import { safeJsonParse } from "../json-utils.js";
 import { customTypes } from "./schema.js";
@@ -18,24 +17,23 @@ import { toLoadedTypes } from "../loaded-types.js";
 export class SqliteTypeStore implements TypeStore {
   constructor(private db: DrizzleDb) {}
 
-  list(spaceId?: string): Promise<TypeSchema[]> {
-    return Promise.resolve(listTypes(spaceId));
+  list(): Promise<TypeSchema[]> {
+    return Promise.resolve(listTypes());
   }
 
-  get(id: string, spaceId?: string): Promise<TypeSchema | undefined> {
-    return Promise.resolve(getTypeSchema(id, spaceId));
+  get(id: string): Promise<TypeSchema | undefined> {
+    return Promise.resolve(getTypeSchema(id));
   }
 
   async create(
     schema: TypeSchema,
-    spaceId?: string,
     provenance?: TypeProvenance,
   ): Promise<TypeSchema> {
     const now = new Date().toISOString();
     try {
       await this.db.run(sql`
-        INSERT INTO custom_types (id, space_id, schema, origin, family, owner_integration, created_at, updated_at)
-        VALUES (${schema.id}, ${spaceId ?? ""}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${provenance?.family ?? null}, ${provenance?.owner_integration ?? null}, ${now}, ${now})
+        INSERT INTO custom_types (id, schema, origin, family, owner_integration, created_at, updated_at)
+        VALUES (${schema.id}, ${JSON.stringify(schema)}, ${provenance?.origin ?? "user"}, ${provenance?.family ?? null}, ${provenance?.owner_integration ?? null}, ${now}, ${now})
       `);
     } catch (err: unknown) {
       if (
@@ -49,41 +47,36 @@ export class SqliteTypeStore implements TypeStore {
       }
       throw err;
     }
-    registerTypeSchema(schema, spaceId);
+    registerTypeSchema(schema);
     return schema;
   }
 
-  async update(
-    id: string,
-    schema: TypeSchema,
-    spaceId?: string,
-  ): Promise<TypeSchema> {
+  async update(id: string, schema: TypeSchema): Promise<TypeSchema> {
     const now = new Date().toISOString();
     await this.db.run(sql`
       UPDATE custom_types SET schema = ${JSON.stringify(schema)}, updated_at = ${now}
-      WHERE id = ${id} AND space_id = ${spaceId ?? ""}
+      WHERE id = ${id}
     `);
-    registerTypeSchema(schema, spaceId);
+    registerTypeSchema(schema);
     return schema;
   }
 
-  async delete(id: string, spaceId?: string): Promise<void> {
-    await this.db.run(
-      sql`DELETE FROM custom_types WHERE id = ${id} AND space_id = ${spaceId ?? ""}`,
-    );
-    unregisterTypeSchema(id, spaceId);
+  async delete(id: string): Promise<void> {
+    await this.db.run(sql`DELETE FROM custom_types WHERE id = ${id}`);
+    unregisterTypeSchema(id);
   }
 
-  async listCustom(spaceId?: string): Promise<TypeSchema[]> {
+  async listCustom(): Promise<TypeSchema[]> {
     // `origin != 'platform'` is load-bearing, not a tidy-up. The shipped
-    // vocabulary lives in this table now, so "the space's own registrations"
-    // has to say so explicitly. Without it an archive would carry the platform
-    // set as if the space had registered it, and the restore that replayed it
-    // would be refused for trying to register a locked type.
+    // vocabulary lives in this table now, so "the instance's own
+    // registrations" has to say so explicitly. Without it an archive would
+    // carry the platform set as if the instance had registered it, and the
+    // restore that replayed it would be refused for trying to register a
+    // locked type.
     const rows = await this.db
       .select()
       .from(customTypes)
-      .where(sql`space_id = ${spaceId ?? ""} AND origin != 'platform'`)
+      .where(sql`origin != 'platform'`)
       .all();
     const results: TypeSchema[] = [];
     for (const row of rows) {
@@ -97,15 +90,15 @@ export class SqliteTypeStore implements TypeStore {
     return results;
   }
 
-  async listCustomWithProvenance(spaceId?: string): Promise<LoadedType[]> {
+  async listCustomWithProvenance(): Promise<LoadedType[]> {
     // Same row set as `listCustom`, carrying the provenance columns. The
     // `origin != 'platform'` filter is load-bearing for the same reason
     // it is there: the shipped vocabulary shares this table, so "the
-    // space's own registrations" has to say so explicitly.
+    // instance's own registrations" has to say so explicitly.
     const rows = await this.db
       .select()
       .from(customTypes)
-      .where(sql`space_id = ${spaceId ?? ""} AND origin != 'platform'`)
+      .where(sql`origin != 'platform'`)
       .all();
     return toLoadedTypes(rows);
   }
@@ -124,17 +117,14 @@ export class SqliteTypeStore implements TypeStore {
       // shipped schema has to move the row, or the instance keeps resolving
       // whatever it was first seeded with.
       //
-      // **The `WHERE` is the guard, and this is the dialect where it matters
-      // most.** A self-host runs `AUTH_MODE=keys`, so a credential carries no
-      // space and `POST /types` stores the registration at `space_id = ''` —
-      // the same bucket this writes to. Without it, a build that starts
-      // shipping an identifier somebody already registered rewrote their
-      // schema unattended on the next boot. The PG copy carries the full
-      // reasoning.
+      // **The `WHERE` is the guard.** `POST /types` stores a registration in
+      // this same table. Without it, a build that starts shipping an
+      // identifier somebody already registered rewrote their schema
+      // unattended on the next boot.
       await this.db.run(sql`
-        INSERT INTO custom_types (id, space_id, schema, origin, family, owner_integration, created_at, updated_at)
-        VALUES (${schema.id}, '', ${JSON.stringify(schema)}, 'platform', ${family}, NULL, ${now}, ${now})
-        ON CONFLICT (space_id, id) DO UPDATE SET
+        INSERT INTO custom_types (id, schema, origin, family, owner_integration, created_at, updated_at)
+        VALUES (${schema.id}, ${JSON.stringify(schema)}, 'platform', ${family}, NULL, ${now}, ${now})
+        ON CONFLICT (id) DO UPDATE SET
           schema = excluded.schema,
           origin = 'platform',
           family = excluded.family,
@@ -147,10 +137,6 @@ export class SqliteTypeStore implements TypeStore {
       .from(customTypes)
       .where(
         and(
-          // The platform bucket, addressed through the shared helper rather
-          // than spelled inline — the stores came to disagree about what an
-          // absent space means precisely by spelling it.
-          spaceSentinelCondition(customTypes.space_id, ""),
           ne(customTypes.origin, "platform"),
           inArray(
             customTypes.id,
@@ -165,18 +151,7 @@ export class SqliteTypeStore implements TypeStore {
   async deletePlatformType(id: string): Promise<boolean> {
     const deleted = await this.db
       .delete(customTypes)
-      .where(
-        and(
-          eq(customTypes.id, id),
-          // This table encodes "no space" as `''` rather than NULL, so the
-          // bucket is addressed as a named space here and the helper's
-          // named-space branch is the correct one. Passing the literal
-          // through the helper rather than spelling the comparison keeps
-          // one place deciding what a space fence looks like.
-          spaceSentinelCondition(customTypes.space_id, ""),
-          eq(customTypes.origin, "platform"),
-        ),
-      )
+      .where(and(eq(customTypes.id, id), eq(customTypes.origin, "platform")))
       .returning({ id: customTypes.id });
     return deleted.length > 0;
   }

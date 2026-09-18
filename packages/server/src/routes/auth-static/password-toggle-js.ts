@@ -3,7 +3,7 @@
  *
  * Served from `GET /auth/static/password-toggle.js` (see `auth-static.ts`
  * mounts). Inlined as a TypeScript template literal (same pattern as
- * `auth-css.ts` / `passkey-js.ts`) so tsup bundles it into `dist/` with no
+ * `auth-css.ts` / `submit-state-js.ts`) so tsup bundles it into `dist/` with no
  * separate static-asset copy step.
  *
  * The script runs once on load and enhances every `input[type="password"]`

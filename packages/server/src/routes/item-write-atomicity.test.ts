@@ -35,8 +35,6 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
-
 class ForcedFailure extends Error {
   constructor(what: string) {
     super(`forced failure at ${what}`);
@@ -71,16 +69,6 @@ function breakWrite<O extends object>(
 }
 
 async function readUpdatedAt(itemId: string): Promise<string | undefined> {
-  if (isPg()) {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = (await s.__pgClient(
-      `SELECT updated_at FROM items WHERE id = $1`,
-      [itemId],
-    )) as { updated_at: string }[];
-    return rows[0]?.updated_at;
-  }
   const s = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };
@@ -98,13 +86,10 @@ const uniq = (p: string): string =>
  *  reached with a space-bound credential and a row with no space of its own
  *  is outside what that credential can see. */
 async function makeNote(body: string): Promise<string> {
-  const item = await ctx.storage.items.create(
-    {
-      type: "core.note",
-      properties: { body },
-    },
-    ctx.spaceId,
-  );
+  const item = await ctx.storage.items.create({
+    type: "core.note",
+    properties: { body },
+  });
   return item.id;
 }
 
@@ -114,15 +99,12 @@ async function makeNote(body: string): Promise<string> {
  * body counts the mirror plus every copy of it that survived.
  */
 async function plantMirror(body: string): Promise<string> {
-  const mirror = await ctx.storage.items.create(
-    {
-      type: "core.note",
-      properties: { body },
-      source: "integration:promote-atomicity",
-      source_id: uniq("mirror"),
-    },
-    ctx.spaceId,
-  );
+  const mirror = await ctx.storage.items.create({
+    type: "core.note",
+    properties: { body },
+    source: "integration:promote-atomicity",
+    source_id: uniq("mirror"),
+  });
   return mirror.id;
 }
 

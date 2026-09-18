@@ -24,7 +24,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForAudit,
 } from "../test-utils.js";
@@ -82,19 +82,13 @@ async function seedClient(
     scopes,
     redirectUris: [CALLBACK],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const up = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (up.status !== 200) throw new Error(`sign-up failed ${String(up.status)}`);
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const inRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -152,7 +146,6 @@ async function seedClientWithRedirect(
     scopes: scopes === null ? null : [...scopes],
     redirectUris: [redirectUri],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }
@@ -196,7 +189,7 @@ async function grantConsent(
 
 describe("authorize failures are observable", () => {
   it("an unsatisfiable request logs at a visible level carrying the error code", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "obs-invalid@example.com");
     // A ceiling that permits nothing, so narrowing declines and the plugin's
     // own invalid_scope fires — the production failure shape.
@@ -226,7 +219,7 @@ describe("authorize failures are observable", () => {
   });
 
   it("does not log when the authorization succeeds", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "obs-ok@example.com");
     const clientId = await seedClient(ctx, null);
     const lines = captureLogs();
@@ -245,7 +238,7 @@ describe("authorize failures are observable", () => {
   });
 
   it("logs ordinary flow control at info, not as a fault", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, null);
     const lines = captureLogs();
 
@@ -267,7 +260,7 @@ describe("authorize failures are observable", () => {
   });
 
   it("logs a refusal the plugin returns rather than throws", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "obs-json@example.com");
     const clientId = await seedClient(ctx, []);
     const lines = captureLogs();
@@ -292,7 +285,7 @@ describe("authorize failures are observable", () => {
   });
 
   it("stays silent when a success lands on a redirect URI that itself carries error=", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "obs-poison@example.com");
 
     // Registration does not forbid a query on a redirect URI, and
@@ -329,7 +322,7 @@ describe("authorize failures are observable", () => {
   });
 
   it("does not let a client that registers code= silence its own refusals", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "obs-silencer@example.com");
 
     // The inverse of the case above, and the more dangerous one: reading the
@@ -359,7 +352,7 @@ describe("authorize failures are observable", () => {
   });
 
   it("separates the two by error code, not by whether one happened", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "obs-both@example.com");
     const refusing = await seedClient(ctx, []);
     const healthy = await seedClient(ctx, null);
@@ -387,7 +380,7 @@ describe("authorize failures are observable", () => {
 
 describe("the provider's own consent skip is audited", () => {
   it("writes one auth.grant.reused row for a covered request answered off the wire, and none for the decision or for prompt=consent", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClientWithRedirect(c, CALLBACK, null);
     const cookie = await signInUser(c, "provider-skip@example.com");

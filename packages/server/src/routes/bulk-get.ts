@@ -24,7 +24,6 @@ import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { hydrateEdgesForItems } from "./_edges-hydrate.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
-import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
 import { ItemSchema, MetadataSchema } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
 
@@ -169,13 +168,8 @@ export function bulkGetRoutes(storage: Storage) {
       );
     }
 
-    // Space fence: `items.getMany` filters by `space_id` (the same scope
-    // the single-item GET threads via `items.get(id, space_id)`) and drops
-    // trashed rows. A caller with a space scope therefore never sees rows
-    // outside it; for a space-less key (the operator key, and nothing
-    // self-host) the scope is the whole instance, matching the single GET.
-    const spaceId = apiKey.space_id;
-    const found = await storage.items.getMany(ids, spaceId);
+    // `items.getMany` drops trashed rows, matching the single-item GET.
+    const found = await storage.items.getMany(ids);
 
     // Permission filter: same `checkTypeAccess(..., "read")` gate the
     // single-item GET applies, but here a denial omits the item instead of
@@ -209,14 +203,10 @@ export function bulkGetRoutes(storage: Storage) {
       ? await hydrateExtensionsForItems(storage, visibleIds, apiKey)
       : null;
 
-    // One resolution for the whole batch — see `_orphaned.ts`.
-    const orphanScope = await resolveOrphanScope(storage, visible);
-
     const decorated = visible.map((item) => {
-      const withOrphan = withOrphanState(item, orphanScope);
       const withEdges = edgesMap
-        ? { ...withOrphan, edges: edgesMap.get(item.id) ?? {} }
-        : withOrphan;
+        ? { ...item, edges: edgesMap.get(item.id) ?? {} }
+        : item;
       return extensionsMap
         ? { ...withEdges, extensions: extensionsMap.get(item.id) ?? {} }
         : withEdges;

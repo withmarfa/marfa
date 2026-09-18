@@ -6,7 +6,6 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let ctx: TestContext;
@@ -71,8 +70,8 @@ describe("POST /items", () => {
   });
 
   it("rejects a null byte in a string property with a 400, never a 500", async () => {
-    // A U+0000 null byte cannot be stored in a Postgres TEXT column; without
-    // the validation-layer guard it reaches the driver and surfaces as a 500.
+    // A U+0000 null byte is refused at the validation layer; without the
+    // guard it reaches the driver and surfaces as a 500.
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "a\u0000b" } },
@@ -573,7 +572,6 @@ describe("POST /items — the operator gate", () => {
         is_operator: false,
       },
       hashApiKey(spaceKey, TEST_API_KEY_SALT),
-      "space-x",
     );
 
     const res = await request(ctx.app, "POST", "/items", {
@@ -629,125 +627,6 @@ describe("POST /items — the operator gate", () => {
     expect(body.error.message).toContain("system.connection");
   });
 
-  it("admits runtime credentials writing system.activity (carve-out for integration status reporting)", async () => {
-    // Runtime credentials are is_operator: false but is_runtime_credential:
-    // true and bound to a connection. The activity sink in runtime-sdk
-    // calls POST /items with type: "system.activity" to surface progress
-    // / errors — the carve-out keeps that path open while still blocking
-    // the dangerous system.* writes.
-    const runtimeKey = "marfa_k1_test_runtime_credential";
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: "runtime-cred",
-        source: "runtime-cred",
-        type_permissions: { "system.activity": "write" },
-        connection_id: "conn_test_carve_out",
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({
-          name: "conn_test_carve_out",
-        }),
-      },
-      hashApiKey(runtimeKey, TEST_API_KEY_SALT),
-      "space-x",
-    );
-
-    const activityRes = await request(ctx.app, "POST", "/items", {
-      key: runtimeKey,
-      body: {
-        type: "system.activity",
-        properties: {
-          severity: "info",
-          summary: "Sync run completed",
-          connection_id: "conn_test_carve_out",
-        },
-      },
-    });
-    expect(activityRes.status).toBe(201);
-
-    // Same credential is still blocked from writing system.connection —
-    // the carve-out is narrow.
-    const connectionRes = await request(ctx.app, "POST", "/items", {
-      key: runtimeKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          client_id: "x",
-          scopes: [],
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-    });
-    expect(connectionRes.status).toBe(403);
-  });
-
-  it("admits a runtime credential writing a marfa.* type its manifest granted verbatim", async () => {
-    // The platform's own integrations write items of marfa.* types on
-    // the user's behalf, and their credentials project each manifest
-    // target type as an exact literal. That literal opens the fence for
-    // precisely that type; everything else about the refusal stands.
-    const grantedKey = "marfa_k1_test_runtime_marfa_grant";
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: "runtime-marfa-grant",
-        source: "runtime-marfa-grant",
-        type_permissions: {
-          "system.activity": "write",
-          "marfa.captured_email": "write",
-        },
-        connection_id: "conn_test_marfa_grant",
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({
-          name: "conn_test_marfa_grant",
-        }),
-      },
-      hashApiKey(grantedKey, TEST_API_KEY_SALT),
-      "space-x",
-    );
-
-    const res = await request(ctx.app, "POST", "/items", {
-      key: grantedKey,
-      body: {
-        type: "marfa.captured_email",
-        properties: {
-          from_address: "sender@example.com",
-          to_address: "inbox@example.com",
-        },
-      },
-    });
-    expect(res.status).toBe(201);
-  });
-
-  it("refuses a wildcard grant at the marfa.* fence — only the exact literal qualifies", async () => {
-    const wildcardKey = "marfa_k1_test_runtime_marfa_wildcard";
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: "runtime-marfa-wildcard",
-        source: "runtime-marfa-wildcard",
-        type_permissions: { "system.activity": "write", "*": "write" },
-        connection_id: "conn_test_marfa_wildcard",
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({
-          name: "conn_test_marfa_wildcard",
-        }),
-      },
-      hashApiKey(wildcardKey, TEST_API_KEY_SALT),
-      "space-x",
-    );
-    const res = await request(ctx.app, "POST", "/items", {
-      key: wildcardKey,
-      body: {
-        type: "marfa.captured_email",
-        properties: {
-          from_address: "sender@example.com",
-          to_address: "inbox@example.com",
-        },
-      },
-    });
-    expect(res.status).toBe(403);
-  });
-
   it("refuses the same exact literal on a credential that is not runtime-minted", async () => {
     // The admit rides the manifest projection, and only runtime mints
     // project. A hand-minted key naming the literal does not
@@ -760,7 +639,6 @@ describe("POST /items — the operator gate", () => {
         type_permissions: { "marfa.captured_email": "write" },
       },
       hashApiKey(humanKey, TEST_API_KEY_SALT),
-      "space-x",
     );
     const res = await request(ctx.app, "POST", "/items", {
       key: humanKey,
@@ -769,41 +647,6 @@ describe("POST /items — the operator gate", () => {
         properties: {
           from_address: "sender@example.com",
           to_address: "inbox@example.com",
-        },
-      },
-    });
-    expect(res.status).toBe(403);
-  });
-
-  it("keeps system.* fully fenced even for an exact runtime grant", async () => {
-    const sysKey = "marfa_k1_test_runtime_system_literal";
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: "runtime-system-literal",
-        source: "runtime-system-literal",
-        type_permissions: {
-          "system.activity": "write",
-          "system.connection": "write",
-        },
-        connection_id: "conn_test_system_literal",
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({
-          name: "conn_test_system_literal",
-        }),
-      },
-      hashApiKey(sysKey, TEST_API_KEY_SALT),
-      "space-x",
-    );
-    const res = await request(ctx.app, "POST", "/items", {
-      key: sysKey,
-      body: {
-        type: "system.connection",
-        properties: {
-          kind: "app",
-          client_id: "x",
-          scopes: [],
-          status: "active",
-          granted_at: new Date().toISOString(),
         },
       },
     });
@@ -825,7 +668,6 @@ describe("POST /items — the operator gate", () => {
         is_operator: false,
       },
       hashApiKey(spaceReaderKey, TEST_API_KEY_SALT),
-      "space-x",
     );
     const res = await request(ctx.app, "GET", "/items?type=system.connection", {
       key: spaceReaderKey,
@@ -2895,13 +2737,10 @@ describe("GET /items?include=system", () => {
     // The system row goes in through the storage layer, because the reserved
     // namespace refuses a write to every credential. What this block is about
     // is who reads one back; the seed is not the claim.
-    const device = await ctx.storage.items.create(
-      {
-        type: "system.device",
-        properties: { name: `include-system-${marker}`, kind: "laptop" },
-      },
-      ctx.spaceId,
-    );
+    const device = await ctx.storage.items.create({
+      type: "system.device",
+      properties: { name: `include-system-${marker}`, kind: "laptop" },
+    });
     await ctx.storage.metadata.set(device.id, [`include-system-${marker}`]);
     return { noteId: noteItem.id, deviceId: device.id };
   }

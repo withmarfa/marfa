@@ -1,13 +1,9 @@
 /**
  * Integration provenance, and the two ways it used to collide.
  *
- * `(source, source_id)` is a natural key an integration re-syncs against,
- * and it was unique across the whole instance rather than per space. Two
- * spaces syncing the same integration against the same upstream record
- * are two corpora, not one, so the second space's write failed on a row
- * it cannot see, does not own, and has no way to reach.
+ * `(source, source_id)` is a natural key an integration re-syncs against.
  *
- * The second collision is with the user rather than another space: a
+ * The other collision is with the user: a
  * mirror they trashed refused every later re-sync, permanently, because
  * two dedup checks on the same write path disagreed about state.
  */
@@ -25,7 +21,7 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-/** A credential standing in for one space's integration runtime.
+/** A credential standing in for an integration runtime.
  *  The real provenance prefix (`integration:`) is reserved to the install
  *  pipeline and refused by this route, which is a separate guard working
  *  as intended; the dedup behaviour under test does not depend on it. */
@@ -59,7 +55,7 @@ describe("provenance dedup is scoped, not instance-wide", () => {
     expect(second.status).toBe(201);
   });
 
-  it("still refuses a genuine duplicate within one source and space", async () => {
+  it("still refuses a genuine duplicate within one source", async () => {
     // The other direction. Loosening the index must not stop it deduping
     // what it exists to dedupe — a second create under the same natural
     // key resolves to the existing row rather than making a new one.
@@ -85,98 +81,21 @@ describe("provenance dedup is scoped, not instance-wide", () => {
   });
 });
 
-describe("the same upstream record in two spaces", () => {
-  it("is two corpora, not a collision", async () => {
-    // The defect proper, driven at the storage layer because it is the
-    // unique index that collides and the HTTP harness runs single-space.
-    // Two spaces sync the same integration against the same upstream id:
-    // the second space's write hit a unique violation on a row it cannot
-    // see, does not own, and has no way to reach — surfacing as a 500,
-    // because the create path's violation trap deliberately excludes this
-    // index and its own pre-check had already filtered the row away.
-    const shared = { source: "feed-shared", source_id: "upstream-shared" };
-    const inA = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { title: "space A's copy", body: "x" },
-        ...shared,
-      },
-      "space-a",
-    );
-    const inB = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { title: "space B's copy", body: "x" },
-        ...shared,
-      },
-      "space-b",
-    );
-    expect(inB.id).not.toBe(inA.id);
-
-    // Each space still resolves its own row by the natural key, which is
-    // what makes the re-sync land on the right corpus.
-    const backA = await ctx.storage.items.findBySourceId(
-      shared.source,
-      shared.source_id,
-      "space-a",
-    );
-    const backB = await ctx.storage.items.findBySourceId(
-      shared.source,
-      shared.source_id,
-      "space-b",
-    );
-    expect(backA?.id).toBe(inA.id);
-    expect(backB?.id).toBe(inB.id);
-  });
-
-  it("still refuses a duplicate inside one space", async () => {
+describe("the same upstream record", () => {
+  it("refuses a duplicate at the store", async () => {
     const shared = { source: "feed-inner", source_id: "upstream-inner" };
-    await ctx.storage.items.create(
-      { type: "core.note", properties: { title: "one", body: "x" }, ...shared },
-      "space-c",
-    );
+    await ctx.storage.items.create({
+      type: "core.note",
+      properties: { title: "one", body: "x" },
+      ...shared,
+    });
     await expect(
-      ctx.storage.items.create(
-        {
-          type: "core.note",
-          properties: { title: "two", body: "x" },
-          ...shared,
-        },
-        "space-c",
-      ),
+      ctx.storage.items.create({
+        type: "core.note",
+        properties: { title: "two", body: "x" },
+        ...shared,
+      }),
     ).rejects.toThrow(/already exists/);
-  });
-
-  it("dedupes a space-less caller against the null-space bucket, not every space", async () => {
-    // The pre-check's space predicate used to be conditional, so a caller
-    // with no space (the operator key) deduped
-    // against every space's rows. A space-less write must not collide
-    // with a row that belongs to a space.
-    const shared = { source: "feed-nullspace", source_id: "upstream-null" };
-    await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { title: "in a space", body: "x" },
-        ...shared,
-      },
-      "space-d",
-    );
-    const spaceless = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { title: "no space", body: "x" },
-        ...shared,
-      },
-      undefined,
-    );
-    // Two distinct rows: the space-less write did not collide with, or
-    // resolve to, the row that belongs to a space.
-    const inSpace = await ctx.storage.items.findBySourceId(
-      shared.source,
-      shared.source_id,
-      "space-d",
-    );
-    expect(inSpace?.id).not.toBe(spaceless.id);
   });
 });
 
@@ -225,7 +144,6 @@ describe("a mirror the user trashed", () => {
     const stored = await ctx.storage.items.findBySourceIdIncludingTrashed(
       "feed-trash",
       "upstream-trashed",
-      undefined,
     );
     expect(stored?.id).toBe(id);
     expect(stored?.state).toBe("trashed");

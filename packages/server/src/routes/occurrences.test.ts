@@ -197,6 +197,25 @@ describe("GET /occurrences", () => {
     expect([...starts].sort()).toEqual(starts);
   });
 
+  it("refuses the global wildcard and an unregistered type, as every other listing does", async () => {
+    const wildcard = await occurrences(
+      "2026-03-01T00:00:00Z",
+      "2026-03-08T00:00:00Z",
+      "&type=*",
+    );
+    expect(wildcard.status).toBe(400);
+
+    const res = await request(
+      ctx.app,
+      "GET",
+      "/occurrences?from=2026-03-01T00:00:00Z&to=2026-03-08T00:00:00Z&type=core.nothing_registered",
+      { key: memberKey },
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("unknown_type");
+  });
+
   it("refuses an inverted window", async () => {
     const { status } = await occurrences(
       "2026-06-10T00:00:00Z",

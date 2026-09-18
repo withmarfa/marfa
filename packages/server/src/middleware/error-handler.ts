@@ -134,7 +134,12 @@ export function createErrorHandler(config: {
       );
     }
 
+    // `request_id` is the join key to the access-log line for the same
+    // request, and the path and method say where it was.
     log("error", "Unhandled error", {
+      request_id: c.get("requestId"),
+      method: c.req.method,
+      path: c.req.path,
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });

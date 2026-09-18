@@ -73,10 +73,7 @@ function makeApp(storage: Storage, key: Partial<ApiKey> = {}): Hono<AppEnv> {
     } as unknown as ApiKey);
     await next();
   });
-  app.route(
-    "/events",
-    eventRoutes(storage, { rlsEnforce: false, pgClient: null }),
-  );
+  app.route("/events", eventRoutes(storage));
   return app;
 }
 
@@ -95,16 +92,15 @@ function gatedStorage(): { storage: Storage; open: () => void } {
     eventLog: {
       ...ctx.storage.eventLog,
       append: (entry) => ctx.storage.eventLog.append(entry),
-      getMinRetainedId: (spaceId) =>
-        ctx.storage.eventLog.getMinRetainedId(spaceId),
-      getMaxId: (spaceId) => ctx.storage.eventLog.getMaxId(spaceId),
-      cleanup: (hours, spaceId) => ctx.storage.eventLog.cleanup(hours, spaceId),
-      getAfter: (afterId, limit, spaceId) => {
+      getMinRetainedId: () => ctx.storage.eventLog.getMinRetainedId(),
+      getMaxId: () => ctx.storage.eventLog.getMaxId(),
+      cleanup: (hours) => ctx.storage.eventLog.cleanup(hours),
+      getAfter: (afterId, limit) => {
         if (firstRead) {
           firstRead = false;
           return gate;
         }
-        return ctx.storage.eventLog.getAfter(afterId, limit, spaceId);
+        return ctx.storage.eventLog.getAfter(afterId, limit);
       },
     },
   };
@@ -120,8 +116,6 @@ function emitNotes(count: number, tag: string): void {
         type: "core.note",
         properties: {},
       } as unknown as ItemEventWithId["item"],
-      originatingConnectionId: null,
-      hopCount: 0,
     });
   }
 }
@@ -136,8 +130,6 @@ function emitEdges(count: number, tag: string): void {
         source_id: "src",
         target_id: "tgt",
       } as unknown as EdgeEventWithId["edge"],
-      originatingConnectionId: null,
-      hopCount: 0,
     });
   }
 }
@@ -156,18 +148,22 @@ describe("a catch-up that throws partway through", () => {
   const CYCLE = ["cyc.alpha", "cyc.beta"] as const;
 
   beforeAll(() => {
-    registerTypeSchema(
-      { id: CYCLE[0], version: 1, parent: CYCLE[1], fields: {} },
-      ctx.spaceId,
-    );
-    registerTypeSchema(
-      { id: CYCLE[1], version: 1, parent: CYCLE[0], fields: {} },
-      ctx.spaceId,
-    );
+    registerTypeSchema({
+      id: CYCLE[0],
+      version: 1,
+      parent: CYCLE[1],
+      fields: {},
+    });
+    registerTypeSchema({
+      id: CYCLE[1],
+      version: 1,
+      parent: CYCLE[0],
+      fields: {},
+    });
   });
 
   afterAll(() => {
-    for (const id of CYCLE) unregisterTypeSchema(id, ctx.spaceId);
+    for (const id of CYCLE) unregisterTypeSchema(id);
   });
 
   it("tells the client and closes, instead of ending quietly", async () => {
@@ -189,7 +185,6 @@ describe("a catch-up that throws partway through", () => {
     const beforeId = await ctx.storage.eventLog.append({
       event_type: "created",
       item_id: "ZZbeforethrowZZ",
-      space_id: ctx.spaceId,
       payload: JSON.stringify({
         type: "item.created",
         item: { id: "ZZbeforethrowZZ", type: "core.note", properties: {} },
@@ -202,7 +197,6 @@ describe("a catch-up that throws partway through", () => {
     await ctx.storage.eventLog.append({
       event_type: "created",
       item_id: "ZZcyclicZZ",
-      space_id: ctx.spaceId,
       payload: JSON.stringify({
         type: "item.created",
         item: { id: "ZZcyclicZZ", type: CYCLE[0], properties: {} },
@@ -215,7 +209,6 @@ describe("a catch-up that throws partway through", () => {
     await ctx.storage.eventLog.append({
       event_type: "created",
       item_id: "ZZafterthrowZZ",
-      space_id: ctx.spaceId,
       payload: JSON.stringify({
         type: "item.created",
         item: { id: "ZZafterthrowZZ", type: "core.note", properties: {} },
@@ -372,8 +365,6 @@ describe("frames the subscriber would never receive", () => {
         type: "core.task",
         properties: {},
       } as unknown as ItemEventWithId["item"],
-      originatingConnectionId: null,
-      hopCount: 0,
     });
 
     const { text } = await readSse(res, {

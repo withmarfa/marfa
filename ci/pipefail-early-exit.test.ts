@@ -92,7 +92,7 @@ describe("a decision taken from a pipeline that can exit early", () => {
   it("finds the workflows, so an empty pass cannot be a missing directory", () => {
     // The control this file needs most: a glob matching nothing would report
     // every assertion below as satisfied.
-    expect(files.length).toBeGreaterThan(4);
+    expect(files.length).toBeGreaterThan(0);
   });
 
   it.each(files)("does not appear in %s", (file) => {

@@ -24,17 +24,11 @@ describe("test-context temp directory", () => {
   it("removes its directory when the build throws before returning one", async () => {
     // The directory is minted first and the cleanup closure is only handed
     // back on success, so a throw in between leaves nothing holding a
-    // reference to it. Both dialect entry points are stubbed so the case is
-    // reached whichever lane this runs in.
+    // reference to it.
     vi.resetModules();
     const boom = new Error("storage unavailable");
     vi.doMock("./storage/sqlite/index.js", () => ({
       createSqliteStorage: () => {
-        throw boom;
-      },
-    }));
-    vi.doMock("./storage/pg/test-template.js", () => ({
-      cloneTemplate: () => {
         throw boom;
       },
     }));
@@ -59,7 +53,6 @@ describe("test-context temp directory", () => {
     } finally {
       vi.doUnmock("node:fs");
       vi.doUnmock("./storage/sqlite/index.js");
-      vi.doUnmock("./storage/pg/test-template.js");
       vi.resetModules();
       for (const dir of created) {
         realFs.rmSync(dir, { recursive: true, force: true });

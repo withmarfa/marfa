@@ -23,7 +23,7 @@ const ORIGIN = "http://localhost:0";
 
 describe("GET /auth/oauth2/end-session", () => {
   it("passes a real plugin response through rather than swallowing it", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     // No id_token_hint, so the plugin refuses before it reaches a session.
     // The point is that the refusal survives: a wrapper that rendered its own
     // page on anything non-redirecting would report a completed sign-out for

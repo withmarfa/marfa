@@ -65,13 +65,7 @@ function sweeper(
 async function seedBlob(bytes: Buffer, mimeType: string): Promise<string> {
   const ref = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
   await ctx.blobBackend.put(ref, bytes, mimeType);
-  await ctx.storage.blobs.register(
-    ref,
-    mimeType,
-    bytes.length,
-    ref,
-    ctx.spaceId,
-  );
+  await ctx.storage.blobs.register(ref, mimeType, bytes.length, ref);
   return ref;
 }
 

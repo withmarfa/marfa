@@ -81,12 +81,6 @@ async function newContext(): Promise<TestContext> {
   return ctx;
 }
 
-async function newHostedContext(): Promise<TestContext> {
-  const ctx = await createTestContext({ authMode: "hosted" });
-  contexts.push(ctx);
-  return ctx;
-}
-
 afterAll(async () => {
   await closeTestContexts(contexts);
 });
@@ -98,107 +92,74 @@ function uniqueSuffix(): string {
   return `${String(counter)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/**
- * Export one space as an archive, through that space's own working key.
- *
- * `target_space_id` has to name the caller's own space: naming any other is
- * refused, and only the operator key may name a foreign one, which reads no
- * content and would export an empty archive. So every source space here is
- * the context's own.
- */
-async function exportArchive(ctx: TestContext, space: string): Promise<Buffer> {
-  const res = await request(
-    ctx.app,
-    "GET",
-    `/export?format=archive&target_space_id=${space}`,
-    { key: ctx.spaceKey },
-  );
+/** Export the instance as an archive, through the working key. */
+async function exportArchive(ctx: TestContext): Promise<Buffer> {
+  const res = await request(ctx.app, "GET", `/export?format=archive`, {
+    key: ctx.spaceKey,
+  });
   expect(res.status).toBe(200);
   return Buffer.from(await res.arrayBuffer());
 }
 
 /** Restore an archive. `/admin/restore-archive` is an operator route, so it
- *  takes the operator key and no space credential reaches it. */
-async function restore(
-  ctx: TestContext,
-  space: string,
-  archive: Buffer,
-): Promise<Response> {
-  return await ctx.app.request(
-    `/admin/restore-archive?target_space_id=${space}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${ctx.operatorKey}`,
-        "Content-Type": "application/gzip",
-      },
-      body: archive,
+ *  takes the operator key and no working credential reaches it. */
+async function restore(ctx: TestContext, archive: Buffer): Promise<Response> {
+  return await ctx.app.request(`/admin/restore-archive`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${ctx.operatorKey}`,
+      "Content-Type": "application/gzip",
     },
-  );
+    body: archive,
+  });
 }
 
 describe("archives carry custom type registrations", () => {
   it("round-trips a space whose items use its own types", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const suffix = uniqueSuffix();
     const typeId = `user.recipe_${suffix}`;
     const edgeTypeId = `user.cooked-with-${suffix}`;
 
-    await source.storage.types.create(
-      {
-        id: typeId,
-        label: "Recipe",
-        description: "A recipe.",
-        version: 1,
-        fields: {
-          title: { type: "string", required: true, description: "Name." },
-          servings: { type: "number", description: "How many it feeds." },
-        },
+    await source.storage.types.create({
+      id: typeId,
+      label: "Recipe",
+      description: "A recipe.",
+      version: 1,
+      fields: {
+        title: { type: "string", required: true, description: "Name." },
+        servings: { type: "number", description: "How many it feeds." },
       },
-      space,
-    );
-    await source.storage.edgeTypes.create(
-      {
-        id: edgeTypeId,
-        cardinality: "many-to-many",
-        source_type_constraints: ["*"],
-        target_type_constraints: ["*"],
-        cascade_on_delete: "orphan",
-        property_schema: {},
-      },
-      space,
-    );
+    });
+    await source.storage.edgeTypes.create({
+      id: edgeTypeId,
+      cardinality: "many-to-many",
+      source_type_constraints: ["*"],
+      target_type_constraints: ["*"],
+      cascade_on_delete: "orphan",
+      property_schema: {},
+    });
 
-    const recipe = await source.storage.items.create(
-      {
-        type: typeId,
-        properties: { title: "Soup", servings: 4 },
-        source: "at-seed",
-        source_id: "r1",
-      },
-      space,
-    );
-    const note = await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "made this" },
-        source: "at-seed",
-        source_id: "n1",
-      },
-      space,
-    );
-    await source.storage.edges.createRaw(
-      {
-        source_id: note.id,
-        target_id: recipe.id,
-        edge_type: edgeTypeId,
-      },
-      space,
-    );
+    const recipe = await source.storage.items.create({
+      type: typeId,
+      properties: { title: "Soup", servings: 4 },
+      source: "at-seed",
+      source_id: "r1",
+    });
+    const note = await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "made this" },
+      source: "at-seed",
+      source_id: "n1",
+    });
+    await source.storage.edges.createRaw({
+      source_id: note.id,
+      target_id: recipe.id,
+      edge_type: edgeTypeId,
+    });
 
-    const archive = await exportArchive(source, space);
+    const archive = await exportArchive(source);
     const entries = await extractArchive(archive);
     expect(entries.has("types.ndjson")).toBe(true);
     const manifest = JSON.parse(entries.get("manifest.json")!.toString()) as {
@@ -208,7 +169,7 @@ describe("archives carry custom type registrations", () => {
     expect(manifest.custom_type_count).toBe(1);
     expect(manifest.custom_edge_type_count).toBe(1);
 
-    const res = await restore(destination, space, archive);
+    const res = await restore(destination, archive);
     expect(
       res.status,
       `restore -> ${String(res.status)}: ${await res.clone().text()}`,
@@ -219,13 +180,11 @@ describe("archives carry custom type registrations", () => {
     // The item of the custom type landed, which is what used to fail.
     expect(result.imported).toBe(2);
 
-    const restored = await destination.storage.items.get(recipe.id, space);
+    const restored = await destination.storage.items.get(recipe.id);
     expect(restored?.type).toBe(typeId);
     expect(restored?.properties).toEqual({ title: "Soup", servings: 4 });
 
-    const restoredEdges = await destination.storage.edges.list({
-      spaceId: space,
-    });
+    const restoredEdges = await destination.storage.edges.list({});
     expect(restoredEdges.data).toHaveLength(1);
     expect(restoredEdges.data[0]?.edge_type).toBe(edgeTypeId);
 
@@ -234,59 +193,49 @@ describe("archives carry custom type registrations", () => {
     // registry itself: it is a process-level singleton that both contexts
     // share, so it would answer for the source's registration whatever
     // the restore did. The rows are the part this test can actually own.
-    const destTypes = await destination.storage.types.listCustom(space);
+    const destTypes = await destination.storage.types.listCustom();
     expect(destTypes.map((s) => s.id)).toContain(typeId);
-    const destEdgeTypes = await destination.storage.edgeTypes.list(space);
+    const destEdgeTypes = await destination.storage.edgeTypes.list();
     expect(destEdgeTypes.map((s) => s.id)).toContain(edgeTypeId);
   });
 
   it("restores a subtype whose parent is in the same archive", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const suffix = uniqueSuffix();
     const parentId = `user.doc_${suffix}`;
     const childId = `user.doc_${suffix}.signed`;
 
     // Registered child-first so the archive lists it before its parent
     // only if ordering is incidental; the restore must not depend on it.
-    await source.storage.types.create(
-      {
-        id: parentId,
-        label: "Doc",
-        description: "A document.",
-        version: 1,
-        fields: {
-          title: { type: "string", required: true, description: "Name." },
-        },
+    await source.storage.types.create({
+      id: parentId,
+      label: "Doc",
+      description: "A document.",
+      version: 1,
+      fields: {
+        title: { type: "string", required: true, description: "Name." },
       },
-      space,
-    );
-    await source.storage.types.create(
-      {
-        id: childId,
-        label: "Signed doc",
-        description: "A signed document.",
-        parent: parentId,
-        version: 1,
-        fields: {
-          title: { type: "string", required: true, description: "Name." },
-          signed_by: { type: "string", description: "Who signed." },
-        },
+    });
+    await source.storage.types.create({
+      id: childId,
+      label: "Signed doc",
+      description: "A signed document.",
+      parent: parentId,
+      version: 1,
+      fields: {
+        title: { type: "string", required: true, description: "Name." },
+        signed_by: { type: "string", description: "Who signed." },
       },
-      space,
-    );
-    await source.storage.items.create(
-      {
-        type: childId,
-        properties: { title: "Lease", signed_by: "someone" },
-        source: "at-p",
-        source_id: "d1",
-      },
-      space,
-    );
+    });
+    await source.storage.items.create({
+      type: childId,
+      properties: { title: "Lease", signed_by: "someone" },
+      source: "at-p",
+      source_id: "d1",
+    });
 
-    const archive = await exportArchive(source, space);
+    const archive = await exportArchive(source);
     // Reverse the type lines so the child is offered before its parent.
     const entries = await extractArchive(archive);
     const lines = entries
@@ -299,7 +248,7 @@ describe("archives carry custom type registrations", () => {
       "types.ndjson": lines.join("\n") + "\n",
     });
 
-    const res = await restore(destination, space, reordered);
+    const res = await restore(destination, reordered);
     expect(
       res.status,
       `restore -> ${String(res.status)}: ${await res.clone().text()}`,
@@ -312,40 +261,33 @@ describe("archives carry custom type registrations", () => {
   it("re-restoring skips the registrations it already made", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const typeId = `user.repeat_${uniqueSuffix()}`;
 
-    await source.storage.types.create(
-      {
-        id: typeId,
-        label: "Repeat",
-        description: "Registered twice on purpose.",
-        version: 1,
-        fields: {
-          title: { type: "string", required: true, description: "Name." },
-        },
+    await source.storage.types.create({
+      id: typeId,
+      label: "Repeat",
+      description: "Registered twice on purpose.",
+      version: 1,
+      fields: {
+        title: { type: "string", required: true, description: "Name." },
       },
-      space,
-    );
-    await source.storage.items.create(
-      {
-        type: typeId,
-        properties: { title: "once" },
-        source: "at-r",
-        source_id: "x1",
-      },
-      space,
-    );
+    });
+    await source.storage.items.create({
+      type: typeId,
+      properties: { title: "once" },
+      source: "at-r",
+      source_id: "x1",
+    });
 
-    const archive = await exportArchive(source, space);
+    const archive = await exportArchive(source);
     const first = (await (
-      await restore(destination, space, archive)
+      await restore(destination, archive)
     ).json()) as RestoreResult;
     expect(first.custom_types_registered).toBe(1);
     expect(first.custom_types_skipped).toBe(0);
 
     const second = (await (
-      await restore(destination, space, archive)
+      await restore(destination, archive)
     ).json()) as RestoreResult;
     expect(second.custom_types_registered).toBe(0);
     expect(second.custom_types_skipped).toBe(1);
@@ -354,7 +296,6 @@ describe("archives carry custom type registrations", () => {
   it("refuses an archive that redefines a type the space already holds", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const typeId = `user.clash_${uniqueSuffix()}`;
 
     const schema = {
@@ -366,34 +307,28 @@ describe("archives carry custom type registrations", () => {
         title: { type: "string" as const, required: true, description: "T." },
       },
     };
-    await source.storage.types.create(schema, space);
-    await source.storage.items.create(
-      {
-        type: typeId,
-        properties: { title: "from source" },
-        source: "at-c",
-        source_id: "c1",
-      },
-      space,
-    );
+    await source.storage.types.create(schema);
+    await source.storage.items.create({
+      type: typeId,
+      properties: { title: "from source" },
+      source: "at-c",
+      source_id: "c1",
+    });
     // The destination already holds the same id with a different shape.
-    await destination.storage.types.create(
-      {
-        ...schema,
-        description: "A different reading of the same name.",
-        fields: {
-          headline: {
-            type: "string" as const,
-            required: true,
-            description: "H.",
-          },
+    await destination.storage.types.create({
+      ...schema,
+      description: "A different reading of the same name.",
+      fields: {
+        headline: {
+          type: "string" as const,
+          required: true,
+          description: "H.",
         },
       },
-      space,
-    );
+    });
 
-    const archive = await exportArchive(source, space);
-    const res = await restore(destination, space, archive);
+    const archive = await exportArchive(source);
+    const res = await restore(destination, archive);
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
       error: { code: string; details?: { conflicting_ids?: string[] } };
@@ -402,25 +337,21 @@ describe("archives carry custom type registrations", () => {
     expect(body.error.details?.conflicting_ids).toContain(typeId);
 
     // Refused before anything was written: the item did not land.
-    const items = await destination.storage.items.list({ spaceId: space });
+    const items = await destination.storage.items.list({});
     expect(items.data).toHaveLength(0);
   });
 
   it("refuses an archive claiming a reserved namespace", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
-    await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "innocent" },
-        source: "at-e",
-        source_id: "e1",
-      },
-      space,
-    );
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-e",
+      source_id: "e1",
+    });
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const tampered = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
@@ -436,7 +367,7 @@ describe("archives carry custom type registrations", () => {
         }) + "\n",
     });
 
-    const res = await restore(destination, space, tampered);
+    const res = await restore(destination, tampered);
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("forbidden");
@@ -445,18 +376,14 @@ describe("archives carry custom type registrations", () => {
   it("refuses an archive carrying a malformed type", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
-    await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "innocent" },
-        source: "at-m",
-        source_id: "m1",
-      },
-      space,
-    );
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-m",
+      source_id: "m1",
+    });
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const tampered = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
@@ -472,9 +399,9 @@ describe("archives carry custom type registrations", () => {
         }) + "\n",
     });
 
-    const res = await restore(destination, space, tampered);
+    const res = await restore(destination, tampered);
     expect(res.status).toBe(400);
-    const items = await destination.storage.items.list({ spaceId: space });
+    const items = await destination.storage.items.list({});
     expect(items.data).toHaveLength(0);
   });
 
@@ -495,16 +422,12 @@ describe("archives carry custom type registrations", () => {
     // own, and the cases for these two messages belong with either fix.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
-    await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "innocent" },
-        source: "at-d",
-        source_id: "d1",
-      },
-      space,
-    );
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-d",
+      source_id: "d1",
+    });
 
     // Eleven ancestors above the last entry, one past the cap.
     const suffix = uniqueSuffix();
@@ -522,10 +445,10 @@ describe("archives carry custom type registrations", () => {
       }),
     ).join("\n");
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const tampered = await repack(entries, { "types.ndjson": chain + "\n" });
 
-    const res = await restore(destination, space, tampered);
+    const res = await restore(destination, tampered);
     expect(res.status).toBe(400);
     const payload = (await res.json()) as { error: { message: string } };
     expect(payload.error.message).toBe(
@@ -536,18 +459,14 @@ describe("archives carry custom type registrations", () => {
   it("refuses an archive redefining a core edge type", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
-    await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "innocent" },
-        source: "at-ce",
-        source_id: "ce1",
-      },
-      space,
-    );
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "innocent" },
+      source: "at-ce",
+      source_id: "ce1",
+    });
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const tampered = await repack(entries, {
       "types.ndjson":
         JSON.stringify({
@@ -555,29 +474,25 @@ describe("archives carry custom type registrations", () => {
         }) + "\n",
     });
 
-    const res = await restore(destination, space, tampered);
+    const res = await restore(destination, tampered);
     expect(res.status).toBe(409);
   });
 
   it("restores an archive that predates the types member", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
-    await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "from an older exporter" },
-        source: "at-o",
-        source_id: "o1",
-      },
-      space,
-    );
+    await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "from an older exporter" },
+      source: "at-o",
+      source_id: "o1",
+    });
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     entries.delete("types.ndjson");
     const older = await repack(entries, {});
 
-    const res = await restore(destination, space, older);
+    const res = await restore(destination, older);
     expect(res.status).toBe(200);
     const result = (await res.json()) as RestoreResult;
     expect(result.imported).toBe(1);
@@ -595,10 +510,9 @@ describe("an archive carries where a type came from", () => {
   /** The provenance the destination actually stored for one type id. */
   async function storedOrigin(
     ctx: TestContext,
-    space: string,
     typeId: string,
   ): Promise<string | undefined> {
-    const rows = await ctx.storage.types.listCustomWithProvenance(space);
+    const rows = await ctx.storage.types.listCustomWithProvenance();
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
 
@@ -610,22 +524,20 @@ describe("an archive carries where a type came from", () => {
     // first-party operation described to them as a restore.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const typeId = `acme.widget_${uniqueSuffix()}`;
 
-    await source.storage.types.create({ id: typeId, ...baseType }, space, {
-      origin: "integration",
-      family: "integration",
-      owner_integration: "acme/widgets",
-    });
-
-    const res = await restore(
-      destination,
-      space,
-      await exportArchive(source, space),
+    await source.storage.types.create(
+      { id: typeId, ...baseType },
+      {
+        origin: "integration",
+        family: "integration",
+        owner_integration: "acme/widgets",
+      },
     );
+
+    const res = await restore(destination, await exportArchive(source));
     expect(res.status).toBe(200);
-    expect(await storedOrigin(destination, space, typeId)).toBe("integration");
+    expect(await storedOrigin(destination, typeId)).toBe("integration");
   });
 
   it("records an archive with no provenance as unrecorded", async () => {
@@ -635,14 +547,16 @@ describe("an archive carries where a type came from", () => {
     // guessing, and guessing defaulted to the permissive side.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const typeId = `salvage.record_${uniqueSuffix()}`;
 
-    await source.storage.types.create({ id: typeId, ...baseType }, space, {
-      origin: "user",
-    });
+    await source.storage.types.create(
+      { id: typeId, ...baseType },
+      {
+        origin: "user",
+      },
+    );
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const stripped = (entries.get("types.ndjson")?.toString() ?? "")
       .split("\n")
       .filter((l) => l.trim().length > 0)
@@ -655,11 +569,10 @@ describe("an archive carries where a type came from", () => {
 
     const res = await restore(
       destination,
-      space,
       await repack(entries, { "types.ndjson": stripped + "\n" }),
     );
     expect(res.status).toBe(200);
-    expect(await storedOrigin(destination, space, typeId)).toBe("unknown");
+    expect(await storedOrigin(destination, typeId)).toBe("unknown");
   });
 
   it("records an origin this build does not recognize as unrecorded", async () => {
@@ -670,14 +583,16 @@ describe("an archive carries where a type came from", () => {
     // read-only treatment an archive with nothing recorded gets.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const typeId = `salvage.future_${uniqueSuffix()}`;
 
-    await source.storage.types.create({ id: typeId, ...baseType }, space, {
-      origin: "user",
-    });
+    await source.storage.types.create(
+      { id: typeId, ...baseType },
+      {
+        origin: "user",
+      },
+    );
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const tampered = (entries.get("types.ndjson")?.toString() ?? "")
       .split("\n")
       .filter((l) => l.trim().length > 0)
@@ -692,11 +607,10 @@ describe("an archive carries where a type came from", () => {
 
     const res = await restore(
       destination,
-      space,
       await repack(entries, { "types.ndjson": tampered + "\n" }),
     );
     expect(res.status).toBe(200);
-    expect(await storedOrigin(destination, space, typeId)).toBe("unknown");
+    expect(await storedOrigin(destination, typeId)).toBe("unknown");
   });
 
   it("refuses an archive claiming a type is platform-shipped", async () => {
@@ -709,15 +623,13 @@ describe("an archive carries where a type came from", () => {
     // worth refusing rather than downgrading.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
 
     await source.storage.types.create(
       { id: `acme.sneak_${uniqueSuffix()}`, ...baseType },
-      space,
       { origin: "user" },
     );
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const tampered = (entries.get("types.ndjson")?.toString() ?? "")
       .split("\n")
       .filter((l) => l.trim().length > 0)
@@ -730,7 +642,6 @@ describe("an archive carries where a type came from", () => {
 
     const res = await restore(
       destination,
-      space,
       await repack(entries, { "types.ndjson": tampered + "\n" }),
     );
     expect(res.status).toBe(403);
@@ -746,15 +657,13 @@ describe("an archive carries where a type came from", () => {
     // claiming to be part of the build.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
 
     await source.storage.types.create(
       { id: `acme.family_${uniqueSuffix()}`, ...baseType },
-      space,
       { origin: "user" },
     );
 
-    const entries = await extractArchive(await exportArchive(source, space));
+    const entries = await extractArchive(await exportArchive(source));
     const tampered = (entries.get("types.ndjson")?.toString() ?? "")
       .split("\n")
       .filter((l) => l.trim().length > 0)
@@ -769,7 +678,6 @@ describe("an archive carries where a type came from", () => {
 
     const res = await restore(
       destination,
-      space,
       await repack(entries, { "types.ndjson": tampered + "\n" }),
     );
     expect(res.status).toBe(403);
@@ -797,23 +705,18 @@ describe("a claimed `user` origin is checked against the handle", () => {
    */
   async function archiveClaiming(
     source: TestContext,
-    space: string,
     seedTypeId: string,
     typeId: string,
     provenance: Record<string, unknown>,
   ): Promise<Buffer> {
     await source.storage.types.create(
       { id: seedTypeId, ...baseType },
-      source.spaceId,
       { origin: "user" },
     );
-    const entries = await extractArchive(
-      await exportArchive(source, source.spaceId),
-    );
+    const entries = await extractArchive(await exportArchive(source));
     const manifest = JSON.parse(
       entries.get("manifest.json")!.toString(),
     ) as Record<string, unknown>;
-    manifest.space_id = space;
     const line =
       JSON.stringify({
         custom_type: { id: typeId, ...baseType },
@@ -827,73 +730,11 @@ describe("a claimed `user` origin is checked against the handle", () => {
 
   async function storedOriginOf(
     ctx: TestContext,
-    space: string,
     typeId: string,
   ): Promise<string | undefined> {
-    const rows = await ctx.storage.types.listCustomWithProvenance(space);
+    const rows = await ctx.storage.types.listCustomWithProvenance();
     return rows.find((r) => r.schema.id === typeId)?.origin;
   }
-
-  it("degrades the claim when the space does not hold the handle", async () => {
-    // `POST /types` binds publisher-tier registration to owning the
-    // handle. This path never had that check, and `user` is the value
-    // that earns a write wildcard over the whole root, so honoring the
-    // claim unchecked would sell through a restore what that route sells
-    // only to the handle's owner.
-    const source = await newContext();
-    const destination = await newHostedContext();
-    const suffix = uniqueSuffix();
-    const typeId = `acme_${suffix}.shim`;
-
-    // The users table has a foreign key onto spaces, so the space has to
-    // be a real row rather than an arbitrary identifier.
-    const space = (await destination.storage.spaces!.create("hnd-none")).id;
-    await destination.storage.users!.create({
-      provider: "test",
-      provider_id: `p-${suffix}`,
-      space_id: space,
-      handle: `someoneelse${suffix}`,
-    });
-
-    const archive = await archiveClaiming(
-      source,
-      space,
-      `user.seed_${suffix}`,
-      typeId,
-      { origin: "user" },
-    );
-    const res = await restore(destination, space, archive);
-    expect(res.status).toBe(200);
-    expect(await storedOriginOf(destination, space, typeId)).toBe("unknown");
-  });
-
-  it("honors the claim when the space does hold the handle", async () => {
-    // The other half, so the check cannot pass by refusing everything.
-    const source = await newContext();
-    const destination = await newHostedContext();
-    const suffix = uniqueSuffix();
-    const handle = `acme_${suffix}`;
-    const typeId = `${handle}.shim`;
-
-    const space = (await destination.storage.spaces!.create("hnd-held")).id;
-    await destination.storage.users!.create({
-      provider: "test",
-      provider_id: `p-${suffix}`,
-      space_id: space,
-      handle,
-    });
-
-    const archive = await archiveClaiming(
-      source,
-      space,
-      `user.seed_${suffix}`,
-      typeId,
-      { origin: "user" },
-    );
-    const res = await restore(destination, space, archive);
-    expect(res.status).toBe(200);
-    expect(await storedOriginOf(destination, space, typeId)).toBe("user");
-  });
 
   it("refuses an archive claiming the system family", async () => {
     // The sibling of the `core` case. Both values are named in the
@@ -901,17 +742,15 @@ describe("a claimed `user` origin is checked against the handle", () => {
     // the suite staying green.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const suffix = uniqueSuffix();
 
     const archive = await archiveClaiming(
       source,
-      space,
       `user.seed_${suffix}`,
       `acme_${suffix}.thing`,
       { origin: "user", family: "system" },
     );
-    const res = await restore(destination, space, archive);
+    const res = await restore(destination, archive);
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("forbidden");
@@ -923,26 +762,25 @@ describe("a claimed `user` origin is checked against the handle", () => {
     // a row an integration had claimed back to `unknown`.
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
     const suffix = uniqueSuffix();
     const typeId = `acme_${suffix}.widget`;
 
-    await destination.storage.types.create({ id: typeId, ...baseType }, space, {
-      origin: "integration",
-      family: "integration",
-    });
+    await destination.storage.types.create(
+      { id: typeId, ...baseType },
+      {
+        origin: "integration",
+        family: "integration",
+      },
+    );
 
     const archive = await archiveClaiming(
       source,
-      space,
       `user.seed_${suffix}`,
       typeId,
       { origin: "user" },
     );
-    const res = await restore(destination, space, archive);
+    const res = await restore(destination, archive);
     expect(res.status).toBe(200);
-    expect(await storedOriginOf(destination, space, typeId)).toBe(
-      "integration",
-    );
+    expect(await storedOriginOf(destination, typeId)).toBe("integration");
   });
 });

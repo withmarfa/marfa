@@ -95,65 +95,49 @@ describe("export → restore round trip", () => {
   it("reproduces items, ids, tags, extensions, and edges on a fresh database", async () => {
     const source = await newContext();
     const destination = await newContext();
-    // The exporting credential's own space. An export is a list read, so it
-    // is fenced to the caller's space and narrowed by the caller's type
-    // permissions; content anywhere else is content the archive would not
-    // carry.
-    const space = source.spaceId;
 
-    const note1 = await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { title: "First", body: "carries tags and an extension" },
-        source: "rt-seed",
-        source_id: "n1",
-        tier: "feed",
-        timestamp: "2026-01-01T00:00:00.000Z",
-        tags: ["alpha", "beta"],
-      },
-      space,
-    );
-    const note2 = await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { title: "Second", body: "archived on purpose" },
-        source: "rt-seed",
-        source_id: "n2",
-        state: "archived",
-      },
-      space,
-    );
-    const note3 = await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { title: "Third", body: "plain" },
-        source: "rt-seed",
-        source_id: "n3",
-      },
-      space,
-    );
+    const note1 = await source.storage.items.create({
+      type: "core.note",
+      properties: { title: "First", body: "carries tags and an extension" },
+      source: "rt-seed",
+      source_id: "n1",
+      tier: "feed",
+      timestamp: "2026-01-01T00:00:00.000Z",
+      tags: ["alpha", "beta"],
+    });
+    const note2 = await source.storage.items.create({
+      type: "core.note",
+      properties: { title: "Second", body: "archived on purpose" },
+      source: "rt-seed",
+      source_id: "n2",
+      state: "archived",
+    });
+    const note3 = await source.storage.items.create({
+      type: "core.note",
+      properties: { title: "Third", body: "plain" },
+      source: "rt-seed",
+      source_id: "n3",
+    });
     await source.storage.metadata.setExtension(note1.id, "roundtrip.test", {
       checked: true,
       label: "kept",
     });
-    const edge1 = await source.storage.edges.createRaw(
-      {
-        source_id: note1.id,
-        target_id: note2.id,
-        edge_type: "references",
-        properties: { context: "see also" },
-      },
-      space,
-    );
-    const edge2 = await source.storage.edges.createRaw(
-      { source_id: note3.id, target_id: note1.id, edge_type: "references" },
-      space,
-    );
+    const edge1 = await source.storage.edges.createRaw({
+      source_id: note1.id,
+      target_id: note2.id,
+      edge_type: "references",
+      properties: { context: "see also" },
+    });
+    const edge2 = await source.storage.edges.createRaw({
+      source_id: note3.id,
+      target_id: note1.id,
+      edge_type: "references",
+    });
 
     const exportRes = await request(
       source.app,
       "GET",
-      `/export?format=archive&target_space_id=${space}`,
+      `/export?format=archive`,
       { key: source.spaceKey },
     );
     expect(exportRes.status).toBe(200);
@@ -170,17 +154,14 @@ describe("export → restore round trip", () => {
 
     // Restore is an operator route, and the operator key is space-less, so
     // the space the archive came from is named rather than inferred.
-    const restoreRes = await destination.app.request(
-      `/admin/restore-archive?target_space_id=${space}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${destination.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: archive,
+    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${destination.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: archive,
+    });
     expect(restoreRes.status).toBe(200);
     const result = (await restoreRes.json()) as RestoreResult;
     expect(result.imported).toBe(3);
@@ -193,7 +174,7 @@ describe("export → restore round trip", () => {
     // deliberately not compared; `version` is carried, and is covered by
     // archive-restore-version.test.ts rather than here.
     for (const original of [note1, note2, note3]) {
-      const restored = await destination.storage.items.get(original.id, space);
+      const restored = await destination.storage.items.get(original.id);
       expect(restored, `item ${original.source_id ?? original.id}`).not.toBe(
         null,
       );
@@ -213,9 +194,7 @@ describe("export → restore round trip", () => {
       label: "kept",
     });
 
-    const restoredEdges = await destination.storage.edges.list({
-      spaceId: space,
-    });
+    const restoredEdges = await destination.storage.edges.list({});
     expect(restoredEdges.data).toHaveLength(2);
     const byId = new Map(restoredEdges.data.map((e) => [e.id, e]));
     const r1 = byId.get(edge1.id);
@@ -230,42 +209,36 @@ describe("export → restore round trip", () => {
 
   it("re-restoring the same archive changes nothing and counts duplicates", async () => {
     const source = await newContext();
-    const space = source.spaceId;
 
-    const a = await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "a" },
-        source: "rt2",
-        source_id: "a",
-        tags: ["keep"],
-      },
-      space,
-    );
-    const b = await source.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "b" },
-        source: "rt2",
-        source_id: "b",
-      },
-      space,
-    );
-    await source.storage.edges.createRaw(
-      { source_id: a.id, target_id: b.id, edge_type: "references" },
-      space,
-    );
+    const a = await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "a" },
+      source: "rt2",
+      source_id: "a",
+      tags: ["keep"],
+    });
+    const b = await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "b" },
+      source: "rt2",
+      source_id: "b",
+    });
+    await source.storage.edges.createRaw({
+      source_id: a.id,
+      target_id: b.id,
+      edge_type: "references",
+    });
 
     const exportRes = await request(
       source.app,
       "GET",
-      `/export?format=archive&target_space_id=${space}`,
+      `/export?format=archive`,
       { key: source.spaceKey },
     );
     const archive = Buffer.from(await exportRes.arrayBuffer());
 
     const restore = () =>
-      source.app.request(`/admin/restore-archive?target_space_id=${space}`, {
+      source.app.request(`/admin/restore-archive`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${source.operatorKey}`,
@@ -284,7 +257,7 @@ describe("export → restore round trip", () => {
     expect(result.edges_imported).toBe(0);
     expect(result.edges_skipped).toBe(1);
 
-    const edges = await source.storage.edges.list({ spaceId: space });
+    const edges = await source.storage.edges.list({});
     expect(edges.data).toHaveLength(1);
     const meta = await source.storage.metadata.get(a.id);
     expect(meta.tags).toEqual(["keep"]);
@@ -292,7 +265,6 @@ describe("export → restore round trip", () => {
 
   it("skips and counts edges whose endpoints the archive does not carry", async () => {
     const ctx = await newContext();
-    const space = `t-rt3-${Math.random().toString(36).slice(2, 10)}`;
 
     const itemId = "01912345-0000-7000-8000-000000000001";
     const missingId = "01912345-0000-7000-8000-00000000dead";
@@ -301,7 +273,6 @@ describe("export → restore round trip", () => {
         version: 1,
         format: "marfa-archive-v1",
         created_at: new Date().toISOString(),
-        space_id: space,
         item_count: 1,
         edge_count: 1,
         blob_count: 0,
@@ -331,53 +302,44 @@ describe("export → restore round trip", () => {
       ],
     );
 
-    const res = await ctx.app.request(
-      `/admin/restore-archive?target_space_id=${space}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${ctx.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: archive,
+    const res = await ctx.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${ctx.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: archive,
+    });
     expect(res.status).toBe(200);
     const result = (await res.json()) as RestoreResult;
     expect(result.imported).toBe(1);
     expect(result.edges_imported).toBe(0);
     expect(result.edges_skipped).toBe(1);
 
-    const edges = await ctx.storage.edges.list({ spaceId: space });
+    const edges = await ctx.storage.edges.list({});
     expect(edges.data).toHaveLength(0);
   });
 
   it("emits only edges whose endpoints are both inside a filtered export", async () => {
     const ctx = await newContext();
-    const space = ctx.spaceId;
 
-    const note = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "in filter" },
-        source: "rt4",
-        source_id: "n",
-      },
-      space,
-    );
-    const bookmark = await ctx.storage.items.create(
-      {
-        type: "core.bookmark",
-        properties: { url: "https://example.com" },
-        source: "rt4",
-        source_id: "b",
-      },
-      space,
-    );
-    await ctx.storage.edges.createRaw(
-      { source_id: note.id, target_id: bookmark.id, edge_type: "references" },
-      space,
-    );
+    const note = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "in filter" },
+      source: "rt4",
+      source_id: "n",
+    });
+    const bookmark = await ctx.storage.items.create({
+      type: "core.bookmark",
+      properties: { url: "https://example.com" },
+      source: "rt4",
+      source_id: "b",
+    });
+    await ctx.storage.edges.createRaw({
+      source_id: note.id,
+      target_id: bookmark.id,
+      edge_type: "references",
+    });
 
     const readEdgeLines = async (path: string): Promise<unknown[]> => {
       const res = await request(ctx.app, "GET", path, { key: ctx.spaceKey });
@@ -395,12 +357,10 @@ describe("export → restore round trip", () => {
     // Type-filtered: the bookmark endpoint is outside the export, so the
     // edge must not be emitted — the output never references an item it
     // does not carry.
-    const filtered = await readEdgeLines(
-      `/export?type=core.note&target_space_id=${space}`,
-    );
+    const filtered = await readEdgeLines(`/export?type=core.note`);
     expect(filtered).toHaveLength(0);
 
-    const unfiltered = await readEdgeLines(`/export?target_space_id=${space}`);
+    const unfiltered = await readEdgeLines(`/export`);
     expect(unfiltered).toHaveLength(1);
   });
 });
@@ -429,31 +389,21 @@ describe("an archive's blobs", () => {
   it("carries the bytes, and a restore reads them back", async () => {
     const source = await newContext();
     const destination = await newContext();
-    const space = source.spaceId;
 
     const bytes = Buffer.from("the file's exact contents, and not a stand-in");
     const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
     await source.blobBackend.put(hash, bytes, "text/plain");
-    await source.storage.blobs.register(
-      hash,
-      "text/plain",
-      bytes.length,
-      hash,
-      space,
-    );
-    await source.storage.items.create(
-      {
-        type: "core.file",
-        properties: {
-          title: "attachment",
-          blob_ref: hash,
-          mime_type: "text/plain",
-          size: bytes.length,
-        },
-        source: "blob-seed",
+    await source.storage.blobs.register(hash, "text/plain", bytes.length, hash);
+    await source.storage.items.create({
+      type: "core.file",
+      properties: {
+        title: "attachment",
+        blob_ref: hash,
+        mime_type: "text/plain",
+        size: bytes.length,
       },
-      space,
-    );
+      source: "blob-seed",
+    });
 
     const exportRes = await request(
       source.app,
@@ -475,24 +425,19 @@ describe("an archive's blobs", () => {
 
     const manifest = JSON.parse(entries.get("manifest.json")!.toString()) as {
       blob_count: number;
-      space_id: string | null;
     };
     expect(manifest.blob_count).toBe(1);
-    expect(manifest.space_id).toBe(space);
 
     // And the round trip, which is what the archive is for: restore into a
     // database that has never seen these bytes and read one back.
-    const restoreRes = await destination.app.request(
-      `/admin/restore-archive?target_space_id=${space}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${destination.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: archive,
+    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${destination.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: archive,
+    });
     expect(restoreRes.status, await restoreRes.clone().text()).toBe(200);
     const restored = await destination.blobBackend.get(hash);
     expect(restored).not.toBeNull();

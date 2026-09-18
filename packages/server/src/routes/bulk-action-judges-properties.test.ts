@@ -127,15 +127,16 @@ describe("the bulk-action door judges a property patch", () => {
     // The second row is of a type with no registered schema, so the same
     // patch is judged for the note and unjudged for it.
     const loose = "user.unjudged_in_a_mixed_chunk";
-    registerTypeSchema(
-      { id: loose, version: 1, fields: { body: { type: "string" } } },
-      ctx.spaceId,
-    );
+    registerTypeSchema({
+      id: loose,
+      version: 1,
+      fields: { body: { type: "string" } },
+    });
     try {
       const marker = `bapmix-${Math.random().toString(36).slice(2, 8)}`;
       const note = await seed(marker);
       const other = await seedOfType(marker, loose, { body: "before" });
-      unregisterTypeSchema(loose, ctx.spaceId);
+      unregisterTypeSchema(loose);
 
       const outcome = await patchByTag(marker, REFUSED_BY_THE_TYPE);
 
@@ -151,7 +152,7 @@ describe("the bulk-action door judges a property patch", () => {
       expect(await bodyOf(note)).toBe(`bap-${marker}`);
       expect(await bodyOf(other)).toBe(12345);
     } finally {
-      unregisterTypeSchema(loose, ctx.spaceId);
+      unregisterTypeSchema(loose);
     }
   });
 
@@ -161,10 +162,11 @@ describe("the bulk-action door judges a property patch", () => {
     // unguarded would refuse every row of a type this worker's registry does
     // not hold — a space's own type, or one deleted since the row was written.
     const orphan = "user.orphaned_by_the_bulk_action_test";
-    registerTypeSchema(
-      { id: orphan, version: 1, fields: { note: { type: "string" } } },
-      ctx.spaceId,
-    );
+    registerTypeSchema({
+      id: orphan,
+      version: 1,
+      fields: { note: { type: "string" } },
+    });
     // Unregistered in a `finally` as well, so a throwing seed does not leave
     // the type in the process-global registry for every later test.
     const marker = `baporph-${Math.random().toString(36).slice(2, 8)}`;
@@ -173,7 +175,7 @@ describe("the bulk-action door judges a property patch", () => {
       id = await seed(marker, orphan);
     } finally {
       // The row outlives its type, which is the state the guard is for.
-      unregisterTypeSchema(orphan, ctx.spaceId);
+      unregisterTypeSchema(orphan);
     }
 
     const outcome = await patchByTag(marker, { note: "still fine" });

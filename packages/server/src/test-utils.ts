@@ -3,14 +3,9 @@ import type { CreateKeyInput } from "@withmarfa/shared";
 import { createApp } from "./app.js";
 import { consentLockDepth } from "./auth/consent-lock.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
-import { resolveSpaceIdForAuthUser } from "./auth/grant-space.js";
 import type { AppConfig } from "./config.js";
-import type { EmailTransport } from "./email/transport.js";
-import type { DeadLetterOps } from "./integrations/local-runtime/dead-letters.js";
+import type { MarfaAuth } from "./auth/instance.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
-import { createPgStorage } from "./storage/pg/index.js";
-import { pgApplicationName } from "./storage/pg/connection.js";
-import { cloneTemplate } from "./storage/pg/test-template.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import { hashApiKey } from "./middleware/auth.js";
@@ -32,9 +27,9 @@ export const TEST_API_KEY_SALT = "test-salt";
 const SALT = TEST_API_KEY_SALT;
 
 /**
- * Resolve the raw-SQL test escape hatches off the storage object, throwing
- * if they're absent. These are test-only internals (`__sqliteRun` /
- * `__pgClient`) the storage layer exposes for direct setup writes. An
+ * Resolve the raw-SQL test escape hatch off the storage object, throwing
+ * if it is absent. It is a test-only internal (`__sqliteRun`) the storage
+ * layer exposes for direct setup writes. An
  * earlier version silently no-op'd when they were missing — so a change to
  * the storage shape would quietly skip the setup and surface as a confusing
  * downstream failure. Fail loudly instead.
@@ -53,43 +48,22 @@ function requireSqliteRun(
   return s.__sqliteRun;
 }
 
-function requirePgClient(
-  storage: Storage,
-): (sql: string, params?: unknown[]) => Promise<unknown> {
-  const s = storage as unknown as {
-    __pgClient?: (sql: string, params?: unknown[]) => Promise<unknown>;
-  };
-  if (!s.__pgClient) {
-    throw new Error(
-      "test-utils: storage.__pgClient escape hatch missing — PG test storage internals changed",
-    );
-  }
-  return s.__pgClient;
-}
-
 export interface TestContext {
   app: Hono<AppEnv>;
   storage: Storage;
   blobBackend: BlobBackend;
   /**
-   * The instance tier, and nothing else: no space, no permissions, exactly
-   * what the one unauthenticated mint hands back. It opens the instance
-   * routes and reaches no content at all, so a test about anything inside a
-   * space wants `spaceKey`.
+   * The instance tier, and nothing else: no permissions, exactly what the
+   * one unauthenticated mint hands back. It opens the instance routes and
+   * reaches no content at all, so a test about anything inside the
+   * permission model wants `spaceKey`.
    */
   operatorKey: string;
   /**
-   * The instance's one space. Keys mode provisions one at bootstrap, so a
-   * fixture that stamps the sentinel instead has to provision it here or it
-   * tests a shape the product stopped producing.
-   */
-  spaceId: string;
-  /**
-   * A credential bound to `spaceId`, holding every space permission and
-   * writing every content family — an ordinary working key, and what a
-   * self-hoster is handed alongside the operator key. This is the suite's
-   * working credential: content, the space permissions, everything but the
-   * instance routes.
+   * A working credential holding every space permission and writing every
+   * content family — what the operator mints first through `POST /keys`.
+   * This is the suite's working credential: content, the space permissions,
+   * everything but the instance routes.
    */
   spaceKey: string;
   /** The per-context temporary directory holding the sqlite database and
@@ -101,109 +75,16 @@ export interface TestContext {
    *  cleanups queue against admin-URL DROPs from other test files and
    *  can starve afterAll hooks. Best practice: `await ctx.cleanup()`. */
   cleanup: () => Promise<void>;
+  /** The Better Auth instance the app mounted, for tests that need a
+   *  signed-in user behind the OAuth provider. `createTestAccount` is the
+   *  usual way in. */
+  auth: MarfaAuth;
 }
 
 /**
- * Clone the PG template database and build a Storage against it. Returns
- * the storage plus an awaitable cleanup callback that closes the pool
- * and drops the clone with `WITH (FORCE)` so any lingering connections
- * are terminated.
- *
- * Used by `createTestContext` for the standard path and by the few test
- * files that roll their own storage (custom `authMode`, etc.) instead
- * of going through `createTestContext`.
- *
- * Cleanup is async + awaitable. With parallel test files all doing
- * per-test clone/drop traffic against the same admin URL, an unawaited
- * fire-and-forget drop queues against everyone else's drops; the
- * afterAll hooks of long-running files can sit behind a multi-second
- * queue. Awaiting cleanup bounds per-file work.
- */
-/**
- * Connections a test file's pool may open. Named because the config a test
- * app is built with has to state the same number: `/health` reports the pool
- * against `dbPoolSize`, so a config that omits it describes a pool ten wide
- * that is actually three, and the figure reads as permanently roomy.
- */
-export const TEST_POOL_SIZE = 3;
-
-export async function createPgTestStorage(options?: {
-  authMode?: "hosted" | "keys";
-  /** Override the default pool-size cap. Default is `TEST_POOL_SIZE` — see
-   *  the comment inside this function for the rationale. */
-  maxPoolSize?: number;
-}): Promise<{ storage: Storage; cleanup: () => Promise<void> }> {
-  const clone = await cloneTemplate();
-  // Cap at 3 connections per test file. With ~CPU-count parallel workers,
-  // the default max=10 quickly exhausts Postgres's default max_connections=100.
-  // Skip bootstrap — the cloned DB already has the schema baked in from the
-  // template, saving hundreds of ms per storage creation under parallel load.
-  const storage = await createPgStorage(clone.url, {
-    ...options,
-    maxPoolSize: options?.maxPoolSize ?? TEST_POOL_SIZE,
-    // Named rather than left to default, because this pool stands in for a
-    // server's own and `/health` finds that pool by its label. Unnamed it
-    // would carry `PG_UNNAMED_APPLICATION_NAME`, which is deliberately not a
-    // label any role produces, and the endpoint would report a pool it never
-    // found as an idle one. `buildTestContext` builds its `AppConfig` with no
-    // `processRole`, so this is the same expression the endpoint evaluates.
-    applicationName: pgApplicationName(undefined),
-    skipBootstrap: true,
-  });
-  return {
-    storage,
-    cleanup: async () => {
-      // Close first, bounded — then drop. These used to run in parallel,
-      // which raced the DROP's `WITH (FORCE)` against the drain inside
-      // `storage.close()`: FORCE terminates backends server-side, so a
-      // tracked fire-and-forget write (audit row, oauth last-used stamp)
-      // still on the wire died mid-socket-write. The tracker catches the
-      // write's own rejection, but postgres-js leaks a second, unowned
-      // rejection when a socket is killed mid-write, and that one fails
-      // whichever test is running as an unhandled rejection — rarely on a
-      // quiet machine, reliably under load. Sequencing lets the drain
-      // finish before anything is terminated. The bound stays because
-      // pool-close can hang on in-flight SSE / export streams; a close
-      // that overruns it is then cleaned up by the FORCE drop, accepting
-      // the rare leaked rejection in exchange for never wedging afterAll.
-      await Promise.race([
-        storage.close().catch(() => undefined),
-        new Promise<void>((resolve) => {
-          setTimeout(() => {
-            resolve();
-          }, 5_000);
-        }),
-      ]);
-      await clone.drop().catch(() => undefined);
-    },
-  };
-}
-
-/**
- * Close a file's accumulated test contexts without the teardown cost growing
- * linearly with the number of tests.
- *
- * **Why this exists rather than a `for` loop.** Each `cleanup()` races
- * `storage.close()` against a five-second bound before dropping the clone, and
- * that bound is reached whenever the machine is busy — a pool close waits on
- * in-flight work. Closed serially, a file holding N contexts therefore spends
- * up to `N * 5s` in its `afterAll`, against Vitest's 120-second default. At 38
- * contexts that is 190 seconds of budget for a hook allowed 120, and the file
- * failed twice in one evening on a loaded machine while every assertion in the
- * run passed.
- *
- * **Bounded rather than unbounded, and the bound is not arbitrary.** Closing
- * all of them at once would put N pool closes and N `DROP DATABASE ... WITH
- * (FORCE)` statements against one Postgres simultaneously, which trades a slow
- * teardown for a contended one. Eight at a time is what `conformance`'s own
- * cleanup settled on for the same question.
- *
- * **Concurrency is across contexts, never inside one.** `cleanup()` sequences
- * its own close before its own drop deliberately: running those two in
- * parallel raced the FORCE against the drain and killed a tracked write
- * mid-socket, which surfaces as an unhandled rejection in whichever test is
- * running. That ordering is untouched here — each context still closes then
- * drops, and only different contexts overlap.
+ * Close a file's accumulated test contexts eight at a time, so a file
+ * holding many of them does not spend its whole hook budget closing them
+ * one by one, and does not close them all at once either.
  */
 export async function closeTestContexts(
   contexts: readonly { cleanup: () => Promise<void> }[],
@@ -229,29 +110,15 @@ export async function closeTestContexts(
  *
  * @param scopes literal scope strings (e.g. `["core.note:read"]`)
  * @param opts.clientName    visible client name (defaults to "Test App")
- * @param opts.spaceId      the space to bind the token to. Omitted, it
- *                           resolves the space issuance would, and throws
- *                           when nothing resolves rather than minting the
- *                           unbound token a fixture used to get by accident.
- *                           Pass `null` deliberately for the unbound shape,
- *                           which the middleware refuses.
  * @param opts.authUserId    Better Auth user id; if absent a synthetic
  *                           one is seeded into `auth_user`.
- * @param opts.seedUserRow   Seed a `users` row bound to the `auth_user`, so
- *                           the bearer middleware can resolve the caller's
- *                           space. It used to be `userRole` and to take one
- *                           of three role strings, none of which was ever
- *                           stored — a user row carries no role and nothing
- *                           projects one. Hosted-mode storage only.
  */
 export async function seedOauthBearer(
   storage: Storage,
   scopes: string[],
   opts: {
     clientName?: string;
-    spaceId?: string | null;
     authUserId?: string;
-    seedUserRow?: boolean;
   } = {},
 ): Promise<{ token: string; grantId: string; clientId: string }> {
   if (
@@ -270,7 +137,6 @@ export async function seedOauthBearer(
 
   // Seed the OAuth client row directly (the plugin's own DCR endpoint
   // would create the same row — we shortcut for test setup speed).
-  const dialect = storage.betterAuthDialect;
   const db = storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -285,40 +151,22 @@ export async function seedOauthBearer(
   const authUserId =
     opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
   if (!opts.authUserId) {
-    if (dialect === "sqlite") {
-      await requireSqliteRun(storage)(
-        "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
-        [
-          authUserId,
-          "Test User",
-          `${authUserId}@test.local`,
-          Math.floor(now.getTime() / 1000),
-          Math.floor(now.getTime() / 1000),
-        ],
-      );
-    } else {
-      await requirePgClient(storage)(
-        "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
-        [
-          authUserId,
-          "Test User",
-          `${authUserId}@test.local`,
-          now.toISOString(),
-        ],
-      );
-    }
+    await requireSqliteRun(storage)(
+      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
+      [
+        authUserId,
+        "Test User",
+        `${authUserId}@test.local`,
+        Math.floor(now.getTime() / 1000),
+        Math.floor(now.getTime() / 1000),
+      ],
+    );
   }
 
-  const schemaModule =
-    dialect === "pg"
-      ? await import("./storage/pg/schema.js")
-      : await import("./storage/sqlite/schema.js");
-  // PG: `redirect_uris` is native `text[]` (migration 0059); SQLite:
-  // plain `text` with JSON-serialized array via the Better Auth adapter.
-  const redirectUrisValue: unknown =
-    dialect === "pg"
-      ? ["http://localhost:5173/callback"]
-      : JSON.stringify(["http://localhost:5173/callback"]);
+  const schemaModule = await import("./storage/sqlite/schema.js");
+  // `redirect_uris` is plain `text` holding a JSON-serialized array, the
+  // shape the Better Auth adapter writes.
+  const redirectUrisValue = JSON.stringify(["http://localhost:5173/callback"]);
   const insertOp = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -330,28 +178,20 @@ export async function seedOauthBearer(
   });
   await (insertOp.execute?.() ?? insertOp.run?.() ?? Promise.resolve());
 
-  const grant = await storage.items.create(
-    {
-      type: "system.connection",
-      tier: "library",
-      state: "active",
-      properties: {
-        kind: "app",
-        client_id: clientId,
-        user_id: authUserId,
-        scopes,
-        status: "active",
-        granted_at: now.toISOString(),
-      },
-      source: "test/oauth-bearer",
+  const grant = await storage.items.create({
+    type: "system.connection",
+    tier: "library",
+    state: "active",
+    properties: {
+      kind: "app",
+      client_id: clientId,
+      user_id: authUserId,
+      scopes,
+      status: "active",
+      granted_at: now.toISOString(),
     },
-    // **The projection item stays where the caller put it, which is normally
-    // nowhere.** A `system.connection` row with `kind: "app"` is a grant
-    // projection, and the provider store resolves those space-less on
-    // purpose, and the keys-mode migration excludes them from its move for
-    // the same reason. Only the token's `reference_id` binds to a space.
-    opts.spaceId ?? undefined,
-  );
+    source: "test/oauth-bearer",
+  });
 
   // Mint the token pair via the plugin's storage helper. Hash the BARE
   // (prefix-stripped) token to match what the plugin's `storeTokens.hash`
@@ -360,43 +200,6 @@ export async function seedOauthBearer(
   const rawToken = `marfa_at_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const rawRefresh = `marfa_rt_${Math.random().toString(36).slice(2)}_${String(Date.now())}`;
   const { hashApiKey } = await import("./middleware/auth.js");
-  // **Bound the way issuance binds.** A token whose `reference_id` is NULL is
-  // refused by the middleware in either mode, because a space-less bearer is
-  // a principal the storage layer applies no space predicate to. Omitting the
-  // space here used to produce exactly that, so a fixture minted a token no
-  // deployment can issue and every test through it authenticated as something
-  // the product cannot make. `null` still means unbound, for the cases that
-  // are about the refusal.
-  //
-  // Through the resolver rather than a copy of it. A fixture that answered
-  // this question its own way would drift from issuance silently, and a
-  // fixture that drifts from the thing it stands in for is the reason this
-  // helper needed repairing in the first place.
-  //
-  // **Nothing unresolved is minted silently.** When the caller named no space
-  // and the resolver answers nothing, there is no shape to fall back to: an
-  // unbound token is refused on every request, so a permission test written
-  // through it stops testing the permission and starts re-testing the
-  // refusal, and it does that while staying green. That is the failure this
-  // helper has already caused once. Throwing names the two ways to get here
-  // -- no user row for the id, or an instance holding other than one space --
-  // and points at `spaceId: null` for a case that genuinely wants the unbound
-  // token.
-  let boundSpaceId: string | undefined;
-  if (opts.spaceId === undefined) {
-    boundSpaceId = await resolveSpaceIdForAuthUser(storage, authUserId);
-    if (boundSpaceId === undefined) {
-      throw new Error(
-        "seedOauthBearer: no space resolved for this bearer, so the token would " +
-          "be minted unbound and refused on every request. Seed a users row for " +
-          `"${authUserId}" or a single space, pass an explicit spaceId, or pass ` +
-          "spaceId: null if the unbound token is what the case is about.",
-      );
-    }
-  } else {
-    boundSpaceId = opts.spaceId ?? undefined;
-  }
-
   await storage.oauthProvider.mintTokenPair({
     accessTokenHash: hashApiKey(
       rawToken.slice("marfa_at_".length),
@@ -408,135 +211,34 @@ export async function seedOauthBearer(
     ),
     clientId,
     authUserId,
-    referenceId: boundSpaceId ?? null,
     scopes,
     accessTtlMs: 3600_000,
   });
-
-  if (opts.seedUserRow) {
-    if (!storage.users) {
-      throw new Error(
-        "seedOauthBearer({ seedUserRow }) requires hosted-mode storage with a UserStore",
-      );
-    }
-    if (!opts.spaceId) {
-      throw new Error(
-        "seedOauthBearer({ seedUserRow }) requires opts.spaceId (users.space_id is FK-bound)",
-      );
-    }
-    await storage.users.create({
-      provider: "test",
-      provider_id: authUserId,
-      space_id: opts.spaceId,
-      auth_user_id: authUserId,
-    });
-  }
 
   return { token: rawToken, grantId: grant.id, clientId };
 }
 
 /**
- * Mark a user's email verified. With `requireEmailVerification: true`
- * the auth instance blocks sign-in until `auth_user.email_verified` is
- * `true`. Tests that exercise the post-sign-in flow (consent, OAuth,
- * etc.) call this between sign-up and sign-in to skip the email
- * round-trip.
+ * Put a password account behind the OAuth provider's sign-in page.
  *
- * Safe to call when the user doesn't exist — the UPDATE simply
- * affects zero rows.
+ * There is no HTTP door that creates a user: sign-up is disabled on every
+ * instance, so this goes through the programmatic seam the app exposes.
+ * The account arrives verified, so a test signs in through
+ * `POST /auth/sign-in/email` (or the form at `POST /auth/sign-in`) right
+ * away. A refusal throws rather than returning, because a fixture with no
+ * user behind it fails somewhere far from here.
  */
-export async function markEmailVerified(
-  storage: Storage,
+export async function createTestAccount(
+  ctx: { auth: MarfaAuth },
   email: string,
-): Promise<void> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  const lower = email.toLowerCase();
-  if (dialect === "pg") {
-    await requirePgClient(storage)(
-      `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = $1`,
-      [lower],
-    );
-    return;
+  password: string,
+  name?: string,
+): Promise<{ authUserId: string; email: string }> {
+  const result = await ctx.auth.createEmailAccount({ email, password, name });
+  if (!result.ok) {
+    throw new Error(`createTestAccount(${email}) refused: ${result.reason}`);
   }
-  await requireSqliteRun(storage)(
-    "UPDATE auth_user SET email_verified = 1 WHERE LOWER(email) = ?",
-    [lower],
-  );
-}
-
-/**
- * Read the latest reset-password verification token from
- * `auth_verification`. Better-auth keys these rows as
- * `identifier = "reset-password:${token}"` and `value = userId`.
- * Returns the most-recently-created token across any user; tests
- * typically have one in flight at a time. Returns `null` when no row
- * matches.
- *
- * The hook in `instance.ts` builds the email URL itself, so tests
- * read the token from the DB and submit it directly to
- * `POST /auth/reset-password`.
- */
-export async function readLatestResetToken(
-  storage: Storage,
-): Promise<string | null> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const pg = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pg.__pgClient) return null;
-    const rows = (await pg.__pgClient(
-      `SELECT identifier FROM auth_verification
-        WHERE identifier LIKE 'reset-password:%'
-        ORDER BY created_at DESC LIMIT 1`,
-    )) as { identifier: string }[];
-    if (rows.length === 0) return null;
-    return rows[0]?.identifier.slice("reset-password:".length) ?? null;
-  }
-  const sqlite = storage as unknown as {
-    __sqliteAll?: (q: string) => Promise<unknown[]>;
-  };
-  if (!sqlite.__sqliteAll) return null;
-  const rows = (await sqlite.__sqliteAll(
-    `SELECT identifier FROM auth_verification
-      WHERE identifier LIKE 'reset-password:%'
-      ORDER BY created_at DESC LIMIT 1`,
-  )) as { identifier: string }[];
-  if (rows.length === 0) return null;
-  return rows[0]?.identifier.slice("reset-password:".length) ?? null;
-}
-
-/**
- * True when an `auth_user` row exists for `email`.
- *
- * Every account-creating path converges on the one `databaseHooks`
- * entry that also provisions a space, so the absence of an `auth_user`
- * is what proves nothing was provisioned. Asserting on spaces alone
- * would still pass if an account were created without one.
- *
- * Reads every email and compares in JS rather than parameterizing:
- * `__sqliteAll` takes no parameters, and a test database holds a
- * handful of rows.
- */
-export async function authUserExists(
-  storage: Storage,
-  email: string,
-): Promise<boolean> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  const lower = email.toLowerCase();
-  const query = `SELECT email FROM auth_user`;
-  if (dialect === "pg") {
-    const rows = (await requirePgClient(storage)(query)) as {
-      email: string;
-    }[];
-    return rows.some((r) => r.email.toLowerCase() === lower);
-  }
-  const sqlite = storage as unknown as {
-    __sqliteAll?: (q: string) => Promise<unknown[]>;
-  };
-  if (!sqlite.__sqliteAll) return false;
-  const rows = (await sqlite.__sqliteAll(query)) as { email: string }[];
-  return rows.some((r) => r.email.toLowerCase() === lower);
+  return { authUserId: result.authUserId, email: result.email };
 }
 
 /**
@@ -557,7 +259,7 @@ export async function authUserExists(
  * Returns the final result so the caller can chain assertions.
  *
  * Bounded to ~2s with 25ms polls — long enough to cover any audit
- * insert latency on a loaded Docker Postgres, short enough that a real
+ * insert latency on a loaded machine, short enough that a real
  * regression (the row genuinely never lands) still surfaces fast.
  */
 export async function waitForAudit<T>(
@@ -616,19 +318,18 @@ export async function waitForConsentLockDepth(
 }
 
 /**
- * A working credential bound to `spaceId`, shaped the way
- * `POST /admin/spaces/{id}/keys` shapes one: everything in that space unless
- * the caller narrows it, and never the operator tier.
+ * A working credential, shaped the way the operator's `POST /keys` shapes
+ * one for a body that names no narrowing: everything unless the caller
+ * narrows it, and never the operator tier.
  *
- * For a test that needs a second space beside the one `createTestContext`
- * provisions, or a narrower credential in that space. Minting through the
+ * For a test that needs a second working credential beside the one
+ * `createTestContext` provisions, or a narrower one. Minting through the
  * store rather than the route keeps a fixture out of the operator key's way,
  * and the shape is the route's — `test-context-credentials.test.ts` is what
  * holds the two together.
  */
 export async function mintSpaceKey(
   ctx: Pick<TestContext, "storage">,
-  spaceId: string,
   options?: Partial<CreateKeyInput> & { rawKey?: string },
 ): Promise<string> {
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -650,37 +351,16 @@ export async function mintSpaceKey(
       is_operator: false,
     },
     hashApiKey(rawKey, SALT),
-    spaceId,
   );
   return rawKey;
 }
 
 export async function createTestContext(
   overrides?: Partial<AppConfig>,
-  /**
-   * Optional email transport. Wired into `createApp` as the 4th arg.
-   * Production boots a real transport via `createEmailTransport`; tests
-   * pass a spy to assert on send calls (e.g. the deletion-guard cancel
-   * email). Left undefined, email-dependent flows behave as if no
-   * transport is configured — the existing default for most tests.
-   */
-  emailTransport?: EmailTransport,
-  /**
-   * Optional dead-letter ops for the admin runtime-jobs routes. Wired
-   * into `createApp` as the 7th arg. Left undefined, the routes answer
-   * 503 `local_runtime_not_available`, matching a deployment without
-   * the local substrate.
-   */
-  deadLetterOps?: DeadLetterOps,
 ): Promise<TestContext> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-test-"));
   try {
-    return await buildTestContext(
-      tmpDir,
-      overrides,
-      emailTransport,
-      deadLetterOps,
-    );
+    return await buildTestContext(tmpDir, overrides);
   } catch (error) {
     // The only thing that removes this directory on the happy path is the
     // `cleanup` closure, and that closure does not exist until the build
@@ -705,47 +385,22 @@ export interface UnbootstrappedTestApp {
   config: AppConfig;
   tmpDir: string;
   cleanup: () => Promise<void>;
+  auth: MarfaAuth;
 }
 
 async function buildUnbootstrappedApp(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
-  emailTransport?: EmailTransport,
-  deadLetterOps?: DeadLetterOps,
 ): Promise<UnbootstrappedTestApp> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const blobPath = join(tmpDir, "blobs");
 
-  const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
-  let storage: Storage;
-  let pgCleanup: (() => Promise<void>) | undefined;
-  if (dialect === "pg") {
-    // `dbPoolSize` is a real config field, so a test that sets it means
-    // it: a suite about what a request does to the pool needs the pool it
-    // asked for, and the default of three hides an exhaustion the code
-    // would reach at one. Absent, the default stands.
-    const clone = await createPgTestStorage({
-      authMode: storageAuthMode,
-      ...(overrides?.dbPoolSize !== undefined && {
-        maxPoolSize: overrides.dbPoolSize,
-      }),
-    });
-    storage = clone.storage;
-    pgCleanup = clone.cleanup;
-  } else {
-    const dbPath = join(tmpDir, "test.db");
-    storage = await createSqliteStorage(dbPath, { authMode: storageAuthMode });
-  }
+  const dbPath = join(tmpDir, "test.db");
+  const storage = await createSqliteStorage(dbPath);
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const config: AppConfig = {
     port: 0,
-    // What `createPgTestStorage` actually builds. Unset, `/health` would
-    // report this pool against the production default instead.
-    dbPoolSize: TEST_POOL_SIZE,
-    storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath,
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -759,8 +414,6 @@ async function buildUnbootstrappedApp(
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
-    mcpEnabled: true,
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -779,24 +432,16 @@ async function buildUnbootstrappedApp(
     trustedProxyCidrs: [],
     trustedProxyHeader: null,
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret-change-in-production-not-required-here",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
     ...overrides,
   };
   const oidcSigner = await OidcSigner.init(storage);
-  const app = createApp(
-    storage,
-    blobBackend,
-    config,
-    emailTransport,
-    oidcSigner,
-    undefined,
-    deadLetterOps,
-  );
+  const app = createApp(storage, blobBackend, config, oidcSigner);
+  if (!app.auth) {
+    throw new Error("test-utils: createApp mounted no auth instance");
+  }
 
   return {
     app,
@@ -804,16 +449,13 @@ async function buildUnbootstrappedApp(
     blobBackend,
     config,
     tmpDir,
+    auth: app.auth,
     cleanup: async () => {
       try {
-        if (pgCleanup) {
-          await pgCleanup();
-        } else {
-          try {
-            await storage.close();
-          } catch {
-            // Best-effort.
-          }
+        try {
+          await storage.close();
+        } catch {
+          // Best-effort.
         }
       } finally {
         // In `finally` because a failed close must not strand the
@@ -832,17 +474,10 @@ async function buildUnbootstrappedApp(
  */
 export async function createUnbootstrappedTestApp(
   overrides?: Partial<AppConfig>,
-  emailTransport?: EmailTransport,
-  deadLetterOps?: DeadLetterOps,
 ): Promise<UnbootstrappedTestApp> {
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-unbootstrapped-"));
   try {
-    return await buildUnbootstrappedApp(
-      tmpDir,
-      overrides,
-      emailTransport,
-      deadLetterOps,
-    );
+    return await buildUnbootstrappedApp(tmpDir, overrides);
   } catch (error) {
     rmSync(tmpDir, { recursive: true, force: true });
     throw error;
@@ -852,15 +487,9 @@ export async function createUnbootstrappedTestApp(
 async function buildTestContext(
   tmpDir: string,
   overrides?: Partial<AppConfig>,
-  emailTransport?: EmailTransport,
-  deadLetterOps?: DeadLetterOps,
 ): Promise<TestContext> {
-  const { app, storage, blobBackend, cleanup } = await buildUnbootstrappedApp(
-    tmpDir,
-    overrides,
-    emailTransport,
-    deadLetterOps,
-  );
+  const { app, storage, blobBackend, cleanup, auth } =
+    await buildUnbootstrappedApp(tmpDir, overrides);
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_test_operator_key_${suffix}`;
@@ -893,49 +522,39 @@ async function buildTestContext(
   );
   await storage.settings.set("bootstrapped", "true");
 
-  // **The instance's one space and the key that works in it, provisioned here
-  // because bootstrap provisions them there.** This fixture stamps the
-  // sentinel directly rather than driving the unauthenticated mint, so nothing
-  // else would create either — and a keys-mode instance with no space is a
-  // shape the product no longer produces. Everything a real caller owns lives
-  // in the space: connections above all, because a connection with no space
-  // cannot mint a runtime credential now that a space-less credential is the
-  // operator key and nothing else.
+  // **The working key, minted here because the operator mints it there.**
+  // This fixture stamps the sentinel directly rather than driving the
+  // unauthenticated mint, so nothing else would create it.
   //
-  // The wildcard maps and the whole permission list are what
-  // `POST /admin/spaces/{id}/keys` hands back for a body that names no
-  // narrowing, and what a keys-mode bootstrap provisions: a seed with no
-  // creator above it takes everything in its space.
-  const space = await storage.spaces?.create("test-space");
+  // The wildcard maps and the whole permission list are what the operator's
+  // `POST /keys` hands back for a body that names no narrowing: a seed with
+  // no creator above it takes everything.
   const spaceRawKey = `marfa_k1_test_space_key_${suffix}`;
-  if (space) {
-    await storage.keys.create(
-      {
-        label: "test-space-key",
-        source: `test-space-${suffix}`,
-        type_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        metadata_permissions: { "*": "write" },
-        profile_permissions: { "*": "write" },
-        space_permissions: [...SPACE_PERMISSIONS],
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(spaceRawKey, SALT),
-      space.id,
-    );
-  }
+  await storage.keys.create(
+    {
+      label: "test-space-key",
+      source: `test-space-${suffix}`,
+      type_permissions: { "*": "write" },
+      extension_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
+      profile_permissions: { "*": "write" },
+      space_permissions: [...SPACE_PERMISSIONS],
+      default_tier: "library",
+      is_operator: false,
+    },
+    hashApiKey(spaceRawKey, SALT),
+  );
 
   return {
     app,
     storage,
     blobBackend,
     operatorKey: rawKey,
-    spaceId: space?.id ?? "",
     spaceKey: spaceRawKey,
     tmpDir,
     cleanup,
+    auth,
   };
 }
 
@@ -948,7 +567,7 @@ export function request(
     /**
      * Form-encoded body (mutually exclusive with `body`). Used by
      * OAuth 2.0 surfaces that must accept `application/x-www-form-urlencoded`
-     * — `/auth/oauth2/token`, `/auth/authorize` POST, `/auth/device/token`.
+     * — `/auth/oauth2/token`, `/auth/authorize` POST, `/auth/device/consent`.
      */
     form?: Record<string, string | string[]>;
     headers?: Record<string, string>;
@@ -1307,20 +926,14 @@ export async function settle(ms = 50): Promise<void> {
  * event to await, so it listens for a bounded moment and finds the
  * collection empty.
  */
-export function collectItemEvents(
-  signal: AbortSignal,
-  /** The same fence `GET /events` applies for a scoped viewer, so a frame
-   *  published without a space, or with the wrong one, is invisible here
-   *  too. Omit it to watch everything, which is what the operator key sees. */
-  spaceId?: string,
-): {
+export function collectItemEvents(signal: AbortSignal): {
   events: ItemEventWithId[];
   done: Promise<void>;
 } {
   const events: ItemEventWithId[] = [];
   const done = (async () => {
     try {
-      for await (const event of subscribe({ signal, spaceId })) {
+      for await (const event of subscribe({ signal })) {
         events.push(event);
       }
     } catch {

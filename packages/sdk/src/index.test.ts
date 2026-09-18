@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { MarfaClient } from "./index.js";
+import {
+  MarfaClient,
+  getResolvedFields,
+  getTypeSchema,
+  hydrateTypeRegistry,
+  validateProperties,
+} from "./index.js";
 import type {
   Occurrence,
   OccurrenceSeriesError,
@@ -29,11 +35,9 @@ const NAMESPACES = [
   "types",
   "keys",
   "webhooks",
-  "connections",
   "spaces",
   "admin",
   "events",
-  "profile",
   "occurrences",
 ] as const;
 
@@ -60,6 +64,20 @@ describe("package entry point", () => {
       )
       .map(([key]) => key);
     expect(found.sort()).toEqual([...NAMESPACES].sort());
+  });
+
+  it("exports the type registry's writer and both of its readers from the package root", () => {
+    // One registry instance: the readers have to leave by the same door as
+    // the writer, or a consumer resolving two copies of the shared package
+    // hydrates one registry and reads the other.
+    for (const fn of [
+      hydrateTypeRegistry,
+      validateProperties,
+      getResolvedFields,
+      getTypeSchema,
+    ]) {
+      expect(fn).toBeTypeOf("function");
+    }
   });
 
   it("exports the occurrence types from the package root", () => {

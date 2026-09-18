@@ -2,8 +2,8 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
-// Separate file so the small-cap test context's Postgres truncate doesn't
-// interfere with blobs.test.ts state. Each test file builds its own context.
+// Separate file so the small-cap test context doesn't interfere with
+// blobs.test.ts state. Each test file builds its own context.
 
 const CAP = 1024;
 

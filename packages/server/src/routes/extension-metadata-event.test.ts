@@ -21,13 +21,10 @@ import type { ItemEventWithId } from "../pubsub.js";
 import {
   createTestContext,
   request,
-  TEST_API_KEY_SALT,
   collectItemEvents,
   settle,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -73,16 +70,6 @@ const PINNED = "2000-01-01T00:00:00.000Z";
  *  write path stamps `now`, so a contrived value is the only way to make
  *  the pre-write and post-write timestamps reliably distinguishable. */
 async function forceUpdatedAt(itemId: string, iso: string): Promise<void> {
-  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
-      iso,
-      itemId,
-    ]);
-    return;
-  }
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };
@@ -159,140 +146,6 @@ describe("metadata.changed on an extension write", () => {
   });
 });
 
-describe("the space a metadata.changed frame is delivered in", () => {
-  /**
-   * `GET /events` subscribes with the viewer's own `space_id`, so a frame
-   * published without one — or with the wrong one — is dropped for every
-   * real viewer while still being visible to a test that subscribes
-   * unscoped. The two tests above subscribe unscoped under a platform
-   * key, so they cannot see that difference at all. This one can.
-   */
-  it("reaches a viewer in the writing space and no viewer outside it", async () => {
-    // Thrown rather than returned early. A skip here would report green
-    // having proved nothing, and this is the one test covering the fence
-    // every real viewer sits behind.
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const spaceA = await spaces.create("ext-events-a");
-    const spaceB = await spaces.create("ext-events-b");
-
-    const item = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "scoped" }, tags: ["kept"] },
-      spaceA.id,
-    );
-
-    // A member in space A holding write on the namespace and nothing
-    // else. The extension doors do not consult type permissions, so this
-    // is the whole grant such a caller needs.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const memberKey = `marfa_k1_extspace_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `extspace-${suffix}`,
-        source: `extspace-${suffix}`,
-        type_permissions: {},
-        extension_permissions: { reader: "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(memberKey, TEST_API_KEY_SALT),
-      spaceA.id,
-    );
-
-    const inA = new AbortController();
-    const inB = new AbortController();
-    const viewerA = collectItemEvents(inA.signal, spaceA.id);
-    const viewerB = collectItemEvents(inB.signal, spaceB.id);
-    await settle();
-
-    const written = await request(
-      ctx.app,
-      "PUT",
-      `/items/${item.id}/extensions/reader`,
-      { key: memberKey, body: { offset: 7 } },
-    );
-    expect(written.status).toBe(200);
-    const removed = await request(
-      ctx.app,
-      "DELETE",
-      `/items/${item.id}/extensions/reader`,
-      { key: memberKey },
-    );
-    expect(removed.status).toBe(200);
-    await settle();
-    inA.abort();
-    inB.abort();
-    await viewerA.done;
-    await viewerB.done;
-
-    // Both doors, in the space that owns the row.
-    expect(metadataEventsFor(viewerA.events, item.id)).toHaveLength(2);
-    // And nothing at all next door. A publish carrying no space would
-    // reach neither viewer, so the emptiness here is only meaningful
-    // beside the count above.
-    expect(metadataEventsFor(viewerB.events, item.id)).toHaveLength(0);
-  });
-});
-
-describe("the reserved connection namespaces", () => {
-  /**
-   * Per-Connection runtime state is written by the machine, at dispatch
-   * frequency, and the local integrations runtime writes the identical
-   * blob straight through storage without publishing. Emitting here
-   * would make the event depend on which substrate did the write, and
-   * would put sync cursors and error tails on every `metadata.changed`
-   * subscription that carries no type filter.
-   */
-  it("are written without announcing anything", async () => {
-    // The gate admits only the connection's own runtime credential, so
-    // the row has to be a real connection and the credential has to be
-    // bound to it.
-    const connection = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-      ctx.spaceId,
-    );
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const runtimeKey = `marfa_k1_extruntime_${suffix}`;
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: `extruntime-${suffix}`,
-        source: `extruntime-${suffix}`,
-        type_permissions: {},
-        connection_id: connection.id,
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({ name: "acme.fixture" }),
-      },
-      hashApiKey(runtimeKey, TEST_API_KEY_SALT),
-      ctx.spaceId,
-    );
-
-    const controller = new AbortController();
-    const { events, done } = collectItemEvents(controller.signal);
-    await settle();
-
-    const res = await request(
-      ctx.app,
-      "PUT",
-      `/items/${connection.id}/extensions/connection.runtime`,
-      { key: runtimeKey, body: { cursor: "abc123" } },
-    );
-    // The write lands — this is silence, not refusal.
-    expect(res.status).toBe(200);
-    await settle();
-    controller.abort();
-    await done;
-
-    expect(metadataEventsFor(events, connection.id)).toHaveLength(0);
-  });
-});
-
 describe("the item the event carries is the item after the write", () => {
   /**
    * Every metadata door reads the item first, to authorize against it,
@@ -313,7 +166,7 @@ describe("the item the event carries is the item after the write", () => {
     const itemId = await seedTaggedItem();
     await forceUpdatedAt(itemId, PINNED);
 
-    const before = await ctx.storage.items.get(itemId, undefined);
+    const before = await ctx.storage.items.get(itemId);
     expect(before?.updated_at).toBe(PINNED);
 
     const controller = new AbortController();
@@ -334,7 +187,7 @@ describe("the item the event carries is the item after the write", () => {
     const changes = metadataEventsFor(events, itemId);
     expect(changes).toHaveLength(1);
 
-    const stored = await ctx.storage.items.get(itemId, undefined);
+    const stored = await ctx.storage.items.get(itemId);
     // The write moved it, so the two candidate answers are distinct and
     // the assertion below is deciding between them rather than passing
     // on a coincidence.

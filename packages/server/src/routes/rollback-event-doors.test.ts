@@ -71,7 +71,7 @@ import {
 import type { TestContext } from "../test-utils.js";
 import {
   initEventLog,
-  __resetCycleDetectionForTests,
+  __resetEventLogForTests,
   type EdgeEventWithId,
   type ItemEventWithId,
 } from "../pubsub.js";
@@ -87,7 +87,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  __resetCycleDetectionForTests();
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 
@@ -608,15 +608,12 @@ const doors: Door[] = [
       // route stamps that source, so the mirror is planted through storage —
       // into the space the caller below is bound to, or the door never
       // resolves it.
-      const mirror = await ctx.storage.items.create(
-        {
-          type: "core.note",
-          properties: { body: "upstream copy" },
-          source: "integration:promote-fixture",
-          source_id: uniq("mirror"),
-        },
-        ctx.spaceId,
-      );
+      const mirror = await ctx.storage.items.create({
+        type: "core.note",
+        properties: { body: "upstream copy" },
+        source: "integration:promote-fixture",
+        source_id: uniq("mirror"),
+      });
       return { item: mirror.id };
     },
     act: async (s) => {
@@ -1249,25 +1246,11 @@ const PUBLISHES_UNDER_GUARD: Record<string, PublishingFile> = {
  * rather than omitted so the next reader can see the decision and reopen it.
  */
 const PUBLISHES_OUT_OF_SCOPE: Record<string, PublishingFile> = {
-  "routes/connections.ts": { sites: 5, why: "connection lifecycle" },
   "routes/auth-pages.ts": { sites: 2, why: "grant projection at sign-in" },
   "routes/auth-consent.ts": { sites: 1, why: "grant projection at consent" },
-  "routes/integrations.ts": { sites: 1, why: "the install pipeline" },
   "routes/admin-archive.ts": {
     sites: 2,
     why: "archive restore, an admin surface: the items it wrote and the edges between them, in that order",
-  },
-  "auth/starter-content.ts": {
-    sites: 1,
-    why: "sign-up seeding, outside a request",
-  },
-  "connections/upstream-credential.ts": {
-    sites: 2,
-    why: "credential teardown, announcing its edge cascade and the row itself",
-  },
-  "routes/admin.ts": {
-    sites: 2,
-    why: "the client removal, an admin surface: each purged projection's edges and then the row, announced once the transaction that removed them has committed",
   },
   "enrichment/sweeper.ts": {
     sites: 1,

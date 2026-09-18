@@ -1,4 +1,4 @@
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, lt } from "drizzle-orm";
 import type {
   ClaimIdempotencyKeyInput,
   IdempotencyClaim,
@@ -6,7 +6,6 @@ import type {
   IdempotencyRecordState,
   IdempotencyStore,
 } from "../interface.js";
-import { spaceCondition } from "../space-condition.js";
 import { idempotencyRecords } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -15,7 +14,6 @@ type Row = typeof idempotencyRecords.$inferSelect;
 function toRecord(row: Row): IdempotencyRecord {
   return {
     id: row.id,
-    space_id: row.space_id,
     idempotency_key: row.idempotency_key,
     fingerprint: row.fingerprint,
     state: row.state as IdempotencyRecordState,
@@ -36,7 +34,6 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
       .insert(idempotencyRecords)
       .values({
         id: input.id,
-        space_id: input.space_id,
         idempotency_key: input.idempotency_key,
         fingerprint: input.fingerprint,
         state: "in_flight",
@@ -47,7 +44,7 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
       .all();
     if (inserted.length > 0) return { claimed: true };
 
-    const held = await this.find(input.space_id, input.idempotency_key);
+    const held = await this.find(input.idempotency_key);
     // The INSERT lost and the winner is already gone: a `release()` after
     // a 5xx, or the retention sweep, landing between the two statements.
     // Nobody holds the key and nobody is coming to complete it, and this
@@ -146,45 +143,23 @@ export class SqliteIdempotencyStore implements IdempotencyStore {
     return deleted.length > 0;
   }
 
-  async cleanup(
-    retentionHours: number,
-    spaceId?: string | null,
-  ): Promise<number> {
+  async cleanup(retentionHours: number): Promise<number> {
     const cutoff = new Date(
       Date.now() - retentionHours * 3_600_000,
     ).toISOString();
-    // `spaceCondition` gives all three shapes the sweep needs: a named
-    // space, the space-less bucket, and no fence at all. Spelled through
-    // the helper rather than inline, which is what stopped the stores
-    // disagreeing about what an absent space means.
-    const where = and(
-      lt(idempotencyRecords.created_at, cutoff),
-      spaceCondition(idempotencyRecords.space_id, spaceId),
-    );
     const rows = await this.db
       .delete(idempotencyRecords)
-      .where(where)
+      .where(lt(idempotencyRecords.created_at, cutoff))
       .returning({ id: idempotencyRecords.id })
       .all();
     return rows.length;
   }
 
-  private async find(
-    spaceId: string | null,
-    key: string,
-  ): Promise<IdempotencyRecord | null> {
-    // Through the same COALESCE the unique index is built on, so the read
-    // and the constraint agree about which rows are one key. A plain
-    // `space_id = ?` would miss the null-space bucket entirely.
+  private async find(key: string): Promise<IdempotencyRecord | null> {
     const rows = await this.db
       .select()
       .from(idempotencyRecords)
-      .where(
-        and(
-          sql`COALESCE(${idempotencyRecords.space_id}, '') = ${spaceId ?? ""}`,
-          eq(idempotencyRecords.idempotency_key, key),
-        ),
-      )
+      .where(eq(idempotencyRecords.idempotency_key, key))
       .all();
     const row = rows[0];
     return row ? toRecord(row) : null;

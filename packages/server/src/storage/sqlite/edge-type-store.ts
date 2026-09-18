@@ -1,8 +1,7 @@
-import { and, eq } from "drizzle-orm";
-import { spaceSentinelCondition } from "../space-condition.js";
+import { eq } from "drizzle-orm";
 import { ErrorCode, MarfaError } from "@withmarfa/shared";
 import type { EdgeTypeSchema } from "@withmarfa/shared";
-import type { EdgeTypeStore, LoadedEdgeType } from "../interface.js";
+import type { EdgeTypeStore } from "../interface.js";
 import { customEdgeTypes } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 
@@ -13,34 +12,22 @@ function parseRow(row: typeof customEdgeTypes.$inferSelect): EdgeTypeSchema {
 export class SqliteEdgeTypeStore implements EdgeTypeStore {
   constructor(private db: DrizzleDb) {}
 
-  async list(spaceId?: string): Promise<EdgeTypeSchema[]> {
-    const rows = await this.db
-      .select()
-      .from(customEdgeTypes)
-      .where(spaceSentinelCondition(customEdgeTypes.space_id, spaceId))
-      .all();
+  async list(): Promise<EdgeTypeSchema[]> {
+    const rows = await this.db.select().from(customEdgeTypes).all();
     return rows.map(parseRow);
   }
 
-  async get(id: string, spaceId?: string): Promise<EdgeTypeSchema | undefined> {
+  async get(id: string): Promise<EdgeTypeSchema | undefined> {
     const row = await this.db
       .select()
       .from(customEdgeTypes)
-      .where(
-        and(
-          eq(customEdgeTypes.id, id),
-          spaceSentinelCondition(customEdgeTypes.space_id, spaceId),
-        ),
-      )
+      .where(eq(customEdgeTypes.id, id))
       .get();
     return row ? parseRow(row) : undefined;
   }
 
-  async create(
-    schema: EdgeTypeSchema,
-    spaceId?: string,
-  ): Promise<EdgeTypeSchema> {
-    const existing = await this.get(schema.id, spaceId);
+  async create(schema: EdgeTypeSchema): Promise<EdgeTypeSchema> {
+    const existing = await this.get(schema.id);
     if (existing) {
       throw new MarfaError(
         ErrorCode.CONFLICT,
@@ -53,7 +40,6 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
       .insert(customEdgeTypes)
       .values({
         id: schema.id,
-        space_id: spaceId ?? "",
         schema: JSON.stringify(schema),
         created_at: now,
         updated_at: now,
@@ -62,23 +48,15 @@ export class SqliteEdgeTypeStore implements EdgeTypeStore {
     return schema;
   }
 
-  async delete(id: string, spaceId?: string): Promise<void> {
+  async delete(id: string): Promise<void> {
     await this.db
       .delete(customEdgeTypes)
-      .where(
-        and(
-          eq(customEdgeTypes.id, id),
-          spaceSentinelCondition(customEdgeTypes.space_id, spaceId),
-        ),
-      )
+      .where(eq(customEdgeTypes.id, id))
       .run();
   }
 
-  async loadCustomEdgeTypes(): Promise<LoadedEdgeType[]> {
+  async loadCustomEdgeTypes(): Promise<EdgeTypeSchema[]> {
     const rows = await this.db.select().from(customEdgeTypes).all();
-    return rows.map((row) => ({
-      space_id: row.space_id,
-      schema: parseRow(row),
-    }));
+    return rows.map(parseRow);
   }
 }

@@ -48,15 +48,12 @@ interface AdvancedOptions {
  *  `trustedProxyHeader` is the real unconfigured case rather than one
  *  spelled explicitly. */
 function advancedFor(overrides: Partial<MarfaAuthOptions>): AdvancedOptions {
-  const auth = createMarfaAuth({
+  createMarfaAuth({
     // Never queried: the adapter is built and handed to the stub.
     db: {},
-    dialect: "sqlite",
     baseURL: "http://localhost:8600",
-    allowSignup: false,
     ...overrides,
   });
-  auth.stopOidcRetries();
   const options = capturedOptions[capturedOptions.length - 1];
   if (!options) throw new Error("betterAuth was never called");
   return options.advanced as AdvancedOptions;

@@ -37,8 +37,6 @@ import { constantTimeEqual } from "../utils/crypto.js";
 import { registerArchiveTypes } from "./admin-archive-types.js";
 import { assertEdgesCanBeCreated } from "../storage/edge-constraints.js";
 import { withBlobUploadLock } from "../storage/blob-upload-lock.js";
-import { reserveQuotaForSpace } from "../middleware/quota.js";
-import type { AppConfig } from "../config.js";
 import { log } from "../middleware/logger.js";
 import type { ArchiveTypeEntry } from "./admin-archive-types.js";
 
@@ -84,12 +82,6 @@ interface ArchiveManifest {
   version: number;
   format: string;
   created_at: string;
-  /**
-   * space_id stamped at export time. Used here to verify the importing
-   * admin's authority over the source space. An archive without this
-   * field restores as null, so an archive carrying no space keeps working.
-   */
-  space_id?: string | null;
   item_count: number;
   /** Absent on archives predating edge support; those restore with zero edges. */
   edge_count?: number;
@@ -104,20 +96,9 @@ const restoreArchiveRoute = createRoute({
   tags: ["Admin"],
   summary: "Restore types, items, edges, metadata, and blobs from an archive",
   description:
-    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. The archive's custom type and edge-type registrations are validated and registered first, so a restore into an empty space can write the items that use them; a registration the target space already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve in the restore space. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
+    "Ingests a `marfa-archive-v1.tar.gz` produced by `GET /export?format=archive`. The archive's custom type and edge-type registrations are validated and registered first, so a restore into an empty instance can write the items that use them; a registration the instance already holds identically is skipped, and one it holds differently fails the whole restore with `409` naming every clashing id. Item ids are preserved so restored edges resolve; an id or natural-key collision counts as a duplicate and leaves the existing row untouched. Tags and extensions restore with their items; edges restore in a second pass, skipped (and counted) when either endpoint does not resolve. A row comes back at the version it was archived at, for items and edges alike, so a client holding a version across a restore cannot have its precondition pass against content it never read. Version *history* — the per-version snapshots behind `GET /items/{id}?include=versions` — and row timestamps are re-stamped, not carried.",
   security: [{ bearerAuth: [] }],
   request: {
-    query: z.object({
-      // This route takes the operator key, which carries no space, so the
-      // space to restore into is named here or the space-less bucket is used.
-      // A space-bound caller cannot reach the route at all.
-      target_space_id: z
-        .string()
-        .optional()
-        .describe(
-          "The space to restore into. This route takes the operator key, which carries no space of its own, so naming one here is how a space is chosen.",
-        ),
-    }),
     body: {
       content: {
         "application/gzip": {
@@ -209,9 +190,7 @@ interface BlobRestore {
 async function restoreArchiveBlobs(
   storage: Storage,
   blobBackend: BlobBackend,
-  config: AppConfig,
   pending: readonly PendingBlob[],
-  spaceId: string,
 ): Promise<BlobRestore> {
   const wroteBytes: string[] = [];
   const wroteRows: string[] = [];
@@ -232,7 +211,7 @@ async function restoreArchiveBlobs(
     for (const hash of wroteBytes) {
       await withBlobUploadLock(hash, async () => {
         try {
-          if ((await storage.blobs.getAcrossSpaces(hash)) !== null) return;
+          if ((await storage.blobs.get(hash)) !== null) return;
           await blobBackend.delete(hash);
         } catch (err) {
           log("error", "blob.orphaned_after_refused_restore", {
@@ -244,35 +223,23 @@ async function restoreArchiveBlobs(
     }
   };
 
-  // Rows and their quota reservation are one transaction: the reservation
-  // has to count under the same lock the rows commit under, and a refusal
-  // then rolls every row back at once. The caller with no space of their
-  // own is exactly why the explicit-space form exists — the context form
-  // reserved nothing for the operator key, silently, and a restore could
-  // carry the space past ceilings every other blob write enforces.
+  // The rows commit as one transaction, so a failure rolls every row back
+  // at once.
   try {
     await storage.runInTransaction(async () => {
       const planned: PendingBlob[] = [];
       for (const blob of pending) {
-        if ((await storage.blobs.get(blob.hash, spaceId)) === null) {
+        if ((await storage.blobs.get(blob.hash)) === null) {
           planned.push(blob);
         }
       }
       if (planned.length === 0) return;
-      await reserveQuotaForSpace(storage, config, spaceId || undefined, [
-        { resource: "blobs", increment: planned.length },
-        {
-          resource: "storage_bytes",
-          increment: planned.reduce((sum, b) => sum + b.data.length, 0),
-        },
-      ]);
       for (const blob of planned) {
         await storage.blobs.register(
           blob.hash,
           blob.mimeType,
           blob.data.length,
           blob.hash,
-          spaceId,
         );
         wroteRows.push(blob.hash);
       }
@@ -289,7 +256,7 @@ async function restoreArchiveBlobs(
     undo: async () => {
       for (const hash of wroteRows) {
         try {
-          await storage.blobs.remove(hash, spaceId);
+          await storage.blobs.remove(hash);
         } catch (err) {
           log("error", "blob.row_orphaned_after_refused_restore", {
             hash,
@@ -306,16 +273,11 @@ async function restoreArchiveBlobs(
   };
 }
 
-export function adminArchiveRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-  authMode: "keys" | "hosted",
-) {
+export function adminArchiveRoutes(storage: Storage, blobBackend: BlobBackend) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(restoreArchiveRoute, async (c) => {
     requireOperatorKey(c);
-    const { target_space_id: targetSpaceParam } = c.req.valid("query");
 
     const rawBody = await c.req.arrayBuffer();
     if (rawBody.byteLength === 0) {
@@ -328,21 +290,6 @@ export function adminArchiveRoutes(
     const typeLines: string[] = [];
     const pendingBlobs: { hash: string; mimeType: string; data: Buffer }[] = [];
     let blobCount = 0;
-    // Resolve the space the archive restores into. The caller is the operator
-    // key and nothing else — `requireOperatorKey` above admits only a
-    // credential with the operator flag and no space, which the row constraint
-    // holds together — so there is no caller space to fall back on and
-    // `target_space_id` is how a space is named.
-    //
-    // **A branch reading the caller's own space used to stand here**, refusing
-    // a target that disagreed with it. It described a space-bound admin, which
-    // is not a shape any credential can now have on this route: the space-less
-    // half of the operator gate makes it unreachable rather than merely rare.
-    //
-    // Absent → the empty-string sentinel, which is what a deployment whose
-    // archive rows carry no space wrote them under.
-    const restoreSpaceId: string = targetSpaceParam ?? "";
-
     const extract = tar.extract();
     const gunzip = createGunzip();
 
@@ -422,36 +369,6 @@ export function adminArchiveRoutes(
     inputStream.pipe(gunzip).pipe(extract);
     await entries;
 
-    // Verify manifest.space_id against the resolved restore space.
-    // Three legitimate shapes:
-    //   - manifest.space_id is null/undefined → an unspaceed archive
-    //     or an export carrying no space. Allowed regardless of
-    //     restore space (import semantics fall back to NULL space_id
-    //     on items, matching the source shape).
-    //   - manifest.space_id matches restoreSpaceId → expected
-    //     same-space round-trip.
-    //   - mismatch → reject. The operator key gets past this via the
-    //     explicit `target_space_id` query param: its resolved
-    //     restoreSpaceId then equals the manifest, landing in the
-    //     matching branch above.
-    // Closure-modified `manifest` — TS doesn't narrow through the
-    // entry-handler closure, so cast back to the declared type for
-    // the access. Null when no manifest.json was present (defensive;
-    // an invalid archive structure is rejected on parse).
-    const m = manifest as ArchiveManifest | null;
-    const manifestSpaceId = m?.space_id ?? null;
-    if (manifestSpaceId !== null && manifestSpaceId !== restoreSpaceId) {
-      throw new MarfaError(
-        ErrorCode.FORBIDDEN,
-        `Archive manifest.space_id "${manifestSpaceId}" does not match restore space "${restoreSpaceId}". The operator key must pass target_space_id matching the source.`,
-      );
-    }
-
-    // Items and blobs restore into the same resolved space. The
-    // empty-string sentinel is a blobs-table convention only; the items
-    // and edges layers use NULL for the space-less shape.
-    const spaceId = restoreSpaceId || undefined;
-
     const items: { item: Record<string, unknown>; metadata?: unknown }[] = [];
     for (const line of itemLines) {
       try {
@@ -505,12 +422,7 @@ export function adminArchiveRoutes(
 
     // Before the transaction, so a rollback cannot strand the registry
     // holding types the database no longer has. See registerArchiveTypes.
-    const typeResult = await registerArchiveTypes(
-      storage,
-      typeEntries,
-      spaceId,
-      authMode,
-    );
+    const typeResult = await registerArchiveTypes(storage, typeEntries);
 
     // Blobs land only once every refusal above has passed. They used to be
     // written as the tar was read, which put bytes AND `blobs` rows into the
@@ -520,13 +432,7 @@ export function adminArchiveRoutes(
     // count toward. They are still outside the transaction, because a
     // rollback cannot reach a filesystem or an object store; what changes is
     // that this request now takes back exactly what it wrote.
-    const blobs = await restoreArchiveBlobs(
-      storage,
-      blobBackend,
-      c.get("config"),
-      pendingBlobs,
-      restoreSpaceId,
-    );
+    const blobs = await restoreArchiveBlobs(storage, blobBackend, pendingBlobs);
 
     // Filled inside the transaction, announced after it commits.
     const restoredItems: { item: Item; metadata: Metadata }[] = [];
@@ -553,30 +459,27 @@ export function adminArchiveRoutes(
         for (const { item, metadata: meta } of items) {
           const archiveId = typeof item.id === "string" ? item.id : undefined;
           try {
-            const created = await storage.items.create(
-              {
-                ...(archiveId !== undefined && { id: archiveId }),
-                // The row comes back under its archived id, so it comes
-                // back at its archived version too. Re-minting at 1 lets a
-                // client's stale precondition pass, later, against content
-                // it never read from.
-                ...(typeof item.version === "number" && {
-                  version: item.version,
-                }),
-                type: item.type as string,
-                properties: (item.properties ?? {}) as Record<string, unknown>,
-                state: item.state as ItemState | undefined,
-                tier: item.tier as Tier | undefined,
-                timestamp: item.timestamp as string | undefined,
-                source: item.source as string | undefined,
-                source_id: item.source_id as string | undefined,
-                device: item.device as string | undefined,
-                capture_latitude: item.capture_latitude as number | undefined,
-                capture_longitude: item.capture_longitude as number | undefined,
-                tags: archiveTags(meta),
-              },
-              spaceId,
-            );
+            const created = await storage.items.create({
+              ...(archiveId !== undefined && { id: archiveId }),
+              // The row comes back under its archived id, so it comes
+              // back at its archived version too. Re-minting at 1 lets a
+              // client's stale precondition pass, later, against content
+              // it never read from.
+              ...(typeof item.version === "number" && {
+                version: item.version,
+              }),
+              type: item.type as string,
+              properties: (item.properties ?? {}) as Record<string, unknown>,
+              state: item.state as ItemState | undefined,
+              tier: item.tier as Tier | undefined,
+              timestamp: item.timestamp as string | undefined,
+              source: item.source as string | undefined,
+              source_id: item.source_id as string | undefined,
+              device: item.device as string | undefined,
+              capture_latitude: item.capture_latitude as number | undefined,
+              capture_longitude: item.capture_longitude as number | undefined,
+              tags: archiveTags(meta),
+            });
             imported++;
             resolvableIds.add(created.id);
 
@@ -633,8 +536,7 @@ export function adminArchiveRoutes(
         // space, so a partial or hand-edited archive cannot plant a
         // reference to an item that is not there.
         const endpointResolves = async (id: string): Promise<boolean> =>
-          resolvableIds.has(id) ||
-          (await storage.items.get(id, spaceId)) !== null;
+          resolvableIds.has(id) || (await storage.items.get(id)) !== null;
 
         for (const edge of edges) {
           const sourceId = edge.source_id;
@@ -673,18 +575,13 @@ export function adminArchiveRoutes(
           // Custom edge types resolve because the archive's own registrations
           // are replayed before this loop runs.
           try {
-            await assertEdgesCanBeCreated(
-              storage.edges,
-              storage.items,
-              [
-                {
-                  source_id: sourceId,
-                  target_id: targetId,
-                  edge_type: edgeType,
-                },
-              ],
-              { space_id: spaceId },
-            );
+            await assertEdgesCanBeCreated(storage.edges, storage.items, [
+              {
+                source_id: sourceId,
+                target_id: targetId,
+                edge_type: edgeType,
+              },
+            ]);
           } catch (err) {
             if (err instanceof MarfaError) {
               skipEdge(err.code);
@@ -692,21 +589,18 @@ export function adminArchiveRoutes(
             }
             throw err;
           }
-          const restored = await storage.edges.createRaw(
-            {
-              ...(edgeId !== undefined && { id: edgeId }),
-              // Same rule as the item path above. Both doors move together
-              // or the hole stays reachable through the other one.
-              ...(typeof edge.version === "number" && {
-                version: edge.version,
-              }),
-              source_id: sourceId,
-              target_id: targetId,
-              edge_type: edgeType,
-              properties: (edge.properties ?? {}) as Record<string, unknown>,
-            },
-            spaceId,
-          );
+          const restored = await storage.edges.createRaw({
+            ...(edgeId !== undefined && { id: edgeId }),
+            // Same rule as the item path above. Both doors move together
+            // or the hole stays reachable through the other one.
+            ...(typeof edge.version === "number" && {
+              version: edge.version,
+            }),
+            source_id: sourceId,
+            target_id: targetId,
+            edge_type: edgeType,
+            properties: (edge.properties ?? {}) as Record<string, unknown>,
+          });
           // Collected, not announced. This runs inside the restore's
           // transaction, and a later edge failing rolls the whole import
           // back — including the `event_log` append, so a replay cannot
@@ -757,7 +651,6 @@ export function adminArchiveRoutes(
         type: "created",
         item,
         metadata,
-        spaceId,
         enableFanout: false,
       });
     }
@@ -765,14 +658,12 @@ export function adminArchiveRoutes(
       await publishEdge({
         type: "edge_created",
         edge,
-        spaceId,
         enableFanout: false,
       });
     }
 
     await storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: spaceId ?? null,
       key_id: c.get("apiKey")?.id,
       action: "admin.restore_archive",
       resource_type: "admin.restore_archive",

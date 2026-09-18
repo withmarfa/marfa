@@ -13,8 +13,8 @@ afterAll(async () => {
 });
 
 // Audit writes in the route handlers are fire-and-forget
-// (`void storage.audit.log(...)`). Under Postgres the write is
-// genuinely async — use the shared `waitForAudit` helper.
+// (`void storage.audit.log(...)`), so use the shared `waitForAudit`
+// helper rather than reading once.
 async function waitForAuditEntry(filter: {
   action: string;
   resource_id: string;

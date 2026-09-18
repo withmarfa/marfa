@@ -43,16 +43,6 @@ afterAll(async () => {
  * clock happens to oblige.
  */
 async function forceItemUpdatedAt(id: string, iso: string): Promise<void> {
-  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
-      iso,
-      id,
-    ]);
-    return;
-  }
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };
@@ -63,16 +53,6 @@ async function forceItemUpdatedAt(id: string, iso: string): Promise<void> {
 }
 
 async function forceEdgeUpdatedAt(id: string, iso: string): Promise<void> {
-  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(`UPDATE edges SET updated_at = $1 WHERE id = $2`, [
-      iso,
-      id,
-    ]);
-    return;
-  }
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };
@@ -267,34 +247,6 @@ describe("what a catch-up can see", () => {
     );
     expect(ids).toContain(id);
     expect(ids).not.toContain(control);
-  });
-
-  it("does not find an item whose only change was under the reserved runtime root", async () => {
-    const id = await seedNote("runtime-state");
-    await forceItemUpdatedAt(id, EPOCH);
-
-    // A sibling under the root rather than `connection.runtime` itself.
-    // The predicate that decides this is a prefix match, not an equality,
-    // and a sibling is the only case that tells the two apart — an
-    // equality would leave every namespace added under this root later
-    // silent on the stream and loud on catch-up.
-    const res = await request(
-      ctx.app,
-      "PUT",
-      `/items/${id}/extensions/connection.inbound`,
-      { key: ctx.spaceKey, body: { seen: "abc" } },
-    );
-    expect(res.status).toBe(200);
-
-    // Deliberate, and the inverse of the three cases above. Everything
-    // under the `connection.` root is per-Connection machine state —
-    // sync cursors, error tails — written at dispatch frequency and
-    // deliberately silent on the event stream. A write a client cannot
-    // hear about must also be one it cannot find on catch-up, or its two
-    // views of the same item disagree and it re-reads rows forever.
-    expect(
-      await idsFrom(`updated_after=${encodeURIComponent(BOUND)}&limit=200`),
-    ).not.toContain(id);
   });
 });
 

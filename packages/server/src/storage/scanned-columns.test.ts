@@ -28,7 +28,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   SCANNED_COLUMNS,
@@ -167,44 +167,23 @@ describe("the scanned-column roster keeps up with the storage layer", () => {
   it("finds every occurrence it should, so partial loss cannot pass", () => {
     // Counting rather than detecting. An earlier version asked only
     // whether three type names appeared *at all*, so reformatting one
-    // dialect's cast across two lines dropped it from the match set and
-    // the suite stayed green — a reader losing half its input while
-    // reporting success.
+    // cast across two lines dropped it from the match set and the suite
+    // stayed green — a reader losing half its input while reporting
+    // success.
     //
-    // Two properties, and the first is the one that maintains itself.
-    // Every `(column, union)` pair in `pg/` has a mirror in `sqlite/`,
-    // because the two dialects are written as siblings; a reader that
-    // stopped seeing one file's casts breaks the symmetry without any
-    // number being hardcoded here.
-    const counts = new Map<string, { pg: number; sqlite: number }>();
-    for (const { column, type, where } of storedValueCasts()) {
+    // An absolute floor under the three the scan depends on, so a change
+    // that lost a read still fails. `>=` rather than `===` so a legitimate
+    // new read does not redden a test it has nothing to do with. Measured
+    // today: one and one.
+    const counts = new Map<string, number>();
+    for (const { column, type } of storedValueCasts()) {
       if (NOT_A_VALUE_UNION.has(type)) continue;
       const key = pair(column, type);
-      const seen = counts.get(key) ?? { pg: 0, sqlite: 0 };
-      if (where.startsWith(`pg${sep}`)) seen.pg += 1;
-      else if (where.startsWith(`sqlite${sep}`)) seen.sqlite += 1;
-      counts.set(key, seen);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-
-    const asymmetric = [...counts.entries()]
-      .filter(([, n]) => n.pg !== n.sqlite)
-      .map(
-        ([key, n]) => `${key}: pg ${String(n.pg)}, sqlite ${String(n.sqlite)}`,
-      );
-    expect(asymmetric).toEqual([]);
-
-    // And an absolute floor under the three the scan depends on, so a
-    // change that lost both dialects at once — symmetric, and therefore
-    // invisible above — still fails. `>=` rather than `===` so a
-    // legitimate new read does not redden a test it has nothing to do
-    // with. Measured today: two, two, and four.
-    const total = (key: string) => {
-      const n = counts.get(key);
-      return n ? n.pg + n.sqlite : 0;
-    };
-    expect(total("state as ItemState")).toBeGreaterThanOrEqual(2);
-    expect(total("default_tier as Tier")).toBeGreaterThanOrEqual(2);
-    expect(total("deletion_state as DeletionState")).toBeGreaterThanOrEqual(4);
+    const total = (key: string) => counts.get(key) ?? 0;
+    expect(total("state as ItemState")).toBeGreaterThanOrEqual(1);
+    expect(total("default_tier as Tier")).toBeGreaterThanOrEqual(1);
   });
 
   it("gives a reason for every column it leaves uncounted", () => {

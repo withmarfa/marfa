@@ -6,25 +6,15 @@ import type { Item } from "@withmarfa/shared";
  * that would remove it or move it out of the active state, and what the
  * caller is sent to instead.
  *
- * **A credential must not outlive the connection it was minted for**, and
- * none of these doors keeps that true on its own. Each removes or retires
- * the row and none revokes anything: `api_keys.connection_id` carries no
- * foreign key, so a runtime credential whose connection has been deleted is
- * standing privilege that nothing can attribute, the row naming its owner
- * gone. Five such credentials were found on staging and the session that
- * found them could not establish where they came from.
+ * **A grant's tokens must not outlive the row that names their owner**, and
+ * none of these doors keeps that true on its own: each removes or retires
+ * the row and none revokes anything. Refusing rather than revoking here is
+ * the point. Revoking would be a second teardown beside the grant cascade,
+ * and two teardowns drift, so this door sends the caller to the door that
+ * already does it properly. An already-revoked connection goes freely: the
+ * cascade has run and the row is ordinary history.
  *
- * **Refusing rather than revoking here is the point.** Revoking would be a
- * second teardown beside `performUninstall`, and `performUninstall` does more
- * than revoke: leased tokens, the proxy's cached upstream tokens, inbound
- * webhook subscriptions. Two teardowns drift, and the one reached by an
- * ordinary `DELETE /items/{id}` is the one nobody would think to keep in
- * step. So this door sends the caller to the door that already does it
- * properly. An already-revoked connection goes freely: uninstall has run,
- * the credentials are gone, and the row is ordinary history.
- *
- * **An `app` connection is an OAuth grant, and the same rule holds with a
- * different door to send the caller to.** A grant is two records, this
+ * **An `app` connection is an OAuth grant.** A grant is two records, this
  * projection and the plugin's consent row, with the app's tokens hanging
  * off the pair. Removing or retiring the projection leaves the tokens live
  * and the consent row standing, so the app keeps working and the next

@@ -7,33 +7,35 @@ import {
   ErrorCode,
   type Metadata,
 } from "@withmarfa/shared";
-import type { MetadataStore, SetExtensionsResult } from "../interface.js";
+import type {
+  MetadataStore,
+  SetExtensionsResult,
+  SearchStore,
+} from "../interface.js";
 import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
-import { announcesMetadataChange } from "../../metadata-namespaces.js";
 import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class SqliteMetadataStore implements MetadataStore {
-  constructor(private db: DrizzleDb) {}
+  /** The search store, because every tag write is also an index write. */
+  constructor(
+    private db: DrizzleDb,
+    private searchStore: SearchStore,
+  ) {}
 
   /**
    * Aggregate distinct tags across items the caller can read. Uses
-   * `json_each` to unnest the tags JSON arrays; space + type-permission
+   * `json_each` to unnest the tags JSON arrays; type-permission
    * filtering applied via a join to `items`. Excludes trashed items.
    */
   async listTags(filters: {
-    spaceId?: string;
     allowedTypes?: string[];
     excludedTypes?: string[];
   }): Promise<{ tag: string; count: number }[]> {
     const conditions: string[] = ["i.state != 'trashed'"];
     const params: unknown[] = [];
-    if (filters.spaceId) {
-      conditions.push("i.space_id = ?");
-      params.push(filters.spaceId);
-    }
     const excludedTypes = filters.excludedTypes ?? [];
     // An empty allow-list means "no readable types", not "no restriction",
     // and every other read surface reads it that way. Guarding on a non-empty
@@ -42,8 +44,8 @@ export class SqliteMetadataStore implements MetadataStore {
     // readable.
     //
     // **A global wildcard skips the clause only when nothing is excluded
-    // beside it** — see the sibling note in the Postgres store for what
-    // re-armed this and why it is two files from the change that did.
+    // beside it**: an exclusion under a wildcard is what narrows a grant, so
+    // dropping the clause for the wildcard alone would widen it back.
     const unrestricted =
       filters.allowedTypes?.includes(GLOBAL_TYPE_WILDCARD) === true &&
       excludedTypes.length === 0;
@@ -126,25 +128,19 @@ export class SqliteMetadataStore implements MetadataStore {
     // reads backwards — this method is about the sidecar, and the item is
     // the afterthought — so it invites being swapped back.
     //
-    // SQLite admits one writer at a time, so the deadlock this order
-    // prevents is not reachable here; the Postgres store carries the same
-    // order because there it is. Kept identical deliberately. These two
-    // files are read as a pair, and an ordering that mattered in only one
-    // of them would leave the next reader working out which — the answer
-    // being easy to get wrong and nothing failing when it is.
-    // One bump for the whole write, however many namespaces it carries.
-    // Any announcing namespace in the set makes the item's change visible,
-    // and a caller writing several together means one change rather than
-    // one per namespace.
-    let bumpedAt: string | null = null;
-    if ("tags" in write || write.namespaces.some(announcesMetadataChange)) {
-      bumpedAt = new Date().toISOString();
-      await tx
-        .update(items)
-        .set({ updated_at: bumpedAt })
-        .where(eq(items.id, itemId))
-        .run();
-    }
+    // SQLite admits one writer at a time, so the deadlock this order once
+    // prevented on a store with row locks is not reachable here. Kept
+    // deliberately: the order costs nothing and an engine with row locks
+    // would need it.
+    // One bump for the whole write, however many namespaces it carries: a
+    // caller writing several together means one change rather than one per
+    // namespace.
+    const bumpedAt = new Date().toISOString();
+    await tx
+      .update(items)
+      .set({ updated_at: bumpedAt })
+      .where(eq(items.id, itemId))
+      .run();
     await tx
       .update(metadata)
       .set(
@@ -155,6 +151,28 @@ export class SqliteMetadataStore implements MetadataStore {
       .where(eq(metadata.item_id, itemId))
       .run();
     return bumpedAt;
+  }
+
+  /** The row after a write inside `tx`. The sidecar is updated in place
+   *  rather than upserted, so an id no item carries has no row to read
+   *  back: that is a missing item, said as one, rather than a non-null
+   *  assertion failing on the way out. */
+  private async readBack(
+    tx: SqliteTxContext,
+    itemId: string,
+  ): Promise<Metadata> {
+    const after = await tx
+      .select()
+      .from(metadata)
+      .where(eq(metadata.item_id, itemId))
+      .get();
+    if (!after) {
+      throw new MarfaError(
+        ErrorCode.ITEM_NOT_FOUND,
+        `Item ${itemId} not found`,
+      );
+    }
+    return rowToMetadata(after);
   }
 
   async getMany(itemIds: string[]): Promise<Metadata[]> {
@@ -209,6 +227,7 @@ export class SqliteMetadataStore implements MetadataStore {
         );
       }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(tags) });
+      await this.searchStore.setTags(itemId, tags);
     });
     return this.get(itemId);
   }
@@ -241,13 +260,8 @@ export class SqliteMetadataStore implements MetadataStore {
       await this.writeSidecar(tx, itemId, {
         tags: JSON.stringify(mergedTags),
       });
-      const after = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-      return rowToMetadata(after!);
+      await this.searchStore.setTags(itemId, mergedTags);
+      return this.readBack(tx, itemId);
     });
   }
 
@@ -275,13 +289,8 @@ export class SqliteMetadataStore implements MetadataStore {
         );
       }
       await this.writeSidecar(tx, itemId, { tags: JSON.stringify(merged) });
-      const after = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-      return rowToMetadata(after!);
+      await this.searchStore.setTags(itemId, merged);
+      return this.readBack(tx, itemId);
     });
   }
 
@@ -299,13 +308,8 @@ export class SqliteMetadataStore implements MetadataStore {
       await this.writeSidecar(tx, itemId, {
         tags: JSON.stringify(filtered),
       });
-      const after = await tx
-        .select()
-        .from(metadata)
-        .where(eq(metadata.item_id, itemId))
-        .get();
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion -- the SET above guarantees the row exists inside this transaction
-      return rowToMetadata(after!);
+      await this.searchStore.setTags(itemId, filtered);
+      return this.readBack(tx, itemId);
     });
   }
 
@@ -411,12 +415,7 @@ export class SqliteMetadataStore implements MetadataStore {
 
   /**
    * SQLite has no row-level lock to take; the write transaction is the
-   * serialization point, since SQLite admits one writer at a time. The
-   * Postgres implementation adds `FOR UPDATE` for the same guarantee.
-   *
-   * That is also why the Postgres side claims the item row before its
-   * metadata lock and this one does not: with no row locks here there is
-   * no order between two of them to get wrong.
+   * serialization point, since SQLite admits one writer at a time.
    */
   async mutateExtension(
     itemId: string,

@@ -308,7 +308,7 @@ function errorCodeOf(body: string): string | null {
 /**
  * `Idempotency-Key` on the item and edge write doors.
  *
- * **Mounted outside the RLS transaction wrapper**, which is not a
+ * **Mounted outside any write transaction**, which is not a
  * preference: the claim must commit whether or not the write's own
  * transaction does, or a rolled-back write would take the record of it
  * with it and the second attempt would write for real.
@@ -338,15 +338,13 @@ export function idempotencyMiddleware(opts: {
     }
 
     // **No credential, no claim.** `authMiddleware` never rejects: every
-    // failure path — absent bearer, an OAuth token that does not resolve,
-    // a hosted token with no space — sets `apiKey` to undefined and calls
+    // failure path — absent bearer, an OAuth token that does not resolve —
+    // sets `apiKey` to undefined and calls
     // `next()`, and the refusal is raised by `requireAuth` inside the
     // route, which is downstream of here. Claiming first would let an
     // unauthenticated stranger insert a row per request, keyed on 255
     // bytes of their choosing and kept for the whole retention window, on
-    // a table with no quota; and because a space-less caller lands in the
-    // `COALESCE(space_id, '') = ''` bucket alongside every platform
-    // self-host and the operator key, a planted key would make a legitimate
+    // a table with no quota; and a planted key would make a legitimate
     // caller's later use of the same one a fingerprint mismatch until it
     // aged out.
     //
@@ -358,14 +356,13 @@ export function idempotencyMiddleware(opts: {
     const apiKey = c.get("apiKey");
     if (apiKey === undefined) return next();
 
-    const spaceId = apiKey.space_id ?? null;
     // Cloned so the route's own body read is untouched: the original
     // stream stays unconsumed and the validator parses it as usual.
     const bodyText =
       c.req.raw.body === null ? "" : await c.req.raw.clone().text();
     const digest = await fingerprint(c, bodyText);
 
-    const held = await acquire(storage, spaceId, key, digest);
+    const held = await acquire(storage, key, digest);
     if ("answer" in held) return withPreparedHeaders(c, held.answer);
 
     const { recordId, heldSince } = held;
@@ -417,7 +414,6 @@ export function idempotencyMiddleware(opts: {
  */
 async function acquire(
   storage: Storage,
-  spaceId: string | null,
   key: string,
   digest: string,
 ): Promise<{ recordId: string; heldSince: string } | { answer: Response }> {
@@ -426,7 +422,6 @@ async function acquire(
     const now = new Date().toISOString();
     const claim = await storage.idempotency.claim({
       id,
-      space_id: spaceId,
       idempotency_key: key,
       fingerprint: digest,
       created_at: now,

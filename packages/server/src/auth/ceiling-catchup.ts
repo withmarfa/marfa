@@ -163,7 +163,6 @@ export async function catchUpClientScopeCeiling(opts: {
   // of the log line: two callers write this action and the trail has to say
   // which.
   void storage.audit.log({
-    space_id: null,
     action: "auth.client.scopes_widened",
     resource_type: "oauth_client",
     resource_id: clientId,

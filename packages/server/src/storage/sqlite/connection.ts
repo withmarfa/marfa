@@ -1,13 +1,25 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { createClient, type Client } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import { sql } from "drizzle-orm";
 import * as schema from "./schema.js";
-import { stampSqliteDrizzleMigrations } from "../bootstrap-stamp.js";
-import { SCHEMA_SQL } from "./schema-sql.generated.js";
+
+/**
+ * The database's DDL, generated from `schema.ts` by
+ * `scripts/generate-schema-sql.ts` and applied in full at every open.
+ * Read from beside this module so the same file serves `tsx` on the source
+ * tree and the built bundle, which copies it into `dist/`.
+ */
+export const SCHEMA_SQL = readFileSync(
+  new URL("./schema.sql", import.meta.url),
+  "utf8",
+);
 
 // Raw SQL for tables that Drizzle cannot express (FTS5 virtual tables).
+// `tags` carries the sidecar's tag list, space-joined, so a tag absent from
+// an item's text still finds it; the search store keeps the column current
+// on every tag write.
 const CREATE_FTS = `
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
   item_id,
@@ -16,6 +28,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
   description,
   name,
   extra,
+  tags,
   tokenize='porter unicode61'
 );
 `;
@@ -31,20 +44,14 @@ export type RawDb = Client;
  *   share one in-memory database. Plain `:memory:` gives each libsql logical
  *   connection its own isolated DB, which breaks the moment a transaction
  *   opens — the tx connection sees a different empty database.
- * - File paths become `file:<path>`.
- * - Already-formed URLs (`file:`, `http://`, `https://`, `libsql://`) pass
- *   through unchanged so callers can pin to remote replicas if needed.
+ * - File paths become `file:<path>`; an already-formed `file:` URL passes.
+ *
+ * One file per instance, and nothing else: a remote libsql URL would open
+ * and then silently ignore every PRAGMA below, so it is not an option here.
  */
 function toLibsqlUrl(pathOrUrl: string): string {
   if (pathOrUrl === ":memory:") return "file::memory:?cache=shared";
-  if (
-    pathOrUrl.startsWith("file:") ||
-    pathOrUrl.startsWith("http://") ||
-    pathOrUrl.startsWith("https://") ||
-    pathOrUrl.startsWith("libsql://")
-  ) {
-    return pathOrUrl;
-  }
+  if (pathOrUrl.startsWith("file:")) return pathOrUrl;
   return `file:${pathOrUrl}`;
 }
 
@@ -58,13 +65,8 @@ export async function createConnection(sqlitePath: string): Promise<{
   close: () => Promise<void>;
 }> {
   // Ensure the directory exists for filesystem paths (skip for in-memory and
-  // already-formed URLs).
-  if (
-    sqlitePath !== ":memory:" &&
-    !sqlitePath.startsWith("file:") &&
-    !sqlitePath.startsWith("http") &&
-    !sqlitePath.startsWith("libsql:")
-  ) {
+  // an already-formed `file:` URL).
+  if (sqlitePath !== ":memory:" && !sqlitePath.startsWith("file:")) {
     const dir = dirname(sqlitePath);
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true });
@@ -79,18 +81,16 @@ export async function createConnection(sqlitePath: string): Promise<{
   await client.execute("PRAGMA foreign_keys = ON");
 
   // Create tables via raw SQL (idempotent — CREATE TABLE IF NOT EXISTS).
-  // SCHEMA_SQL is auto-generated from drizzle/sqlite/ migrations by
-  // scripts/generate-schema-sql.ts; see that script for details.
   await client.executeMultiple(SCHEMA_SQL);
-  // The remaining hand-written block is the FTS5 virtual table — Drizzle
-  // Kit cannot express FTS5, so it never appears in any migration and must
-  // be applied separately.
+  // The remaining hand-written block is the FTS5 virtual table — drizzle-kit
+  // cannot express FTS5, so it is applied separately.
   await client.executeMultiple(CREATE_FTS);
 
-  // FTS5 doesn't support ALTER TABLE; detect missing 'extra' column and rebuild.
+  // FTS5 doesn't support ALTER TABLE; a database whose index predates the
+  // newest column is rebuilt from the rows.
   let needsFtsRebuild = false;
   try {
-    await client.execute("SELECT extra FROM items_fts LIMIT 0");
+    await client.execute("SELECT tags FROM items_fts LIMIT 0");
   } catch {
     needsFtsRebuild = true;
   }
@@ -99,9 +99,15 @@ export async function createConnection(sqlitePath: string): Promise<{
     await client.executeMultiple(CREATE_FTS);
     // Re-index all items (extra defaults to empty since we don't have type
     // context here). json() projects the stored JSONB blob back to text —
-    // reading the raw column would hand JSON.parse a binary value.
+    // reading the raw column would hand JSON.parse a binary value. The tags
+    // come off the sidecar, space-joined the way the store indexes them.
     const allItems = await client.execute(
-      "SELECT id, json(properties) AS properties FROM items WHERE state != 'trashed'",
+      `SELECT i.id, json(i.properties) AS properties,
+              (SELECT group_concat(je.value, ' ')
+                 FROM metadata m, json_each(m.tags) je
+                WHERE m.item_id = i.id) AS tags
+         FROM items i
+        WHERE i.state != 'trashed'`,
     );
     for (const row of allItems.rows) {
       try {
@@ -113,23 +119,17 @@ export async function createConnection(sqlitePath: string): Promise<{
         const desc =
           typeof props.description === "string" ? props.description : "";
         const name = typeof props.name === "string" ? props.name : "";
+        const tags = typeof row.tags === "string" ? row.tags : "";
         await client.execute({
-          sql: `INSERT INTO items_fts(item_id, title, body, description, name, extra)
-                VALUES (?, ?, ?, ?, ?, ?)`,
-          args: [id, title, body, desc, name, ""],
+          sql: `INSERT INTO items_fts(item_id, title, body, description, name, extra, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          args: [id, title, body, desc, name, "", tags],
         });
       } catch {
         // skip rows with unparseable properties
       }
     }
   }
-
-  // Stamp Drizzle's `__drizzle_migrations` table so a follow-up
-  // `pnpm migrate` against this bootstrapped DB short-circuits as a no-op.
-  // Without this, migrate replays from 0000 and several DROP / ALTER
-  // migrations error against tables the bootstrap shape never had.
-  // Idempotent — only stamps when the table is empty.
-  await stampSqliteDrizzleMigrations(client);
 
   const db = drizzle(client, { schema });
 

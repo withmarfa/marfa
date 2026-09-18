@@ -3,12 +3,12 @@
  *
  * Three things to pin:
  *   1. `findGrantItemId` resolves the projected system.connection by
- *      (spaceId, clientId, authUserId) and refuses cross-space matches.
+ *      (clientId, authUserId).
  *   2. `findRefreshTokenGrantKey` returns `revoked: true` only when the
  *      refresh row's `revoked` timestamp is non-null; the dialect-level
  *      timestamp-vs-boolean coercion must not silently flip.
  *   3. Re-running `seedOauthBearer` against the same
- *      (spaceId, clientId, authUserId) creates a NEW projection row
+ *      (clientId, authUserId) creates a NEW projection row
  *      each time, but `findGrantItemId` returns one deterministically.
  *
  * These tests don't cover the refresh-replay path end-to-end (that
@@ -41,7 +41,6 @@ describe("OauthProviderStore.findGrantItemId", () => {
     expect(typeof authUserId).toBe("string");
 
     const got = await ctx.storage.oauthProvider?.findGrantItemId({
-      spaceId: null,
       clientId: seeded.clientId,
       authUserId: authUserId as string,
     });
@@ -51,35 +50,10 @@ describe("OauthProviderStore.findGrantItemId", () => {
   it("returns null when no projection exists for the pair", async () => {
     ctx = await createTestContext();
     const got = await ctx.storage.oauthProvider?.findGrantItemId({
-      spaceId: null,
       clientId: "client_nonexistent",
       authUserId: "auth_user_nonexistent",
     });
     expect(got).toBeNull();
-  });
-
-  it("refuses cross-space matches (space predicate is enforced)", async () => {
-    ctx = await createTestContext();
-    const seeded = await seedOauthBearer(ctx.storage, ["core.note:read"]);
-    const grant = await ctx.storage.items.get(seeded.grantId);
-    const authUserId = grant!.properties.user_id as string;
-
-    // Seeded with spaceId=undefined (null in DB). Lookup with a non-null
-    // space must miss.
-    const wrongSpace = await ctx.storage.oauthProvider?.findGrantItemId({
-      spaceId: "other-space",
-      clientId: seeded.clientId,
-      authUserId,
-    });
-    expect(wrongSpace).toBeNull();
-
-    // Lookup with null space matches.
-    const rightSpace = await ctx.storage.oauthProvider?.findGrantItemId({
-      spaceId: null,
-      clientId: seeded.clientId,
-      authUserId,
-    });
-    expect(rightSpace).toBe(seeded.grantId);
   });
 });
 

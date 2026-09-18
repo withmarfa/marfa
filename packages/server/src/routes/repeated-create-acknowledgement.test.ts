@@ -21,25 +21,16 @@
  * other device.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  generateId,
-  MarfaError,
-  ErrorCode,
-  SPACE_PERMISSIONS,
-} from "@withmarfa/shared";
-import type { TypePermission } from "@withmarfa/shared";
+import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import {
   createTestContext,
   request,
-  TEST_API_KEY_SALT,
   collectItemEvents,
   collectEdgeEvents,
   settle,
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
-import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
 
 let ctx: TestContext;
 
@@ -146,41 +137,6 @@ describe("a repeated item create", () => {
       "type_mismatch",
     );
   });
-
-  it("stays a conflict when the id belongs to a space the caller cannot see", async () => {
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const other = await spaces.create("ack-other-space");
-    const hidden = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "not yours" } },
-      other.id,
-    );
-
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const mineKey = `marfa_k1_ack_${suffix}`;
-    const mine = await spaces.create("ack-my-space");
-    await ctx.storage.keys.create(
-      {
-        label: `ack-${suffix}`,
-        source: `ack-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: { "*": "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(mineKey, TEST_API_KEY_SALT),
-      mine.id,
-    );
-
-    // The id is taken, but not by anything this caller may be told about.
-    // Acknowledging would confirm the existence of another space's row.
-    const res = await request(ctx.app, "POST", "/items", {
-      key: mineKey,
-      body: { type: "core.note", id: hidden.id, properties: { body: "mine" } },
-    });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as ErrorBody).error.code).toBe("conflict");
-  });
 });
 
 describe("a repeated edge create", () => {
@@ -232,172 +188,6 @@ describe("a repeated edge create", () => {
 });
 
 describe("the gates an acknowledgement still runs", () => {
-  /**
-   * A space, and a key inside it that may write items.
-   *
-   * No space permission is named because none of these doors asks for one:
-   * `POST /items` is decided by the type map alone, and the quota the case
-   * below sets is written by the operator key.
-   */
-  async function spaceWithKey(
-    label: string,
-    permissions: Record<string, TypePermission> = { "*": "write" },
-  ): Promise<{ spaceId: string; key: string }> {
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const space = await spaces.create(label);
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const key = `marfa_k1_${label.replace(/[^a-z]/g, "")}_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `${label}-${suffix}`,
-        source: `${label}-${suffix}`,
-        type_permissions: permissions,
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(key, TEST_API_KEY_SALT),
-      space.id,
-    );
-    return { spaceId: space.id, key };
-  }
-
-  it("is reached even when the space is at its item ceiling", async () => {
-    // The acknowledgement used to sit behind the write transaction, whose
-    // first statement reserves quota — so a full space answered a repeat
-    // with `quota_exceeded` for a row it already held. That is the same
-    // permanent refusal the whole change exists to remove, wearing a
-    // different code.
-    const { spaceId, key } = await spaceWithKey("quotaspace");
-    const id = generateId();
-    const first = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", id, properties: { body: "at-ceiling" } },
-    });
-    expect(first.status).toBe(201);
-
-    // Ceiling set to exactly what the space now holds, so any genuine
-    // create is refused and only the acknowledgement can answer 200.
-    // Quotas are an operator surface: the key that sets them is the
-    // instance's, not one bound to the space being capped.
-    const quota = await request(ctx.app, "PUT", `/spaces/${spaceId}/quotas`, {
-      key: ctx.operatorKey,
-      body: { items_limit: 1 },
-    });
-    expect(quota.status).toBe(200);
-
-    const blocked = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", properties: { body: "a genuine create" } },
-    });
-    expect(blocked.status).toBe(429);
-
-    const repeat = await request(ctx.app, "POST", "/items", {
-      key,
-      body: { type: "core.note", id, properties: { body: "repeat" } },
-    });
-    expect(repeat.status).toBe(200);
-    expect((await repeat.json()) as ItemBody).toMatchObject({
-      acknowledged: true,
-    });
-  });
-
-  it("refuses a repeat landing on another connection's row", async () => {
-    // D63. The guard engages only where the row is integration-sourced,
-    // the caller's `item_source` matches it, and a *different live*
-    // connection is recorded as the writer. "Live" means the connection
-    // resolves a catalog row, so the fixture has to register a
-    // `system.integration` and point both connections at it — without
-    // that both writers read as dead, adoption applies, and the test
-    // passes while proving nothing.
-    //
-    // Two connections on ONE integration is the load-bearing part:
-    // `item_source` is keyed on the manifest name, so both share it, and
-    // sharing it is the only way this door resolves a row the credential
-    // did not write.
-    const name = `acme.ackfixture${Math.random().toString(36).slice(2, 8)}`;
-    const integration = await ctx.storage.items.create(
-      {
-        type: "system.integration",
-        properties: {
-          manifest_name: name,
-          manifest_version: "1.0.0",
-          publisher: "acme",
-          manifest: {
-            name,
-            version: "1.0.0",
-            publisher: "acme",
-            description: "Repeat-create acknowledgement fixture",
-            direction: "read",
-            triggers: [{ type: "manual" }],
-            target_types: ["core.note"],
-            bidirectional_handling: {
-              echo_ttl_seconds: 60,
-              lag_window_seconds: 60,
-              tombstone_mapping: "state-trashed",
-              partial_write_mode: "all-or-nothing",
-            },
-            oauth_requirements: {},
-            webhook_verification: { method: "hmac-sha256" },
-            manifest_schema_version: "2.0.0",
-            permissions: {},
-          },
-          registered_at: new Date().toISOString(),
-        },
-      },
-      undefined,
-    );
-
-    // Sequential, not `Promise.all`: the test database is one in-memory
-    // SQLite, and two write transactions at once deadlock it.
-    const connection = async () =>
-      ctx.storage.items.create(
-        {
-          type: "system.connection",
-          properties: {
-            kind: "integration",
-            status: "active",
-            granted_at: new Date().toISOString(),
-            integration_ref: integration.id,
-          },
-        },
-        ctx.spaceId,
-      );
-    const mine = await connection();
-    const theirs = await connection();
-
-    const cred = await mintLocalRuntimeCredential(
-      ctx.storage,
-      TEST_API_KEY_SALT,
-      mine.id,
-    );
-
-    // The twin's row: the source this credential writes under, written by
-    // the other connection.
-    const foreign = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "the twin's record" },
-        source: `integration:${name}`,
-        source_id: `twin-${Math.random().toString(36).slice(2, 8)}`,
-        written_by_connection_id: theirs.id,
-      },
-      undefined,
-    );
-
-    const res = await request(ctx.app, "POST", "/items", {
-      key: cred.api_key,
-      body: {
-        type: "core.note",
-        id: foreign.id,
-        properties: { body: "claiming it" },
-      },
-    });
-    // Not an acknowledgement: answering 200 would read as "your record is
-    // already stored" when the record is a twin's.
-    expect(res.status).not.toBe(200);
-  });
-
   it("acknowledges a trashed row, in the state it holds", async () => {
     // The retry is not asking to revive it. Hiding the row instead would
     // send the create down the insert path and refuse it forever, which
@@ -423,9 +213,8 @@ describe("the gates an acknowledgement still runs", () => {
     // Matching the trashed natural-key branch it sits beside.
     //
     // Scoped to this item's own id rather than counting the whole table.
-    // Audit writes are fire-and-forget and genuinely async on Postgres,
-    // so a global count races every other test's pending inserts — which
-    // is exactly how this first failed, on the Postgres dialect only.
+    // Audit writes are fire-and-forget, so a global count races every
+    // other test's pending inserts — which is exactly how this first failed.
     const id = generateId();
     expect((await createNote(id)).status).toBe(201);
     // Wait for the create's own row, so the comparison below is against a
@@ -504,12 +293,12 @@ describe("a repeated edge create under concurrency", () => {
       }
       return realGet(edgeId);
     };
-    store.existsExactBatch = async (proposals, space) => {
+    store.existsExactBatch = async (proposals) => {
       if (!blindedExists) {
         blindedExists = true;
         return new Set<string>();
       }
-      return realExists(proposals, space);
+      return realExists(proposals);
     };
     let res: Response;
     try {
@@ -538,65 +327,6 @@ describe("a repeated edge create under concurrency", () => {
     });
     expect(((await listed.json()) as { data: unknown[] }).data).toHaveLength(1);
   });
-
-  it("keeps a cross-space id a conflict rather than an acknowledgement", async () => {
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const theirs = await spaces.create("edge-other-space");
-    const theirSource = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "their source" } },
-      theirs.id,
-    );
-    const theirTarget = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "their target" } },
-      theirs.id,
-    );
-    const theirEdge = await ctx.storage.edges.createRaw(
-      {
-        source_id: theirSource.id,
-        target_id: theirTarget.id,
-        edge_type: "about",
-      },
-      theirs.id,
-    );
-
-    const mine = await spaces.create("edge-my-space");
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const myKey = `marfa_k1_edgeack_${suffix}`;
-    await ctx.storage.keys.create(
-      {
-        label: `edgeack-${suffix}`,
-        source: `edgeack-${suffix}`,
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        default_tier: "library",
-        is_operator: false,
-      },
-      hashApiKey(myKey, TEST_API_KEY_SALT),
-      mine.id,
-    );
-    const mySource = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "my source" } },
-      mine.id,
-    );
-    const myTarget = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "my target" } },
-      mine.id,
-    );
-
-    const res = await request(ctx.app, "POST", "/edges", {
-      key: myKey,
-      body: {
-        id: theirEdge.id,
-        source_id: mySource.id,
-        target_id: myTarget.id,
-        edge_type: "about",
-      },
-    });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as ErrorBody).error.code).toBe("conflict");
-  });
 });
 
 describe("the item door's concurrency backstop", () => {
@@ -616,12 +346,12 @@ describe("the item door's concurrency backstop", () => {
     const store = ctx.storage.items;
     const realGet = store.getIncludingTrashed.bind(store);
     let blinded = false;
-    store.getIncludingTrashed = async (itemId: string, spaceId?: string) => {
+    store.getIncludingTrashed = async (itemId: string) => {
       if (!blinded) {
         blinded = true;
         return null;
       }
-      return realGet(itemId, spaceId);
+      return realGet(itemId);
     };
     let res: Response;
     try {
@@ -664,116 +394,5 @@ describe("the item door's concurrency backstop", () => {
     }
     expect(res.status).toBe(409);
     expect(((await res.json()) as ErrorBody).error.code).toBe("conflict");
-  });
-});
-
-describe("attribution on the two acknowledged doors", () => {
-  /**
-   * Both doors hand a stored row back, and a sibling Connection's
-   * `system.activity` row is not this credential's to be shown. They ran
-   * different gates, so a refused caller got a different answer depending
-   * on which key resolved the row.
-   */
-  async function runtimeCredentialAndForeignActivity(): Promise<{
-    key: string;
-    activityId: string;
-  }> {
-    const connection = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-      ctx.spaceId,
-    );
-    const cred = await mintLocalRuntimeCredential(
-      ctx.storage,
-      TEST_API_KEY_SALT,
-      connection.id,
-    );
-    // An activity row attributed to a connection that is not this
-    // credential's. `permitsActivityAttribution` compares the row's
-    // `connection_id` against the credential's, so that field is the
-    // whole fixture.
-    const other = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-      ctx.spaceId,
-    );
-    const activity = await ctx.storage.items.create(
-      {
-        type: "system.activity",
-        properties: {
-          connection_id: other.id,
-          severity: "info",
-          summary: "a sibling's activity",
-        },
-      },
-      undefined,
-    );
-    return { key: cred.api_key, activityId: activity.id };
-  }
-
-  it("refuses on the repeated-id door", async () => {
-    const { key, activityId } = await runtimeCredentialAndForeignActivity();
-    const res = await request(ctx.app, "POST", "/items", {
-      key,
-      body: {
-        type: "system.activity",
-        id: activityId,
-        properties: {
-          connection_id: "someone",
-          severity: "info",
-          summary: "claiming it",
-        },
-      },
-    });
-    expect(res.status).not.toBe(200);
-  });
-
-  it("refuses a type mismatch on the trashed natural-key door", async () => {
-    // The gate this arm was actually missing. Attribution is not it:
-    // `permitsActivityAttribution` constrains only `system.activity`, and
-    // `system.*` lifecycles have no `trashed` state, so no row this arm
-    // resolves is one attribution would look at.
-    //
-    // A declared type that is not the row's is reachable here, and until
-    // now this arm accepted it — which is what made the route's own 409
-    // description untrue of the trashed answer.
-    const sourceId = `mismatch-${Math.random().toString(36).slice(2, 8)}`;
-    const seeded = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "core.note",
-        source_id: sourceId,
-        properties: { body: "will be trashed" },
-      },
-    });
-    expect(seeded.status).toBe(201);
-    const id = ((await seeded.json()) as ItemBody).item.id;
-    expect(
-      (await request(ctx.app, "DELETE", `/items/${id}`, { key: ctx.spaceKey }))
-        .status,
-    ).toBe(200);
-
-    const res = await request(ctx.app, "POST", "/items", {
-      key: ctx.spaceKey,
-      body: {
-        type: "core.task",
-        source_id: sourceId,
-        properties: { title: "a different type" },
-      },
-    });
-    expect(res.status).toBe(409);
-    expect(((await res.json()) as ErrorBody).error.code).toBe("type_mismatch");
   });
 });

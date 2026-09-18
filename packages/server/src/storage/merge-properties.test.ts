@@ -1,8 +1,7 @@
 /**
  * The merge rule three write paths depend on. Two of them had already drifted
  * apart, so the cases below pin the parts that differ by more than style: what
- * a null means with and without faithful-mirror semantics, and whether the
- * type resolves in the space that registered it.
+ * a null means with and without faithful-mirror semantics.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { registerTypeSchema, unregisterTypeSchema } from "@withmarfa/shared";
@@ -11,25 +10,21 @@ import {
   resolveIncomingProperties,
 } from "./merge-properties.js";
 
-const SPACE = "space-merge-test";
 const CUSTOM_TYPE = "acme.widget";
 
 beforeAll(() => {
-  registerTypeSchema(
-    {
-      id: CUSTOM_TYPE,
-      version: 1,
-      fields: {
-        name: { type: "string", description: "Name", required: true },
-        note: { type: "string", description: "Note" },
-      },
+  registerTypeSchema({
+    id: CUSTOM_TYPE,
+    version: 1,
+    fields: {
+      name: { type: "string", description: "Name", required: true },
+      note: { type: "string", description: "Note" },
     },
-    SPACE,
-  );
+  });
 });
 
 afterAll(() => {
-  unregisterTypeSchema(CUSTOM_TYPE, SPACE);
+  unregisterTypeSchema(CUSTOM_TYPE);
 });
 
 describe("an ordinary update", () => {
@@ -60,14 +55,13 @@ describe("an ordinary update", () => {
   });
 
   it("resolves a type registered by a space, not only a shipped one", () => {
-    // The two stores disagreed here: one passed the space through and one
-    // did not, so the same null was dropped on Postgres and written as null
-    // on SQLite.
+    // The store once resolved the type without the space, so the same
+    // null was written as null on a space-registered type.
     expect(
-      resolveIncomingProperties(CUSTOM_TYPE, { note: null }, false, SPACE),
+      resolveIncomingProperties(CUSTOM_TYPE, { note: null }, false),
     ).toEqual({});
     expect(
-      resolveIncomingProperties(CUSTOM_TYPE, { name: null }, false, SPACE),
+      resolveIncomingProperties(CUSTOM_TYPE, { name: null }, false),
     ).toEqual({ name: null });
   });
 });

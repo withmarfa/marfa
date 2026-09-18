@@ -2,70 +2,7 @@ import { EventEmitter, on } from "node:events";
 import type { Edge, Item, Metadata } from "@withmarfa/shared";
 import { typeAnswersSubtreeFilter } from "@withmarfa/shared";
 import { envNumber } from "./config.js";
-import { cycleRequestContext } from "./cycle-context.js";
-import { log } from "./middleware/logger.js";
-import type { EventLogStore, Storage } from "./storage/interface.js";
-
-/**
- * Cycle-detection metadata carried on every published event.
- * The chain is detected through two fields:
- *
- *   - `originatingConnectionId` is set when the chain was kicked off by
- *     an integration (not a human). It propagates verbatim down the chain.
- *   - `hopCount` increments on each reactive publish; pubsub.publish()
- *     drops events whose hop_count would exceed the space's
- *     `max_event_hop_budget` (default 5).
- *
- * Events originating from a human caller MUST resolve to
- * `{ originatingConnectionId: null, hopCount: 0 }`.
- *
- * **Request-scoped resolution.** Callers don't thread cycle metadata
- * explicitly on every `publish(...)`. `cycleMiddleware` stores the
- * resolved cycle in `cycleRequestContext` at request entry; `publish`
- * and `publishEdge` consult it automatically. The optional
- * `originatingConnectionId` / `hopCount` fields on event args remain
- * supported as an explicit override for the rare server-internal publish
- * that needs to synthesize its own cycle. If either field is present,
- * the explicit values win; otherwise the ALS is consulted; outside any
- * request (background workers) the resolver falls through to the human
- * sentinel.
- */
-export interface CycleMetadata {
-  originatingConnectionId?: string | null;
-  hopCount?: number;
-}
-
-/**
- * Resolve the cycle metadata to stamp on an emitted event.
- *
- * Order:
- *
- *   1. **Explicit override** — caller passed `originatingConnectionId`
- *      or `hopCount` on the event arg. The explicit values win; missing
- *      siblings default to `null` / `0`.
- *   2. **ALS** — `cycleRequestContext.getStore()` set by
- *      `cycleMiddleware`. The normal path inside a request handler.
- *   3. **Sentinel** — outside any request AND no explicit override:
- *      `{ null, 0 }`. The human-chain-head shape; bypasses the budget.
- *
- * The function is purely internal; the event arg's optional fields are
- * the public contract.
- */
-function resolveCycleForPublish(event: CycleMetadata): {
-  originatingConnectionId: string | null;
-  hopCount: number;
-} {
-  const hasExplicit = "originatingConnectionId" in event || "hopCount" in event;
-  if (hasExplicit) {
-    return {
-      originatingConnectionId: event.originatingConnectionId ?? null,
-      hopCount: event.hopCount ?? 0,
-    };
-  }
-  const ctx = cycleRequestContext.getStore();
-  if (ctx) return ctx;
-  return { originatingConnectionId: null, hopCount: 0 };
-}
+import type { EventLogStore } from "./storage/interface.js";
 
 /**
  * Whether this event drives outbound side effects as well as being logged
@@ -100,7 +37,7 @@ export function fansOut(event: FanoutControl): boolean {
   return event.enableFanout !== false;
 }
 
-export interface ItemEvent extends CycleMetadata, FanoutControl {
+export interface ItemEvent extends FanoutControl {
   type:
     | "created"
     | "updated"
@@ -111,13 +48,11 @@ export interface ItemEvent extends CycleMetadata, FanoutControl {
     | "metadata_changed";
   item: Item;
   metadata?: Metadata;
-  spaceId?: string;
 }
 
-export interface EdgeEvent extends CycleMetadata, FanoutControl {
+export interface EdgeEvent extends FanoutControl {
   type: "edge_created" | "edge_updated" | "edge_deleted";
   edge: Edge;
-  spaceId?: string;
 }
 
 export type PubsubEvent = ItemEvent | EdgeEvent;
@@ -126,22 +61,11 @@ export interface ItemEventWithId extends ItemEvent {
   /** event_log.id assigned by storage. `bigint` so values above
    *  Number.MAX_SAFE_INTEGER round-trip without truncation. */
   eventId?: bigint;
-  /**
-   * True when this event was published by ANOTHER process and replicated
-   * here through the database (see event-replication.ts). Subscribers
-   * that produce side effects exactly once per event — outbound webhook
-   * delivery — skip remote events, because the origin process already
-   * produced them; pure fan-out (SSE, the reactive bridge's elected
-   * drainer) treats local and remote alike.
-   */
-  remote?: boolean;
 }
 
 export interface EdgeEventWithId extends EdgeEvent {
   /** event_log.id assigned by storage. `bigint` — see ItemEventWithId. */
   eventId?: bigint;
-  /** Replicated from another process — see ItemEventWithId.remote. */
-  remote?: boolean;
 }
 
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
@@ -150,183 +74,26 @@ export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
  * Process-local event bus: the distribution channel for Server-Sent
  * Events, outbound webhook dispatch, and the reactive bridges.
  *
- * On Postgres this emitter is no longer the whole story. `publish()`
- * announces every appended event over pg_notify (the `notifyRemote` hook,
- * wired by index.ts to event-replication.ts), and every sibling process
- * hydrates the announcement from event_log and re-emits it here marked
- * `remote: true` — so a subscriber on any process sees the deployment's
- * events, not one process's. Subscribers with exactly-once side effects
- * (webhook delivery) skip remote events; pure fan-out treats local and
- * remote alike. On SQLite one process is the deployment and no hook is
- * wired, which restores the old purely-local behavior by construction.
- *
- * What still assumes few processes lives elsewhere: the in-memory
- * per-email throttle, the rate-limit and space-cap caches, and the
- * `last_used_at` debounce all tolerate multiple copies (they degrade to
- * per-process granularity) but are not shared state. The realtime loss
- * that made one process a hard requirement is what this closes.
+ * One process is the deployment, so this emitter is the whole story: every
+ * subscriber sees every event the process publishes.
  */
 const emitter = new EventEmitter();
 emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));
 
-/** Default hop budget when the space has no override configured. */
-export const DEFAULT_HOP_BUDGET = 5;
-
 let eventLogStore: EventLogStore | null = null;
-let getHopBudget: (spaceId: string | undefined) => Promise<number> = () =>
-  Promise.resolve(DEFAULT_HOP_BUDGET);
-let onHopOverflow:
-  ((event: PubsubEvent, budget: number) => Promise<void>) | null = null;
-let notifyRemote: ((eventId: bigint) => Promise<void>) | null = null;
 
-export interface InitEventLogOptions {
-  /**
-   * Resolve the per-space hop budget. Defaults to `DEFAULT_HOP_BUDGET`.
-   * Hosted-mode wiring reads `spaces.getConfig(...).max_event_hop_budget`.
-   */
-  getHopBudget?: (spaceId: string | undefined) => Promise<number>;
-  /**
-   * Hook fired when an event is dropped due to hop overflow. The default
-   * (when unset) is a no-op; the server's bootstrap installs a hook that
-   * writes a `system.activity` row with severity `error` so the user
-   * surface can show the loop detection.
-   */
-  onHopOverflow?: (event: PubsubEvent, budget: number) => Promise<void>;
-  /**
-   * Cross-process announcement of a freshly-appended event, fired after
-   * the event_log append with the id it assigned. The Postgres wiring
-   * issues pg_notify on the request-context connection, so the
-   * announcement joins the surrounding transaction and is delivered only
-   * on commit. Unset on SQLite, where one process is the deployment.
-   */
-  notifyRemote?: (eventId: bigint) => Promise<void>;
-}
-
-/** Call once at startup to enable event persistence + cycle detection. */
-export function initEventLog(
-  store: EventLogStore,
-  options?: InitEventLogOptions,
-): void {
+/** Call once at startup to enable event persistence. */
+export function initEventLog(store: EventLogStore): void {
   eventLogStore = store;
-  if (options?.getHopBudget) getHopBudget = options.getHopBudget;
-  if (options?.onHopOverflow) onHopOverflow = options.onHopOverflow;
-  notifyRemote = options?.notifyRemote ?? null;
 }
 
 /**
- * Reset the cycle-detection wiring (test-only). Restores the default
- * hop-budget callback and clears the overflow hook.
+ * Reset the event-log wiring (test-only). Detaches the store, so a test
+ * that wired the log to its own context does not leave it bound for
+ * everything that runs afterwards in the same file.
  */
-export function __resetCycleDetectionForTests(): void {
-  getHopBudget = () => Promise.resolve(DEFAULT_HOP_BUDGET);
-  onHopOverflow = null;
-  // Also detaches the remote-announcement hook: a test that wired a
-  // notifier over a since-dropped database must not leave it bound for
-  // whatever runs next in the same process.
-  notifyRemote = null;
-  // And the store itself. `initEventLog` sets four pieces of module state and
-  // this used to restore three, so a test that wired the log to its own
-  // context left the store bound to it for everything that ran afterwards in
-  // the same file. Files are forked apart, so it could never cross one, which
-  // is exactly what made it the kind of thing found by reading rather than by
-  // a failure.
+export function __resetEventLogForTests(): void {
   eventLogStore = null;
-}
-
-/**
- * Helper for integration reaction handlers (exported here so the contract
- * is in one place). Returns the cycle
- * metadata to stamp on a downstream event when reacting to a parent —
- * propagates `originatingConnectionId` (taking the parent's, or stamping
- * the current integration's if the chain starts here) and increments
- * `hopCount`.
- */
-export function nextHopMetadata(
-  parent: CycleMetadata,
-  currentConnectionId?: string,
-): Required<CycleMetadata> {
-  const hopCount = (parent.hopCount ?? 0) + 1;
-  const originatingConnectionId =
-    parent.originatingConnectionId ?? currentConnectionId ?? null;
-  return { originatingConnectionId, hopCount };
-}
-
-/**
- * TTL for the per-space hop-budget cache. The publish path hits this
- * lookup on every reactive (hopCount > 0) event; without caching, every
- * such publish triggers a `storage.spaces.getConfig` round-trip which
- * is a real DB hit on hosted Postgres. 30s is the trade-off: long enough
- * to absorb burst traffic at near-zero cost; short enough that an
- * operator's `PUT /spaces/me/config` change to `max_event_hop_budget`
- * propagates within a window the operator can tolerate.
- */
-const HOP_BUDGET_TTL_MS = 30_000;
-
-/**
- * Build the InitEventLogOptions wiring from a Storage instance. The
- * server's bootstrap calls this; tests can opt in or pass their own
- * stubs.
- *
- * The `getHopBudget` resolver is wrapped in a per-space TTL cache so
- * the publish hot path doesn't hit storage on every reactive event.
- */
-export function defaultCycleDetectionWiring(
-  storage: Storage,
-): InitEventLogOptions {
-  // Per-space budget cache. Sized by space count, expires per-entry on
-  // first access past `HOP_BUDGET_TTL_MS`.
-  const budgetCache = new Map<string, { value: number; expiresAt: number }>();
-
-  const lookupBudget = async (spaceId: string): Promise<number> => {
-    const now = Date.now();
-    const cached = budgetCache.get(spaceId);
-    if (cached && cached.expiresAt > now) return cached.value;
-    if (!storage.spaces) return DEFAULT_HOP_BUDGET;
-    const cfg = await storage.spaces.getConfig(spaceId);
-    const value = cfg?.max_event_hop_budget ?? DEFAULT_HOP_BUDGET;
-    budgetCache.set(spaceId, { value, expiresAt: now + HOP_BUDGET_TTL_MS });
-    return value;
-  };
-
-  return {
-    getHopBudget: async (spaceId) => {
-      // No space scope (keys-mode self-host) → constant default; skip
-      // the cache entirely.
-      if (!spaceId) return DEFAULT_HOP_BUDGET;
-      return lookupBudget(spaceId);
-    },
-    onHopOverflow: async (event, budget) => {
-      // Emit a `system.activity` row directly via storage.items.create —
-      // bypassing pubsub.publish so the activity isn't itself fed back
-      // into the bus and re-counted toward the budget.
-      const spaceId = event.spaceId;
-      const originatingConnectionId =
-        event.originatingConnectionId ??
-        ("item" in event ? event.item.id : event.edge.id);
-      try {
-        await storage.items.create(
-          {
-            type: "system.activity",
-            properties: {
-              severity: "error",
-              summary: `Event hop budget (${String(budget)}) exceeded; further reactions dropped`,
-              connection_id: originatingConnectionId,
-              detail: {
-                event_type: event.type,
-                hop_count: event.hopCount,
-                budget,
-              },
-            },
-          },
-          spaceId,
-        );
-      } catch {
-        // Best-effort — failure to record the overflow doesn't crash the
-        // whole publish path. The dropped-event signal lives in audit.log
-        // on the storage side.
-      }
-    },
-  };
 }
 
 /**
@@ -353,173 +120,8 @@ function isEdgeEvent(event: PubsubEvent): event is EdgeEvent {
   return "edge" in event;
 }
 
-/**
- * Resolve the per-space hop budget without invoking the publish path.
- * Public counterpart to the module-private `getHopBudget` so debug
- * surfaces (e.g. preview-event) can report what the budget would be
- * for a space. Falls back to `DEFAULT_HOP_BUDGET` in keys-mode (no
- * space scope) and when the wiring isn't initialized (tests).
- */
-export async function resolveHopBudget(
-  spaceId: string | undefined,
-): Promise<number> {
-  return getHopBudget(spaceId);
-}
-
-/**
- * Check whether the event would exceed the space's hop budget. When it
- * does, fire the overflow hook and return false so the caller skips
- * persistence + emission. Returns true on the happy path.
- *
- * Attribution is by `originatingConnectionId !== null` — NOT by
- * `hopCount`. A misbehaving (or hostile) wire-level publish that ships
- * `hopCount: 0` plus an `originatingConnectionId` set would otherwise
- * short-circuit the budget. The contract per `nextHopMetadata` is
- * `hopCount >= 1` whenever origin is set; any event that violates it
- * gets treated as `hopCount = 1` so the budget gate still applies.
- *
- * The `cycle` argument is the already-resolved cycle (post-ALS /
- * explicit-override resolution from `resolveCycleForPublish`); callers
- * must not pass the raw event's optional fields.
- */
-/**
- * Resolve the hop count the budget gate should enforce against. For
- * integration-originated events (origin set) it applies a floor of 1 so a
- * malformed wire publish that stamps origin but leaves hopCount at 0
- * doesn't slip past the budget. ALS-driven propagation means in-process
- * callers can't produce this shape, but a tampered inbound header still
- * can — so the floor stays as wire-tampering defense. Human-originated
- * events (no origin) pass their hopCount through unchanged.
- *
- * Shared by `passesHopBudget` and the `POST /connections/preview-event`
- * hypothetical-event reasoning so the two can't drift.
- */
-export function computeEffectiveHopCount(cycle: {
-  originatingConnectionId: string | null;
-  hopCount: number;
-}): number {
-  const isIntegrationOriginated = cycle.originatingConnectionId != null;
-  return isIntegrationOriginated ? Math.max(cycle.hopCount, 1) : cycle.hopCount;
-}
-
-/**
- * Whether this event is inside the space's hop budget.
- *
- * A pure question, deliberately: the answer is needed *before* the event log
- * append, because the append records it, while the overflow hook it used to
- * fire is a write of its own and must happen once. Splitting them is what
- * lets the budget decide `enable_fanout` rather than decide whether to emit.
- */
-async function withinHopBudget(
-  event: PubsubEvent,
-  cycle: { originatingConnectionId: string | null; hopCount: number },
-): Promise<{ within: boolean; budget: number }> {
-  const isIntegrationOriginated = cycle.originatingConnectionId != null;
-  const budget = await getHopBudget(event.spaceId);
-  // Human-originated events (no origin, no hops) bypass the budget.
-  if (!isIntegrationOriginated && cycle.hopCount === 0) {
-    return { within: true, budget };
-  }
-  return { within: computeEffectiveHopCount(cycle) <= budget, budget };
-}
-
-/** Record an overflow. Best-effort; a failure here never reaches the caller. */
-async function recordHopOverflow(
-  event: PubsubEvent,
-  cycle: { originatingConnectionId: string | null; hopCount: number },
-  budget: number,
-): Promise<void> {
-  if (!onHopOverflow) return;
-  try {
-    // The overflow hook receives the event annotated with the
-    // resolved cycle so the system.activity row carries the right
-    // origin / hopCount even when the caller relied on ALS / sentinel.
-    const annotated: PubsubEvent = {
-      ...event,
-      originatingConnectionId: cycle.originatingConnectionId,
-      hopCount: cycle.hopCount,
-    };
-    await onHopOverflow(annotated, budget);
-  } catch {
-    // Swallow — overflow handler errors don't propagate.
-  }
-}
-
-/**
- * What the budget decides, and what it does not.
- *
- * It decides whether the event drives outbound work — the integration
- * reactions that are the loop it exists to bound. It does not decide whether
- * the event is logged, and no longer decides whether it is emitted.
- *
- * Emitting it is what makes the stream consistent: an over-budget row is in
- * the log, so a client replaying from a cursor receives it, and suppressing
- * the live emit meant the same event id behaved differently depending on
- * when you connected. Suppressing only the fan-out is the property actually
- * wanted, and because it rides the row it survives replication — the
- * replicator's reconnect catch-up re-emits every row it finds above its
- * anchor with no budget check of its own, which was quietly advancing every
- * stalled chain one hop per reconnect.
- */
-async function resolveFanout(
-  event: PubsubEvent,
-  cycle: { originatingConnectionId: string | null; hopCount: number },
-): Promise<boolean> {
-  const { within, budget } = await withinHopBudget(event, cycle);
-  if (!within) await recordHopOverflow(event, cycle, budget);
-  return fansOut(event) && within;
-}
-
-/**
- * The space an event belongs to: the row's own, falling back to the caller's.
- *
- * **A caller's space and its rows' space are the same thing right up until
- * they are not.** Storage is space-scoped at the SQL layer, so for an ordinary
- * space-bound credential a row it read is already in its own space and this
- * changes nothing. The operator key is not space-bound: its `space_id` is
- * null, so every door that took the space from the credential published
- * unscoped whenever it wrote to somebody else's rows.
- *
- * An unscoped event is not a broadly-delivered one. `subscribeItems` drops an
- * event whose space does not match a space-bound subscriber's, so the account
- * whose rows were written was the one account not told — while the unscoped
- * admin, matching nothing, received everything. The event log is worse than
- * the stream: its read is `space_id = ?`, which SQL never matches against
- * NULL, so a frame written unscoped can never be replayed to the owner's
- * cursor and no gap signal reports it.
- *
- * Deriving here rather than at each door is what closes the class. The
- * fallback direction is what makes it safe: a genuinely space-less row keeps
- * the caller's space, so this can only ever widen correctness and never
- * narrow an event that is delivered correctly today.
- */
-function spaceForEvent(
-  row: { space_id?: string | null },
-  declared: string | undefined,
-): string | undefined {
-  const own = row.space_id ?? undefined;
-  if (own !== undefined && declared !== undefined && own !== declared) {
-    // Neither is null, and they disagree. That is a door addressing an event
-    // somewhere its row does not live, which is always a bug — reported
-    // rather than thrown, because this runs after the write has committed and
-    // a throw would turn a mis-addressed event into a failed write.
-    log("warn", "Event addressed to a space its row does not belong to", {
-      item_id: (row as { id?: string }).id,
-      row_space: own,
-      declared_space: declared,
-    });
-  }
-  return own ?? declared;
-}
-
-export async function publish(input: ItemEvent): Promise<bigint | undefined> {
-  const spaceId = spaceForEvent(input.item, input.spaceId);
-  const event: ItemEvent = {
-    ...input,
-    ...(spaceId !== undefined && { spaceId }),
-  };
-  const cycle = resolveCycleForPublish(event);
-  const enableFanout = await resolveFanout(event, cycle);
+export async function publish(event: ItemEvent): Promise<bigint | undefined> {
+  const enableFanout = fansOut(event);
 
   let eventId: bigint | undefined;
 
@@ -532,20 +134,13 @@ export async function publish(input: ItemEvent): Promise<bigint | undefined> {
     eventId = await eventLogStore.append({
       event_type: event.type,
       item_id: event.item.id,
-      space_id: event.spaceId,
       payload,
-      originating_connection_id: cycle.originatingConnectionId,
-      hop_count: cycle.hopCount,
       enable_fanout: enableFanout,
     });
   }
 
-  await announceRemote(eventId);
-
   emitter.emit("ITEM_CHANGED", {
     ...event,
-    originatingConnectionId: cycle.originatingConnectionId,
-    hopCount: cycle.hopCount,
     enableFanout,
     eventId,
   });
@@ -566,15 +161,9 @@ export async function publish(input: ItemEvent): Promise<bigint | undefined> {
  * re-read and leaves no tombstone when it goes.
  */
 export async function publishEdge(
-  input: EdgeEvent,
+  event: EdgeEvent,
 ): Promise<bigint | undefined> {
-  const spaceId = spaceForEvent(input.edge, input.spaceId);
-  const event: EdgeEvent = {
-    ...input,
-    ...(spaceId !== undefined && { spaceId }),
-  };
-  const cycle = resolveCycleForPublish(event);
-  const enableFanout = await resolveFanout(event, cycle);
+  const enableFanout = fansOut(event);
 
   let eventId: bigint | undefined;
 
@@ -587,20 +176,13 @@ export async function publishEdge(
       event_type: event.type,
       item_id: null,
       edge_id: event.edge.id,
-      space_id: event.spaceId,
       payload,
-      originating_connection_id: cycle.originatingConnectionId,
-      hop_count: cycle.hopCount,
       enable_fanout: enableFanout,
     });
   }
 
-  await announceRemote(eventId);
-
   emitter.emit("EDGE_CHANGED", {
     ...event,
-    originatingConnectionId: cycle.originatingConnectionId,
-    hopCount: cycle.hopCount,
     enableFanout,
     eventId,
   });
@@ -608,43 +190,15 @@ export async function publishEdge(
 }
 
 /**
- * Tell sibling processes an event landed, so their subscribers see the
- * deployment's events rather than one process's.
- *
- * A failed announcement must not suppress local delivery: outside a request
- * transaction the append has already committed, and inside one a failed
- * statement aborts the transaction regardless — either way this process's
- * own subscribers keep the event they always got.
- */
-async function announceRemote(eventId: bigint | undefined): Promise<void> {
-  if (eventId === undefined || !notifyRemote) return;
-  try {
-    await notifyRemote(eventId);
-  } catch (err) {
-    logRemoteNotifyFailure(eventId, err);
-  }
-}
-
-function logRemoteNotifyFailure(eventId: bigint, err: unknown): void {
-  log("warn", "Remote event announcement failed; siblings missed one", {
-    event_id: String(eventId),
-    error: err instanceof Error ? err.message : String(err),
-  });
-}
-
-/**
- * Emit an event into this process's subscribers without persisting or
- * announcing it. For in-process wake sentinels only — a shutdown wake
- * has to unblock local for-await loops, and it neither belongs in
- * event_log nor deserves broadcast to sibling processes as a fabricated
- * event on every rolling deploy.
+ * Emit an event into this process's subscribers without persisting it.
+ * For in-process wake sentinels only — a shutdown wake has to unblock
+ * local for-await loops, and it does not belong in event_log.
  */
 export function emitWake(event: PubsubEventWithId): void {
-  // `isEdgeEvent` rather than a list of edge type names. Both this and
-  // `emitReplicated` enumerated the two that existed, so adding a third
-  // meant remembering two sites that mention neither edges nor events in
-  // their names — and an event routed to the wrong emitter is delivered to
-  // nobody rather than failing. The discriminant is the payload shape,
+  // `isEdgeEvent` rather than a list of edge type names. This once
+  // enumerated the two that existed, so adding a third meant remembering a
+  // site that mentions neither edges nor events in its name — and an event
+  // routed to the wrong emitter is delivered to nobody rather than failing. The discriminant is the payload shape,
   // which cannot fall behind the union.
   if (isEdgeEvent(event)) {
     emitter.emit("EDGE_CHANGED", event);
@@ -653,34 +207,16 @@ export function emitWake(event: PubsubEventWithId): void {
   }
 }
 
-/**
- * Emit an event replicated from another process into this process's
- * subscribers, marked `remote: true`. No event_log append and no remote
- * announcement: the origin process did both, and repeating either here
- * would duplicate the row or echo the event around the cluster forever.
- * Only event-replication.ts calls this.
- */
-export function emitReplicated(event: PubsubEventWithId): void {
-  const marked = { ...event, remote: true };
-  // Shape, not a name list — see `emitWake`.
-  if (isEdgeEvent(event)) {
-    emitter.emit("EDGE_CHANGED", marked);
-  } else {
-    emitter.emit("ITEM_CHANGED", marked);
-  }
-}
-
 export interface SubscribeOptions {
   /** One type, or several. A list is answered by any entry matching, so
    *  the subtree rule above applies per entry rather than to the list. */
   typeFilter?: string | readonly string[];
-  spaceId?: string;
   /**
    * Detaches the underlying emitter listener the moment it aborts.
    * Without it a departed subscriber's listener survives until the next
    * event MATCHING its filters arrives to resume the generator —
    * `iterator.return()` alone cannot unwind a generator suspended on an
-   * event that never comes, so a quiet space accumulates one listener
+   * event that never comes, so a quiet instance accumulates one listener
    * per departed viewer indefinitely. Long-lived per-request consumers
    * (the SSE route) pass one; process-lifetime consumers (the webhook
    * consumer, the bridges) do not need to.
@@ -721,23 +257,16 @@ export interface SubscribeOptions {
  * same parameter, and answered it with an empty stream and a 200 rather
  * than with an error.
  *
- * **`spaceId` is what makes the answer true for the caller's own types.**
- * A space's subtype of a shipped type resolves only through the space's
- * overlay, so a matcher called without one classifies core and system
- * types and quietly misses everything the space registered for itself.
- * Both delivery paths pass it, and they must keep passing the same value
- * or a reconnect narrows a view the live stream had been serving in full.
- *
  * **What resolving the registry per live event costs, and what that was
  * judged against.** The yardstick is `matchesTypeFilter`, the permission
  * projection the stream already applies to every item event on the line
  * above this one: nothing costing a fraction of a call this path is
  * already making per event needs a cache in front of it. Measured over
- * two million calls against a space holding twenty custom types, one of
+ * two million calls against an instance holding twenty custom types, one of
  * them declaring a shipped parent from outside its namespace:
  *
  *   - name clause answers (`core.media` / `core.media.song`)     ~18ns
- *   - registry walk, declared parent through the overlay         ~38ns
+ *   - registry walk, declared parent through the registry        ~38ns
  *   - registry walk, answering no                                ~30ns
  *   - `matchesTypeFilter`, already paid per event               ~146ns
  *
@@ -760,15 +289,12 @@ export interface SubscribeOptions {
 export function eventMatchesTypeFilter(
   eventType: string,
   filter: string | readonly string[] | undefined,
-  spaceId?: string | null,
 ): boolean {
   if (filter === undefined) return true;
   if (typeof filter === "string")
-    return typeAnswersSubtreeFilter(eventType, filter, spaceId);
+    return typeAnswersSubtreeFilter(eventType, filter);
   if (filter.length === 0) return true;
-  return filter.some((entry) =>
-    typeAnswersSubtreeFilter(eventType, entry, spaceId),
-  );
+  return filter.some((entry) => typeAnswersSubtreeFilter(eventType, entry));
 }
 
 export async function* subscribe(
@@ -782,26 +308,7 @@ export async function* subscribe(
   try {
     for await (const [event] of iter) {
       const itemEvent = event as ItemEventWithId;
-      // Space first, and the order matters now: this is a string
-      // comparison while the type filter below may walk a declared chain
-      // through the registry, so testing the cheap fence first keeps the
-      // expensive question off every event belonging to another space.
-      if (options?.spaceId && itemEvent.spaceId !== options.spaceId) continue;
-      // The space goes to the matcher, or a space's own subtype of a
-      // shipped type does not answer a filter naming that type. `?? null`
-      // rather than passing the value through: the list surfaces resolve
-      // a space-less caller against the null-space overlay a platform
-      // self-host registers into, and a stream resolving it against core
-      // types alone would disagree with them for exactly those
-      // deployments. It also matters that this is not `undefined`, which
-      // the matcher reads as "resolve names only".
-      if (
-        !eventMatchesTypeFilter(
-          itemEvent.item.type,
-          options?.typeFilter,
-          options?.spaceId ?? null,
-        )
-      )
+      if (!eventMatchesTypeFilter(itemEvent.item.type, options?.typeFilter))
         continue;
       yield itemEvent;
     }
@@ -818,11 +325,10 @@ export async function* subscribe(
   }
 }
 
-/** Subscribe to edge lifecycle events. Filters by space only; there is
- *  no typeFilter since edges don't carry a content type.
+/** Subscribe to edge lifecycle events. There is no typeFilter since edges
+ *  don't carry a content type.
  *  Same iterator cleanup contract as `subscribe()` above. */
 export async function* subscribeEdges(options?: {
-  spaceId?: string;
   signal?: AbortSignal;
 }): AsyncGenerator<EdgeEventWithId> {
   const iter = on(
@@ -833,7 +339,6 @@ export async function* subscribeEdges(options?: {
   try {
     for await (const [event] of iter) {
       const edgeEvent = event as EdgeEventWithId;
-      if (options?.spaceId && edgeEvent.spaceId !== options.spaceId) continue;
       yield edgeEvent;
     }
   } catch (err) {

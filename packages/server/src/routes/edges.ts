@@ -389,15 +389,16 @@ export function edgeRoutes(storage: Storage) {
     // rename says otherwise: it describes the rename as covering this
     // door, so a client migrating exactly as instructed writes
     // `timestamp_after` here and, unrefused, receives a silently
-    // unfiltered page at 200 with a well-formed cursor.
+    // unfiltered page at 200 with a well-formed cursor. The refusal names
+    // `updated_after`, the one time filter this door has: an edge has no
+    // item time, so the renamed filters do not exist here either.
     refuseRenamedTimeQueryParams(c.req.raw.url, {
       catchUpFilter: "updated_after",
+      hasItemTimeFilters: false,
     });
     refuseUnknownQueryParams(c.req.raw.url, listEdgesRoute.request.query);
-    const spaceId = c.get("apiKey")?.space_id;
     const q = c.req.valid("query");
     const result = await storage.edges.list({
-      spaceId,
       edge_type: parseEdgeTypeFilter(q.edge_type),
       updated_after: q.updated_after,
       limit: q.limit,
@@ -424,7 +425,6 @@ export function edgeRoutes(storage: Storage) {
     if (body.id !== undefined && !isValidId(body.id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid edge ID");
     }
-    const spaceId = c.get("apiKey")?.space_id;
 
     // Dual gate: the source item's type permission and the edge type's, and
     // nothing bypasses either. There is no rank left to bypass on, and the
@@ -433,7 +433,7 @@ export function edgeRoutes(storage: Storage) {
     // any other credential whose maps do not cover it. The one carve-out
     // either helper makes is for a reserved namespace, and that does not fire
     // for an ordinary type.
-    const sourceItem = await storage.items.get(body.source_id, spaceId);
+    const sourceItem = await storage.items.get(body.source_id);
     if (!sourceItem) {
       throw new MarfaError(
         ErrorCode.ITEM_NOT_FOUND,
@@ -469,10 +469,6 @@ export function edgeRoutes(storage: Storage) {
       if (body.id === undefined) return null;
       const existing = await storage.edges.get(body.id);
       if (!existing) return null;
-      // `edges.get` is unscoped, so an edge outside the caller's space is
-      // left to the store's own collision trap: it is somebody else's row
-      // and this caller must not learn it exists, let alone read it back.
-      if (spaceId && existing.space_id !== spaceId) return null;
       const sameEdge =
         existing.source_id === body.source_id &&
         existing.target_id === body.target_id &&
@@ -499,18 +495,14 @@ export function edgeRoutes(storage: Storage) {
           source_id: body.source_id,
           target_id: body.target_id,
           edge_type: body.edge_type,
-          space_id: spaceId,
         });
-        return storage.edges.createRaw(
-          {
-            id: body.id,
-            source_id: body.source_id,
-            target_id: body.target_id,
-            edge_type: body.edge_type,
-            properties: body.properties,
-          },
-          spaceId,
-        );
+        return storage.edges.createRaw({
+          id: body.id,
+          source_id: body.source_id,
+          target_id: body.target_id,
+          edge_type: body.edge_type,
+          properties: body.properties,
+        });
       });
     } catch (err) {
       // The concurrency backstop. The row appeared between the pre-check
@@ -526,10 +518,9 @@ export function edgeRoutes(storage: Storage) {
       if (!raced) throw err;
       return c.json({ edge: raced, acknowledged: true }, 200);
     }
-    await publishEdge({ type: "edge_created", edge, spaceId });
+    await publishEdge({ type: "edge_created", edge });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge.create",
       resource_type: "edge",
@@ -546,13 +537,8 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(getEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const spaceId = c.get("apiKey")?.space_id;
     const existing = await storage.edges.get(id);
-    // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
-    // space: a space-scoped caller must never learn another space's edge
-    // exists. The operator key carries no space_id and skips
-    // the check.
-    if (!existing || (spaceId && existing.space_id !== spaceId)) {
+    if (!existing) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // The same two gates update and delete apply, at `read` rather than
@@ -564,10 +550,7 @@ export function edgeRoutes(storage: Storage) {
     // `items.get` returns null for a trashed source, and a null source
     // skips the type gate entirely rather than failing it. Trashing the
     // source item would otherwise turn a refusal into a disclosure.
-    const srcItem = await storage.items.getIncludingTrashed(
-      existing.source_id,
-      spaceId,
-    );
+    const srcItem = await storage.items.getIncludingTrashed(existing.source_id);
     if (srcItem) requireTypeAccess(c, srcItem.type, "read");
     requireEdgePermission(c, existing.edge_type, "read");
     return c.json({ edge: existing }, 200);
@@ -577,13 +560,8 @@ export function edgeRoutes(storage: Storage) {
     requireAuth(c);
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    const spaceId = c.get("apiKey")?.space_id;
     const existing = await storage.edges.get(id);
-    // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
-    // space: a space-scoped caller must never learn another space's edge
-    // exists, let alone mutate it. The operator key carries
-    // no space_id and skip the check.
-    if (!existing || (spaceId && existing.space_id !== spaceId)) {
+    if (!existing) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
@@ -591,10 +569,7 @@ export function edgeRoutes(storage: Storage) {
     // storage.items.get() returns null for trashed sources, which would
     // silently skip the gate and let a credential without the source
     // type's write permission mutate the edge.
-    const srcItem = await storage.items.getIncludingTrashed(
-      existing.source_id,
-      spaceId,
-    );
+    const srcItem = await storage.items.getIncludingTrashed(existing.source_id);
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
     // Reject attempts to change immutable fields — extra insurance beyond
@@ -618,7 +593,6 @@ export function edgeRoutes(storage: Storage) {
     const result = await storage.edges.updateProperties(
       id,
       body.properties,
-      spaceId,
       body.version,
     );
     if (!result.ok) {
@@ -653,10 +627,9 @@ export function edgeRoutes(storage: Storage) {
     // SDK could change an edge through this route and nothing propagated
     // it, so a second device kept the stale payload with nothing to say
     // otherwise.
-    await publishEdge({ type: "edge_updated", edge: updated, spaceId });
+    await publishEdge({ type: "edge_updated", edge: updated });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge.update",
       resource_type: "edge",
@@ -669,13 +642,8 @@ export function edgeRoutes(storage: Storage) {
   router.openapi(deleteEdgeRoute, async (c) => {
     requireAuth(c);
     const { id } = c.req.valid("param");
-    const spaceId = c.get("apiKey")?.space_id;
     const existing = await storage.edges.get(id);
-    // `edges.get` is unscoped, so 404-cloak any edge outside the caller's
-    // space: a space-scoped caller must never learn another space's edge
-    // exists, let alone delete it. The operator key carries
-    // no space_id and skip the check.
-    if (!existing || (spaceId && existing.space_id !== spaceId)) {
+    if (!existing) {
       throw new MarfaError(ErrorCode.EDGE_NOT_FOUND, `Edge ${id} not found`);
     }
     // Use getIncludingTrashed so edges whose source item is trashed
@@ -683,22 +651,16 @@ export function edgeRoutes(storage: Storage) {
     // storage.items.get() returns null for trashed sources, which would
     // silently skip the gate and let a credential without the source
     // type's write permission mutate the edge.
-    const srcItem = await storage.items.getIncludingTrashed(
-      existing.source_id,
-      spaceId,
-    );
+    const srcItem = await storage.items.getIncludingTrashed(existing.source_id);
     if (srcItem) requireTypeAccess(c, srcItem.type, "write");
     requireEdgePermission(c, existing.edge_type, "write");
-    // Fence the delete to the caller's space — belt to the 404-cloak above.
-    await storage.edges.delete(id, spaceId);
+    await storage.edges.delete(id);
     await publishEdge({
       type: "edge_deleted",
       edge: existing,
-      spaceId,
     });
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge.delete",
       resource_type: "edge",
@@ -871,7 +833,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
-    const spaceId = c.get("apiKey")?.space_id;
     // The trashed-inclusive read, matching the write doors above. Edges
     // carry no lifecycle of their own, and the collection-level listing
     // returns one whether or not an endpoint is in the bin — so the plain
@@ -888,7 +849,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // is; only a trashed one is new. Worth stating because the two method
     // names invite reading `get` as "active only", and a reader who
     // believes that will look for a widening here that is not present.
-    const item = await storage.items.getIncludingTrashed(id, spaceId);
+    const item = await storage.items.getIncludingTrashed(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
@@ -927,7 +888,6 @@ export function itemEdgeListingRoutes(storage: Storage) {
     if (!isValidId(id)) {
       throw new MarfaError(ErrorCode.INVALID_ID, "Invalid item ID");
     }
-    const spaceId = c.get("apiKey")?.space_id;
     // The trashed-inclusive read, matching the write doors above. Edges
     // carry no lifecycle of their own, and the collection-level listing
     // returns one whether or not an endpoint is in the bin — so the plain
@@ -944,7 +904,7 @@ export function itemEdgeListingRoutes(storage: Storage) {
     // is; only a trashed one is new. Worth stating because the two method
     // names invite reading `get` as "active only", and a reader who
     // believes that will look for a widening here that is not present.
-    const item = await storage.items.getIncludingTrashed(id, spaceId);
+    const item = await storage.items.getIncludingTrashed(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }

@@ -94,7 +94,6 @@ async function syncCredential(options: {
       is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    ctx.spaceId,
   );
   return { id: created.id, key: raw, source };
 }

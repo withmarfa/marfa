@@ -10,10 +10,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { setPlatformDrift } from "../storage/platform-drift.js";
-import type { TypeSchema } from "@withmarfa/shared";
-import { hashApiKey } from "../middleware/auth.js";
-import { TEST_API_KEY_SALT } from "../test-utils.js";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 const contexts: TestContext[] = [];
 
@@ -33,35 +29,6 @@ afterEach(async () => {
   }
 });
 
-/**
- * A credential bound to one space, holding every space permission and no
- * operator flag.
- *
- * The distinction this exists to test: it authenticates, so a request
- * carrying it never reaches the 401 an unauthenticated one gets. Both halves
- * of `requireOperatorKey` refuse it — the flag is false and the space binding
- * is present, either of which disqualifies on its own — and a test that sends
- * no credential at all cannot tell the two apart: it would pass against
- * `requireAuth` just as happily.
- */
-async function mintSpaceBoundKey(ctx: TestContext): Promise<string> {
-  const suffix = Math.random().toString(36).slice(2, 12);
-  const raw = `marfa_k1_platform_types_${suffix}`;
-  await ctx.storage.keys.create(
-    {
-      label: `space-bound-${suffix}`,
-      source: `space-bound-${suffix}`,
-      space_permissions: [...SPACE_PERMISSIONS],
-      default_tier: "library",
-      type_permissions: {},
-      is_operator: false,
-    },
-    hashApiKey(raw, TEST_API_KEY_SALT),
-    (await ctx.storage.spaces!.create("bound")).id,
-  );
-  return raw;
-}
-
 /** Registers a platform row the build does not ship, and reports it drifted. */
 async function seedDriftedType(ctx: TestContext): Promise<string> {
   const id = `core.retired_${Math.random().toString(36).slice(2, 8)}`;
@@ -71,7 +38,6 @@ async function seedDriftedType(ctx: TestContext): Promise<string> {
       version: 1,
       fields: { name: { type: "string", required: true } },
     },
-    undefined,
     { origin: "platform", family: "core" },
   );
   setPlatformDrift([id]);
@@ -83,14 +49,6 @@ describe("GET /admin/platform-types/drift", () => {
     const ctx = await newContext();
     const res = await request(ctx.app, "GET", "/admin/platform-types/drift");
     expect(res.status).toBe(401);
-  });
-
-  it("refuses an admin bound to a space", async () => {
-    const ctx = await newContext();
-    const res = await request(ctx.app, "GET", "/admin/platform-types/drift", {
-      key: await mintSpaceBoundKey(ctx),
-    });
-    expect(res.status).toBe(403);
   });
 
   it("lists the drifted rows with their live item counts", async () => {
@@ -146,17 +104,6 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     expect(res.status).toBe(401);
   });
 
-  it("refuses an admin bound to a space", async () => {
-    const ctx = await newContext();
-    const res = await request(
-      ctx.app,
-      "POST",
-      "/admin/platform-types/core.anything/remove",
-      { key: await mintSpaceBoundKey(ctx) },
-    );
-    expect(res.status).toBe(403);
-  });
-
   it("removes a drifted row", async () => {
     const ctx = await newContext();
     const id = await seedDriftedType(ctx);
@@ -197,80 +144,6 @@ describe("POST /admin/platform-types/{id}/remove", () => {
     expect(rows.map((r) => r.schema.id)).toContain("core.note");
   });
 
-  it("cannot reach a space's row of the same identifier", async () => {
-    // The primary key is (space_id, id) and the seed writes an empty
-    // space, so scoping the delete on origin alone would let this remove a
-    // space's own registration that happens to share a name.
-    const ctx = await newContext();
-    const id = `acme.shared_${Math.random().toString(36).slice(2, 8)}`;
-    const space = (await ctx.storage.spaces!.create("drift-scope")).id;
-    const schema: TypeSchema = {
-      id,
-      version: 1,
-      fields: { name: { type: "string", required: true } },
-    };
-    await ctx.storage.types.create(schema, undefined, {
-      origin: "platform",
-      family: "core",
-    });
-    await ctx.storage.types.create(schema, space, { origin: "user" });
-    setPlatformDrift([id]);
-
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/admin/platform-types/${id}/remove`,
-      { key: ctx.operatorKey },
-    );
-    expect(res.status).toBe(200);
-
-    const rows = await ctx.storage.types.loadCustomTypes();
-    const survivors = rows.filter((r) => r.schema.id === id);
-    expect(survivors).toHaveLength(1);
-    expect(survivors[0]?.space_id).toBe(space);
-    expect(survivors[0]?.origin).toBe("user");
-  });
-
-  it("cannot reach a platform-origin row inside a space", async () => {
-    // The origin clause alone happens to be sufficient today, because
-    // nothing but the seed writes `origin = "platform"` and the seed
-    // writes an empty space. That is an accident of the current writers
-    // rather than a property, so the space clause is what makes the scope
-    // hold if a future writer appears. Without a case like this the clause
-    // can be deleted with every other test still green.
-    const ctx = await newContext();
-    const id = `acme.platformish_${Math.random().toString(36).slice(2, 8)}`;
-    const space = (await ctx.storage.spaces!.create("drift-origin")).id;
-    const schema: TypeSchema = {
-      id,
-      version: 1,
-      fields: { name: { type: "string", required: true } },
-    };
-    await ctx.storage.types.create(schema, undefined, {
-      origin: "platform",
-      family: "core",
-    });
-    await ctx.storage.types.create(schema, space, {
-      origin: "platform",
-      family: "core",
-    });
-    setPlatformDrift([id]);
-
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/admin/platform-types/${id}/remove`,
-      { key: ctx.operatorKey },
-    );
-    expect(res.status).toBe(200);
-
-    const survivors = (await ctx.storage.types.loadCustomTypes()).filter(
-      (r) => r.schema.id === id,
-    );
-    expect(survivors).toHaveLength(1);
-    expect(survivors[0]?.space_id).toBe(space);
-  });
-
   it("declines while another type inherits from it", async () => {
     // The guard the item count cannot stand in for. An abstract parent
     // carries no items of its own, so it is the type most certain to
@@ -287,7 +160,6 @@ describe("POST /admin/platform-types/{id}/remove", () => {
         version: 1,
         fields: { extra: { type: "string" } },
       },
-      undefined,
       { origin: "platform", family: "core" },
     );
 
@@ -314,7 +186,6 @@ describe("POST /admin/platform-types/{id}/remove", () => {
         version: 1,
         fields: { extra: { type: "string" } },
       },
-      undefined,
       { origin: "platform", family: "core" },
     );
 

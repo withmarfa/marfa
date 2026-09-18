@@ -19,7 +19,7 @@
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { createTestContext, request, type TestContext } from "../test-utils.js";
-import { initEventLog, __resetCycleDetectionForTests } from "../pubsub.js";
+import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 
 let ctx: TestContext;
 
@@ -32,7 +32,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  __resetCycleDetectionForTests();
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 

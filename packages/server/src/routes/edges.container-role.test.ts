@@ -15,13 +15,8 @@
  */
 
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -31,8 +26,6 @@ let ctx: TestContext;
  * edge whose source is one; a runtime credential naming those literals can,
  * which is the only shape the cases below can be driven through.
  */
-let integrationKey: string;
-const INTEGRATION_SOURCE = "integration:acme.podcasts";
 
 // A publisher who is not us, registering the pair an integration would ship.
 const suffix = Math.random().toString(36).slice(2, 8);
@@ -109,25 +102,6 @@ async function join(
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  integrationKey = `marfa_k1_container_role_${Math.random().toString(36).slice(2, 14)}`;
-  await ctx.storage.keys.createRuntimeCredential(
-    {
-      label: "podcast-integration",
-      source: `podcast-integration-${suffix}`,
-      // The exact literals, not a wildcard: the reserved fence reads the map
-      // directly, so a wildcard would reach nothing here.
-      type_permissions: {
-        "marfa.podcast.show": "write",
-        "marfa.podcast.episode": "write",
-      },
-      edge_permissions: { "*": "write" },
-      connection_id: `conn_container_role_${suffix}`,
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      item_source: INTEGRATION_SOURCE,
-    },
-    hashApiKey(integrationKey, TEST_API_KEY_SALT),
-    ctx.spaceId,
-  );
   await registerTypeOk({
     id: PUBLISHER_CONTAINER,
     label: "Library",
@@ -170,87 +144,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await ctx.cleanup();
-});
-
-describe("a shipped integration's own container", () => {
-  // The live failure this was built for: every episode of a swept feed was
-  // written, the show was written, and only the join was refused — once per
-  // episode, each leaving an action-required row against the connection.
-  async function createShow(title: string): Promise<string> {
-    return await createItem(
-      "marfa.podcast.show",
-      {
-        title,
-        feed_url: `https://example.com/${Math.random().toString(36).slice(2)}.xml`,
-      },
-      integrationKey,
-    );
-  }
-
-  it("joins an episode to its show", async () => {
-    const show = await createShow("Signal Hill");
-    const episode = await createItem(
-      "marfa.podcast.episode",
-      { title: "Letter 1" },
-      integrationKey,
-    );
-    const res = await join(episode, show, integrationKey);
-    expect(
-      res.status,
-      `POST /edges -> ${String(res.status)}: ${await res.clone().text()}`,
-    ).toBe(201);
-  });
-
-  it("puts the join on the show's backrefs and the episode's edges", async () => {
-    const show = await createShow("Harbour Lights");
-    const first = await createItem(
-      "marfa.podcast.episode",
-      { title: "One" },
-      integrationKey,
-    );
-    const second = await createItem(
-      "marfa.podcast.episode",
-      { title: "Two" },
-      integrationKey,
-    );
-    expect((await join(first, show, integrationKey)).status).toBe(201);
-    expect((await join(second, show, integrationKey)).status).toBe(201);
-
-    const back = await request(ctx.app, "GET", `/items/${show}/backrefs`, {
-      key: ctx.spaceKey,
-    });
-    const data = (await back.json()) as {
-      data: { edge_type: string; source_id: string }[];
-    };
-    const members = data.data
-      .filter((e) => e.edge_type === "in-collection")
-      .map((e) => e.source_id)
-      .sort();
-    expect(members).toEqual([first, second].sort());
-
-    const edges = await request(ctx.app, "GET", `/items/${first}/edges`, {
-      key: ctx.spaceKey,
-    });
-    const outbound = (await edges.json()) as {
-      data: { edge_type: string; target_id: string }[];
-    };
-    expect(
-      outbound.data
-        .filter((e) => e.edge_type === "in-collection")
-        .map((e) => e.target_id),
-    ).toEqual([show]);
-  });
-
-  it("refuses a show as a member of another show", async () => {
-    // The nesting guard reads the edge's own target constraint, so a type
-    // becomes an illegal source the moment it declares itself a container.
-    const outer = await createShow("Outer");
-    const inner = await createShow("Inner");
-    const res = await join(inner, outer, integrationKey);
-    expect(res.status).toBe(400);
-    const data = (await res.json()) as ErrorResponse;
-    expect(data.error.details?.constraint).toBe("nesting");
-  });
 });
 
 describe("a publisher's own container", () => {

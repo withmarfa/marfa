@@ -34,12 +34,10 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
-const CONNECTION_ID = "conn_properties_refusal";
-const ITEM_SOURCE = runtimeCredentialItemSource({ name: CONNECTION_ID });
+const ITEM_SOURCE = "properties-refusal";
 const RUNTIME_KEY = "marfa_k1_test_properties_refusal";
 
 /** `core.note` declares `body` as a required string, so a number is a
@@ -49,17 +47,13 @@ const GOOD = { body: "well formed" };
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  await ctx.storage.keys.createRuntimeCredential(
+  await ctx.storage.keys.create(
     {
       label: "properties-refusal",
-      source: "properties-refusal",
+      source: ITEM_SOURCE,
       type_permissions: { "*": "write" },
-      connection_id: CONNECTION_ID,
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      item_source: ITEM_SOURCE,
     },
     hashApiKey(RUNTIME_KEY, TEST_API_KEY_SALT),
-    ctx.spaceId,
   );
 });
 

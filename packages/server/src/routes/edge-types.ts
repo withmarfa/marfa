@@ -109,7 +109,7 @@ const createEdgeTypeRoute = createRoute({
   tags: ["Edge Types"],
   summary: "Register an edge type",
   description:
-    "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`; the registration is scoped to the caller's space and is invisible to other spaces. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
+    "Registers a custom edge type with its cardinality, cascade behavior, type constraints, and optional property schema. Requires `metadata.edge_types:write`. The eight core edge-type names are reserved and reject with a conflict, and custom types are flat with no inheritance.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -164,7 +164,7 @@ const listEdgeTypesRoute = createRoute({
   tags: ["Edge Types"],
   summary: "List edge types",
   description:
-    "Returns every edge type registered in the space — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
+    "Returns every edge type registered on the instance — the eight core types plus any custom registrations — each with its cardinality, cascade behavior, and source/target type constraints.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -226,8 +226,7 @@ export function edgeTypeRoutes(storage: Storage) {
     // scope, which every credential must carry: `metadata.edge_types:write`
     // is requestable but not part of the default consent bundle, so an app
     // that registers edge types asks for it explicitly. Mirrors
-    // `POST /types`. The create below stamps space_id from the caller, so a
-    // scope-bearing credential can only register within its own space.
+    // `POST /types`.
     requireMetadataPermission(c, "edge_types", "write");
     const body = c.req.valid("json");
     // Check core-type protection first — matches the client-facing
@@ -277,12 +276,10 @@ export function edgeTypeRoutes(storage: Storage) {
       >,
     };
 
-    const spaceId = c.get("apiKey")?.space_id;
-    await storage.edgeTypes.create(schema, spaceId);
-    registerEdgeTypeSchema(schema, spaceId);
+    await storage.edgeTypes.create(schema);
+    registerEdgeTypeSchema(schema);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge_type.create",
       resource_type: "edge_type",
@@ -293,12 +290,8 @@ export function edgeTypeRoutes(storage: Storage) {
 
   router.openapi(listEdgeTypesRoute, async (c) => {
     requireAuth(c);
-    // Core types are global; custom types resolve only within the caller's
-    // space. `listEdgeTypes(spaceId)` returns core plus this space's own
-    // custom edge types — never another space's.
-    const spaceId = c.get("apiKey")?.space_id;
     const { listEdgeTypes } = await import("@withmarfa/shared");
-    return c.json({ edge_types: listEdgeTypes(spaceId) }, 200);
+    return c.json({ edge_types: listEdgeTypes() }, 200);
   });
 
   router.openapi(deleteEdgeTypeRoute, async (c) => {
@@ -311,23 +304,17 @@ export function edgeTypeRoutes(storage: Storage) {
         `${id} is a core edge type and cannot be deleted`,
       );
     }
-    const spaceId = c.get("apiKey")?.space_id;
-    // Space-scoped lookup: a space-bound caller can only see (and so
-    // delete) its own custom edge types. A probe for another space's id
-    // resolves to nothing here and 404s — cross-space deletes are
-    // impossible.
-    const existing = await storage.edgeTypes.get(id, spaceId);
+    const existing = await storage.edgeTypes.get(id);
     if (!existing) {
       throw new MarfaError(
         ErrorCode.EDGE_TYPE_NOT_FOUND,
         `Edge type ${id} not found`,
       );
     }
-    await storage.edgeTypes.delete(id, spaceId);
-    unregisterEdgeTypeSchema(id, spaceId);
+    await storage.edgeTypes.delete(id);
+    unregisterEdgeTypeSchema(id);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
       key_id: c.get("apiKey")?.id,
       action: "edge_type.delete",
       resource_type: "edge_type",

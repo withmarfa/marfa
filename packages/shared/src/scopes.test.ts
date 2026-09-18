@@ -469,17 +469,9 @@ describe("space permissions", () => {
     // The two boundaries in the set that a reader is most likely to want to
     // collapse, pinned so collapsing one is a test failure rather than a
     // judgement call made again from scratch. Managing this app's own keys
-    // must not carry the power to revoke every other app's access, and
-    // configuring a connection must not carry the credential behind it.
+    // must not carry the power to revoke every other app's access.
     const keys = ["space.keys"];
     expect(hasSpacePermission(keys, "space.app_grants")).toBe(false);
-    const connections = ["space.connections"];
-    expect(hasSpacePermission(connections, "space.credentials")).toBe(false);
-    // Installing a connection must not carry the power to spend its live
-    // upstream token against the third-party account behind it.
-    expect(hasSpacePermission(connections, "space.upstream_access")).toBe(
-      false,
-    );
     // And reading how full a space is must not carry rewriting its policy.
     const usage = ["space.usage"];
     expect(hasSpacePermission(usage, "space.settings")).toBe(false);
@@ -490,7 +482,7 @@ describe("space permissions", () => {
     // the whole point is that a person grants webhooks without granting
     // credentials. The count is the cheapest statement of that.
     expect(new Set(SPACE_PERMISSIONS).size).toBe(SPACE_PERMISSIONS.length);
-    expect(SPACE_PERMISSIONS.length).toBe(11);
+    expect(SPACE_PERMISSIONS.length).toBe(8);
   });
 
   it("claims its whole namespace, members or nothing", () => {

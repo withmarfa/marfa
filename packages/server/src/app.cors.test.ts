@@ -29,9 +29,7 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
   const app = createApp(storage, blobBackend, {
     isProduction,
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: join(tmpDir, "blobs"),
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -44,7 +42,6 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
     apiKeySalt: SALT,
     corsOrigins: [ALLOWED_ORIGIN],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -60,13 +57,9 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
   });
 
   return {

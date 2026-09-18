@@ -96,49 +96,16 @@ const WRITERS: Record<string, string> = {
     "archive restore is idempotent by construction — an existing row is reported skipped — and it is an operator-key operation over a file rather than a write a client retries",
 
   // --- Writes with no request behind them, so no header to carry ---
-  "auth/account-holder.ts": "sign-up provisioning, inside the auth hook",
-  "auth/starter-content.ts": "sign-up provisioning, inside the auth hook",
-  "connections/install-pipeline.ts":
-    "lifecycle pipeline; serialized by the per-connection lifecycle lock and re-entrant by design",
-  "connections/uninstall-pipeline.ts": "lifecycle pipeline, as above",
-  "connections/pause-pipeline.ts": "lifecycle pipeline, as above",
-  "connections/upgrade-pipeline.ts": "lifecycle pipeline, as above",
-  "connections/mapping-health.ts": "background reconcile, no request",
-  "connections/revoked-connection.ts": "lifecycle teardown, no request",
-  "connections/upstream-credential.ts": "lifecycle teardown, no request",
-  "integrations/local-runtime/supervisor.ts":
-    "dispatch, whose at-least-once redelivery is handled by the connection's own idempotency window rather than by an HTTP header",
-  "integrations/local-runtime/connection-timings.ts":
-    "per-connection runtime state, written under the dispatch lock",
-  "integrations/register-manifest.ts": "catalog reconcile at boot",
   "enrichment/sweeper.ts": "background extraction sweep, no request",
   "bulk-actions/runner.ts":
     "the async bulk-action worker; the job row it runs from is what the door's own Idempotency-Key already deduplicates",
-  "pubsub.ts":
-    "the hop-overflow activity row, written from the publish path rather than from a route",
-
-  // --- Not part of the running server ---
-  "scripts/deprecated/migrate-oauth-to-credential.ts":
-    "one-shot migration script, not mounted",
-  "scripts/deprecated/migrate-sync-json-to-connection.ts":
-    "one-shot migration script, not mounted",
 
   // --- Routes writing a system item through a surface of their own ---
   "routes/auth-consent.ts":
     "projects an OAuth grant onto a system.connection; the consent decision is already serialized by withConsentLock and is a browser form rather than a retried API write",
   "routes/auth-pages.ts": "the device-flow and grant surfaces, as above",
-  "routes/admin.ts":
-    "the operator's client removal: it runs the grant cascade per projection and deletes the client's rows, and a second call finds nothing left to do, so a retry converges without a key; reached from an operator's shell rather than a retried API write",
   "auth/grant-lifecycle.ts":
     "the revoke cascade's projection flip, moved out of auth-pages so the grant routes and the client-revoke hook share one writer; a convergent write (status revoked, revoked_at restamped) reached from a browser form, an admin route or the plugin's revoke endpoint rather than from a retried API write, and taken under the consent lock whenever both ids are known",
-  "routes/credentials.ts":
-    "credential registration under /credentials, outside the item and edge write surface this covers",
-  "routes/connection-proxy.ts":
-    "writes a system.activity row as a side effect of proxying, not as the request's outcome",
-  "routes/connection-configure.ts":
-    "connection configuration under /connections, outside this surface",
-  "routes/connection-mapping.ts":
-    "connection mapping under /connections, outside this surface",
 };
 
 /** Every file under `src/` that is not a test. */
@@ -201,7 +168,7 @@ describe("every writer is accounted for", () => {
     // above pass having measured nothing, which is exactly the shape a
     // renamed store method or a moved directory produces.
     const writers = writerFiles();
-    expect(writers.size).toBeGreaterThan(20);
+    expect(writers.size).toBeGreaterThan(10);
     expect(writers.has("routes/items.ts")).toBe(true);
     expect(writers.has("routes/edges.ts")).toBe(true);
     expect(writers.has("enrichment/sweeper.ts")).toBe(true);

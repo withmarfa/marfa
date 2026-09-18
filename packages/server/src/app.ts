@@ -20,7 +20,6 @@ import { createMarfaAuth } from "./auth/instance.js";
 import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
-import { mcpRoutes } from "./routes/mcp.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
@@ -31,16 +30,11 @@ import { searchRoutes } from "./routes/search.js";
 import { occurrenceRoutes } from "./routes/occurrences.js";
 import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
-import { profileRoutes } from "./routes/profile.js";
 import { keyRoutes } from "./routes/keys.js";
-import { credentialRoutes } from "./routes/credentials.js";
-import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { adminPlatformTypeRoutes } from "./routes/admin-platform-types.js";
-import { adminRuntimeJobsRoutes } from "./routes/admin-runtime-jobs.js";
-import { authRoutes, DEVICE_CODE_GRANT_TYPE } from "./routes/auth-pages.js";
-import { oauthRegisterRoutes } from "./routes/oauth-register.js";
+import { authRoutes } from "./routes/auth-pages.js";
 import { oauthPluginFenceRoutes } from "./routes/oauth-plugin-fence.js";
 import {
   oauthProviderAuthServerMetadata,
@@ -48,81 +42,28 @@ import {
 } from "@better-auth/oauth-provider";
 import { authStaticRoutes } from "./routes/auth-static.js";
 import { renderHttpErrorPage, prefersHtml } from "./routes/http-error-page.js";
-import type { EmailTransport as MarfaEmailTransport } from "./email/transport.js";
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
-import {
-  inboundWebhookSubscriptionRoutes,
-  inboundWebhookReceiptRoutes,
-} from "./routes/inbound-webhooks.js";
-import { connectionProxyRoutes } from "./routes/connection-proxy.js";
-import {
-  oauthStartRoutes,
-  oauthCallbackRoutes,
-} from "./routes/oauth-callback.js";
-import {
-  connectionLeasedTokenRoutes,
-  leaseTokenValidationRoutes,
-} from "./routes/connection-leased-tokens.js";
-import { connectionRoutes } from "./routes/connections.js";
-import { connectionMappingRoutes } from "./routes/connection-mapping.js";
-import { connectionConfigureRoutes } from "./routes/connection-configure.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
-import { adminRoutes } from "./routes/admin.js";
-import { userAuthRoutes } from "./routes/users.js";
 import { spaceRoutes } from "./routes/spaces.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
-import { cycleMiddleware } from "./middleware/cycle.js";
-import { spaceSuspensionMiddleware } from "./middleware/space-suspension.js";
-import { createAccountDeletionGate } from "./middleware/account-deletion-guard.js";
-import { authAccountRoutes } from "./routes/auth-account.js";
 import { authConsentRoutes } from "./routes/auth-consent.js";
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
-import { rlsSpaceContextMiddleware } from "./middleware/rls-space-context.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
 } from "./middleware/idempotency.js";
-import type { PgClient, PgDb } from "./storage/pg/connection.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
   storage: Storage,
   blobBackend: BlobBackend,
   config: AppConfig,
-  emailTransport?: MarfaEmailTransport,
   oidcSigner?: OidcSigner,
-  /**
-   * Optional Hono sub-app mounted at the root path before any auth
-   * middleware. The local-runtime substrate uses this to expose
-   * `POST /runtime/webhook/:connection_id` without going through the
-   * bearer-token gate (verification happens at the route via the
-   * subscription's HMAC secret).
-   */
-  localRuntimeApp?: import("hono").Hono,
-  /**
-   * Dead-letter operator surface from the local integration substrate.
-   * The admin routes mount unconditionally (so the OpenAPI reflection
-   * sees them in every configuration) and answer 503
-   * `local_runtime_not_available` when this is absent.
-   */
-  deadLetterOps?:
-    import("./integrations/local-runtime/dead-letters.js").DeadLetterOps | null,
-  /**
-   * The running local integration substrate, when there is one.
-   *
-   * `POST /connections/{id}/run` needs it for two things a route cannot
-   * answer on its own: whether this deployment can dispatch the named
-   * integration at all, and the queue to put the run on. It belongs here
-   * rather than on `localRuntimeApp` because that sub-app mounts before
-   * the auth middleware, and asking for a run needs `space.connections`.
-   */
-  localRuntime?:
-    import("./integrations/local-runtime/types.js").LocalRuntime | null,
 ) {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -146,6 +87,11 @@ export function createApp(
     const body = {
       error: { code: "not_found", message: "Not found" },
     };
+    // The header every error the handler shapes carries. This response is
+    // built here rather than thrown through the handler, so it sets the
+    // header itself, and a client keying on `X-Error-Code` reads a 404 the
+    // same way it reads every other refusal.
+    c.header("X-Error-Code", "not_found");
     if (prefersHtml(c.req.header("accept"))) {
       return c.html(renderHttpErrorPage(404), 404);
     }
@@ -163,7 +109,7 @@ export function createApp(
   // Structured logging (wraps entire request lifecycle)
   app.use("*", loggerMiddleware());
 
-  // Stamp request_id / key_id / space_id onto the active OTel span and
+  // Stamp request_id / key_id onto the active OTel span and
   // mark 5xx as span errors. Pure no-op when OpenTelemetry is disabled
   // (no active span). After the logger so `requestId` is already set.
   app.use("*", otelCorrelationMiddleware());
@@ -291,14 +237,7 @@ export function createApp(
     "metrics",
     "edges",
     "admin_archive",
-    "connections",
-    "integrations",
-    "lease-tokens",
-    "oauth-callback",
   ];
-  if (config.authMode === "hosted") {
-    features.push("users");
-  }
   // §3.15: derive the deployed `version` from `version.json` (read at
   // startup by index.ts and threaded through `config.versionSha`). The
   // OpenAPI spec carries a separate, semantically-distinct API-contract
@@ -313,26 +252,7 @@ export function createApp(
       cdn_base_url: config.cdnBaseUrl || null,
     }),
   );
-  // `auth` is constructed further down, so health reads it through a
-  // closure rather than a value — the handle is resolved per request.
-  app.route(
-    "/health",
-    healthRoutes(
-      storage,
-      blobBackend,
-      config,
-      () => auth,
-      deadLetterOps ? () => deadLetterOps.count() : null,
-    ),
-  );
-
-  // Local-runtime substrate routes (POST /runtime/webhook/:id). Mounted
-  // before any auth middleware so the public webhook receipt endpoint
-  // stays unauthenticated — verification happens inside the route via
-  // the subscription's HMAC secret.
-  if (localRuntimeApp) {
-    app.route("/", localRuntimeApp);
-  }
+  app.route("/health", healthRoutes(storage, blobBackend));
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE
@@ -358,40 +278,6 @@ export function createApp(
   // still fall through to IP-based limiting inside rateLimitMiddleware.
   app.use("*", authMiddleware(storage, config.apiKeySalt));
 
-  // Space-suspension write-guard. Sits AFTER `authMiddleware` so the
-  // credential is resolved when this runs. Rejects every non-GET request
-  // whose space is suspended with HTTP 403 `space_suspended`. Reads pass
-  // through; the operator key is let through so operators can manage a
-  // suspended space.
-  app.use("*", spaceSuspensionMiddleware(storage));
-
-  // Block sign-ins on accounts in `pending_deletion`. Mounted AFTER the
-  // space suspension guard so suspended-space rejection still wins.
-  // Only triggers on the better-auth sign-in paths — every other path
-  // is a pass-through. The gate is created once so its in-memory cancel-
-  // email cooldown is SHARED between the middleware (better-auth JSON
-  // sign-in endpoints) and the human-facing `POST /auth/sign-in` wrapper,
-  // which dispatches to `auth.handler` directly and so bypasses Hono
-  // middleware — `deletionGate.evaluatePendingDeletion` is threaded into
-  // `authRoutes` below to guard that form path too.
-  const deletionGate = createAccountDeletionGate(
-    storage,
-    emailTransport,
-    config.authBaseUrl,
-    config.accountDeletionGraceDays ?? 30,
-  );
-  app.use("*", deletionGate.middleware);
-
-  // Cycle metadata resolution. Reads X-Marfa-Cycle-Origin /
-  // X-Marfa-Cycle-Hop headers (an integration continuing a chain) or falls
-  // back to the api key's connection binding (an integration kicking off a
-  // chain). Mounted AFTER auth because the fallback path reads
-  // `c.var.apiKey`. The resolved cycle is written to BOTH `c.var.cycle`
-  // (diagnostic) AND `cycleRequestContext` (AsyncLocalStorage) so
-  // `publish()` in `pubsub.ts` reads it automatically — routes do not
-  // thread `...c.var.cycle` into every publish call.
-  app.use("*", cycleMiddleware());
-
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
   // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows
   // through AppConfig — the rate-limit middleware reads its settings from
@@ -407,34 +293,20 @@ export function createApp(
           // Insertion order matters: the middleware iterates and
           // takes the FIRST `path.startsWith(prefix)` match, so
           // place more-specific prefixes ahead of broader siblings
-          // (e.g. `/auth/device/token` MUST precede `/auth/device`,
-          // and `/auth/sign-in/magic-link` MUST precede `/auth/sign-in`).
+          // (e.g. `/auth/device/code` MUST precede `/auth/device`).
           //
           // Auth-endpoint caps calibrated for realistic human retry
           // patterns plus iterative smoke testing. The global default
           // (1000/window) bounds anything else.
           //
-          // Device-flow polling (`/auth/device/token`) gets its own
-          // budget independent of the sign-in / token-exchange paths:
-          // RFC 8628's default 5-second poll interval means a single
-          // in-flight device flow burns 12 calls/minute, so 60/min
-          // accommodates ~5 concurrent flows without sharing budget
-          // with `/auth/oauth2/token`.
-          //
-          // The per-email throttle on `/auth/forgot-password`
-          // (3/hour, in-route) is the inner cap; the per-IP cap
-          // here is the outer cap that prevents a single client
-          // botnet from running thousands of reset attempts across
-          // many addresses in one window.
-          "/auth/device/token": 60,
+          // Device-flow polling goes to `/auth/oauth2/token` with the
+          // device grant and shares that endpoint's budget: RFC 8628's
+          // default 5-second poll interval means one in-flight device flow
+          // burns 12 calls/minute.
+          "/auth/device/code": 30,
           "/auth/device": 30,
-          "/auth/sign-in/magic-link": 15,
           "/auth/sign-in/email": 30,
           "/auth/sign-in": 30,
-          "/auth/sign-up": 15,
-          "/auth/forgot-password": 15,
-          "/auth/reset-password": 30,
-          "/auth/verify-email/resend": 15,
           // Cap the OAuth2 plugin endpoints (`/auth/oauth2/*`). Without
           // this, every plugin endpoint inherits the global default
           // (1000/min) — particularly bad for DCR (`/auth/oauth2/register`)
@@ -456,11 +328,7 @@ export function createApp(
         },
         trustedProxyCidrs: config.trustedProxyCidrs,
         trustedProxyHeader: config.trustedProxyHeader ?? null,
-        // Per-space rate ceiling on top of the per-credential window.
-        // Reads space_quotas.rate_per_minute_limit (with env fallback)
-        // via a 60s in-process cache. No-op for space-less keys.
         storage,
-        spaceDefaultRatePerMinute: config.defaultQuotaRatePerMinute ?? null,
         // Aggregate per-identifier cap (defaultLimit × multiplier),
         // keyed on the identifier with no path split, so a key's budget
         // can't multiply across path groups and space-less identifiers
@@ -474,10 +342,10 @@ export function createApp(
   // lost a response can ask what its first attempt did instead of asking
   // the door again and being told about the second ask.
   //
-  // **Registered ahead of the RLS wrapper deliberately.** A claim has to
-  // commit whether or not the write's own transaction does; inside the
-  // wrapper it would roll back with a failed write and the retry would
-  // then write for real, which is the defect this removes.
+  // **Registered outside any write transaction deliberately.** A claim has
+  // to commit whether or not the write's own transaction does; inside it
+  // the claim would roll back with a failed write and the retry would then
+  // write for real, which is the defect this removes.
   //
   // Registered per door through Hono's own router rather than matched by
   // hand: the table is the registered patterns, so the coverage test can
@@ -490,22 +358,6 @@ export function createApp(
     app.on(method, path, idempotency);
   }
 
-  // Postgres RLS request-level enforcement. Wraps each space-bounded
-  // request in a transaction with `SET LOCAL ROLE marfa_app` and
-  // `set_config('marfa.space_id', $space, true)` so the per-table RLS
-  // policies actually filter queries. Pass-through when
-  // `MARFA_RLS_ENFORCE=false`, when storage is SQLite (`pgDb` undefined),
-  // or when the request has no space on its api key (the operator key /
-  // public routes). See `middleware/rls-space-context.ts` for the full
-  // contract — including the streaming-response exemption.
-  app.use(
-    "*",
-    rlsSpaceContextMiddleware({
-      rlsEnforce: config.rlsEnforce ?? false,
-      db: (storage.pgDb as PgDb | undefined) ?? null,
-    }),
-  );
-
   // Better Auth setup. Instance is created up front so it can be passed
   // into authRoutes (the OAuth consent screen consumes its cookie-based
   // getSession to gate `/auth/authorize`). The catch-all `/auth/*` mount
@@ -517,38 +369,24 @@ export function createApp(
   // both fields are optional, so a Storage that doesn't wire better-auth
   // simply skips the auth mount.
   let auth: MarfaAuth | undefined;
-  if (storage.betterAuthDb && storage.betterAuthDialect) {
+  if (storage.betterAuthDb) {
     const trustedOrigins = [config.authBaseUrl, ...config.corsOrigins].filter(
       Boolean,
     );
     auth = createMarfaAuth({
       db: storage.betterAuthDb,
-      dialect: storage.betterAuthDialect,
       baseURL: config.authBaseUrl,
-      allowSignup: config.authAllowSignup,
-      seedStarterContent: config.seedStarterContent,
       secret: config.authSecret || undefined,
       trustedOrigins,
       // The same header `clientIpMiddleware` and `rateLimitMiddleware`
       // read. Better Auth runs a rate limiter of its own and cannot be
       // told by either of them.
       trustedProxyHeader: config.trustedProxyHeader ?? null,
-      oidcProviders: config.oidcProviders,
-      // Rich transport carries the HTML template + idempotency key
-      // for log correlation. Falls back to the basic callable for
-      // tests that don't construct a full transport.
-      marfaEmailTransport: emailTransport,
       // storage + salt are needed by the @better-auth/oauth-provider plugin
-      // (storeTokens.hash matches Marfa's hashApiKey, clientReference
-      // resolves space_id, hooks.after projects grants into system.connection).
+      // (storeTokens.hash matches Marfa's hashApiKey, hooks.after projects
+      // grants into system.connection).
       storage,
       apiKeySalt: config.apiKeySalt,
-      // Opt-in override for `requireEmailVerification`. When unset, the
-      // auth layer auto-detects from the transport (on for
-      // `cloudflare`/`smtp`, off for `none`/missing).
-      ...(config.authRequireEmailVerification !== undefined && {
-        requireEmailVerification: config.authRequireEmailVerification,
-      }),
     });
   }
 
@@ -556,25 +394,10 @@ export function createApp(
   // actual endpoint paths (e.g. `/auth/oauth2/token`, `/auth/jwks`).
   //
   // The plugin also answers `/auth/.well-known/*` on its own basePath, and its
-  // document is **not** the same as the one below — it is the unaugmented one,
-  // described in the next paragraph. Every URL a client can derive is therefore
-  // registered here ahead of the `/auth/*` catch-all, so Hono answers first and
-  // one document is served everywhere. An unregistered derivation reaches the
-  // plugin instead and returns a document that passes every check a client
-  // makes — the issuer matches, because the URL really does belong to this
-  // issuer — while silently omitting the device-code grant. A device-flow
-  // client discovering there concludes the server does not support device flow.
-  // That is a worse failure than the bare-root one this block used to have,
-  // where at least the issuer mismatch named the problem.
-  //
-  // The plugin's helper does NOT advertise the device-code grant type or the
-  // `device_authorization_endpoint` field (RFC 8628 §4) by default. Marfa owns
-  // the device-flow surface at `/auth/device` + `/auth/device/token`, so we
-  // wrap the plugin's response and inject both before returning. Passing the
-  // device-code URN via the plugin's `grantTypes` config causes its token
-  // endpoint to 400 with `unsupported_grant_type` — the plugin has no case
-  // branch for it. Augmenting the metadata here keeps the plugin's token
-  // endpoint behavior intact.
+  // document is the unaugmented one. Every URL a client can derive is
+  // registered here ahead of the `/auth/*` catch-all, so Hono answers first
+  // and one document is served everywhere: the plugin's, with the `none`
+  // revocation method and the permission bundles added below.
   if (auth) {
     // Cast once into the shape both helpers want — they each declare a
     // narrow `api` requirement (`getOAuthServerConfig` vs `getOpenIdConfig`).
@@ -588,7 +411,6 @@ export function createApp(
     const openidConfigMeta = oauthProviderOpenIdConfigMetadata(authForHelpers);
     const augmentMetadata = async (
       handler: (req: Request) => Promise<Response>,
-      baseURL: string,
       req: Request,
     ): Promise<Response> => {
       const upstream = await handler(req);
@@ -601,27 +423,6 @@ export function createApp(
       } catch {
         return upstream;
       }
-      // Inject the device-code URN into `grant_types_supported`
-      // (idempotent — guards against the plugin starting to advertise
-      // it natively in a future version).
-      //
-      // Nothing here removes the client-credentials grant. The plugin is
-      // configured with the grants this server has, so it never publishes
-      // one; a filter here would be a second answer to the same question,
-      // and the shape where the two disagree is a document advertising a
-      // grant the token endpoint refuses.
-      const URN = DEVICE_CODE_GRANT_TYPE;
-      const grantsRaw = payload.grant_types_supported;
-      const grants = Array.isArray(grantsRaw)
-        ? grantsRaw.filter((g): g is string => typeof g === "string")
-        : [];
-      if (!grants.includes(URN)) grants.push(URN);
-      payload.grant_types_supported = grants;
-      // RFC 8628 §4: `device_authorization_endpoint` advertises the
-      // device-authorization request endpoint. Marfa's lives at
-      // `${authBaseUrl}/auth/device` (initiation; the polled token
-      // exchange happens at `/auth/device/token`).
-      payload.device_authorization_endpoint = `${baseURL.replace(/\/+$/, "")}/auth/device`;
       // RFC 8414 §2: the revocation endpoint admits a public client presenting
       // its `client_id` alone, which is how every client this server issues
       // revokes. The plugin advertises only the confidential methods there
@@ -668,16 +469,16 @@ export function createApp(
     // — and cost several releases of dead sign-in in one app before anyone
     // read the two identifiers side by side. A 404 names its own cause.
     app.get("/.well-known/oauth-authorization-server/auth", (c) =>
-      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(authServerMeta, c.req.raw),
     );
     app.get("/.well-known/openid-configuration/auth", (c) =>
-      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(openidConfigMeta, c.req.raw),
     );
     app.get("/auth/.well-known/openid-configuration", (c) =>
-      augmentMetadata(openidConfigMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(openidConfigMeta, c.req.raw),
     );
     app.get("/auth/.well-known/oauth-authorization-server", (c) =>
-      augmentMetadata(authServerMeta, config.authBaseUrl, c.req.raw),
+      augmentMetadata(authServerMeta, c.req.raw),
     );
     // RFC 9728: the resource-server metadata a bearer challenge points at.
     app.route("/", oauthProtectedResourceRoutes(config));
@@ -692,82 +493,17 @@ export function createApp(
   app.route("/edges", edgeRoutes(storage));
   app.route("/edges", edgesBulkRoutes(storage));
   app.route("/edge-types", edgeTypeRoutes(storage));
-  app.route("/types", typeRoutes(storage, config.authMode));
+  app.route("/types", typeRoutes(storage));
   app.route("/search", searchRoutes(storage));
   app.route("/occurrences", occurrenceRoutes(storage));
   app.route("/metadata", metadataRoutes(storage));
   app.route("/blobs", blobRoutes(storage, blobBackend, config.maxBlobSize));
-  // Profile endpoints. Mounted after /blobs so the avatar set path can
-  // reuse the blob layer; the placeholder SVG endpoint is public (no
-  // auth) but lives under /profile for path locality.
-  app.route(
-    "/profile",
-    profileRoutes(storage, blobBackend, config.maxBlobSize),
-  );
-  app.route("/keys", keyRoutes(storage, config.apiKeySalt, config.authMode));
-  app.route("/credentials", credentialRoutes(storage));
-  app.route("/integrations", integrationRoutes(storage, auth));
+  app.route("/keys", keyRoutes(storage, config.apiKeySalt));
   app.route("/spaces", spaceRoutes(storage));
-  app.route(
-    "/admin",
-    adminArchiveRoutes(storage, blobBackend, config.authMode),
-  );
-  app.route("/admin", adminRuntimeJobsRoutes(deadLetterOps ?? null));
+  app.route("/admin", adminArchiveRoutes(storage, blobBackend));
   app.route("/admin", adminPlatformTypeRoutes(storage));
-  // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
-  // session-level RLS on a reserved pool connection — for /export's whole
-  // bounded response, and for /events only during the replay phase (live
-  // SSE delivery runs off the emitter and holds no connection). SQLite +
-  // space-less callers continue to run on the owner connection (no
-  // DB-level fence).
-  const streamingRoutesOptions = {
-    rlsEnforce: config.rlsEnforce ?? false,
-    // Prefer the dedicated stream client (direct/session-mode endpoint) so
-    // streaming's session-level `SET ROLE` can't strand on the app's
-    // transaction-mode pooled connections; fall back to the main client when
-    // no direct endpoint is configured.
-    pgClient:
-      ((storage.pgStreamClient ?? storage.pgClient) as PgClient | undefined) ??
-      null,
-  };
-  // `/events` also makes one bounded, request-shaped read before its body
-  // starts — the log head it announces on connect — which takes the
-  // ordinary pool and the ordinary transaction fence rather than a
-  // streaming reservation.
-  const eventsRoutesOptions = {
-    ...streamingRoutesOptions,
-    pgDb: (storage.pgDb as PgDb | undefined) ?? null,
-  };
-  app.route(
-    "/export",
-    exportRoutes(storage, blobBackend, streamingRoutesOptions),
-  );
-  app.route(
-    "/auth",
-    authRoutes(
-      storage,
-      config.apiKeySalt,
-      auth,
-      oidcSigner,
-      deletionGate.evaluatePendingDeletion,
-    ),
-  );
-  if (config.authMode === "hosted" && storage.users && storage.spaces) {
-    app.route("/auth", userAuthRoutes(storage));
-  }
-  // Account-lifecycle routes — initiate / confirm / cancel. Mounted
-  // BEFORE the better-auth catch-all so the explicit handlers win for
-  // `/auth/account/*`.
-  app.route(
-    "/auth",
-    authAccountRoutes(
-      storage,
-      auth,
-      emailTransport,
-      config.authBaseUrl,
-      config.accountDeletionGraceDays ?? 30,
-    ),
-  );
+  app.route("/export", exportRoutes(storage, blobBackend));
+  app.route("/auth", authRoutes(storage, auth, oidcSigner));
   // `/auth/authorize` consent page (the @better-auth/oauth-provider plugin's
   // `consentPage` redirect target). Mounted BEFORE the better-auth catch-all
   // so this explicit GET handler wins over the plugin's own endpoints under
@@ -781,24 +517,6 @@ export function createApp(
       authBaseUrl: config.authBaseUrl,
     }),
   );
-  // Marfa-owned DCR endpoint. Sits in front of the plugin's
-  // `/auth/oauth2/register` because: (1) the plugin's body schema rejects
-  // the device-code URN at validation time, and (2) the plugin's write path
-  // through Better Auth's Drizzle adapter mishandles `string[]` columns on
-  // the PG provider. See `routes/oauth-register.ts` for the upstream source
-  // references.
-  if (storage.oauthProvider) {
-    app.route(
-      "/auth",
-      oauthRegisterRoutes(
-        storage,
-        storage.oauthProvider,
-        auth,
-        config.corsOrigins,
-      ),
-    );
-  }
-
   // The plugin's management endpoints — consent rows, clients, the resource
   // registry — answer 404 here before the catch-all can serve them. Marfa's
   // own routes are the only writers of a grant's two records; the reasoning
@@ -813,9 +531,8 @@ export function createApp(
   // catch-all so this GET wins.
   app.route("/auth", authErrorRoutes());
 
-  // Better-auth catch-all for unmatched /auth/* paths (sign-in, sign-up,
-  // magic-link, passkey, federated OIDC, session, plus the oauth-provider
-  // plugin's /auth/oauth2/* endpoints). Hono dispatches in registration
+  // Better-auth catch-all for unmatched /auth/* paths (sign-in, session,
+  // plus the oauth-provider plugin's /auth/oauth2/* endpoints). Hono dispatches in registration
   // order — the explicit routes above win.
   if (auth) {
     const authInstance = auth;
@@ -825,72 +542,12 @@ export function createApp(
   app.route(
     "/events",
     eventRoutes(storage, {
-      ...eventsRoutesOptions,
       maxViewers: config.sseMaxViewers ?? 0,
     }),
   );
-  // Inbound subscription management (admin/integration auth) lives under
-  // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
-  // public receipt path /webhooks/inbound/:id resolves correctly.
-  app.route("/connections", inboundWebhookSubscriptionRoutes(storage));
-  // Connection OAuth proxy — POST/GET/etc.
-  // /connections/:id/proxy/* forwards to the connection's configured
-  // upstream URL with Authorization: Bearer <decrypted access_token>.
-  // Exempt from the request-wide RLS transaction and fenced per phase
-  // instead, so `pgDb` + `rlsEnforce` have to reach the route. See the
-  // header of `routes/connection-proxy.ts`.
-  app.route(
-    "/connections",
-    connectionProxyRoutes(storage, {
-      rlsEnforce: config.rlsEnforce ?? false,
-      pgDb: (storage.pgDb as PgDb | undefined) ?? null,
-    }),
-  );
-  // OAuth bootstrap — POST /connections/:id/oauth/start (`space.credentials`)
-  // returns the upstream authorize URL with signed state; the public
-  // GET /oauth/callback exchanges the code and persists tokens under the
-  // same connectionOauthTokens row the proxy reads.
-  app.route(
-    "/connections",
-    oauthStartRoutes(storage, { authBaseUrl: config.authBaseUrl, auth }),
-  );
-  app.route("/oauth/callback", oauthCallbackRoutes(storage));
-  // Leased bearer tokens — issuance + revoke + list under
-  // /connections/:id/lease-tokens; introspection at
-  // /lease-tokens/validate (separate router so it can be reached by
-  // upstream services that don't otherwise touch /connections).
-  app.route("/connections", connectionLeasedTokenRoutes(storage));
-  // Connection management — POST /connections/:id/uninstall (`space.connections`)
-  // orchestrates a full teardown across credentials, OAuth tokens, leased
-  // tokens, inbound webhooks, and the connection's lifecycle state.
-  app.route("/connections", connectionMappingRoutes(storage));
-  app.route("/connections", connectionRoutes(storage, localRuntime ?? null));
-  app.route(
-    "/connections",
-    connectionConfigureRoutes(storage, {
-      auth,
-      corsOrigins: config.corsOrigins,
-      authBaseUrl: config.authBaseUrl,
-    }),
-  );
-  app.route("/lease-tokens", leaseTokenValidationRoutes(storage));
-  app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
-  // Operator surface: the `marfa operator` CLI command tree calls into these.
-  app.route(
-    "/admin",
-    adminRoutes(storage, {
-      graceDays: config.accountDeletionGraceDays ?? 30,
-      apiKeySalt: config.apiKeySalt,
-      // `POST /admin/accounts` mints an account through Better Auth's own
-      // machinery, so it needs the instance rather than the storage
-      // handles. Absent in keys mode, where the route answers 404.
-      auth,
-    }),
-  );
-
   // OpenAPI spec — generated from route definitions
   app.openAPIRegistry.registerComponent("securitySchemes", "bearerAuth", {
     type: "http",
@@ -915,21 +572,8 @@ export function createApp(
   );
   app.get("/openapi.json", (c) => c.json(openapiDocument));
 
-  // The remote agent surface. Mounted last and wired as a closure over the
-  // composed app so tool calls dispatch back through the full middleware
-  // stack in process; a plain Hono route (streaming, protocol-owned wire
-  // shapes) that stays out of the OpenAPI document like SSE and export.
-  if (config.mcpEnabled) {
-    app.route(
-      "/mcp",
-      mcpRoutes({
-        authBaseUrl: config.authBaseUrl,
-        hasAuthServer: Boolean(auth),
-        toolsets: config.mcpToolsets,
-        appFetch: (req) => app.fetch(req),
-      }),
-    );
-  }
-
-  return app;
+  // The auth instance rides on the app so the test harness can reach the
+  // programmatic account seam (`createEmailAccount`) without rebuilding a
+  // second Better Auth instance against the same database.
+  return Object.assign(app, { auth });
 }

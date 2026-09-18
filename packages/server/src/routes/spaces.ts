@@ -1,62 +1,23 @@
 import { createRoute, z } from "@hono/zod-openapi";
-import { ErrorCode, MarfaError } from "@withmarfa/shared";
-import type { ApiKey, SpaceConfig } from "@withmarfa/shared";
+import type { SpaceConfig } from "@withmarfa/shared";
 import type { AppEnv } from "../middleware/auth.js";
-import {
-  requireOperatorKey,
-  requireSpacePermission,
-  requireAuth,
-} from "../middleware/auth.js";
+import { requireSpacePermission, requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { QuotaSchema } from "./_schemas.js";
-
-const TYPE_LIST = z.array(z.string());
+import { readSpaceConfig, writeSpaceConfig } from "../storage/space-config.js";
+import { enforcementSchema } from "./_schemas.js";
 
 /**
  * One shape, built twice: permissive for reads and strict for the write.
- *
- * `.strict()` does not recurse, so the outer object refusing an unknown key
- * while `enforcement` accepted one would leave the same silent drop a level
- * down, on the block where a dropped key means a rule nobody is enforcing.
- * Applying it at every level is the fix, and it has to be applied to the write
- * shape alone: sharing one strict `enforcement` between the two would make the
- * response strict inside and permissive outside, which is both inconsistent
- * and the wrong half to tighten.
- *
- * Taking the shape as a parameter rather than writing it out twice is what
- * stops the two drifting, which is the failure this whole change is about.
+ * `enforcementSchema` in `_schemas.ts` carries the levers, because a key's
+ * override is the same shape and the two must not drift.
  */
-const enforcementSchema = (strict: boolean) => {
-  const obj = strict ? z.strictObject : z.object;
-  const typesAndSources = { types: TYPE_LIST, sources: z.array(z.string()) };
-  return obj({
-    strict_mode: obj({ types: TYPE_LIST }).optional(),
-    source_allowlist: obj(typesAndSources).optional(),
-    source_filter: obj(typesAndSources).optional(),
-  }).optional();
-};
-
 const spaceConfigShape = (strict: boolean) => ({
-  enforcement: enforcementSchema(strict),
-  // How many hops a single event may travel before the bus drops it as a
-  // suspected cycle. `0` stops integration-originated events propagating at
-  // all, which is the tightest the leash goes; human-originated writes are
-  // never subject to it. Resolved per space on the publish path and at the
-  // runtime's own boundary, so raising it takes effect for both.
-  //
-  // Capped, unlike the retention windows below, because the two fail
-  // differently. A retention window set absurdly high keeps data longer; a hop
-  // budget set absurdly high is the protection switched off, and the thing it
-  // protects against is an integration spinning a feedback loop. The ceiling
-  // is a backstop against "effectively unbounded" rather than a view on how
-  // deep a pipeline may reasonably be: twenty times the default is already far
-  // past any real chain.
-  max_event_hop_budget: z.number().int().min(0).max(100).optional(),
-  // Per-space retention overrides for the cleanup jobs. Each falls back
-  // to the instance env default when unset. `0` disables the job for
-  // that space (matches env-default semantics for `TRASH_RETENTION_DAYS=0`);
-  // negatives are rejected.
+  enforcement: enforcementSchema(strict).optional(),
+  // Retention overrides for the cleanup jobs. Each falls back to the
+  // instance env default when unset. `0` disables the job (matches
+  // env-default semantics for `TRASH_RETENTION_DAYS=0`); negatives are
+  // rejected.
   audit_retention_days: z.number().int().min(0).optional(),
   event_log_retention_hours: z.number().int().min(0).optional(),
   trash_retention_days: z.number().int().min(0).optional(),
@@ -71,7 +32,7 @@ const SpaceConfigSchema = z.object(spaceConfigShape(false));
  *
  * `PUT` is a full replacement, so stripping an unknown key is destructive
  * rather than merely useless: `{"activity_retention_day": 30}` is one missing
- * letter, and it used to answer 200 having erased every override the space
+ * letter, and it used to answer 200 having erased every override the instance
  * had. A caller cannot tell that from success.
  *
  * Read stays permissive, deliberately and all the way down. A client that
@@ -85,16 +46,16 @@ const getConfigRoute = createRoute({
   method: "get",
   path: "/me/config",
   tags: ["Spaces"],
-  summary: "Get the current space's configuration",
+  summary: "Get the instance configuration",
   description:
-    "Returns the calling space's configuration — the optional `enforcement` levers plus the per-space cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
+    "Returns the instance configuration — the optional `enforcement` levers plus the cleanup-job retention overrides. Returns an empty object when nothing is configured. Requires `space.settings`.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
       content: {
         "application/json": { schema: SpaceConfigSchema },
       },
-      description: "Space config",
+      description: "Instance config",
     },
     401: {
       content: {
@@ -120,9 +81,9 @@ const putConfigRoute = createRoute({
   method: "put",
   path: "/me/config",
   tags: ["Spaces"],
-  summary: "Replace the current space's configuration",
+  summary: "Replace the instance configuration",
   description:
-    "Overwrites the space's config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the space had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job for this space. Requires `space.settings`.",
+    "Overwrites the instance config with the supplied object — full replacement, not a merge. An unknown key is refused rather than dropped, because a full replacement that ignores a typo erases every override the instance had. Cleanup-job retention overrides must be non-negative, where `0` disables the corresponding job. Requires `space.settings`.",
   security: [{ bearerAuth: [] }],
   request: {
     body: {
@@ -136,7 +97,7 @@ const putConfigRoute = createRoute({
       content: {
         "application/json": { schema: SpaceConfigSchema },
       },
-      description: "Space config updated",
+      description: "Instance config updated",
     },
     400: {
       content: {
@@ -168,197 +129,15 @@ const putConfigRoute = createRoute({
   },
 });
 
-// ---------------------------------------------------------------------------
-// Space quotas
-// ---------------------------------------------------------------------------
-
-const getQuotasRoute = createRoute({
-  operationId: "getSpaceQuotas",
-  method: "get",
-  path: "/{id}/quotas",
-  tags: ["Spaces"],
-  summary: "Get space quotas",
-  description:
-    "Returns the per-space quota ceilings for a specific space. A `null` field means the env default applies, and an entirely-null payload means no per-space override is configured. Operator key only — a space-bound credential holding `space.usage` uses `GET /spaces/me/quotas` to read its own ceilings without knowing its space id.",
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: z.object({
-      id: z.string().describe("ID of the space whose quotas to read"),
-    }),
-  },
-  responses: {
-    200: {
-      content: { "application/json": { schema: QuotaSchema } },
-      description:
-        "Quota row. Null fields mean 'fall back to env defaults'. " +
-        "An entirely-null payload means no per-space override is set.",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Forbidden",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["not_found"]),
-        },
-      },
-      description: "Space not found",
-    },
-  },
-});
-
-// `GET /spaces/me/quotas` resolves the calling key's space_id from
-// `c.var.apiKey` so a space-bound caller doesn't need to know its own
-// space_id to read its ceilings. The explicit `/{space_id}/quotas` route
-// is for the operator key.
-const getOwnQuotasRoute = createRoute({
-  operationId: "getOwnQuotas",
-  method: "get",
-  path: "/me/quotas",
-  tags: ["Spaces"],
-  summary: "Get current space quotas",
-  description:
-    "Returns the calling space's quota ceilings, resolved from the credential so the caller doesn't need to know its own space id. Requires `space.usage`, which only a space-bound credential can hold; `GET /spaces/{id}/quotas` is the route for naming a space explicitly.",
-  security: [{ bearerAuth: [] }],
-  responses: {
-    200: {
-      content: { "application/json": { schema: QuotaSchema } },
-      description: "Quota row for the calling space.",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Forbidden",
-    },
-  },
-});
-
-const putQuotasRoute = createRoute({
-  operationId: "updateSpaceQuotas",
-  method: "put",
-  path: "/{id}/quotas",
-  tags: ["Spaces"],
-  summary: "Update space quotas",
-  description:
-    "Sets the per-space quota ceilings for a specific space. Each field is independent — a non-null value overrides the env default, while `null` resets that field to the env default. Operator key only.",
-  security: [{ bearerAuth: [] }],
-  request: {
-    params: z.object({
-      id: z.string().describe("ID of the space whose quotas to set"),
-    }),
-    body: {
-      content: {
-        "application/json": {
-          schema: z.object({
-            items_limit: z.number().int().nullable().optional(),
-            webhooks_limit: z.number().int().nullable().optional(),
-            blobs_limit: z.number().int().nullable().optional(),
-            storage_bytes_limit: z.number().int().nullable().optional(),
-            rate_per_minute_limit: z.number().int().nullable().optional(),
-          }),
-        },
-      },
-    },
-  },
-  responses: {
-    200: {
-      content: { "application/json": { schema: QuotaSchema } },
-      description: "Quota row updated.",
-    },
-    401: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["unauthorized"]),
-        },
-      },
-      description: "Unauthorized",
-    },
-    403: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["forbidden"]),
-        },
-      },
-      description: "Forbidden",
-    },
-    404: {
-      content: {
-        "application/json": {
-          schema: makeErrorResponseSchema(["not_found"]),
-        },
-      },
-      description: "Space not found",
-    },
-  },
-});
-
-/**
- * The space one of the three `/spaces/me/*` doors acts on: reading the
- * config, writing it, and reading the quota row.
- *
- * **A space permission implies a space.** The eleven are held on a
- * credential's row or on its grant; the operator key is the only shape that
- * can carry no space, and it holds none of them and cannot be given one, so
- * the `requireSpacePermission` on each of these doors has already turned away
- * every space-less caller before this is reached.
- *
- * It is one function so that none of the three carries a refusal no caller
- * can reach, which would read as a protection somebody is relying on.
- * Reaching the throw would mean the gate above had stopped working, which is
- * this file's mistake and not a caller's, so it stops rather than answering
- * as a bad request.
- */
-function ownSpaceOfCaller(key: ApiKey): string {
-  if (key.space_id === undefined) {
-    throw new Error("a space permission admitted a credential with no space");
-  }
-  return key.space_id;
-}
-
 export function spaceRoutes(storage: Storage) {
   const router = createOpenAPIRouter<AppEnv>();
 
-  // `/me/config` addresses the caller's OWN space and reads nothing else,
-  // so the space-bounded gate is the right one: `space.settings`, held by a
-  // credential bound to the space whose config it is reading. Every storage
-  // call below is keyed on `key.space_id`, which satisfies the widening rule
-  // for a space-scoped callsite.
+  // `/me/config` is the instance config door, gated on `space.settings`
+  // and backed by the settings table.
   router.openapi(getConfigRoute, async (c) => {
-    const key = requireAuth(c);
+    requireAuth(c);
     requireSpacePermission(c, "space.settings");
-    // The space-less half of this guard went with its twin below: a
-    // credential with no space holds none of the eleven, so the gate above
-    // has already refused it. What is left is a deployment with no space
-    // store, which reads as an unset config rather than as an error.
-    if (!storage.spaces) {
-      return c.json({}, 200);
-    }
-    const spaceId = ownSpaceOfCaller(key);
-    const config = await storage.spaces.getConfig(spaceId);
+    const config = await readSpaceConfig(storage.settings);
     return c.json(config ?? {}, 200);
   });
 
@@ -371,110 +150,16 @@ export function spaceRoutes(storage: Storage) {
     // not set.
     const body: SpaceConfig = c.req.valid("json");
 
-    if (!storage.spaces) {
-      throw new MarfaError(
-        ErrorCode.VALIDATION_ERROR,
-        "This deployment holds no space configuration",
-      );
-    }
-
-    const spaceId = ownSpaceOfCaller(key);
-
-    await storage.spaces.updateConfig(spaceId, body);
+    await writeSpaceConfig(storage.settings, body);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
-      space_id: spaceId,
       key_id: key.id,
       action: "space.config.update",
       resource_type: "space",
-      resource_id: spaceId,
+      resource_id: "me",
     });
 
     return c.json(body, 200);
-  });
-
-  // **Route order matters.** `/me/quotas` is registered BEFORE `/{id}/quotas`
-  // so a request to `GET /spaces/me/quotas` matches the own-space handler
-  // instead of the operator handler with `id="me"`. Hono dispatches in
-  // registration order; flipping these would 403 every space-bound caller.
-  router.openapi(getOwnQuotasRoute, async (c) => {
-    const key = requireAuth(c);
-    requireSpacePermission(c, "space.usage");
-    // The last space-less caller this door could meet was a keys-mode bearer
-    // holding `space.usage` and no space, which is now refused at the
-    // middleware; a space-less key is the operator tier and holds none of the
-    // eleven, so the gate above turns that away. The refusal that used to sit
-    // here can no longer answer, and `/spaces/{id}/quotas` is still the route
-    // for naming a space explicitly.
-    const spaceId = ownSpaceOfCaller(key);
-    const quota = await storage.spaceQuotas.get(spaceId);
-    return c.json(
-      {
-        space_id: spaceId,
-        items_limit: quota?.items_limit ?? null,
-        webhooks_limit: quota?.webhooks_limit ?? null,
-        blobs_limit: quota?.blobs_limit ?? null,
-        storage_bytes_limit: quota?.storage_bytes_limit ?? null,
-        rate_per_minute_limit: quota?.rate_per_minute_limit ?? null,
-        updated_at: quota?.updated_at ?? null,
-      },
-      200,
-    );
-  });
-
-  // Operator key only — reading another space's caps is cross-space
-  // authority.
-  router.openapi(getQuotasRoute, async (c) => {
-    requireOperatorKey(c);
-    const { id } = c.req.valid("param");
-    const result = await storage.spaceQuotas.getForExistingSpace(id);
-    if (!result.exists) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
-    }
-    const quota = result.quota;
-    return c.json(
-      {
-        space_id: id,
-        items_limit: quota?.items_limit ?? null,
-        webhooks_limit: quota?.webhooks_limit ?? null,
-        blobs_limit: quota?.blobs_limit ?? null,
-        storage_bytes_limit: quota?.storage_bytes_limit ?? null,
-        rate_per_minute_limit: quota?.rate_per_minute_limit ?? null,
-        updated_at: quota?.updated_at ?? null,
-      },
-      200,
-    );
-  });
-
-  router.openapi(putQuotasRoute, async (c) => {
-    const key = requireOperatorKey(c);
-    const { id } = c.req.valid("param");
-    const body = c.req.valid("json");
-    const result = await storage.spaceQuotas.setForExistingSpace(id, body);
-    if (!result) {
-      throw new MarfaError(ErrorCode.NOT_FOUND, `Space ${id} not found`);
-    }
-    void storage.audit.log({
-      client_ip: c.get("clientIp") ?? null,
-      space_id: c.get("apiKey")?.space_id ?? null,
-      key_id: key.id,
-      action: "space.quotas.update",
-      resource_type: "space",
-      resource_id: id,
-      details: body,
-    });
-    return c.json(
-      {
-        space_id: id,
-        items_limit: result.items_limit ?? null,
-        webhooks_limit: result.webhooks_limit ?? null,
-        blobs_limit: result.blobs_limit ?? null,
-        storage_bytes_limit: result.storage_bytes_limit ?? null,
-        rate_per_minute_limit: result.rate_per_minute_limit ?? null,
-        updated_at: result.updated_at,
-      },
-      200,
-    );
   });
 
   return router;

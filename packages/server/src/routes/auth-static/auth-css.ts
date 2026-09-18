@@ -5,9 +5,8 @@
  * file) so tsup bundles it into `dist/` without a separate static-asset
  * copy step. Treat the body as plain CSS.
  *
- * Single source of truth for every `/auth/*` page (sign-in, sign-up,
- * verify-email, forgot/reset password, OAuth consent, device flow, the
- * API-keys console, the security page, passkey enrollment). Page renderers
+ * Single source of truth for every `/auth/*` page (sign-in, OAuth consent,
+ * device flow, signed out, the error pages). Page renderers
  * reference these classes by name and never inline styles.
  *
  * The design is a calm, monochrome "Luma" shadcn surface: a white card on

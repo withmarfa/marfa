@@ -26,7 +26,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -50,14 +50,7 @@ const SCOPE = "core.note:read";
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Resource Param User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Resource Param User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -74,11 +67,16 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
   throw new Error("sign-in: session_token cookie not found");
 }
 
-/** Register through the Marfa-owned DCR endpoint with the person's session
- *  on the request, which is what binds the client to their space. */
+/** Register through the plugin's registration endpoint with the person's
+ *  session on the request. A loopback http redirect is a native client's
+ *  shape, which is what the plugin's registration accepts it for, and the
+ *  plugin registers a confidential client unless told otherwise, so the
+ *  public one this flow exchanges as has to say so. */
 async function registerClient(c: TestContext, cookie: string): Promise<string> {
   const res = await request(c.app, "POST", "/auth/oauth2/register", {
     body: {
+      application_type: "native",
+      token_endpoint_auth_method: "none",
       redirect_uris: [CALLBACK],
       grant_types: ["authorization_code"],
       response_types: ["code"],
@@ -167,8 +165,6 @@ async function signedInClient(
   email: string,
 ): Promise<{ context: TestContext; clientId: string; cookie: string }> {
   const context = await createTestContext({
-    authMode: "hosted",
-    authAllowSignup: true,
     authBaseUrl: base,
   });
   ctx = context;
@@ -177,17 +173,17 @@ async function signedInClient(
 }
 
 describe("resource parameter on the token endpoint", () => {
-  it("accepts the MCP endpoint's canonical URI and mints a resolvable token", async () => {
+  it("accepts the API origin as the resource and mints a resolvable token", async () => {
     const base = "http://localhost:0";
     const { context, clientId, cookie } = await signedInClient(
       base,
-      "resource-mcp@marfa.so",
+      "resource-origin@marfa.so",
     );
 
     const token = await authorizationCodeGrant(context, clientId, cookie, {
-      resource: `${base}/mcp`,
+      resource: base,
     });
-    expect(token.status).toBe(200);
+    expect(token.status, JSON.stringify(token.body)).toBe(200);
 
     const accessToken = token.body.access_token as string;
     // The mint must stay in the opaque family the bearer middleware
@@ -211,7 +207,7 @@ describe("resource parameter on the token endpoint", () => {
     );
 
     const token = await authorizationCodeGrant(context, clientId, cookie, {});
-    expect(token.status).toBe(200);
+    expect(token.status, JSON.stringify(token.body)).toBe(200);
     expect((token.body.access_token as string).startsWith("marfa_at_")).toBe(
       true,
     );

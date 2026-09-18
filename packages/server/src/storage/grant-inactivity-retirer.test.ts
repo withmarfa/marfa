@@ -11,7 +11,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForAudit,
 } from "../test-utils.js";
@@ -31,10 +31,8 @@ const ORIGIN = "http://localhost:0";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const DAY_MS = 86_400_000;
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 async function seedClient(c: TestContext): Promise<string> {
@@ -45,27 +43,21 @@ async function seedClient(c: TestContext): Promise<string> {
     clientId,
     name: "Forgotten App",
     isPublic: true,
-    grantTypes: [DEVICE_GRANT],
+    // The refresh grant too: the plugin mints a refresh token for
+    // `offline_access` only when the client is registered for it.
+    grantTypes: [DEVICE_GRANT, "refresh_token"],
     responseTypes: ["code"],
     tokenEndpointAuthMethod: "none",
     scopes: null,
     redirectUris: [`${ORIGIN}/callback`],
     postLogoutRedirectUris: [`${ORIGIN}/`],
-    referenceId: null,
   });
   return clientId;
 }
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -86,7 +78,7 @@ async function deviceGrant(
   clientId: string,
   cookie: string,
 ): Promise<string> {
-  const init = await request(c.app, "POST", "/auth/device", {
+  const init = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope: "core.note:read offline_access" },
     headers: { origin: ORIGIN },
   });
@@ -107,7 +99,7 @@ async function deviceGrant(
     headers: { origin: ORIGIN, cookie },
   });
   expect(approve.status).toBe(200);
-  const poll = await request(c.app, "POST", "/auth/device/token", {
+  const poll = await request(c.app, "POST", "/auth/oauth2/token", {
     form: { grant_type: DEVICE_GRANT, device_code, client_id: clientId },
     headers: { origin: ORIGIN },
   });
@@ -132,7 +124,7 @@ async function grantOf(c: TestContext, clientId: string) {
 }
 
 async function consentRows(c: TestContext, clientId: string): Promise<number> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -157,15 +149,11 @@ async function backdate(
   const then = new Date(Date.now() - daysAgo * DAY_MS).toISOString();
   const props = { ...grant.properties };
   for (const f of fields) props[f] = then;
-  await c.storage.items.update(
-    grant.id,
-    { properties: props },
-    grant.space_id ?? undefined,
-  );
+  await c.storage.items.update(grant.id, { properties: props });
 }
 
 async function tokenRows(c: TestContext, clientId: string): Promise<number> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -185,7 +173,7 @@ async function tokenRows(c: TestContext, clientId: string): Promise<number> {
 
 describe("GrantInactivityRetirer.runOnce", () => {
   it("retires a grant unused for longer than the window, with an audit row, and leaves a recent one and an integration alone", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "forgotten@example.com");
     const accessToken = await deviceGrant(ctx, clientId, cookie);
@@ -255,7 +243,7 @@ describe("GrantInactivityRetirer.runOnce", () => {
   });
 
   it("counts from the approval when the grant was never used, and a disabled window retires nothing", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx);
     const cookie = await signInUser(ctx, "never-used@example.com");
     await deviceGrant(ctx, clientId, cookie);
@@ -270,11 +258,10 @@ describe("GrantInactivityRetirer.runOnce", () => {
       last_used_at: null,
     };
     props.granted_at = new Date(Date.now() - 400 * DAY_MS).toISOString();
-    await ctx.storage.items.update(
-      grant.id,
-      { properties: props, null_clears: true },
-      grant.space_id ?? undefined,
-    );
+    await ctx.storage.items.update(grant.id, {
+      properties: props,
+      null_clears: true,
+    });
 
     const disabled = new GrantInactivityRetirer(ctx.storage, 0, DAY_MS);
     expect(await disabled.runOnce()).toBe(0);

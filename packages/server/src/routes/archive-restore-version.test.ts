@@ -62,42 +62,36 @@ describe("a restore does not rewind a row's version", () => {
   it("brings items and edges back at the version they were archived at", async () => {
     const source = await newContext();
     const destination = await newContext();
-    // The source instance's own space: the export is taken by a credential
-    // bound to it, and a space-bound caller may only export the space it is
-    // bound to. The destination restores under the same id, which is what an
-    // archive carried between instances looks like.
-    const space = source.spaceId;
 
-    const note = await source.storage.items.create(
-      { type: "core.note", properties: { body: "v1" }, source: "av-seed" },
-      space,
-    );
-    const other = await source.storage.items.create(
-      { type: "core.note", properties: { body: "target" }, source: "av-seed" },
-      space,
-    );
+    const note = await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "v1" },
+      source: "av-seed",
+    });
+    const other = await source.storage.items.create({
+      type: "core.note",
+      properties: { body: "target" },
+      source: "av-seed",
+    });
     // Climb well past 1, so a restore that re-mints at 1 is unmistakable
     // rather than coincidentally right.
     for (const body of ["v2", "v3", "v4"]) {
-      const bumped = await source.storage.items.update(
-        note.id,
-        { properties: { body } },
-        space,
-      );
+      const bumped = await source.storage.items.update(note.id, {
+        properties: { body },
+      });
       expect("error" in bumped).toBe(false);
     }
-    const edge = await source.storage.edges.createRaw(
-      { source_id: note.id, target_id: other.id, edge_type: "references" },
-      space,
-    );
-    const bumpedEdge = await source.storage.edges.updateProperties(
-      edge.id,
-      { weight: 2 },
-      space,
-    );
+    const edge = await source.storage.edges.createRaw({
+      source_id: note.id,
+      target_id: other.id,
+      edge_type: "references",
+    });
+    const bumpedEdge = await source.storage.edges.updateProperties(edge.id, {
+      weight: 2,
+    });
     expect(bumpedEdge.ok).toBe(true);
 
-    const archivedItem = await source.storage.items.get(note.id, space);
+    const archivedItem = await source.storage.items.get(note.id);
     const archivedEdge = await source.storage.edges.get(edge.id);
     expect(archivedItem?.version).toBeGreaterThan(1);
     expect(archivedEdge?.version).toBeGreaterThan(1);
@@ -105,7 +99,7 @@ describe("a restore does not rewind a row's version", () => {
     const exportRes = await request(
       source.app,
       "GET",
-      `/export?format=archive&target_space_id=${space}`,
+      `/export?format=archive`,
       { key: source.spaceKey },
     );
     expect(exportRes.status).toBe(200);
@@ -126,20 +120,17 @@ describe("a restore does not rewind a row's version", () => {
 
     // `/admin/restore-archive` is an operator route, and the operator key is
     // the only credential that reaches it.
-    const restoreRes = await destination.app.request(
-      `/admin/restore-archive?target_space_id=${space}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${destination.operatorKey}`,
-          "Content-Type": "application/gzip",
-        },
-        body: archive,
+    const restoreRes = await destination.app.request(`/admin/restore-archive`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${destination.operatorKey}`,
+        "Content-Type": "application/gzip",
       },
-    );
+      body: archive,
+    });
     expect(restoreRes.status).toBe(200);
 
-    const restoredItem = await destination.storage.items.get(note.id, space);
+    const restoredItem = await destination.storage.items.get(note.id);
     const restoredEdge = await destination.storage.edges.get(edge.id);
     expect(restoredItem).not.toBeNull();
     expect(restoredEdge).not.toBeNull();

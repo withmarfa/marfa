@@ -23,7 +23,6 @@ import type { TestContext } from "../test-utils.js";
 import { buildOauthProviderPlugin } from "./oauth-provider.js";
 import { withIdempotentConsent } from "./consent-idempotent-adapter.js";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
-import * as pgSchema from "../storage/pg/schema.js";
 
 let ctx: TestContext | undefined;
 
@@ -51,36 +50,20 @@ interface TestAdapter {
  * resolved adapter (the surface the oauth-provider plugin calls).
  */
 async function buildAdapter(c: TestContext): Promise<TestAdapter> {
-  const dialect = c.storage.betterAuthDialect;
-  if (!dialect || !c.storage.betterAuthDb) {
-    throw new Error("test storage missing better-auth handles");
+  if (!c.storage.betterAuthDb) {
+    throw new Error("test storage missing better-auth handle");
   }
-  const schema =
-    dialect === "pg"
-      ? {
-          user: pgSchema.auth_user,
-          session: pgSchema.auth_session,
-          account: pgSchema.auth_account,
-          verification: pgSchema.auth_verification,
-          passkey: pgSchema.auth_passkey,
-          oauthClient: pgSchema.auth_oauth_client,
-          oauthAccessToken: pgSchema.auth_oauth_access_token,
-          oauthRefreshToken: pgSchema.auth_oauth_refresh_token,
-          oauthConsent: pgSchema.auth_oauth_consent,
-          jwks: pgSchema.auth_jwks,
-        }
-      : {
-          user: sqliteSchema.auth_user,
-          session: sqliteSchema.auth_session,
-          account: sqliteSchema.auth_account,
-          verification: sqliteSchema.auth_verification,
-          passkey: sqliteSchema.auth_passkey,
-          oauthClient: sqliteSchema.auth_oauth_client,
-          oauthAccessToken: sqliteSchema.auth_oauth_access_token,
-          oauthRefreshToken: sqliteSchema.auth_oauth_refresh_token,
-          oauthConsent: sqliteSchema.auth_oauth_consent,
-          jwks: sqliteSchema.auth_jwks,
-        };
+  const schema = {
+    user: sqliteSchema.auth_user,
+    session: sqliteSchema.auth_session,
+    account: sqliteSchema.auth_account,
+    verification: sqliteSchema.auth_verification,
+    oauthClient: sqliteSchema.auth_oauth_client,
+    oauthAccessToken: sqliteSchema.auth_oauth_access_token,
+    oauthRefreshToken: sqliteSchema.auth_oauth_refresh_token,
+    oauthConsent: sqliteSchema.auth_oauth_consent,
+    jwks: sqliteSchema.auth_jwks,
+  };
 
   const instance = betterAuth({
     baseURL: "http://localhost:0",
@@ -88,7 +71,7 @@ async function buildAdapter(c: TestContext): Promise<TestAdapter> {
     secret: "test-secret-consent-idempotent",
     database: withIdempotentConsent(
       drizzleAdapter(c.storage.betterAuthDb as never, {
-        provider: dialect === "pg" ? "pg" : "sqlite",
+        provider: "sqlite",
         schema,
       }),
     ),
@@ -137,7 +120,6 @@ function consentData(
     scopes,
     createdAt: now,
     updatedAt: now,
-    referenceId: null,
   };
 }
 
@@ -157,7 +139,7 @@ async function countConsents(
 
 describe("idempotent oauth consent adapter", () => {
   it("re-consent does NOT create a duplicate row — exactly one row, scopes updated", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const adapter = await buildAdapter(ctx);
     await seedUser(adapter, "u_dedup");
 
@@ -181,15 +163,14 @@ describe("idempotent oauth consent adapter", () => {
     expect(rows.length).toBe(1);
 
     // Scopes were refreshed to the re-consent set. The adapter returns
-    // scopes as an array on both dialects (PG native text[], SQLite
-    // JSON-deserialized by the Better Auth adapter).
+    // scopes as an array (JSON-deserialized by the Better Auth adapter).
     const scopes = rows[0]?.scopes as string[];
     expect(scopes).toContain("core.note:read");
     expect(scopes).toContain("openid");
   });
 
   it("constraint + idempotent write hold together — many re-consents stay at one row", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const adapter = await buildAdapter(ctx);
     await seedUser(adapter, "u_multi");
 
@@ -208,7 +189,7 @@ describe("idempotent oauth consent adapter", () => {
   });
 
   it("distinct (clientId, userId) pairs each get their own row", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const adapter = await buildAdapter(ctx);
     await seedUser(adapter, "u_a");
     await seedUser(adapter, "u_b");

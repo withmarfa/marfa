@@ -1,6 +1,6 @@
 {
   "name": "@withmarfa/shared",
-  "version": "7.9.0",
+  "version": "8.0.0",
   "license": "Apache-2.0",
   "type": "module",
   "publishConfig": {
@@ -17,9 +17,7 @@
     "dist"
   ],
   "scripts": {
-    "prebuild": "tsx scripts/generate-manifest-schema.ts",
     "build": "tsup && node scripts/inline-types-dts.mjs",
-    "generate:manifest-schema": "tsx scripts/generate-manifest-schema.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"

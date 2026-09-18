@@ -7,22 +7,15 @@ import type {
   Version,
   ApiKey,
   CreateKeyInput,
-  CreateSpaceKeyInput,
   UpdateKeyInput,
   PaginatedResult,
   SearchResult,
   ItemState,
   Tier,
   SpaceConfig,
-  SpaceQuota,
-  Space,
-  SpaceMetrics,
-  SpaceActivityEntry,
   Edge,
   CreateEdgeInput,
   EdgeTypeSchema,
-  Profile,
-  UpdateProfileInput,
 } from "@withmarfa/shared";
 import type {
   TypeSchema,
@@ -31,12 +24,6 @@ import type {
   WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
-  ConnectionInstallInput,
-  ConnectionInstallResult,
-  ConnectionUninstallResult,
-  ConnectionRuntimeStateResult,
-  PreviewEventRequest,
-  PreviewEventResult,
 } from "@withmarfa/shared";
 import { generateId } from "@withmarfa/shared";
 import { HttpTransport, type TokenProviderLike } from "./transport.js";
@@ -138,7 +125,7 @@ export interface UpdateOptions {
   /**
    * Repoint the item at a new natural-key identifier under the caller's
    * stamped `source`. The server enforces `(source, source_id)` uniqueness
-   * per space — a collision returns HTTP 409 `source_id_conflict`. PATCHing
+   * — a collision returns HTTP 409 `source_id_conflict`. PATCHing
    * the value the item already carries is a no-op success. Used by the
    * sync agent to preserve item identity through file renames.
    */
@@ -318,23 +305,6 @@ export interface MetadataInput {
 }
 
 /**
- * Compact API-key summary returned by the instance keys-list route. The
- * full `ApiKey` shape carries permission maps; the operator surface
- * deliberately surfaces only the identifying fields + timestamps needed
- * for emergency revocation.
- */
-export interface SpaceApiKeySummary {
-  id: string;
-  label: string;
-  source: string;
-  /** The space permissions the credential holds, as the literals themselves. */
-  space_permissions: string[];
-  is_operator: boolean;
-  created_at: string;
-  last_used_at: string | null;
-}
-
-/**
  * One shipped type an instance still carries that its running build no
  * longer names, as returned by the operator drift listing.
  *
@@ -345,7 +315,7 @@ export interface SpaceApiKeySummary {
  */
 export interface DriftedPlatformType {
   id: string;
-  /** Items carrying this identifier, across every space. Read live on
+  /** Items carrying this identifier. Read live on
    *  each request rather than cached at boot, because it is the part of
    *  the report that changes without a restart. */
   item_count: number;
@@ -778,7 +748,7 @@ export interface OccurrencesScan {
    * bound on how many rows to go and look at. Group on `item_id` for
    * the exact number.
    *
-   * Scoped to those types rather than to the space. A `type` on the
+   * Scoped to those types rather than to the instance. A `type` on the
    * request, or a credential permissioned for one event type, narrows
    * what was read and therefore what this counts, so a zero says the
    * rules this read looked at were fine and says nothing at all about
@@ -1106,9 +1076,8 @@ export class MarfaClient {
 
     /**
      * Read many items by id in one round-trip via `POST /items/bulk-get`.
-     * Space-scoped and permission-filtered exactly like `get`: ids the
-     * caller cannot read (other space, type not permitted, trashed, or
-     * non-existent) are silently omitted, so the returned array may be
+     * Permission-filtered exactly like `get`: ids the caller cannot read
+     * (type not permitted, trashed, or non-existent) are silently omitted, so the returned array may be
      * shorter than `ids` and is in no guaranteed order. Capped at 100 ids
      * server-side — an over-cap request throws a `validation_error`.
      *
@@ -1687,7 +1656,7 @@ export class MarfaClient {
 
     /**
      * Enumerate the distinct set of tags in use across items the caller can
-     * read. Space-scoped, type-permission scoped, excludes trashed items.
+     * read. Type-permission scoped, excludes trashed items.
      * Returns tags with usage counts, sorted by count desc then tag asc.
      */
     listTags: async (): Promise<{ tag: string; count: number }[]> => {
@@ -1754,7 +1723,7 @@ export class MarfaClient {
 
   readonly edges = {
     /**
-     * Global edge listing across the space, filtered by edge type
+     * Global edge listing across the instance, filtered by edge type
      * (comma-separated string or array of type ids). Use this when you
      * need "all edges of type X" — replaces the walk-every-item
      * pattern. Per-target filters live on `listFromSource` /
@@ -2201,348 +2170,38 @@ export class MarfaClient {
     },
   };
 
-  // ---- Connections ----
+  // ---- Spaces ----
 
-  /**
-   * Connection management. The `system.connection` items themselves are
-   * still managed via `client.items` (list, get, transition); this
-   * namespace adds the orchestrated lifecycle operations that don't fit
-   * the generic items surface — specifically `uninstall`, which requires
-   * a multi-step server-side teardown across credentials, tokens, and
-   * inbound subscriptions.
-   *
-   * Convenience filters for listing connections (by `integration_ref`,
-   * `state`, etc.) live on `client.items.list({ type: "system.connection",
-   * ... })`. The CLI's `my connections` tree wraps both.
-   */
-  readonly connections = {
-    /**
-     * JSON install of an Integration manifest — server-side sibling of
-     * the browser consent flow at `POST /integrations/:id/install`.
-     * Skips the HTML consent screen so operators and tooling can install
-     * connections non-interactively. Takes the connections space
-     * permission, and installs into the caller's own space.
-     *
-     * `integration_id` references a `system.integration` item (registered
-     * via `POST /integrations`).
-     * `credential_ref` lets multiple integrations of the same upstream
-     * share one existing `system.credential` instead of provisioning a
-     * fresh one per install; `configuration` seeds the new connection's
-     * `properties.configuration` bag. Returns the new connection id and
-     * the `system.activity` row id from the install pipeline.
-     */
-    install: async (
-      input: ConnectionInstallInput,
-    ): Promise<ConnectionInstallResult> => {
-      return this.transport.request<ConnectionInstallResult>(
-        "POST",
-        "/connections/install",
-        { body: input },
-      );
-    },
-    /**
-     * Orchestrated uninstall of an `integration`
-     * connection. Revokes runtime credentials, deletes upstream OAuth
-     * tokens, revokes active leased tokens, disables inbound webhook
-     * subscriptions, transitions the system.connection state to
-     * `revoked`, and emits a `system.activity` row. Audit-logged.
-     *
-     * Idempotent at the artifact level — revoking already-revoked
-     * tokens is a no-op — but rejects with 400 when the connection
-     * itself is already in state `revoked`. Takes the connections space
-     * permission, and acts on the caller's own space.
-     */
-    uninstall: async (id: string): Promise<ConnectionUninstallResult> => {
-      return this.transport.request<ConnectionUninstallResult>(
-        "POST",
-        path`/connections/${id}/uninstall`,
-      );
-    },
-    /**
-     * Pause an `integration` connection: sets `runtime_status` to
-     * `paused` — the scheduler skips it, reactive item-event fan-out
-     * drops it, and new inbound webhook deliveries are refused with a
-     * retryable 503 so the sender redelivers after resume. Queued
-     * schedule and item-event work is discarded without running; a
-     * queued webhook dispatch retries and dead-letters if the pause
-     * outlasts it.
-     *
-     * Credentials and the upstream OAuth grant survive, which is the
-     * point — `resume` restores the connection without a fresh consent
-     * round trip, where `uninstall` would require one. Rejects with 400
-     * on a connection that is already paused, or revoked.
-     *
-     * Mediated server-side rather than a direct item write: pausing
-     * means writing a `system.*` item, which ordinary space
-     * credentials are correctly refused, so this route does the
-     * privileged write on the owner's behalf.
-     */
-    pause: async (id: string): Promise<ConnectionRuntimeStateResult> => {
-      return this.transport.request<ConnectionRuntimeStateResult>(
-        "POST",
-        path`/connections/${id}/pause`,
-      );
-    },
-    /**
-     * Resume a paused `integration` connection: restores
-     * `runtime_status` to `healthy`; the scheduler, reactive fan-out,
-     * and inbound webhook receipt all pick it up again with nothing to
-     * re-arm.
-     *
-     * Rejects with 400 on a connection that is not paused, and on one
-     * that is revoked — reviving a revoked connection is what
-     * reinstalling is for.
-     */
-    resume: async (id: string): Promise<ConnectionRuntimeStateResult> => {
-      return this.transport.request<ConnectionRuntimeStateResult>(
-        "POST",
-        path`/connections/${id}/resume`,
-      );
-    },
-    /**
-     * Preview the wire envelopes the reactive-run bridge would emit for
-     * a synthetic item-event, without dispatching anything. Operator
-     * debugging surface: given an existing item id and an event type, the
-     * route returns one row per subscribing connection — either
-     * `would_dispatch: true` with the synthesized envelope, or
-     * `would_dispatch: false` with a `dispatch_reason` (`self_event`,
-     * `cross_space`, `hop_budget_exceeded`, `subscription_inactive`).
-     *
-     * Defaults to all subscribers in the caller's space; pass
-     * `connection_id` to filter to one. The optional `cycle` override
-     * lets you reproduce reactive scenarios ("what if hop_count was N?").
-     * Takes the connections space permission.
-     */
-    previewEvent: async (
-      input: PreviewEventRequest,
-    ): Promise<PreviewEventResult> => {
-      return this.transport.request<PreviewEventResult>(
-        "POST",
-        "/connections/preview-event",
-        { body: input },
-      );
-    },
-  };
-
-  // ---- Spaces (admin) ----
-
-  /** Space-scoped configuration. Carries the three optional schema-
+  /** Instance configuration. Carries the three optional schema-
    * enforcement levers (`strict_mode`, `source_allowlist`,
-   * `source_filter`) and the per-space cleanup-job overrides
+   * `source_filter`) and the cleanup-job overrides
    * (`audit_retention_days`, `event_log_retention_hours`,
    * `trash_retention_days`). Both endpoints take `space.settings`. */
   readonly spaces = {
-    /** Returns the current space's config. Empty object when nothing
-     * is configured. */
+    /** Returns the instance config. Empty object when nothing is
+     * configured. */
     getConfig: async (): Promise<SpaceConfig> => {
       return this.transport.request<SpaceConfig>("GET", "/spaces/me/config");
     },
 
-    /** Replaces the current space's config (PUT semantics — full
-     * replacement, not merge). */
+    /** Replaces the instance config (PUT semantics — full replacement, not
+     * merge). */
     setConfig: async (config: SpaceConfig): Promise<SpaceConfig> => {
       return this.transport.request<SpaceConfig>("PUT", "/spaces/me/config", {
         body: config,
       });
-    },
-
-    /** Per-space resource quotas. Empty / missing limits fall back to
-     *  the instance defaults from env. Quotas are operator-managed. */
-    quotas: {
-      /**
-       * Read the calling space's quota row. Takes `space.usage`, and
-       * resolves the space from the bearer's `space_id`. The operator key
-       * holds no space permission, so it is refused with 403 rather than
-       * answered here; use `getById` for another space's row.
-       *
-       * There is no 400. It used to answer one for a credential holding
-       * `space.usage` with no space, which only a space-less OAuth bearer
-       * could be, and such a bearer is now refused at the middleware in
-       * either mode.
-       */
-      getOwn: async (): Promise<SpaceQuota> => {
-        return this.transport.request<SpaceQuota>("GET", "/spaces/me/quotas");
-      },
-
-      /** Read a specific space's quota row (operator key only). */
-      getById: async (spaceId: string): Promise<SpaceQuota> => {
-        return this.transport.request<SpaceQuota>(
-          "GET",
-          path`/spaces/${spaceId}/quotas`,
-        );
-      },
-
-      /** Replace a space's quota row (operator key only). Pass null
-       *  on a field to clear it (revert to env default). */
-      set: async (
-        spaceId: string,
-        input: {
-          items_limit?: number | null;
-          webhooks_limit?: number | null;
-          blobs_limit?: number | null;
-          storage_bytes_limit?: number | null;
-          rate_per_minute_limit?: number | null;
-        },
-      ): Promise<SpaceQuota> => {
-        return this.transport.request<SpaceQuota>(
-          "PUT",
-          path`/spaces/${spaceId}/quotas`,
-          { body: input },
-        );
-      },
     },
   };
 
   // ---- Admin ----
 
   /**
-   * The instance surface — the `marfa operator` CLI command tree's
-   * backing endpoints. Every method requires the operator key
+   * Operator maintenance. Every method requires the operator key
    * (`is_operator: true`). Every other credential gets a `403
    * forbidden`; render `"this command requires the operator key"`
    * in CLI / UI layers.
-   *
-   * Quota read/write is intentionally NOT duplicated here — it lives on
-   * `client.spaces.quotas.{getById, set}` and is already gated on the
-   * operator key. This namespace mirrors what the CLI's `marfa operator`
-   * tree exposes; quotas are reached via the existing spaces surface.
    */
   readonly admin = {
-    spaces: {
-      /**
-       * Create an empty space. Pair with `admin.keys.create(spaceId, …)` to
-       * issue a credential scoped to it.
-       *
-       * Every other operator verb on a space predates this one, so a space
-       * could previously only come into being through a hosted sign-up. That
-       * left an operator with no way to provision a space, and anything
-       * needing a space-scoped credential — a test harness, a conformance
-       * suite, a self-hoster seeding an instance — with no supported path.
-       */
-      create: async (input?: { name?: string }): Promise<Space> => {
-        return this.transport.request<Space>("POST", "/admin/spaces", {
-          body: input ?? {},
-        });
-      },
-
-      /** List every space in the instance with current status. */
-      list: async (): Promise<Space[]> => {
-        const res = await this.transport.request<{ data: Space[] }>(
-          "GET",
-          "/admin/spaces",
-        );
-        return res.data;
-      },
-
-      /**
-       * Single space + per-space quota overrides + the most-recent
-       * `system.activity` items for the space (`null` quotas when no
-       * override is configured; quota fields then resolve to instance
-       * defaults).
-       */
-      show: async (
-        spaceId: string,
-      ): Promise<{
-        space: Space;
-        quotas: SpaceQuota | null;
-        recent_activity: SpaceActivityEntry[];
-      }> => {
-        return this.transport.request<{
-          space: Space;
-          quotas: SpaceQuota | null;
-          recent_activity: SpaceActivityEntry[];
-        }>("GET", path`/admin/spaces/${spaceId}`);
-      },
-
-      /**
-       * Flip the space's status to `'suspended'`. Future non-GET
-       * requests from credentials in the space return HTTP 403
-       * `space_suspended`. Reads pass through; the operator key
-       * bypasses. Idempotent.
-       */
-      suspend: async (spaceId: string): Promise<Space> => {
-        return this.transport.request<Space>(
-          "POST",
-          path`/admin/spaces/${spaceId}/suspend`,
-        );
-      },
-
-      /** Reverse of `suspend`. Idempotent. */
-      unsuspend: async (spaceId: string): Promise<Space> => {
-        return this.transport.request<Space>(
-          "POST",
-          path`/admin/spaces/${spaceId}/unsuspend`,
-        );
-      },
-
-      /**
-       * Per-space usage snapshot — item count by state, blob count
-       * and total bytes, custom-type count, plus recent activity.
-       */
-      metrics: async (spaceId: string): Promise<SpaceMetrics> => {
-        return this.transport.request<SpaceMetrics>(
-          "GET",
-          path`/admin/spaces/${spaceId}/metrics`,
-        );
-      },
-    },
-
-    keys: {
-      /** Active (non-revoked) keys for the named space. Operator
-       *  surface for emergency revocation — pair with `client.keys.revoke`. */
-      list: async (spaceId: string): Promise<SpaceApiKeySummary[]> => {
-        const res = await this.transport.request<{
-          data: SpaceApiKeySummary[];
-        }>("GET", path`/admin/spaces/${spaceId}/keys`);
-        return res.data;
-      },
-
-      /**
-       * Mint a key bound to the named space. The raw key value is returned
-       * exactly once, same as `client.keys.create`.
-       *
-       * This is the route to reach for when the operator needs to issue a
-       * credential for someone else's space. `client.keys.create` always
-       * binds the new key to the *caller's* space, and the operator key has
-       * none, so it cannot produce a space-bound key through that route at
-       * all. The mint takes everything in the named space unless the request
-       * asks for less, and the route cannot mint another operator key.
-       */
-      create: async (
-        spaceId: string,
-        input: CreateSpaceKeyInput,
-      ): Promise<ApiKey & { key: string }> => {
-        return this.transport.request<ApiKey & { key: string }>(
-          "POST",
-          path`/admin/spaces/${spaceId}/keys`,
-          { body: input },
-        );
-      },
-    },
-
-    accountDeletion: {
-      /**
-       * Force a one-shot run of the pending-delete purger. Returns the
-       * number of accounts purged this tick. Useful when an account has
-       * just passed its grace window and the operator doesn't want to
-       * wait for the next scheduled sweep (default cadence: 1 hour).
-       *
-       * Idempotent: re-running with no eligible rows returns 0. Only
-       * sweeps accounts already past `pending_deletion_at + grace_days`
-       * — does not bypass the grace window. The `run_at` timestamp is
-       * server-stamped at the moment `runOnce()` begins.
-       */
-      purgeNow: async (): Promise<{
-        purged_count: number;
-        run_at: string;
-      }> => {
-        return this.transport.request<{
-          purged_count: number;
-          run_at: string;
-        }>("POST", "/admin/account-deletion/purge-now");
-      },
-    },
-
     platformTypes: {
       /**
        * Shipped type rows this instance still carries that the running
@@ -2567,8 +2226,8 @@ export class MarfaClient {
 
       /**
        * Remove exactly one platform type row this build no longer ships.
-       * Irreversible and instance-wide: the row is deleted across every
-       * space, and a build that no longer ships the type cannot re-seed
+       * Irreversible and instance-wide: the row is deleted, and a build
+       * that no longer ships the type cannot re-seed
        * it. The type keeps resolving until the next restart, because the
        * in-memory registry is filled from the rows at boot.
        *
@@ -2585,19 +2244,6 @@ export class MarfaClient {
     },
   };
 
-  // ---- Profile ----
-
-  /**
-   * The calling user's profile. `system.profile` is a virtual type —
-   * served by a dedicated endpoint over the `users` table joined to
-   * `auth_user` for the canonical email. Username changes go through
-   * the same handle validators as `PUT /auth/me/handle`.
-   *
-   * Apps that need a third-party-OAuth-style read should use the
-   * standard OIDC `profile` / `email` scopes via `/auth/oauth2/userinfo`
-   * instead — this surface is for first-party callers (CLI, MCP, the
-   * user themselves) holding a space-scoped bearer.
-   */
   /**
    * The change stream.
    *
@@ -2617,60 +2263,6 @@ export class MarfaClient {
      */
     subscribe: (options: SubscribeOptions): Subscription => {
       return subscribeToEvents(this.transport, options);
-    },
-  };
-
-  readonly profile = {
-    /** Read the calling user's profile. */
-    get: async (): Promise<Profile> => {
-      return this.transport.request<Profile>("GET", "/profile/me");
-    },
-
-    /**
-     * Update the calling user's profile. Every field optional; `null`
-     * clears (where applicable). `username` runs through the
-     * reserved-handle / collision validators server-side.
-     */
-    update: async (input: UpdateProfileInput): Promise<Profile> => {
-      return this.transport.request<Profile>("PATCH", "/profile/me", {
-        body: input,
-      });
-    },
-
-    /**
-     * Upload an avatar. Accepts a Blob/File or a Uint8Array. The server
-     * stores the bytes in the existing R2-backed blob layer and stamps
-     * the content-addressed hash onto the user row.
-     */
-    setAvatar: async (
-      data: Blob | Uint8Array,
-      mimeType?: string,
-    ): Promise<Profile> => {
-      const form = new FormData();
-      const blob =
-        data instanceof Blob
-          ? data
-          : new Blob([new Uint8Array(data)], {
-              type: mimeType ?? "application/octet-stream",
-            });
-      form.append("file", blob, "avatar");
-      // Bypass the JSON path — multipart needs FormData on rawBody so
-      // fetch sets Content-Type: multipart/form-data with the boundary.
-      const response = await this.transport.rawRequest(
-        "POST",
-        "/profile/me/avatar",
-        { rawBody: form },
-      );
-      const result = (await response.json()) as Profile | { error?: unknown };
-      if (!response.ok) {
-        this.throwRawError(response.status, result);
-      }
-      return result as Profile;
-    },
-
-    /** Clear the avatar; reverts to the deterministic placeholder. */
-    clearAvatar: async (): Promise<Profile> => {
-      return this.transport.request<Profile>("DELETE", "/profile/me/avatar");
     },
   };
 
@@ -2713,12 +2305,12 @@ export class MarfaClient {
      * There is no third refusal. `series_errors` is capped rather than
      * refused past `scan.max_series_errors`, because that list is a
      * diagnostic beside the calendar and nothing in `data` depends on it
-     * — the healthy series in the same space still expand and return. A
+     * — the healthy series still expand and return. A
      * capped list sets `series_errors_truncated` and
      * `scan.series_errors` keeps the true count, so a partial list is
      * never mistaken for a complete one. That count is scoped to the
      * event types this read covered, so it is a statement about what was
-     * read and not about the space: pass a `type`, or use a credential
+     * read and not about the instance: pass a `type`, or use a credential
      * permissioned for one event type, and the rules of the other type
      * are neither read nor counted.
      *
@@ -2726,7 +2318,7 @@ export class MarfaClient {
      * The passes that gather series and exceptions cannot be windowed —
      * a rule written years ago produces occurrences in any window, and
      * an exception moved out of one still shadows the slot it left — so
-     * both read the space whole however little is asked for, and a large
+     * both read the instance whole however little is asked for, and a large
      * calendar is read slowly rather than refused. `scan` on the result
      * is where that cost is visible: `events_read` grows with the
      * calendar rather than with the window, and `max_occurrences`
@@ -2737,7 +2329,7 @@ export class MarfaClient {
      * What "slowly" is bounded by is the expansion budget, and it is the
      * one place the calendar can come back partial. A read spends at
      * most `scan.max_unproductive_iterations` walking rules that produce
-     * no occurrence, and a space holding enough of them — per-minute
+     * no occurrence, and an instance holding enough of them — per-minute
      * reminders, or a long history of series that have ended — reaches
      * that before it reaches every series. Such a read succeeds with
      * `expansion_incomplete` set and `scan.series_unexpanded` above

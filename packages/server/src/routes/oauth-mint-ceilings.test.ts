@@ -2,11 +2,17 @@
  * The non-interactive minting paths: one ceiling, and one grant that is
  * gone.
  *
- * Dynamic client registration hands out authority with no consent screen in
- * front of it, and it used to default to the entire scope allowlist,
- * including the global `*:write` wildcard, when the request simply omitted
- * `scope`. The ceiling now comes from `auth/mint-ceiling.ts`: the bundle
- * expansion, which is what a consent screen would have shown.
+ * Dynamic client registration hands out a scope ceiling with no consent
+ * screen in front of it. The provider plugin's registration stores one
+ * ceiling for every client it registers, the server's allowlist, whatever
+ * the request named or omitted: a request outside the allowlist is refused,
+ * and a narrower one does not narrow the row. What a self-registered client
+ * may later ask for is therefore exactly what the discovery document
+ * advertises, and the consent screen is the only narrowing. Marfa's own
+ * registration handler used to store the bundle expansion for an omitted
+ * scope and the literals for a named one; that went with the handler, and
+ * the two cases below pin what replaced it so a plugin upgrade that changes
+ * the rule is a change the suite sees.
  *
  * The `client_credentials` grant was the other such path and it is no longer
  * a grant this server has. A machine acting on a space is an API key, minted
@@ -24,7 +30,7 @@ import { expandBundlesToScopes } from "@withmarfa/shared";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { getPermissionBundles } from "../config.js";
-import { withSessionScopes } from "../auth/mint-ceiling.js";
+import { SESSION_CRITICAL_SCOPES } from "../auth/mint-ceiling.js";
 
 let ctx: TestContext | undefined;
 
@@ -49,10 +55,7 @@ async function seedConfidentialClient(
   if (!c.storage.betterAuthDb) {
     throw new Error("seedConfidentialClient: storage.betterAuthDb missing");
   }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -62,8 +65,7 @@ async function seedConfidentialClient(
     };
   };
   const now = new Date();
-  const asArray = (values: string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? values : JSON.stringify(values);
+  const asArray = (values: string[]): unknown => JSON.stringify(values);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -113,7 +115,7 @@ async function clientCredentialsToken(
 
 describe("the client-credentials grant is not one this server has", () => {
   it("refuses the token request with unsupported_grant_type", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
@@ -134,7 +136,7 @@ describe("the client-credentials grant is not one this server has", () => {
   });
 
   it("is not stepped around by whitespace in grant_type", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+    ctx = await createTestContext({});
     const secret = `s3cret-${Math.random().toString(36).slice(2)}`;
     const clientId = await seedConfidentialClient(ctx, secret);
 
@@ -157,36 +159,26 @@ describe("the client-credentials grant is not one this server has", () => {
   });
 });
 
-describe("lease-token scope claims are bounded", () => {
-  // A lease grants no Marfa data-plane authority — its scopes are claims
-  // relayed to the introspecting upstream in that service's vocabulary.
-  // Nothing semantic exists to validate them against (the manifest
-  // declares no per-capability scope vocabulary), so the fence is shape:
-  // introspection must not be usable as an unbounded storage channel.
-  it("refuses an empty-string scope and an oversized claim set", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
-    const attempt = (scopes: string[]) =>
-      request(ctx!.app, "POST", "/connections/some-id/lease-tokens", {
-        key: ctx!.spaceKey,
-        body: { capability_id: "cap", scopes },
-      });
+/** The scopes the server advertises, which is the allowlist a registration
+ *  is held to. */
+async function advertisedScopes(c: TestContext): Promise<string[]> {
+  const res = await request(
+    c.app,
+    "GET",
+    "/.well-known/oauth-authorization-server/auth",
+  );
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { scopes_supported?: string[] };
+  return [...(body.scopes_supported ?? [])].sort();
+}
 
-    // Shape validation runs before connection resolution, so a
-    // nonexistent connection id still exercises the bound.
-    const empty = await attempt([""]);
-    expect(empty.status).toBe(400);
-    const oversized = await attempt(
-      Array.from({ length: 33 }, (_, i) => `claim-${String(i)}`),
-    );
-    expect(oversized.status).toBe(400);
-  });
-});
-
-describe("dynamic client registration default-scope ceiling", () => {
-  it("registers the bundle expansion, not the full allowlist, on omitted scope", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
+describe("dynamic client registration scope ceiling", () => {
+  it("registers the advertised allowlist as the ceiling on omitted scope", async () => {
+    ctx = await createTestContext({});
     const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
+        application_type: "native",
+        token_endpoint_auth_method: "none",
         redirect_uris: ["http://localhost/cb"],
         grant_types: ["authorization_code"],
         client_name: "scope-defaults",
@@ -195,31 +187,52 @@ describe("dynamic client registration default-scope ceiling", () => {
     expect(res.status).toBe(201);
     const body = (await res.json()) as { scope: string };
     const registered = body.scope.split(" ").filter(Boolean).sort();
-    expect(registered).not.toContain("*:write");
-    expect(registered).not.toContain("*:read");
-    // The bundle expansion plus the session scopes, which no bundle carries.
-    // Asserting the expansion alone once pinned a ceiling that could not hold
-    // a session: `offline_access` was absent, so the first authorize naming it
-    // was refused for a literal the client was never told to register.
-    expect(registered).toEqual(
-      withSessionScopes(expandBundlesToScopes(getPermissionBundles())).sort(),
-    );
+    // The whole allowlist, wildcards included, and the session scopes with
+    // it: a ceiling minted without `offline_access` refuses the client's
+    // first authorize for a literal it was never told to name.
+    expect(registered).toEqual(await advertisedScopes(ctx));
+    expect(registered).toContain("*:write");
+    for (const scope of SESSION_CRITICAL_SCOPES) {
+      expect(registered).toContain(scope);
+    }
+    // And the bundle expansion, which is what a consent screen offers by
+    // default, sits inside it.
+    for (const scope of expandBundlesToScopes(getPermissionBundles())) {
+      expect(registered).toContain(scope);
+    }
   });
 
-  it("still registers wider scopes when explicitly requested", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
-    const res = await request(ctx.app, "POST", "/auth/oauth2/register", {
+  it("a narrower request does not narrow the ceiling, and one outside the allowlist is refused", async () => {
+    ctx = await createTestContext({});
+    const narrow = await request(ctx.app, "POST", "/auth/oauth2/register", {
       body: {
+        application_type: "native",
+        token_endpoint_auth_method: "none",
         redirect_uris: ["http://localhost/cb"],
         grant_types: ["authorization_code"],
-        client_name: "scope-explicit",
-        scope: "*:read *:write openid",
+        client_name: "scope-narrow",
+        scope: "core.note:read openid",
       },
     });
-    expect(res.status).toBe(201);
-    const body = (await res.json()) as { scope: string };
-    expect(body.scope.split(" ").sort()).toEqual(
-      withSessionScopes(["*:read", "*:write", "openid"]).sort(),
+    expect(narrow.status).toBe(201);
+    const body = (await narrow.json()) as { scope: string };
+    expect(body.scope.split(" ").filter(Boolean).sort()).toEqual(
+      await advertisedScopes(ctx),
+    );
+
+    const outside = await request(ctx.app, "POST", "/auth/oauth2/register", {
+      body: {
+        application_type: "native",
+        token_endpoint_auth_method: "none",
+        redirect_uris: ["http://localhost/cb"],
+        grant_types: ["authorization_code"],
+        client_name: "scope-outside",
+        scope: "core.note:read not.a.type:write",
+      },
+    });
+    expect(outside.status).toBe(400);
+    expect(((await outside.json()) as { error?: string }).error).toBe(
+      "invalid_scope",
     );
   });
 });

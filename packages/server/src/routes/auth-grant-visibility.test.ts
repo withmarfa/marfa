@@ -31,7 +31,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   mintSpaceKey,
   request,
 } from "../test-utils.js";
@@ -62,10 +62,7 @@ async function seedClient(c: TestContext): Promise<string> {
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -74,8 +71,7 @@ async function seedClient(c: TestContext): Promise<string> {
       };
     };
   };
-  const asColumn = (v: readonly string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? [...v] : JSON.stringify(v);
+  const asColumn = (v: readonly string[]): unknown => JSON.stringify(v);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${Math.random().toString(36).slice(2, 10)}`,
@@ -105,30 +101,20 @@ async function seedClient(c: TestContext): Promise<string> {
 async function signInUser(
   c: TestContext,
   email: string,
-): Promise<{ cookie: string; spaceId: string; key: string }> {
+): Promise<{ cookie: string; key: string }> {
   const password = "correct horse battery";
-  const signUp = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Tester" },
-    headers: { origin: ORIGIN },
-  });
-  const authUserId = ((await signUp.json()) as { user?: { id?: string } }).user
-    ?.id;
-  if (!authUserId) throw new Error("sign-up: no user id");
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Tester");
   const signIn = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
   });
   expect(signIn.status).toBe(200);
-  const spaceId = (await c.storage.users?.getByAuthUserId(authUserId))
-    ?.space_id;
-  if (!spaceId) throw new Error("sign-up: no space provisioned");
-  const key = await mintSpaceKey(c, spaceId);
+  const key = await mintSpaceKey(c);
   const setCookie = signIn.headers.get("set-cookie");
   if (!setCookie) throw new Error("sign-in: no Set-Cookie header");
   for (const entry of setCookie.split(/,\s*(?=[a-zA-Z0-9_-]+=)/)) {
     const head = entry.split(";")[0];
-    if (head?.includes("session_token")) return { cookie: head, spaceId, key };
+    if (head?.includes("session_token")) return { cookie: head, key };
   }
   throw new Error("sign-in: session_token cookie not found");
 }
@@ -140,7 +126,7 @@ async function approveDeviceFlow(
   cookie: string,
   scope: string,
 ): Promise<void> {
-  const init = await request(c.app, "POST", "/auth/device", {
+  const init = await request(c.app, "POST", "/auth/device/code", {
     body: { client_id: clientId, scope },
     headers: { origin: ORIGIN },
   });
@@ -165,7 +151,7 @@ async function approveDeviceFlow(
 async function softDeleteGrantRow(c: TestContext, id: string): Promise<void> {
   const row = await c.storage.items.get(id);
   if (!row) throw new Error(`softDeleteGrantRow: no item ${id}`);
-  await c.storage.items.transition(id, "revoked", row.space_id ?? undefined);
+  await c.storage.items.transition(id, "revoked");
 }
 
 /** Every projected grant row, whatever either axis says. */
@@ -193,13 +179,11 @@ async function listedGrants(
 /** Resolve the grant the way every production caller does. */
 function resolveGrantItemId(
   c: TestContext,
-  spaceId: string | null,
   clientId: string,
   authUserId: string,
 ): Promise<string | null | undefined> {
   return Promise.resolve(
     c.storage.oauthProvider?.findGrantItemId({
-      spaceId,
       clientId,
       authUserId,
     }),
@@ -208,10 +192,7 @@ function resolveGrantItemId(
 
 describe("a soft-deleted grant is not resurrected by a re-approval", () => {
   it("REGRESSION: a re-approval inserts a fresh grant and leaves the unreachable row revoked", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -269,10 +250,7 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
   });
 
   it("findGrantItemId returns null for a grant no read surface will list", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie } = await signInUser(
@@ -282,32 +260,24 @@ describe("a soft-deleted grant is not resurrected by a re-approval", () => {
 
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const grant = (await allGrantRows(c))[0]!;
-    const spaceId = grant.space_id ?? null;
     const authUserId = grant.properties.user_id as string;
 
     // The lookup resolves it while it is reachable, so a null afterwards is
     // the predicate and not a mis-keyed probe.
-    expect(await resolveGrantItemId(c, spaceId, clientId, authUserId)).toBe(
-      grant.id,
-    );
+    expect(await resolveGrantItemId(c, clientId, authUserId)).toBe(grant.id);
 
     // The door that produced this shape now refuses a live grant; shape the
     // row through the store instead.
     await softDeleteGrantRow(c, grant.id);
     expect((await c.storage.items.get(grant.id))?.state).toBe("revoked");
 
-    expect(
-      await resolveGrantItemId(c, spaceId, clientId, authUserId),
-    ).toBeNull();
+    expect(await resolveGrantItemId(c, clientId, authUserId)).toBeNull();
   });
 });
 
 describe("an ordinary revoke still re-establishes on re-approval", () => {
   it("keeps updating the same row when only properties.status was revoked", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -320,20 +290,14 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
     expect(listed.length).toBe(1);
     const grantId = listed[0]!.id;
 
-    // The user's own Disconnect button. It moves `properties.status` and
+    // The grants door. It moves `properties.status` and
     // deliberately leaves `state: "active"`, precisely so a later approval
     // has a row to reactivate — an app grant is a re-grantable
     // relationship, unlike an integration connection's terminal uninstall.
-    const revoked = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grantId}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoked.status).toBe(302);
-    expect(revoked.headers.get("location") ?? "").toContain(
-      "notice=grant_revoked",
-    );
+    const revoked = await request(c.app, "DELETE", `/auth/grants/${grantId}`, {
+      key: c.spaceKey,
+    });
+    expect(revoked.status).toBe(204);
     const afterRevoke = await c.storage.items.get(grantId);
     expect(afterRevoke?.state).toBe("active");
     expect(afterRevoke?.properties.status).toBe("revoked");
@@ -379,10 +343,7 @@ describe("an ordinary revoke still re-establishes on re-approval", () => {
  */
 describe("a live grant cannot be stranded through the item doors", () => {
   it("DELETE /items/{id} never reaches the grant: the type gate answers first", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -410,10 +371,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
   });
 
   it("DELETE /items/{id}/purge refuses the same grant before the trash gate can answer", async () => {
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -440,10 +398,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     // exactly as a live grant is. Removing one is the cascade's job, which
     // is the second half of this case rather than a separate file, because
     // the pair is the whole story of how a grant row ever leaves.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -453,14 +408,10 @@ describe("a live grant cannot be stranded through the item doors", () => {
     await approveDeviceFlow(c, clientId, cookie, "core.note:read");
     const [grant] = await listedGrants(c, key);
 
-    const revoke = await request(
-      c.app,
-      "POST",
-      `/auth/grants/${grant!.id}/revoke`,
-      { headers: { origin: ORIGIN, cookie } },
-    );
-    expect(revoke.status).toBe(302);
-    expect(revoke.headers.get("location")).toContain("notice=grant_revoked");
+    const revoke = await request(c.app, "DELETE", `/auth/grants/${grant!.id}`, {
+      key: c.spaceKey,
+    });
+    expect(revoke.status).toBe(204);
 
     const direct = await request(c.app, "DELETE", `/items/${grant!.id}`, {
       key,
@@ -499,10 +450,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     // not a tombstone: tokens live, consent row standing, listed by neither
     // read surface. Purging it would make the strand permanent, since
     // nothing could ever run the cascade for it again.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -542,10 +490,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
     // lifecycle table would refuse anyway: a `system.*` type admits only
     // `revoked` and this route's schema cannot name it. Neither of those is
     // what a caller meets, and the one that answers is the one pinned.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(
@@ -571,10 +516,7 @@ describe("a live grant cannot be stranded through the item doors", () => {
   it("the delete cascade refuses a live grant reached through an edge, and the whole delete rolls back", async () => {
     // `parent-of` cascades on delete and admits any type at either end, so
     // a row anyone can write could otherwise carry the grant out with it.
-    ctx = await createTestContext({
-      authMode: "hosted",
-      authAllowSignup: true,
-    });
+    ctx = await createTestContext({});
     const c = ctx;
     const clientId = await seedClient(c);
     const { cookie, key } = await signInUser(

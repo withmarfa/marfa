@@ -93,18 +93,7 @@ import {
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import type { MarfaAuth } from "../auth/instance.js";
-import {
-  getPermissionBundles,
-  hasUsablePermissionBundleOverride,
-} from "../config.js";
-import {
-  buildDefaultPermissionBundles,
-  resolveRuntimeCustomNamespaces,
-} from "../auth/default-bundles.js";
-import {
-  NO_GRANT_SPACE_MESSAGE,
-  resolveSpaceIdForAuthUser,
-} from "../auth/grant-space.js";
+import { getPermissionBundles } from "../config.js";
 import { renderConsentScreen } from "./consent.js";
 import { deriveWildcardDescription } from "./wildcard-copy.js";
 import { renderAuthorizeExpiredPage } from "./authorize-expired-page.js";
@@ -374,38 +363,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     }
     const clientName = client.name ?? clientId;
 
-    // **A grant needs a space, and this is the last screen that can say so.**
-    // The projection and the token both name the space this resolves, and a
-    // grant with none is refused rather than written: the bearer middleware
-    // turns away a space-less token on every request, so consenting to one
-    // would hand the app a credential that mints and then reaches nothing,
-    // with nothing on any surface naming the cause. The device flow has
-    // always refused up front; this path carried on and wrote a space-less
-    // projection instead.
-    //
-    // Asked here rather than beside the projection write, because by then the
-    // plugin has minted the code. Both ways a code is produced from this
-    // route are below it: the covered-grant skip and the rendered screen the
-    // decision handler answers.
-    const grantSpaceId = await resolveSpaceIdForAuthUser(
-      deps.storage,
-      session.user.id,
-    );
-    if (grantSpaceId === undefined) {
-      // `prompt=none` promised the client an answer at its callback rather
-      // than a screen, and that promise holds for a refusal too. Not
-      // `interaction_required`: no amount of interaction fixes this.
-      if (promptNone) {
-        return promptNoneError(
-          client.redirectUris,
-          "access_denied",
-          NO_GRANT_SPACE_MESSAGE,
-        );
-      }
-      setNoStore(c);
-      return c.html(renderAuthorizeExpiredPage("no_space"), 403);
-    }
-
     // ----- Consent skip (already-granted → silent re-authorization) -----
     // The plugin's own already-consented check runs only at
     // /oauth2/authorize; the post-sign-in return_to lands here without
@@ -570,10 +527,9 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
     const descriptions = buildScopeDescriptions(parsed);
     const wildcardExpansions = await resolveWildcardExpansions(
       deps.storage,
-      session.user.id,
       parsed,
     );
-    const bundles = await resolveConsentBundles(deps.storage, session.user.id);
+    const bundles = resolveConsentBundles();
 
     // Optional error banner (e.g. when redirected back from a zero-scopes
     // accept). Renderer ignores undefined.
@@ -748,20 +704,6 @@ export function authConsentRoutes(deps: ConsentRouteDeps): Hono<AppEnv> {
       const bounce = new URLSearchParams(oauthQuery);
       bounce.set(CONSENT_ERROR_PARAM, "no_scopes_selected");
       return c.redirect(`/auth/authorize?${bounce.toString()}`, 302);
-    }
-
-    // The same refusal the GET path makes, because this handler is reachable
-    // on its own: a form POST is an ordinary browser request and nothing
-    // guarantees the screen in front of it was rendered by the check above.
-    // Before the proxy rather than after, because the proxy is what mints the
-    // code.
-    if (
-      accept &&
-      (await resolveSpaceIdForAuthUser(deps.storage, session.user.id)) ===
-        undefined
-    ) {
-      setNoStore(c);
-      return c.html(renderAuthorizeExpiredPage("no_space"), 403);
     }
 
     const scopeStr = formScopes.join(" ");
@@ -1277,33 +1219,11 @@ async function projectGrantOnConsent(
     clientIp: string | null;
   },
 ): Promise<void> {
-  // Cycle metadata flows through `cycleRequestContext` (set by
-  // `cycleMiddleware`) — `publish()` reads it automatically.
-  // **The same resolver issuance uses.** The projection's space and the
-  // token's `reference_id` have to agree, or `findGrantItemId` looks in one
-  // bucket while the row sits in another and the revoke cascade ends nothing.
-  // They agreed by accident before: hosted read the user's row on both sides,
-  // and keys mode had nothing on either. Keys mode has a space now.
-  const spaceId = await resolveSpaceIdForAuthUser(storage, opts.authUserId);
-  if (spaceId === undefined) {
-    // Unreachable through the route, which refuses before the code is minted,
-    // and stated here anyway because the alternative is silent: a space-less
-    // projection is invisible to the security page and to every revoke door,
-    // so the next re-consent inserts a second row beside it and the person
-    // holding the grant is never shown either. A caller reaching this has
-    // gotten past the guard, which is this file's mistake rather than
-    // theirs.
-    throw new Error(
-      "projectGrantOnConsent: no space resolved for the consenting account",
-    );
-  }
-
   // Detect re-consent: update scopes in place if a projection exists,
   // insert on first consent. Either way the audit row and publish fire.
   let grantItemId: string | null = null;
   if (typeof storage.oauthProvider?.findGrantItemId === "function") {
     grantItemId = await storage.oauthProvider.findGrantItemId({
-      spaceId,
       clientId: opts.clientId,
       authUserId: opts.authUserId,
     });
@@ -1319,7 +1239,7 @@ async function projectGrantOnConsent(
     // patch) so it writes a versions snapshot, bumps updated_at + version,
     // and lets the row sort correctly under /items?sort=updated_at.
     // Pre-fetch to compute prior scopes for the narrowing check below.
-    const existing = await storage.items.get(grantItemId, spaceId);
+    const existing = await storage.items.get(grantItemId);
     if (existing) {
       priorScopes = Array.isArray(existing.properties.scopes)
         ? (existing.properties.scopes as string[])
@@ -1351,14 +1271,14 @@ async function projectGrantOnConsent(
     // scopes have to stop working.
     //
     // **The device screen offers toggles too, and still merges rather than
-    // narrowing.** It once had none, which is where this contrast came from;
-    // `device-scope-merge.ts` carries the current reasoning and it is a
-    // deliberate difference rather than a leftover — a set arriving smaller
-    // there may be the client asking for less or the person unticking a row,
-    // and nothing at that call site can tell the two apart. What the untick
-    // reaches there is the token that device is issued. Neither surface
-    // narrows without the user having asked, and neither leaves a record
-    // claiming access the user withdrew.
+    // narrowing.** It once had none, which is where this contrast came from,
+    // and the difference is deliberate rather than a leftover — a set
+    // arriving smaller there may be the client asking for less or the person
+    // unticking a row, and nothing at that call site can tell the two apart.
+    // What the untick reaches there is the token that device is issued: the
+    // code is narrowed to the ticked set before the plugin approves it.
+    // Neither surface narrows without the user having asked, and neither
+    // leaves a record claiming access the user withdrew.
     if (priorScopes.some((s) => !grantCoversScope(opts.scopes, s))) {
       const provider = storage.oauthProvider;
       if (typeof provider?.revokeAccessTokensForGrant !== "function") {
@@ -1388,18 +1308,14 @@ async function projectGrantOnConsent(
     // rather than reactivating something nobody can see. A soft-deleted
     // grant does not resolve at all and the branch below inserts a fresh
     // row instead.
-    const updated = await storage.items.update(
-      grantItemId,
-      {
-        properties: {
-          scopes: opts.scopes,
-          status: "active",
-          granted_at: now,
-          revoked_at: undefined,
-        },
+    const updated = await storage.items.update(grantItemId, {
+      properties: {
+        scopes: opts.scopes,
+        status: "active",
+        granted_at: now,
+        revoked_at: undefined,
       },
-      spaceId,
-    );
+    });
     if ("error" in updated) {
       // Unreachable: we don't pass `version`, so the merge path bypasses
       // conflict detection. Defensive.
@@ -1410,24 +1326,22 @@ async function projectGrantOnConsent(
     projectedItem = updated;
     eventType = "updated";
   } else {
-    // First-time consent: insert a fresh row.
-    const item = await storage.items.create(
-      {
-        type: "system.connection",
-        tier: "library",
-        state: "active",
-        properties: {
-          kind: "app",
-          client_id: opts.clientId,
-          user_id: opts.authUserId,
-          scopes: opts.scopes,
-          status: "active",
-          granted_at: now,
-        },
-        source: "marfa/oauth2/consent",
+    // First-time consent: insert a fresh row. No tier named: `tier` is a
+    // server-owned field on a `system.*` row (`_tier-rules.ts`), and every
+    // writer of one leaves it to the store the way `POST /items` does.
+    const item = await storage.items.create({
+      type: "system.connection",
+      state: "active",
+      properties: {
+        kind: "app",
+        client_id: opts.clientId,
+        user_id: opts.authUserId,
+        scopes: opts.scopes,
+        status: "active",
+        granted_at: now,
       },
-      spaceId,
-    );
+      source: "marfa/oauth2/consent",
+    });
     grantItemId = item.id;
     projectedItem = item;
     eventType = "created";
@@ -1437,11 +1351,9 @@ async function projectGrantOnConsent(
   void publish({
     type: eventType,
     item: projectedItem,
-    spaceId,
   });
 
   void storage.audit.log({
-    space_id: spaceId,
     action: "auth.grant.created",
     resource_type: "oauth_grant",
     resource_id: opts.clientId,
@@ -1832,39 +1744,14 @@ export const CONSENT_SCOPE_DESCRIPTIONS: Record<string, string> = {
 };
 
 /**
- * The bundle set this consent screen groups under: the consenting space's
- * own derivation, so a space's runtime-registered custom types reach the
- * custom tile. Space-scoped deliberately — bundles built from another
- * space's registrations would present namespaces the consenting space
- * cannot even resolve, and name them as the user's own.
- *
- * Falls back to the instance-wide active bundles when there is no space to
- * scope to (keys mode, or a user not yet provisioned) and when the
- * operator override is set — a curated `MARFA_PERMISSION_BUNDLES` is
- * authoritative over any derivation, per-space included.
+ * The bundle set this consent screen groups under: the instance's active
+ * bundles, which keep their `default_on` flags and carry the namespaces
+ * the instance registered, folded in at boot. A curated
+ * `MARFA_PERMISSION_BUNDLES` override is what `getPermissionBundles`
+ * already answers with when one is set and valid.
  */
-export async function resolveConsentBundles(
-  storage: Storage,
-  authUserId: string,
-): Promise<PermissionBundle[]> {
-  // Validity, not presence. A rejected override has already fallen back to
-  // the shipped bundles, so treating it as authoritative here skips the
-  // per-space derivation too and the consent screen loses the space's own
-  // handle namespaces on top of losing the override. Same distinction boot
-  // draws for the instance-wide fold; one bad environment variable should
-  // cost one thing.
-  if (hasUsablePermissionBundleOverride()) return getPermissionBundles();
-  // Deliberately the `users` row rather than the shared grant resolver: the
-  // consent screen's bundles are a hosted-mode derivation, and falling back
-  // to a keys-mode instance's one space here would replace the shipped
-  // bundles with derived ones and lose their `default_on` flags.
-  if (!storage.users) return getPermissionBundles();
-  const row = await storage.users.getByAuthUserId(authUserId);
-  const spaceId = row?.space_id;
-  if (!spaceId) return getPermissionBundles();
-  return buildDefaultPermissionBundles(
-    await resolveRuntimeCustomNamespaces(storage, spaceId),
-  );
+export function resolveConsentBundles(): PermissionBundle[] {
+  return getPermissionBundles();
 }
 
 /**
@@ -1876,13 +1763,10 @@ export async function resolveConsentBundles(
  * Reserved roots stay un-enumerated — their members are the platform's,
  * not the space's — and any other root enumerates only what the space
  * itself registered under it, so a registry-shipped root like `google.*`
- * keeps rendering without an enumeration. Hosted-mode only — in keys mode
- * there is no per-user space, and the wildcard row renders without the
- * enumeration, the same degradation as the re-consent diff.
+ * keeps rendering without an enumeration.
  */
 export async function resolveWildcardExpansions(
   storage: Storage,
-  authUserId: string,
   scopes: ParsedScope[],
 ): Promise<Record<string, string[]>> {
   const wildcardRoots = new Set<string>();
@@ -1898,11 +1782,8 @@ export async function resolveWildcardExpansions(
     if (isReservedRoot(root) && root !== "user" && root !== "app") continue;
     wildcardRoots.add(root);
   }
-  if (wildcardRoots.size === 0 || !storage.users) return {};
-  const row = await storage.users.getByAuthUserId(authUserId);
-  const spaceId = row?.space_id;
-  if (!spaceId) return {};
-  const types = await storage.types.listCustom(spaceId);
+  if (wildcardRoots.size === 0) return {};
+  const types = await storage.types.listCustom();
   const out: Record<string, string[]> = {};
   for (const root of wildcardRoots) {
     const names = types

@@ -124,15 +124,9 @@ export function detectConflict(input: ConflictInput): ConflictResult {
 // Automatic resolution
 //
 // The server resolves a conflict inside the update's transaction, so that a
-// kit which sends `conflict=auto` does no merging of its own.
-//
-// **That is not yet the whole fleet.** The TypeScript kit sends it. The Swift
-// kit does not: it still receives the 409 envelope and resolves locally, in
-// the opposite direction on a `last_writer_wins` field, so today two engines
-// can still answer one collision differently. What ends that is the Swift kit
-// sending the parameter, not anything in this file — until then this is the
-// only implementation for the callers that opt in, rather than the only one
-// that exists.
+// client which sends `conflict=auto` does no merging of its own. A client
+// that sends nothing receives the 409 envelope and decides for itself; the
+// resolution here is the one implementation for the callers that opt in.
 // ---------------------------------------------------------------------------
 
 /** How a caller wants a colliding update resolved. */

@@ -20,13 +20,10 @@ let scopedKey: string;
 // address the same items and the difference between them is the permission
 // map alone, which is the only thing the filtering tests are about.
 async function createItem(): Promise<string> {
-  const item = await ctx.storage.items.create(
-    {
-      type: "core.note",
-      properties: { body: `ext-item-${String(Math.random())}` },
-    },
-    ctx.spaceId,
-  );
+  const item = await ctx.storage.items.create({
+    type: "core.note",
+    properties: { body: `ext-item-${String(Math.random())}` },
+  });
   return item.id;
 }
 
@@ -48,7 +45,6 @@ beforeAll(async () => {
       is_operator: false,
     },
     hashApiKey(scopedKey, "test-salt"),
-    ctx.spaceId,
   );
 });
 
@@ -57,8 +53,8 @@ afterAll(async () => {
 });
 
 // Audit writes in the route handlers are fire-and-forget
-// (`void storage.audit.log(...)`). Under Postgres the write is genuinely
-// async — poll briefly so the test doesn't race the pending insert.
+// (`void storage.audit.log(...)`) — poll briefly so the test doesn't race
+// the pending insert.
 interface AuditRow {
   action: string;
   resource_id: string | null;

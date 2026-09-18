@@ -3,13 +3,13 @@ import { coerceNullProperties } from "@withmarfa/shared";
 /**
  * How an update's properties merge into a row's, in one place.
  *
- * Both dialect stores perform this merge, and the natural-key upsert route
- * has to predict it: a re-sync is judged on the value the row ends up with,
- * not on the body, because a body naming no required field at all can still
- * be what removes one. Three copies of a merge rule is three chances to
- * disagree, and two had already drifted — the SQLite store resolved the type
- * without a space, so a null on a space-registered custom type's optional
- * field was written as null there and dropped on Postgres.
+ * The item store performs this merge, and the natural-key upsert route has
+ * to predict it: a re-sync is judged on the value the row ends up with, not
+ * on the body, because a body naming no required field at all can still be
+ * what removes one. Two copies of a merge rule is two chances to disagree,
+ * and they had already drifted once — the store resolved the type without a
+ * space, so a null on a space-registered custom type's optional field was
+ * written as null.
  */
 
 /**
@@ -25,12 +25,9 @@ export function resolveIncomingProperties(
   typeId: string,
   properties: Record<string, unknown> | undefined,
   nullClears: boolean,
-  spaceId?: string | null,
 ): Record<string, unknown> | undefined {
   if (properties === undefined) return undefined;
-  return nullClears
-    ? properties
-    : coerceNullProperties(typeId, properties, spaceId);
+  return nullClears ? properties : coerceNullProperties(typeId, properties);
 }
 
 /**

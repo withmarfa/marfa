@@ -58,14 +58,6 @@ export interface Item {
    * high-volume capture. Optional because `system.*` items have no tier.
    */
   tier?: Tier;
-  /**
-   * Space scope. Optional because storage queries are space-scoped at
-   * the SQL layer (`spaceWhere` enforces a `WHERE space_id = ?` on every
-   * read), so for ordinary callers `space_id` always matches the caller's
-   * own space and the field is informational. The reactive-run bridge reads
-   * this to gate fanout on space match. Mirrors `Edge.space_id`.
-   */
-  space_id?: string | null;
   properties: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -77,36 +69,6 @@ export interface Item {
   device?: string;
   capture_latitude?: number;
   capture_longitude?: number;
-  /**
-   * Whether the integration named in `source` still has a live connection in
-   * this item's space.
-   *
-   * **Derived per read and never stored.** No column backs it, no write
-   * accepts it, and the storage layer never sets it — it is attached by the
-   * server as an item goes out, from the connections the space holds at that
-   * moment. It lives on `Item` rather than beside it because `Item` is the
-   * shape a client receives, and a field a typed client cannot see without a
-   * cast is only half a signal.
-   *
-   * **Absent means the question does not apply**, not "no". Only an item an
-   * integration wrote carries it: a hand-written note has no upstream to be
-   * cut off from and can never acquire one. `false` says the integration is
-   * still installed there; `true` says it is not, and the item is a copy of
-   * a record nothing is keeping current any more.
-   *
-   * **Every REST response that carries an item answers**, whether it read
-   * the row or just wrote it — so a `POST /items` or `PATCH` response omits
-   * it for exactly the same reason a `GET` does, and never because a write
-   * had no chance to look.
-   *
-   * **The one surface that does not is the `GET /events` stream.** Removing
-   * a connection publishes no item events, so the stream cannot report the
-   * change this field describes, and its frames leave the field off
-   * entirely. A client merging frames over a read must keep the value the
-   * read gave it rather than reading absence in a frame as an answer, and
-   * must re-read to refresh it.
-   */
-  orphaned?: boolean;
 }
 
 /** Input for creating a new item. */
@@ -223,7 +185,6 @@ export interface Version {
  */
 export interface Edge {
   id: string;
-  space_id?: string | null;
   source_id: string;
   target_id: string;
   edge_type: string;
@@ -297,19 +258,9 @@ export type ProfilePermission = "read" | "write";
 /** An API key record (without the key value itself). */
 export interface ApiKey {
   id: string;
-  space_id?: string;
   label: string;
   /** Human-readable display name stamped onto items this credential writes. */
   source: string;
-  /**
-   * Stable item-provenance source. Runtime credentials rotate frequently,
-   * so their credential `source` identifies one bearer generation while
-   * `item_source` stays fixed for the bound Connection. Item writes stamp
-   * this value when present, preserving `(source, source_id)` idempotency
-   * across credential refreshes. Ordinary keys leave it unset and continue
-   * stamping `source`.
-   */
-  item_source?: string;
   /**
    * Operator-key gate. When `true`, the credential passes the fence in front
    * of the reserved-namespace types (`system.*` and `marfa.*`; `core.*` is
@@ -322,34 +273,16 @@ export interface ApiKey {
    * existing operator key may mint another. Defaults to `false` for every
    * ordinary space credential.
    *
-   * Together with the absence of a `space_id` this is the whole instance
-   * tier: the routes that reach across every space take an operator key and
-   * nothing else, and no consent screen can offer one.
+   * This is the whole instance tier: the routes that run the instance take
+   * an operator key and nothing else, and no consent screen can offer one.
    */
   is_operator: boolean;
   /**
-   * Connections runtime credential gate. When `true`, the credential was
-   * minted by the integration runtime for a specific Connection's
-   * dispatch. The extension write gate narrows such credentials to
-   * writing only the `connection.runtime` subtree of the item whose id
-   * matches `connection_id`.
-   *
-   * Defaults to `false` for every other credential type. The runtime's
-   * own mint path is the only one that flips this flag; ordinary key
-   * creation cannot.
-   */
-  is_runtime_credential?: boolean;
-  /**
-   * Set when `is_runtime_credential` is `true`. Stamps the Connection
-   * the credential was minted for. The extension gate compares this
-   * against the path `:id` for cross-space denial.
-   */
-  connection_id?: string;
-  /**
    * Per-credential schema-enforcement override. Same shape as
-   * `SpaceConfig.enforcement`; entries here merge over the space default
-   * for this credential's writes/reads. Optional — most credentials inherit
-   * space config without override.
+   * `SpaceConfig.enforcement`; a lever set here wins over the instance
+   * config for this credential's writes and reads, lever by lever
+   * (`resolveEnforcement`). Optional — most credentials inherit the instance
+   * config without override.
    */
   enforcement_override?: EnforcementSettings;
   /** Tier stamped onto items when the client doesn't supply one. */
@@ -428,34 +361,14 @@ export interface CreateKeyInput {
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
   profile_permissions?: Record<string, ProfilePermission>;
+  /** Per-credential schema-enforcement override; see `ApiKey`. */
+  enforcement_override?: EnforcementSettings;
   /**
    * Optional. Only an existing operator key can set this to `true`; other
    * callers see the value silently coerced to `false`. The key minted at
    * server install is the seed operator key.
    */
   is_operator?: boolean;
-}
-
-/**
- * Input for `POST /admin/spaces/{id}/keys`, the operator route that mints a
- * key into a named space rather than into the caller's own.
- *
- * Two deliberate differences from {@link CreateKeyInput}: the space comes
- * from the path, not the body; and there is no `is_operator`, because the
- * whole point of the route is a credential whose authority is confined to
- * one space. Omitting `space_permissions` takes everything in that space,
- * which is the seed rule for a mint no creator set bounds.
- */
-export interface CreateSpaceKeyInput {
-  label: string;
-  source: string;
-  space_permissions?: SpacePermission[];
-  default_tier?: Tier;
-  type_permissions?: Record<string, TypePermission>;
-  extension_permissions?: Record<string, ExtensionPermission>;
-  edge_permissions?: Record<string, EdgePermission>;
-  metadata_permissions?: Record<string, MetadataPermission>;
-  profile_permissions?: Record<string, ProfilePermission>;
 }
 
 /**
@@ -476,6 +389,9 @@ export interface UpdateKeyInput {
   edge_permissions?: Record<string, EdgePermission>;
   metadata_permissions?: Record<string, MetadataPermission>;
   profile_permissions?: Record<string, ProfilePermission>;
+  /** Per-credential schema-enforcement override; `null` clears it so the
+   *  key inherits the instance config again. */
+  enforcement_override?: EnforcementSettings | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -648,46 +564,6 @@ export interface OAuthCode {
   used_at: string | null;
   created_at: string;
 }
-
-/**
- * Device Authorization Grant (RFC 8628) — pairing record between a
- * client polling for tokens and a human-driven approval flow.
- *
- * The client receives `device_code` (kept private, hashed at storage)
- * and `user_code` (short, low-entropy, shown to the human). The user
- * visits `verification_uri`, types in `user_code`, signs in, and
- * approves the requested scopes; the client polls
- * `POST /auth/device/token` with `device_code` until approved.
- *
- * `connection_item_id` is set when status transitions to `approved`
- * (the `system.connection` of kind `app` created at approval time).
- */
-export interface OAuthDeviceCode {
-  id: string;
-  user_code: string;
-  client_id: string;
-  scopes: string[];
-  status: OAuthDeviceCodeStatus;
-  /** Set when status transitions to `approved`. Null otherwise. */
-  connection_item_id: string | null;
-  expires_at: string;
-  /** Minimum seconds the client should wait between token-endpoint polls. */
-  interval_seconds: number;
-  /** Last time the client polled. Used for `slow_down` detection. */
-  last_polled_at: string | null;
-  approved_at: string | null;
-  created_at: string;
-}
-
-export type OAuthDeviceCodeStatus =
-  | "pending"
-  | "approved"
-  | "denied"
-  | "expired"
-  /** Exchanged for tokens. A code is spent by its one issuance, so a later
-   *  poll with the same code is refused rather than minting a second pair. */
-  | "redeemed";
-
 // ---------------------------------------------------------------------------
 // Webhook types
 // ---------------------------------------------------------------------------
@@ -695,7 +571,6 @@ export type OAuthDeviceCodeStatus =
 /** A registered outbound webhook. */
 export interface Webhook {
   id: string;
-  space_id?: string;
   url: string;
   secret: string;
   events: string[];
@@ -733,469 +608,9 @@ export interface WebhookDelivery {
   created_at: string;
 }
 
-/**
- * An inbound webhook subscription. Receives POST requests from external
- * services at `POST /webhooks/inbound/:id`. Each subscription belongs to a
- * `system.connection` of kind `integration` and stamps its verification
- * method (read from the Integration manifest) at creation time. The raw
- * shared secret is returned only in the create response; subsequent reads
- * always redact it.
- */
-export interface InboundWebhook {
-  id: string;
-  space_id?: string;
-  connection_id: string;
-  external_service_id?: string;
-  /**
-   * Redacted shared-secret marker for list/get responses (`****<last 4>`).
-   * The raw secret is only ever surfaced in the 201 create response,
-   * which uses the `secret` field on `CreatedInboundWebhook` below.
-   */
-  secret_redacted: string;
-  verification_method: "hmac-sha256" | "slack" | "stripe" | "github";
-  /**
-   * Always undefined on new rows — the `custom` verification method is
-   * no longer supported. The column is retained for data compatibility
-   * and will be removed in a follow-on migration.
-   */
-  verification_adapter_id?: string;
-  events: string[];
-  disabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-/**
- * Returned exactly once by `POST /connections/:id/inbound-webhooks` —
- * extends the standard `InboundWebhook` shape with the raw `secret`
- * the caller must transmit to the external service. Subsequent reads
- * never re-surface it.
- */
-export interface CreatedInboundWebhook extends InboundWebhook {
-  secret: string;
-}
-
-/** Input for registering an inbound webhook subscription. */
-export interface CreateInboundWebhookInput {
-  /** The external service's id for this subscription, optional. */
-  external_service_id?: string;
-  /** Subscribed event types — opaque strings the integration understands. */
-  events: string[];
-  /**
-   * The Integration manifest, inline. Validated via
-   * `validateManifest`; the verification method (and adapter_id when
-   * `method: custom`) is stamped on the new row.
-   *
-   * Typed as `unknown` here because the shape is enforced by
-   * `IntegrationManifestSchema` at validate time — the wire surface
-   * accepts anything; the route rejects with the structured error
-   * array on shape mismatch.
-   */
-  manifest: unknown;
-}
-
-/** A single inbound webhook receipt — one row per POST to `/webhooks/inbound/:id`. */
-export interface InboundWebhookEvent {
-  id: string;
-  inbound_webhook_id: string;
-  external_delivery_id: string;
-  received_at: string;
-  /** Raw request body as received (UTF-8 string). */
-  payload: string;
-  verified: boolean;
-  /** NULL until the reactive runner finishes processing. */
-  processed_at: string | null;
-  /** NULL until retries are exhausted (DLQ). */
-  processing_error: string | null;
-  retry_count: number;
-  next_attempt_at: string | null;
-}
-
-/**
- * Wire view of a leased bearer token issued to an integration for cases the
- * OAuth proxy doesn't cover (multipart streaming, WebSocket, SDK lock-in,
- * non-HTTP). The lease IS a bearer token; storage is hashed (SHA-256) like
- * API keys, and the plaintext is returned exactly once on issue.
- */
-export interface ConnectionLeasedToken {
-  id: string;
-  connection_id: string;
-  space_id: string | null;
-  capability_id: string;
-  scopes: string[];
-  expires_at: string;
-  revoked_at: string | null;
-  created_at: string;
-}
-
-/**
- * Extends `ConnectionLeasedToken` with the raw `lease_token` field —
- * returned once in the 201 response to `POST /connections/:id/lease-tokens`,
- * never echoed by subsequent reads.
- */
-export interface CreatedConnectionLeasedToken extends ConnectionLeasedToken {
-  /** Plaintext bearer; pass to validate / use against the upstream. */
-  lease_token: string;
-}
-
-/**
- * Wire shape accepted by `POST /connections/install`. The JSON install
- * sibling of the HTML consent flow — skips the human-consent step (no
- * browser approval) and needs `space.connections`.
- */
-export interface ConnectionInstallInput {
-  /** id of the `system.integration` item (a manifest registered via
-   *  `POST /integrations`) the new connection binds to. */
-  integration_id: string;
-  /** Optional id of an existing `system.credential` (kind `oauth_token` or
-   *  `api_token`) to reference instead of provisioning a fresh provider
-   *  credential. Lets multiple integrations of the same upstream (e.g.
-   *  `google/calendar` + `google/tasks`) share one credential instead of
-   *  duplicating per-integration. Create such credentials via
-   *  `POST /credentials/oauth-provider` or `POST /credentials/api-token`. */
-  credential_ref?: string;
-  /** Optional seed for the new connection's `properties.configuration`
-   *  bag. Free-form per-integration knobs (e.g. `upstream_base_url_override`
-   *  for connections sharing one credential across different upstream
-   *  hosts). Merged over the empty default at install time so callers
-   *  don't need a follow-on `PATCH /items/:id` round-trip. */
-  configuration?: Record<string, unknown>;
-}
-
-/**
- * Wire shape returned by `POST /connections/install`: the connection id
- * and the `system.activity` row id from the install pipeline.
- */
-export interface ConnectionInstallResult {
-  connection_id: string;
-  /** id of the system.activity row emitted by the pipeline. */
-  activity_id: string;
-}
-
-/**
- * Result of pausing or resuming an `integration` connection.
- *
- * `runtime_status` is the field that carries the answer: the
- * `system.connection` lifecycle is bounded to `active | revoked`, so
- * there is no paused *state* to move to, and `runtime_status` already
- * has a `paused` member for exactly this.
- */
-export interface ConnectionRuntimeStateResult {
-  connection_id: string;
-  runtime_status: "paused" | "healthy";
-  /** id of the system.activity row emitted by the pipeline. */
-  activity_id: string;
-}
-
-/**
- * Wire shape returned by `POST /connections/:id/uninstall`. Records the
- * artifacts the orchestrated uninstall pipeline cleaned up — the runtime
- * credentials it revoked, whether an upstream OAuth tokens row was
- * deleted, and counts for leased tokens revoked / inbound webhooks
- * disabled. The system.activity row id is included so callers can
- * correlate the uninstall with the operator-visible activity feed.
- */
-export interface ConnectionUninstallResult {
-  connection_id: string;
-  /** ids of every runtime credential revoked. Usually one. */
-  revoked_credential_ids: string[];
-  /** True when a `connection_oauth_tokens` row was deleted. */
-  oauth_tokens_deleted: boolean;
-  /** Number of `connection_leased_tokens` rows revoked. */
-  leased_tokens_revoked: number;
-  /** Number of `inbound_webhooks` subscriptions disabled. */
-  inbound_webhooks_disabled: number;
-  /** id of the system.activity row emitted by the pipeline. */
-  activity_id: string;
-}
-
-/**
- * Item-event types the reactive bridge fans out to integrations. Used by
- * `POST /connections/preview-event` for the operator-supplied
- * `event_type` in the preview-event request.
- *
- * A subset of the `ItemEvent['type']` union in `packages/server/src/
- * pubsub.ts` rather than a copy of it, and the subset is the point:
- * `purged` is deliberately absent. A purge is the terminal removal of a
- * row an integration was already told about when it was trashed, so
- * fanning one out would fire a `tombstone_mapping` delete-upstream path a
- * second time for a row that is already gone at the far end.
- */
-export type PreviewEventItemEventType =
-  | "created"
-  | "updated"
-  | "deleted"
-  | "restored"
-  | "state_changed"
-  | "metadata_changed";
-
-/**
- * Optional cycle metadata an operator can override on a preview-event
- * request. Maps to the cycle-detection fields stamped server-side at
- * `pubsub.publish` time (`originatingConnectionId`, `hopCount`). Default
- * values — `originating_connection_id: null`, `hop_count: 0` — describe
- * a human-originated event that always passes the per-space hop budget.
- *
- * Set both fields to model a reactive event mid-chain ("what would happen
- * if connection X re-published this at hop 4?").
- */
-export interface PreviewEventCycleOverride {
-  originating_connection_id?: string | null;
-  hop_count?: number;
-}
-
-/**
- * Wire shape for `POST /connections/preview-event`. Operator supplies an
- * existing item id plus an event type; the route renders the
- * `QueueMessageBody` envelopes the reactive-run bridge would emit, and for
- * each subscribing connection that wouldn't be dispatched, the reason why.
- * Pure server-side transform — no handler invocation, no queue producer call.
- * Needs `space.connections`.
- */
-export interface PreviewEventRequest {
-  /** id of an existing item the operator wants to simulate fanout for. */
-  item_id: string;
-  /** Item-event type to simulate. */
-  event_type: PreviewEventItemEventType;
-  /**
-   * Optional filter to a single subscribing connection id. Default behavior
-   * (omitted) renders all subscribers in the caller's space.
-   */
-  connection_id?: string;
-  /**
-   * Optional override for the cycle-detection metadata stamped on the
-   * synthetic event. Defaults to a human-originated shape that passes the
-   * hop budget. Useful for reproducing "what if hop_count was N?"
-   * scenarios.
-   */
-  cycle?: PreviewEventCycleOverride;
-}
-
-/**
- * One row in the preview response — the bridge's verdict for one
- * (event, subscriber) pair.
- *
- * `dispatch_reason` values:
- *   - `ok`: would dispatch; `envelope` is populated.
- *   - `self_event`: subscriber is the connection that originated the event.
- *   - `cross_space`: subscriber's space doesn't match the event's space.
- *   - `type_not_targeted`: the item's type is not in the subscriber
- *     manifest's `target_types` — its runtime credential could not read
- *     the item, so the dispatch could only fail.
- *   - `hop_budget_exceeded`: per-space `max_event_hop_budget` would
- *     refuse to publish the event upstream of the bridge — applies to
- *     every subscriber when the gate trips.
- *   - `subscription_inactive`: the operator filtered to a connection id
- *     that isn't currently a subscriber (revoked, wrong kind, manifest
- *     missing an `item-event` trigger, etc.).
- *   - `subscription_paused`: the filtered connection is paused — the
- *     one inactive cause an operator flips on purpose; resume restores
- *     dispatch.
- */
-export interface PreviewEventEnvelope {
-  connection_id: string;
-  /** Manifest name from the connection's bound integration; "" when the
-   *  connection is not a subscriber (`subscription_inactive` /
-   *  `subscription_paused`). */
-  integration_name: string;
-  would_dispatch: boolean;
-  dispatch_reason:
-    | "ok"
-    | "self_event"
-    | "cross_space"
-    /** The event is a `system.*` row — the platform's own bookkeeping,
-     *  which never fans out to reactive handlers. */
-    | "system_type"
-    | "type_not_targeted"
-    | "hop_budget_exceeded"
-    | "subscription_inactive"
-    | "subscription_paused";
-  /**
-   * The wire envelope the bridge would enqueue for dispatch, present
-   * iff `would_dispatch === true`. Mirrors the bridge's internal
-   * `QueueMessageBody`.
-   */
-  envelope?: PreviewEventQueueBody;
-}
-
-/**
- * Mirror of the reactive-run bridge's `QueueMessageBody`. Surfaced
- * publicly only via the preview-event route so operators (and the SDK)
- * can read what the bridge would have emitted without invoking handlers.
- */
-export interface PreviewEventQueueBody {
-  kind: "item-event";
-  integration_name: string;
-  connection_id: string;
-  space_id?: string;
-  /** Wire form, e.g. `item.created`, `item.metadata_changed`. */
-  event_type: string;
-  item_id: string;
-  cycle: {
-    originating_connection_id: string | null;
-    hop_count: number;
-  };
-  payload: unknown;
-}
-
-/**
- * Wire shape returned by `POST /connections/preview-event`. The
- * `envelopes` array is one entry per subscribing connection (or one per
- * filtered-to connection); `hop_budget` reports the space-resolved
- * budget alongside what was used by the previewed event so the operator
- * can see how close to the cap they are.
- */
-export interface PreviewEventResult {
-  envelopes: PreviewEventEnvelope[];
-  hop_budget: {
-    /** Space-resolved `max_event_hop_budget` (default 5). */
-    max: number;
-    /**
-     * Hop-count the synthetic event would carry under the `cycle`
-     * override (default 0). Useful alongside `max` to see whether the
-     * event would have been dropped before reaching the bridge.
-     */
-    used: number;
-  };
-}
-
-/**
- * RFC 7662-shaped introspection response from
- * `POST /lease-tokens/validate`. `active: false` when the lease is
- * unknown, expired, or revoked; the route returns 200 in either case so
- * relying parties can branch on the boolean rather than catching errors.
- */
-export interface LeaseTokenIntrospection {
-  active: boolean;
-  connection_id?: string;
-  capability_id?: string;
-  scopes?: string[];
-  expires_at?: string;
-}
-
-/**
- * Wire view of a stored OAuth token for an external-service integration.
- * Tokens are encrypted at rest server-side; the wire view reveals only the
- * metadata necessary for admin/observability surfaces. The `access_token`
- * and `refresh_token` fields are intentionally absent — there is no API
- * that returns them in plaintext. The proxy route is the only path through
- * which the access token influences a request, and that path forwards to
- * the upstream rather than echoing to the caller.
- */
-export interface ConnectionOAuthToken {
-  id: string;
-  connection_id: string;
-  space_id: string | null;
-  expires_at: string;
-  scopes: string[];
-  /** True when a refresh token is present — the proxy can self-heal on 401. */
-  has_refresh_token: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
 // ---------------------------------------------------------------------------
-// User model (hosted mode only)
+// Instance configuration
 // ---------------------------------------------------------------------------
-
-/** A space represents an isolated data namespace. */
-export interface Space {
-  id: string;
-  name: string | null;
-  created_at: string;
-  /**
-   * Operator-controlled lifecycle. `'active'` (default) allows writes;
-   * `'suspended'` blocks them at the auth middleware. Reads pass through
-   * regardless. The operator key bypasses the gate, so whoever runs the
-   * instance can inspect a suspended space.
-   */
-  status: SpaceStatus;
-}
-
-/**
- * Valid space statuses, and the source the union is derived from.
- *
- * Declared as a tuple with `SpaceStatus` derived from it rather than the
- * other way round, so a status added to one cannot go missing from the
- * other. The same drift is what let a family be added to a union without
- * reaching the array that decides which set it joins.
- */
-export const SPACE_STATUSES = ["active", "suspended"] as const;
-
-export type SpaceStatus = (typeof SPACE_STATUSES)[number];
-
-/**
- * Whether a value is a space status this build recognizes.
- *
- * Exists because a status read back from storage is a bare string, the column carries no constraint in either
- * dialect, and the one gate that consumes it compares against a single
- * literal. So a value outside the union matches no branch and is refused
- * nowhere: it reads as "not suspended", and the writes the suspension
- * exists to stop are accepted.
- *
- * Kept free of any logging concern because this ships to npm and the SDK
- * consumes it. The policy for meeting a bad value lives server-side in
- * `storedSpaceStatus`.
- */
-export function isSpaceStatus(value: unknown): value is SpaceStatus {
-  return (
-    typeof value === "string" &&
-    (SPACE_STATUSES as readonly string[]).includes(value)
-  );
-}
-
-/**
- * Valid account deletion states, and the source the union is derived from.
- *
- * Declared as a tuple with `DeletionState` derived from it for the reason
- * `SPACE_STATUSES` gives one block up: so a state added to one cannot go
- * missing from the other. It was previously a bare type alias written out
- * twice, once in each dialect's account-lifecycle store, which is the
- * shape that drift starts from — two declarations of one union with
- * nothing making them agree, and nothing at all to check a stored value
- * against.
- *
- * `pending_deletion` is the state the sign-in guard intercepts on, so a
- * value outside this union is not cosmetic: it matches neither branch, and
- * an account the operator believes is scheduled for deletion is simply
- * not.
- */
-export const DELETION_STATES = ["active", "pending_deletion"] as const;
-
-export type DeletionState = (typeof DELETION_STATES)[number];
-
-/**
- * Per-space metrics snapshot. Returned by `GET /admin/spaces/:id/metrics`
- * for the named space. Same shape as the instance-wide `/metrics` endpoint,
- * scoped to one space.
- */
-export interface SpaceMetrics {
-  space_id: string;
-  items: {
-    total: number;
-    active: number;
-    archived: number;
-    trashed: number;
-  };
-  blobs: {
-    count: number;
-    total_size: number;
-  };
-  /**
-   * Best-effort recent activity. Last `system.activity` rows for the
-   * space, newest-first, capped at the route's `limit` (default 10).
-   * Empty array when the space has no activity rows.
-   */
-  recent_activity: SpaceActivityEntry[];
-  generated_at: string;
-}
-
-export interface SpaceActivityEntry {
-  id: string;
-  severity: string;
-  summary: string;
-  created_at: string;
-}
 
 /**
  * Schema-enforcement levers. All three default off; flip on per-type to
@@ -1215,46 +630,13 @@ export interface EnforcementSettings {
   source_filter?: { types: string[]; sources: string[] };
 }
 
-/**
- * Per-space resource quotas. Empty / missing limits fall back to the
- * instance defaults from env (`MARFA_DEFAULT_QUOTA_*`). Quotas are managed by
- * the operator key via `GET/PUT /admin/spaces/:id/quotas`; space-own reads
- * land via `GET /spaces/me/quotas`, on `space.usage`. Counts are computed
- * on-demand from existing tables at quota-check time.
- */
-export interface SpaceQuota {
-  space_id: string;
-  items_limit?: number | null;
-  webhooks_limit?: number | null;
-  blobs_limit?: number | null;
-  /** Storage bytes ceiling. Optional — counter + reconcile job to be
-   *  added in a follow-on. */
-  storage_bytes_limit?: number | null;
-  /** Per-space request-rate ceiling (additional to the per-credential
-   *  global rate limit). Not currently enforced. */
-  rate_per_minute_limit?: number | null;
-  updated_at: string;
-}
-
-/** Resource categories tracked for quota enforcement. */
-export type QuotaResource =
-  "items" | "webhooks" | "blobs" | "storage_bytes" | "rate_per_minute";
-
-/** Space-level configuration. Written through `/spaces/me/config` on `space.settings`. */
+/** Instance configuration. Written through `/spaces/me/config` on `space.settings`. */
 export interface SpaceConfig {
   enforcement?: EnforcementSettings;
   /**
-   * Maximum number of hops a single event may traverse before the bus
-   * drops it as a suspected cycle. Integration reactions can publish further
-   * events; without a budget, a malformed integration could spin a feedback
-   * loop. Default 5; raise it on `space.settings` for deeply pipelined integrations
-   * or lower it to tighten the leash.
-   */
-  max_event_hop_budget?: number;
-  /**
-   * Space-scoped retention overrides for the cleanup jobs. Each falls back
-   * to the instance env default when unset. Values must be non-negative; `0`
-   * disables the job for that space. Negative values are rejected at write.
+   * Retention overrides for the cleanup jobs. Each falls back to the
+   * instance env default when unset. Values must be non-negative; `0`
+   * disables the job. Negative values are rejected at write.
    */
   audit_retention_days?: number;
   event_log_retention_hours?: number;
@@ -1265,99 +647,4 @@ export interface SpaceConfig {
    * type by a wide margin and nothing aged it out before this existed.
    */
   activity_retention_days?: number;
-}
-
-/**
- * A user account (hosted mode). Owns exactly one space.
- *
- * The canonical email + display image lives on `auth_user`. The `email`
- * and `avatar_url` columns are not on `users` — every read of email goes
- * through `auth_user_id` → `auth_user.email`. The avatar is content-addressed
- * via `avatar_blob_hash`; the public URL is reconstructed at read time and
- * the placeholder is generated server-side from `handle`.
- *
- * The wire shape returned by the profile endpoints is `Profile`, not `User` —
- * `Profile` is the read-time projection that joins `auth_user` for email and
- * reconstructs `avatar_url`. `User` is the underlying storage shape.
- */
-export interface User {
-  id: string;
-  name: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  bio: string | null;
-  /** Content-addressed blob hash (`sha256:<hex>`) for the avatar. NULL
-   *  means "no custom avatar"; the placeholder is rendered from the
-   *  handle. Wire URL is reconstructed by the profile endpoint. */
-  avatar_blob_hash: string | null;
-  provider: string;
-  provider_id: string;
-  space_id: string;
-  /**
-   * Lowercase alphanumeric + hyphens, 3–32 chars. Required at signup
-   * (nullable here because not every stored row carries one). The user id
-   * (the immutable PK) is what foreign references key off; the handle is
-   * potentially renameable. Reserved roots cannot be claimed.
-   */
-  handle: string | null;
-  /** FK to `auth_user.id`. Canonical bridge from authentication identity
-   *  to Marfa profile. NULL only on a `users` row with no matching
-   *  `auth_user`. */
-  auth_user_id: string | null;
-  /** IANA zone the account keeps its own clock in, or NULL when unstated.
-   *  A default and a display preference: it is what answers "what is on
-   *  today" for a caller that names no zone. It never anchors a
-   *  recurrence — a series expands in its own `timezone`, so an account
-   *  moving country does not reschedule its calendar. */
-  timezone: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-/**
- * Wire shape returned by the profile endpoints (`GET /profile/me`). The
- * profile's own fields are served by joining `users` to `auth_user` for the
- * canonical email, not read from an item. Avatar URL is reconstructed at
- * read time (either `/blobs/<hash>` for an uploaded avatar or
- * `/profile/placeholder/<username>.svg` when unset). Apps compose any
- * display name from `first_name` / `last_name` / `username` — there is no
- * `display_name` field by design.
- *
- * `account_holder_item_id` is the one link into the item graph: the id of
- * the `system.account_holder` row an edge can target. The fields above it
- * are still not stored there.
- */
-export interface Profile {
-  /** Same as `users.handle`. Required (the API rejects users without
-   *  one); only nullable here for migration-in-flight rows. */
-  username: string | null;
-  first_name: string | null;
-  last_name: string | null;
-  bio: string | null;
-  /** Reconstructed at read time. Always a string (placeholder URL when
-   *  no upload). */
-  avatar_url: string;
-  /** Mirrored read-only from `auth_user.email`. */
-  email: string;
-  /** Mirrored read-only from `auth_user.email_verified`. */
-  email_verified: boolean;
-  created_at: string;
-  updated_at: string;
-  /**
-   * Id of the account holder's `system.account_holder` item — the graph
-   * handle to aim an `authored-by` (or any other) edge at, so a client never
-   * has to guess or invent a stand-in. Read-only and absent only on an
-   * instance whose backfill has not run.
-   */
-  account_holder_item_id?: string;
-}
-
-/** `PATCH /profile/me` body. Every field is optional; `null` clears the
- *  column (where applicable). `username` runs through the reserved-handle
- *  and collision validators server-side. */
-export interface UpdateProfileInput {
-  username?: string;
-  first_name?: string | null;
-  last_name?: string | null;
-  bio?: string | null;
 }

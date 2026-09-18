@@ -49,7 +49,6 @@ import * as logger from "../middleware/logger.js";
 function unreadableFamilyRow(id: string): LoadedType {
   const schema: TypeSchema = { id, version: 1, fields: {} };
   return {
-    space_id: "",
     schema,
     origin: "platform",
     family: "written-by-a-newer-build" as LoadedType["family"],

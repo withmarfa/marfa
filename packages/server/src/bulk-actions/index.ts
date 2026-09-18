@@ -3,8 +3,7 @@
  *
  * Public surface:
  *   - `BulkActionWorker` — the in-process polling loop. One per server
- *     process; on PG `claimNext` uses `FOR UPDATE SKIP LOCKED` so
- *     multi-instance deployments coordinate naturally.
+ *     process.
  *   - `BulkActionJobGcSweeper` — periodic retention sweep (default
  *     7 days, controlled by `BULK_ACTION_JOB_RETENTION_MS`).
  *   - `runChunk` — exposed for tests; the worker invokes it per chunk.
@@ -16,7 +15,6 @@ export { BulkActionWorker, type BulkActionWorkerOptions } from "./worker.js";
 export {
   setBulkJobEnqueueListener,
   notifyBulkJobEnqueued,
-  BULK_JOB_WAKE_CHANNEL,
 } from "./enqueue-signal.js";
 export { BulkActionJobGcSweeper } from "./gc.js";
 export { runChunk, type ChunkOutcome, type RunChunkContext } from "./runner.js";

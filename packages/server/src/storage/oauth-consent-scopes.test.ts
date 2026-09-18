@@ -15,8 +15,7 @@ import { sameScopeSet } from "./consent-scopes.js";
  * revoked from `/auth/security`, or rewritten by another server process
  * — the restoration is declined rather than applied over the top.
  *
- * Runs on both dialects: `scopes` is a JSON text column on SQLite and a
- * native `text[]` on Postgres, and the guard has to hold on each.
+ * `scopes` is a JSON text column, and the guard has to hold on it.
  */
 
 let ctx: TestContext | undefined;
@@ -35,16 +34,14 @@ interface InsertDb {
   };
 }
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("./pg/schema.js")
-    : await import("./sqlite/schema.js");
+function betterAuthSchema() {
+  return import("./sqlite/schema.js");
 }
 
 /** `auth_oauth_consent.user_id` is a FK, so the user has to exist first. */
 async function seedUser(c: TestContext, userId: string): Promise<void> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as InsertDb;
   const now = new Date();
   const op = db.insert(schemaModule.auth_user).values({
@@ -66,15 +63,14 @@ async function seedConsent(
 ): Promise<void> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
   await seedUser(c, userId);
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as InsertDb;
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_consent).values({
     id: `consent_${Math.random().toString(36).slice(2)}`,
     clientId,
     userId,
-    scopes:
-      c.storage.betterAuthDialect === "pg" ? scopes : JSON.stringify(scopes),
+    scopes: JSON.stringify(scopes),
     createdAt: now,
     updatedAt: now,
   });

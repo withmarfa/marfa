@@ -12,7 +12,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { AUTH_CSS } from "./auth-static/auth-css.js";
-import { renderGoogleCalendarPicker } from "./connection-configure.js";
 
 describe("form controls are styled", () => {
   it("covers every control these pages actually use", () => {
@@ -44,37 +43,5 @@ describe("one section-label style", () => {
     // that stayed.
     expect(AUTH_CSS).toContain(".lsec");
     expect(AUTH_CSS).not.toContain(".eyebrow {");
-  });
-});
-
-describe("a badge sits beside its label, not on top of it", () => {
-  const picker = () =>
-    renderGoogleCalendarPicker({
-      connectionId: "01999a3f-96ad-4ec1-b378-399d4875cfa5",
-      calendars: [
-        {
-          id: "primary",
-          summary: "A calendar with a fairly long name",
-          primary: true,
-          backgroundColor: "#3f51b5",
-          accessRole: "owner",
-        },
-      ],
-      writeFamilyChoices: ["google", "core"],
-      defaultWriteFamily: "google",
-    });
-
-  it("keeps the badge outside the bold element", () => {
-    const html = picker();
-    // The overlap was structural: the badge was nested inside a
-    // display:block <b>, so nothing held the two apart.
-    expect(html).not.toMatch(/<b>[^<]*<span class="ccard__badge"/);
-    expect(html).toContain('class="ccard__name"');
-  });
-
-  it("gives the row a rule that separates them", () => {
-    expect(AUTH_CSS).toContain(".ccard__name");
-    // And the long name truncates rather than pushing the badge off the card.
-    expect(AUTH_CSS).toContain("text-overflow: ellipsis");
   });
 });

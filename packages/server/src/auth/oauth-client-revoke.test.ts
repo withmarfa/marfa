@@ -29,14 +29,13 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
   waitForAudit,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import * as logger from "../middleware/logger.js";
 import { resolveRevokeClientId } from "./oauth-provider.js";
-import { NO_GRANT_SPACE_MESSAGE } from "./grant-space.js";
 
 // Every case signs a user up and in and drives a full authorization-code
 // grant before asserting anything, which is more than the default budget
@@ -53,10 +52,8 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 const CALLBACK = "http://localhost:0/callback";
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 /** A public PKCE client with no scope ceiling, registered for the code and
@@ -66,7 +63,7 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -75,9 +72,8 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
       };
     };
   };
-  const isPg = c.storage.betterAuthDialect === "pg";
   const asColumn = (values: readonly string[]): unknown =>
-    isPg ? [...values] : JSON.stringify([...values]);
+    JSON.stringify([...values]);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${randomBytes(5).toString("hex")}`,
@@ -99,14 +95,7 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -124,7 +113,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 }
 
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -264,7 +253,7 @@ async function grantRows(
   clientId: string,
   authUserId: string,
 ): Promise<GrantRows> {
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -356,7 +345,7 @@ function revokedAudits(c: TestContext) {
 
 describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   it("drops the consent row, every token and the projection, writes the audit row, and the next authorize asks again", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Revoking App");
     const cookie = await signInUser(ctx, "revoke@example.com");
     const authUserId = await authUserIdFor(ctx, "revoke@example.com");
@@ -402,7 +391,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a refresh token presented under another registered client revokes nothing", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const owner = await seedClient(ctx, "Owner App");
     const other = await seedClient(ctx, "Other App");
     const cookie = await signInUser(ctx, "stolen@example.com");
@@ -441,7 +430,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a rotated-out refresh token still ends the grant, because the plugin has already ended its tokens", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Rotating App");
     const cookie = await signInUser(ctx, "rotated@example.com");
     const authUserId = await authUserIdFor(ctx, "rotated@example.com");
@@ -480,7 +469,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a request the plugin refuses moves nothing, even with a live token and a matching client_id", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Refused App");
     const cookie = await signInUser(ctx, "refused@example.com");
     const authUserId = await authUserIdFor(ctx, "refused@example.com");
@@ -511,7 +500,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a grant whose projection is already gone still loses its consent row and tokens", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Projectionless App");
     const cookie = await signInUser(ctx, "projectionless@example.com");
     const authUserId = await authUserIdFor(ctx, "projectionless@example.com");
@@ -524,12 +513,8 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
 
     // The shape a hand-deleted record leaves: plugin rows, no projection.
     const grant = await onlyGrant(ctx);
-    await ctx.storage.items.transition(
-      grant.id,
-      "revoked",
-      grant.space_id ?? undefined,
-    );
-    await ctx.storage.items.purge(grant.id, grant.space_id ?? undefined);
+    await ctx.storage.items.transition(grant.id, "revoked");
+    await ctx.storage.items.purge(grant.id);
 
     const res = await revoke(ctx, tokens.refresh_token as string, clientId);
     expect(res.status).toBe(200);
@@ -545,7 +530,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("a token sent with its Authorization scheme is revoked and cascaded like a bare one", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Header Shaped App");
     const cookie = await signInUser(ctx, "scheme@example.com");
     const authUserId = await authUserIdFor(ctx, "scheme@example.com");
@@ -571,7 +556,7 @@ describe("POST /auth/oauth2/revoke with a refresh token ends the grant", () => {
   });
 
   it("an access-token revoke stays token-only", async () => {
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Signing Out App");
     const cookie = await signInUser(ctx, "signout@example.com");
     const authUserId = await authUserIdFor(ctx, "signout@example.com");
@@ -636,7 +621,6 @@ async function seedUnboundTokenPair(
     ),
     clientId,
     authUserId,
-    referenceId: null,
     scopes,
     accessTtlMs: 3600_000,
   });
@@ -652,7 +636,7 @@ describe("a token minted before the grant's space resolved", () => {
     // the endpoint answers 200 over a grant the security page still lists as
     // active. A revoke that reports success and ends nothing is the failure
     // this whole change exists to close.
-    ctx = await createTestContext({ authAllowSignup: true });
+    ctx = await createTestContext({});
     const clientId = await seedClient(ctx, "Upgraded App");
     const cookie = await signInUser(ctx, "unbound-revoke@example.com");
     const authUserId = await authUserIdFor(ctx, "unbound-revoke@example.com");
@@ -661,9 +645,6 @@ describe("a token minted before the grant's space resolved", () => {
 
     const grantBefore = await onlyGrant(ctx);
     expect(grantBefore.properties.status).toBe("active");
-    // The projection is in a space; the legacy token is not. That pairing is
-    // the whole case, so assert it rather than assume it.
-    expect(grantBefore.space_id).toBeTruthy();
 
     const legacy = await seedUnboundTokenPair(ctx, clientId, authUserId, [
       "core.note:read",
@@ -676,51 +657,6 @@ describe("a token minted before the grant's space resolved", () => {
     const rows = await grantRows(ctx, clientId, authUserId);
     expect(rows.consents).toBe(0);
     expect(rows.accessTokens).toBe(0);
-  });
-
-  it("is refused at the token endpoint rather than rotated into another one", async () => {
-    // The plugin copies the presented token's reference onto the rotated
-    // token instead of resolving it again, so rotating an unbound token
-    // produces another unbound token and the bearer middleware answers 401 on
-    // every request made with it, naming nothing. This is the only grant that
-    // reaches a mint without passing through a code, so no other guard sees
-    // it.
-    ctx = await createTestContext({ authAllowSignup: true });
-    const clientId = await seedClient(ctx, "Rotating App");
-    const cookie = await signInUser(ctx, "unbound-refresh@example.com");
-    const authUserId = await authUserIdFor(ctx, "unbound-refresh@example.com");
-    await codeGrant(ctx, clientId, cookie, "core.note:read offline_access");
-    const legacy = await seedUnboundTokenPair(ctx, clientId, authUserId, [
-      "core.note:read",
-      "offline_access",
-    ]);
-
-    // The premise: the token authenticates and is refused for its space, not
-    // for being unknown.
-    const data = await request(ctx.app, "GET", "/items?type=core.note", {
-      headers: { authorization: `Bearer ${legacy.accessToken}` },
-    });
-    expect(data.status).toBe(401);
-
-    const res = await request(ctx.app, "POST", "/auth/oauth2/token", {
-      form: {
-        grant_type: "refresh_token",
-        refresh_token: legacy.refreshToken,
-        client_id: clientId,
-      },
-      headers: { origin: ORIGIN },
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as {
-      error: string;
-      error_description: string;
-    };
-    expect(body.error).toBe("invalid_grant");
-    expect(body.error_description).toBe(NO_GRANT_SPACE_MESSAGE);
-
-    // The grant itself is untouched: this refuses a credential, it does not
-    // revoke anything.
-    expect((await onlyGrant(ctx)).properties.status).toBe("active");
   });
 });
 

@@ -33,7 +33,7 @@ import { fileURLToPath } from "node:url";
 import { expandBundlesToScopes } from "@withmarfa/shared";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -80,19 +80,13 @@ async function seedClientWithCeiling(
     scopes,
     redirectUris: [CALLBACK],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const up = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (up.status !== 200) throw new Error(`sign-up failed ${String(up.status)}`);
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const inRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -111,7 +105,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 
 describe("a stale client ceiling cannot strand the default-on bundle", () => {
   it("a code reaches the redirect URI despite a ceiling minted before the registry moved", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "stale-ceiling@example.com");
 
     const requested = defaultOnRequestScopes();
@@ -212,11 +206,11 @@ describe("a stale client ceiling cannot strand the default-on bundle", () => {
   });
 
   it("a client with no ceiling keeps the whole default-on set", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "no-ceiling@example.com");
 
     const requested = defaultOnRequestScopes();
-    // The shape the seed script now writes for a first-party client.
+    // The shape a first-party client is written with.
     const clientId = await seedClientWithCeilingNull(ctx);
 
     const challenge = createHash("sha256")
@@ -265,7 +259,6 @@ async function seedClientWithCeilingNull(c: TestContext): Promise<string> {
     scopes: null,
     redirectUris: [CALLBACK],
     postLogoutRedirectUris: [ORIGIN + "/"],
-    referenceId: null,
   });
   return clientId;
 }
@@ -363,16 +356,12 @@ function walkTypeScript(dir: string): string[] {
 describe("call sites that persist a client scope ceiling", () => {
   // `writers` is the number of ceiling-writing calls the file is allowed, so
   // a second one appearing inside a file that is already named still fails.
-  const DOORS: { file: string; writers: number; justification: string }[] = [
-    {
-      file: "src/routes/oauth-register.ts",
-      writers: 1,
-      justification:
-        "Dynamic client registration. The array is the ceiling the third-party " +
-        "client asked for and a security boundary — not a copy of ours, and " +
-        "correctly frozen.",
-    },
-  ];
+  //
+  // Empty: the one Marfa-side writer was the registration handler, and the
+  // provider plugin's own registration writes the ceiling now, outside this
+  // tree. The walk stays so a writer added on this side is named here or
+  // fails, which is the only thing the guard is for.
+  const DOORS: { file: string; writers: number; justification: string }[] = [];
 
   it("discovers every Marfa-side writer, and each is deliberate", () => {
     const root = fileURLToPath(new URL("../..", import.meta.url));
@@ -432,16 +421,5 @@ describe("call sites that persist a client scope ceiling", () => {
     for (const door of DOORS) {
       expect(door.justification.length).toBeGreaterThan(40);
     }
-  });
-
-  it("the seed script writes no ceiling", () => {
-    const root = fileURLToPath(new URL("../..", import.meta.url));
-    const source = readFileSync(
-      new URL("src/scripts/seed-oauth-clients.ts", `file://${root}`),
-      "utf8",
-    );
-    expect(source).toContain("scopes: null");
-    // The generating shape, named so a revert is loud rather than quiet.
-    expect(source).not.toContain("buildAllowedScopes");
   });
 });

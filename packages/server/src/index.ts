@@ -1,5 +1,4 @@
 import { serve } from "@hono/node-server";
-import { Hono } from "hono";
 import {
   ensureBootstrapSecret,
   isBootstrapped,
@@ -19,17 +18,10 @@ import {
 import { setRuntimeNamespaceRoots } from "./auth/oauth-provider.js";
 import { createApp } from "./app.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
-import { createPgStorage } from "./storage/pg/index.js";
-import { pgEndpointHost } from "./storage/pg/endpoint.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import type { Storage } from "./storage/interface.js";
-import {
-  WebhookConsumer,
-  WebhookPoller,
-  WEBHOOK_POLL_INTERVAL_MS,
-} from "./webhooks/delivery.js";
-import { withStartupWait } from "./storage/startup-wait.js";
+import { WebhookConsumer, WebhookPoller } from "./webhooks/delivery.js";
 import { logJobTickFailure } from "./storage/job-tick.js";
 import { HeartbeatPinger } from "./heartbeat.js";
 import { VersionThinner } from "./storage/version-thinner.js";
@@ -40,67 +32,26 @@ import {
   RevokedKeyReaper,
   TrashPurger,
   AuthSessionCleaner,
-  PendingDeletePurger,
   RateLimitWindowCleaner,
   DcrClientCleaner,
-  DeviceCodeCleaner,
   BlobOrphanCleaner,
-  RuntimeCredentialReaper,
   runSpaceCleanup,
 } from "./storage/retention.js";
-import { ConnectionUpgrader } from "./connections/auto-upgrade.js";
 import type { SpaceFanout } from "./storage/retention.js";
-import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
-import {
-  createPgEventNotifier,
-  startEventReplication,
-  type EventReplication,
-} from "./event-replication.js";
-import { setConsentLockBackend } from "./auth/consent-lock.js";
-import { createPgConsentLockBackend } from "./storage/pg/consent-lock-backend.js";
-import {
-  pgApplicationName,
-  pgPoolClient,
-  type PgClient,
-  type PgDb,
-} from "./storage/pg/connection.js";
-import {
-  tryStartLocalIntegrationRuntime,
-  loadInTreeRegistrations,
-  type LocalRuntimeBundle,
-} from "./integrations/local-runtime/index.js";
-import { DEFAULT_RUNTIME_CREDENTIAL_TTL_MS } from "./integrations/local-runtime/credentials.js";
-import {
-  describeReconcile,
-  reconcileShippedCatalog,
-} from "./integrations/catalog-reconcile.js";
+import { initEventLog } from "./pubsub.js";
 import { TextEnrichmentSweeper } from "./enrichment/sweeper.js";
 import { TesseractOcr } from "./enrichment/ocr.js";
-import {
-  startPgBossSchedules,
-  type ScheduledJobSpec,
-} from "./scheduled/pg-boss-schedules.js";
-import {
-  setScheduledJobsReporter,
-  surveyScheduledJobs,
-} from "./scheduled/job-metrics.js";
-import type { PgBoss } from "pg-boss";
 import {
   log,
   formatErrorSummary,
   serializeError,
 } from "./middleware/logger.js";
-import { createEmailTransport } from "./email/index.js";
-import { checkCorsOrigins } from "./routes/cors-origins-check.js";
-import { checkMultiReplica } from "./multi-replica-check.js";
 import { OidcSigner } from "./auth/oidc-signing.js";
 import {
   BulkActionWorker,
   setBulkJobEnqueueListener,
   BulkActionJobGcSweeper,
-  BULK_JOB_WAKE_CHANNEL,
 } from "./bulk-actions/index.js";
-import { sql } from "drizzle-orm";
 
 async function main() {
   const config = loadConfig();
@@ -121,77 +72,7 @@ async function main() {
     log("info", "Server version", { sha: "dev" });
   }
 
-  // What this process does. `web` serves HTTP and enqueues; `worker` runs
-  // the pg-boss consumers behind a minimal health endpoint; `both` (the
-  // default) is the single-container self-host shape. Everything below
-  // that is role-specific gates on these two flags; everything ungated
-  // runs in every role on purpose — event replication and the outbound
-  // webhook consumer in particular, because each process delivers exactly
-  // the events it originated (delivery skips replicated events), and both
-  // roles originate writes.
-  const processRole = config.processRole ?? "both";
-  const runsWeb = processRole !== "worker";
-  const runsWorker = processRole !== "web";
-  log("info", "Process role", { role: processRole });
-
-  // A database that is merely slow to come back (a rebooting host, a
-  // pooler warming up) must not turn a supervised server into a crash
-  // loop: wait with backoff inside the process, loudly, up to the budget.
-  // Misconfiguration is not retryable and still fails immediately.
-  const waitForDb = <T>(create: () => Promise<T>): Promise<T> =>
-    withStartupWait(create, {
-      budgetMs: config.dbStartupWaitMs ?? 90_000,
-      onAttempt: (attempt, delayMs, err) => {
-        log("warn", "Database not ready; waiting to retry", {
-          attempt,
-          retry_in_ms: delayMs,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      },
-    });
-
-  // Names this process's connections in `pg_stat_activity`. Read by
-  // `/health`, which matches the shape rather than a prefix, so a pool
-  // labeled some other way is attributed to nobody. Declared once because
-  // two places set it: the pools `createConnection` builds, and the
-  // consent lock's own client below.
-  const applicationName = pgApplicationName(config.processRole);
-
-  let storage: Storage;
-  if (config.storageDialect === "pg") {
-    if (!config.databaseUrl) {
-      throw new Error("DATABASE_URL is required when DB_DIALECT=pg");
-    }
-    const databaseUrl = config.databaseUrl;
-    const directUrl = config.databaseUrlDirect ?? "";
-    storage = await waitForDb(() =>
-      createPgStorage(databaseUrl, {
-        authMode: config.authMode,
-        directConnectionString: directUrl,
-        poolMode: config.dbPoolMode,
-        applicationName,
-        ...(config.dbPoolSize !== undefined && {
-          maxPoolSize: config.dbPoolSize,
-        }),
-      }),
-    );
-    // Which endpoint streaming RLS reserves from is not otherwise observable
-    // from outside the process, and getting it wrong strands a role on shared
-    // pooler backends, where it surfaces as permission errors on requests that
-    // never touched a stream. State it once, at boot. Host only: connection
-    // strings carry credentials.
-    log("info", "Streaming RLS endpoint", {
-      db_pool_mode: config.dbPoolMode ?? "session",
-      streaming_endpoint: directUrl ? "direct" : "shared_with_app_pool",
-      streaming_endpoint_host: pgEndpointHost(directUrl || config.databaseUrl),
-    });
-  } else {
-    storage = await waitForDb(() =>
-      createSqliteStorage(config.sqlitePath, {
-        authMode: config.authMode,
-      }),
-    );
-  }
+  const storage: Storage = await createSqliteStorage(config.sqlitePath);
 
   let blobBackend: BlobBackend;
   if (config.blobBackend === "s3") {
@@ -207,69 +88,7 @@ async function main() {
   } else {
     blobBackend = new FilesystemBlobBackend(config.blobPath);
   }
-  // On Postgres every published event is announced to sibling processes
-  // over pg_notify and their announcements are hydrated back into this
-  // process's emitter (event-replication.ts), so SSE and the reactive
-  // bridge see the whole deployment's events, not one process's. The
-  // announcement rides the publishing transaction; the listener holds the
-  // session-mode client, whose LISTEN connection postgres.js keeps apart
-  // from the pool — one extra backend against the direct endpoint's
-  // ceiling, not a pool slot. SQLite is one process and wires none of
-  // this.
-  const pgSessionClient =
-    ((storage.pgStreamClient ?? storage.pgClient) as PgClient | undefined) ??
-    null;
-  initEventLog(storage.eventLog, {
-    ...defaultCycleDetectionWiring(storage),
-    ...(storage.pgDb !== undefined && {
-      notifyRemote: createPgEventNotifier(storage.pgDb as PgDb),
-    }),
-  });
-  let eventReplication: EventReplication | null = null;
-  let consentLockClient: PgClient | null = null;
-  if (pgSessionClient) {
-    // A copy that cannot hear its siblings silently drops their events,
-    // which is the exact defect this closes — a listen failure at boot is
-    // fatal on purpose.
-    eventReplication = await startEventReplication(
-      pgSessionClient,
-      storage.eventLog,
-    );
-    // The consent lock's cross-process backend: a blocking advisory lock
-    // held for the critical section, so two web copies cannot interleave
-    // grant read-modify-write cycles. It reserves from its own tiny
-    // client, never a pool the critical section's own queries run on —
-    // holding a lock connection from the pool the locked work needs is
-    // the documented bracketing deadlock, reached at pool size. Session
-    // mode is required (a session lock needs a session), so on a
-    // transaction-mode pooler this takes the direct endpoint. Web-role
-    // only: consent flows are HTTP, so a worker-role process would hold
-    // this client's slice of the connection budget for nothing.
-    if (runsWeb) {
-      const { default: postgresCtor } = await import("postgres");
-      const sessionModeUrl =
-        config.dbPoolMode === "transaction" && config.databaseUrlDirect
-          ? config.databaseUrlDirect
-          : config.databaseUrl;
-      consentLockClient = postgresCtor(sessionModeUrl, {
-        max: 2,
-        // Labeled like every pool `createConnection` builds, so `/health`
-        // attributes these backends to this deployment. Without it they
-        // counted toward the ceiling under `other`, alongside whatever
-        // else happens to be connected.
-        connection: {
-          application_name: pgPoolClient(applicationName, "consent"),
-        },
-        idle_timeout: 30,
-        max_lifetime: 30 * 60,
-        onnotice: () => {
-          // Advisory-lock warnings surface through the backend's own
-          // destroy-on-doubt handling; the default notice logger is noise.
-        },
-      });
-      setConsentLockBackend(createPgConsentLockBackend(consentLockClient));
-    }
-  }
+  initEventLog(storage.eventLog);
 
   // Declared ahead of the jobs rather than beside `shutdown()` because the
   // two inline cleanups below close over it: a sweep that loses its pool
@@ -278,75 +97,22 @@ async function main() {
   // job carries the same flag on itself.
   let shuttingDown = false;
 
-  // pg-boss carries two duties on Postgres: the scheduled background jobs
-  // below, on every Postgres deployment, and the local integration
-  // substrate's queues when that substrate is enabled. One instance serves
-  // both. On a transaction-mode pooler it takes the direct endpoint, which
-  // the boot guard guarantees is set: its core path tolerates a pooler,
-  // but its schema migration deserves a connection that owns its backend,
-  // and polling never benefits from pooling. The pool is bounded because
-  // the direct endpoint has the tighter connection ceiling (see the
-  // session pool's sizing note in storage/pg/connection.ts); a poll is a
-  // fast statement, so many queues share two connections comfortably.
-  let boss: PgBoss | null = null;
-  if (config.storageDialect === "pg") {
-    // pg-boss 12 is ESM with a named `PgBoss` export (no default).
-    const { PgBoss: PgBossCtor } = await import("pg-boss");
-    const bossUrl =
-      config.dbPoolMode === "transaction" && config.databaseUrlDirect
-        ? config.databaseUrlDirect
-        : config.databaseUrl;
-    boss = new PgBossCtor({ connectionString: bossUrl, max: 2 });
-    // Maintenance errors surface on 'error'; an unhandled 'error' event
-    // would crash the process over a transient the next tick absorbs.
-    // Worker failures arrive as plain object literals carrying message,
-    // stack, queue and worker fields, not Error instances, so the
-    // instanceof arm alone would log "[object Object]" for exactly the
-    // failures this channel exists to surface.
-    boss.on("error", (err) => {
-      const shaped = err as {
-        message?: string;
-        queue?: string;
-        worker?: string;
-      };
-      log("error", "pg-boss error", {
-        error:
-          err instanceof Error ? err.message : (shaped.message ?? String(err)),
-        ...(shaped.queue !== undefined && { queue: shaped.queue }),
-        ...(shaped.worker !== undefined && { worker: shaped.worker }),
-      });
-    });
-    await boss.start();
-  }
-
-  // On Postgres the recurring background jobs run as pg-boss chains
-  // (scheduled/pg-boss-schedules.ts), so exactly one process executes each
-  // tick however many share the database, and — once containers split by
-  // role — the queue is what pins this work to the worker container. On
-  // SQLite each job keeps its own in-process timer: pg-boss is
-  // Postgres-only, and a SQLite deployment is single-process by
-  // definition. Every job construction below routes through this helper.
-  const scheduledJobs: ScheduledJobSpec[] = [];
-  const scheduleJob = (
-    spec: ScheduledJobSpec,
-    startTimer: () => void,
-  ): void => {
-    if (boss) scheduledJobs.push(spec);
-    else startTimer();
+  const auditFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "audit_retention_days",
   };
-
-  const auditFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "audit_retention_days" }
-    : undefined;
-  const eventLogFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "event_log_retention_hours" }
-    : undefined;
-  const trashFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "trash_retention_days" }
-    : undefined;
-  const activityFanout: SpaceFanout | undefined = storage.spaces
-    ? { spaces: storage.spaces, configField: "activity_retention_days" }
-    : undefined;
+  const eventLogFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "event_log_retention_hours",
+  };
+  const trashFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "trash_retention_days",
+  };
+  const activityFanout: SpaceFanout = {
+    settings: storage.settings,
+    configField: "activity_retention_days",
+  };
 
   // Default 168h; override via MARFA_EVENT_LOG_RETENTION_HOURS or per-space config.
   const eventLogRetentionHours = config.eventLogRetentionHours ?? 168;
@@ -361,13 +127,12 @@ async function main() {
     let purgedRecords = 0;
     return runSpaceCleanup({
       jobName: "event-log-cleanup",
-      coordination: storage.coordination,
       fanout: eventLogFanout,
       instanceDefault: eventLogRetentionHours,
       unitMs: 3_600_000,
-      sweep: async (retention, spaceId) => {
-        purgedRecords += await storage.idempotency.cleanup(retention, spaceId);
-        return storage.eventLog.cleanup(retention, spaceId);
+      sweep: async (retention) => {
+        purgedRecords += await storage.idempotency.cleanup(retention);
+        return storage.eventLog.cleanup(retention);
       },
     })
       .then((deleted) => {
@@ -383,34 +148,19 @@ async function main() {
   };
   let eventLogCleanupDelay: ReturnType<typeof setTimeout> | null = null;
   let eventLogCleanupInterval: ReturnType<typeof setInterval> | null = null;
-  scheduleJob(
-    {
-      name: "event-log-cleanup",
-      logName: "Event-log cleanup",
-      intervalMs: config.eventLogCleanupIntervalMs ?? 3_600_000,
-      firstRunDelaySeconds: 10,
-      runOnce: runEventLogCleanup,
-    },
-    () => {
-      eventLogCleanupDelay = setTimeout(
-        () => void runEventLogCleanup(),
-        10_000,
-      );
-      eventLogCleanupInterval = setInterval(
-        () => void runEventLogCleanup(),
-        config.eventLogCleanupIntervalMs ?? 3_600_000,
-      );
-    },
+  eventLogCleanupDelay = setTimeout(() => void runEventLogCleanup(), 10_000);
+  eventLogCleanupInterval = setInterval(
+    () => void runEventLogCleanup(),
+    config.eventLogCleanupIntervalMs ?? 3_600_000,
   );
 
   const runAuditCleanup = () =>
     runSpaceCleanup({
       jobName: "audit-cleanup",
-      coordination: storage.coordination,
       fanout: auditFanout,
       instanceDefault: config.auditRetentionDays,
       unitMs: 86_400_000,
-      sweep: (retention, spaceId) => storage.audit.cleanup(retention, spaceId),
+      sweep: (retention) => storage.audit.cleanup(retention),
     })
       .then((deleted) => {
         if (deleted > 0)
@@ -424,21 +174,10 @@ async function main() {
       });
   let auditCleanupDelay: ReturnType<typeof setTimeout> | null = null;
   let auditCleanupInterval: ReturnType<typeof setInterval> | null = null;
-  scheduleJob(
-    {
-      name: "audit-cleanup",
-      logName: "Audit cleanup",
-      intervalMs: config.auditCleanupIntervalMs,
-      firstRunDelaySeconds: 5,
-      runOnce: runAuditCleanup,
-    },
-    () => {
-      auditCleanupDelay = setTimeout(() => void runAuditCleanup(), 5_000);
-      auditCleanupInterval = setInterval(
-        () => void runAuditCleanup(),
-        config.auditCleanupIntervalMs,
-      );
-    },
+  auditCleanupDelay = setTimeout(() => void runAuditCleanup(), 5_000);
+  auditCleanupInterval = setInterval(
+    () => void runAuditCleanup(),
+    config.auditCleanupIntervalMs,
   );
 
   const webhookConsumer = new WebhookConsumer(
@@ -448,20 +187,7 @@ async function main() {
   webhookConsumer.start();
 
   const webhookPoller = new WebhookPoller(storage.outboundWebhookDeliveries);
-  // The one background job with no cross-process coordination of its own:
-  // two timer-driven copies double-deliver, which is why this job in
-  // particular must run through the queue on Postgres.
-  scheduleJob(
-    {
-      name: "webhook-poll",
-      logName: "Webhook poll",
-      intervalMs: WEBHOOK_POLL_INTERVAL_MS,
-      runOnce: () => webhookPoller.runOnce(),
-    },
-    () => {
-      webhookPoller.start();
-    },
-  );
+  webhookPoller.start();
 
   // Opt-in liveness heartbeat: off unless the operator names a receiver.
   const heartbeat = config.heartbeatUrl
@@ -481,41 +207,17 @@ async function main() {
       maxVersions: config.versionMaxVersions,
     },
     config.versionThinningIntervalMs,
-    storage.coordination,
   );
-  scheduleJob(
-    {
-      name: "version-thinning",
-      logName: "Version thinning",
-      intervalMs: config.versionThinningIntervalMs,
-      firstRunDelaySeconds: 15,
-      runOnce: () => versionThinner.runOnce(),
-    },
-    () => {
-      versionThinner.start();
-    },
-  );
+  versionThinner.start();
 
   const trashPurger = new TrashPurger(
     storage.items,
     config.trashRetentionDays,
     config.trashPurgeIntervalMs,
     undefined,
-    storage.coordination,
     trashFanout,
   );
-  scheduleJob(
-    {
-      name: "trash-purge",
-      logName: "Trash purge",
-      intervalMs: config.trashPurgeIntervalMs,
-      firstRunDelaySeconds: 20,
-      runOnce: () => trashPurger.runScheduled(),
-    },
-    () => {
-      trashPurger.start();
-    },
-  );
+  trashPurger.start();
 
   // Activity rows are ordinary items and had no retention at all, which
   // is how production reached 6,015 of them against 805 of everything
@@ -528,7 +230,6 @@ async function main() {
           config.activityRetentionDays ?? 14,
           activityPurgeIntervalMs,
           undefined,
-          storage.coordination,
           activityFanout,
         )
       : undefined;
@@ -545,24 +246,10 @@ async function main() {
           config.revokedGrantRetentionDays ?? 90,
           revokedGrantPurgeIntervalMs,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (revokedGrantPurger) {
-    scheduleJob(
-      {
-        name: "revoked-grant-purge",
-        logName: "Revoked grant purge",
-        intervalMs: revokedGrantPurgeIntervalMs,
-        firstRunDelaySeconds: 35,
-        runOnce: () => revokedGrantPurger.runScheduled(),
-      },
-      () => {
-        // `start()`, not `stop()`: this hook is what runs the job when
-        // pg-boss is absent, so on SQLite the purge never began.
-        revokedGrantPurger.start();
-      },
-    );
+    revokedGrantPurger.start();
   }
   // A grant nobody has used for a year is retired through the same cascade
   // a Disconnect runs, with an audit row saying why. The tombstone it leaves
@@ -580,36 +267,13 @@ async function main() {
           grantInactivityDays,
           grantInactivityIntervalMs,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (grantInactivityRetirer) {
-    scheduleJob(
-      {
-        name: "grant-inactivity-retire",
-        logName: "Inactive grant retirement",
-        intervalMs: grantInactivityIntervalMs,
-        firstRunDelaySeconds: 40,
-        runOnce: () => grantInactivityRetirer.runScheduled(),
-      },
-      () => {
-        grantInactivityRetirer.start();
-      },
-    );
+    grantInactivityRetirer.start();
   }
   if (activityPurger) {
-    scheduleJob(
-      {
-        name: "activity-purge",
-        logName: "Activity purge",
-        intervalMs: activityPurgeIntervalMs,
-        firstRunDelaySeconds: 25,
-        runOnce: () => activityPurger.runScheduled(),
-      },
-      () => {
-        activityPurger.start();
-      },
-    );
+    activityPurger.start();
   }
 
   // The runtime reaper below covers machine-minted credentials only.
@@ -619,20 +283,8 @@ async function main() {
     storage,
     activityPurgeIntervalMs,
     undefined,
-    storage.coordination,
   );
-  scheduleJob(
-    {
-      name: "revoked-key-reap",
-      logName: "Revoked key reap",
-      intervalMs: activityPurgeIntervalMs,
-      firstRunDelaySeconds: 45,
-      runOnce: () => revokedKeyReaper.runScheduled(),
-    },
-    () => {
-      revokedKeyReaper.start();
-    },
-  );
+  revokedKeyReaper.start();
 
   // Gated on authSessions being wired; test contexts that skip better-auth omit it.
   const authSessionCleaner = storage.authSessions
@@ -640,47 +292,10 @@ async function main() {
         storage.authSessions,
         config.authSessionCleanupIntervalMs ?? 3_600_000,
         undefined,
-        storage.coordination,
       )
     : undefined;
   if (authSessionCleaner) {
-    scheduleJob(
-      {
-        name: "auth-session-cleanup",
-        logName: "Auth session cleanup",
-        intervalMs: config.authSessionCleanupIntervalMs ?? 3_600_000,
-        firstRunDelaySeconds: 25,
-        runOnce: () => authSessionCleaner.runScheduled(),
-      },
-      () => {
-        authSessionCleaner.start();
-      },
-    );
-  }
-
-  // Gated on accountLifecycle being wired; test stubs that omit it skip this job.
-  const pendingDeletePurger = storage.accountLifecycle
-    ? new PendingDeletePurger(
-        storage,
-        config.accountDeletionGraceDays ?? 30,
-        config.accountDeletionPurgeIntervalMs ?? 3_600_000,
-        undefined,
-        storage.coordination,
-      )
-    : undefined;
-  if (pendingDeletePurger) {
-    scheduleJob(
-      {
-        name: "account-deletion-purge",
-        logName: "Pending-delete purge",
-        intervalMs: config.accountDeletionPurgeIntervalMs ?? 3_600_000,
-        firstRunDelaySeconds: 30,
-        runOnce: () => pendingDeletePurger.runScheduled(),
-      },
-      () => {
-        pendingDeletePurger.start();
-      },
-    );
+    authSessionCleaner.start();
   }
 
   // GC keeps the table bounded; expired rows are correctness-safe (upsert path
@@ -689,20 +304,8 @@ async function main() {
     storage,
     config.rateLimitCleanupIntervalMs ?? 3_600_000,
     undefined,
-    storage.coordination,
   );
-  scheduleJob(
-    {
-      name: "rate-limit-cleanup",
-      logName: "Rate-limit window cleanup",
-      intervalMs: config.rateLimitCleanupIntervalMs ?? 3_600_000,
-      firstRunDelaySeconds: 25,
-      runOnce: () => rateLimitCleaner.runScheduled(),
-    },
-    () => {
-      rateLimitCleaner.start();
-    },
-  );
+  rateLimitCleaner.start();
 
   // Reap grantless DCR clients so unauthenticated registration doesn't grow
   // `auth_oauth_client` unbounded. Gated on a positive retention window
@@ -716,48 +319,11 @@ async function main() {
           dcrRetentionDays,
           config.dcrClientCleanupIntervalMs ?? 86_400_000,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (dcrClientCleaner) {
-    scheduleJob(
-      {
-        name: "dcr-client-cleanup",
-        logName: "DCR client cleanup",
-        intervalMs: config.dcrClientCleanupIntervalMs ?? 86_400_000,
-        firstRunDelaySeconds: 30,
-        runOnce: () => dcrClientCleaner.runScheduled(),
-      },
-      () => {
-        dcrClientCleaner.start();
-      },
-    );
+    dcrClientCleaner.start();
   }
-
-  // Device codes were written and never swept: pending, denied, approved and
-  // redeemed rows all outlived their expiry indefinitely. Daily, with an
-  // hour's grace past expiry, and deliberately not configurable: a code lives
-  // minutes, so the only thing a knob could tune is how long dead rows sit,
-  // and the DCR reaper's own interval is that job's setting, not this one's.
-  const deviceCodeCleanupIntervalMs = 86_400_000;
-  const deviceCodeCleaner = new DeviceCodeCleaner(
-    storage,
-    deviceCodeCleanupIntervalMs,
-    undefined,
-    storage.coordination,
-  );
-  scheduleJob(
-    {
-      name: "device-code-cleanup",
-      logName: "Device code cleanup",
-      intervalMs: deviceCodeCleanupIntervalMs,
-      firstRunDelaySeconds: 30,
-      runOnce: () => deviceCodeCleaner.runScheduled(),
-    },
-    () => {
-      deviceCodeCleaner.start();
-    },
-  );
 
   // Storing a blob and creating the item that references it are separate
   // calls, so an item write refused between them leaves bytes registered,
@@ -776,86 +342,10 @@ async function main() {
           blobCleanupGraceMs,
           blobCleanupIntervalMs,
           undefined,
-          storage.coordination,
         )
       : undefined;
   if (blobOrphanCleaner) {
-    scheduleJob(
-      {
-        name: "blob-cleanup",
-        logName: "Blob cleanup",
-        intervalMs: blobCleanupIntervalMs,
-        firstRunDelaySeconds: 30,
-        runOnce: () => blobOrphanCleaner.runScheduled(),
-      },
-      () => {
-        blobOrphanCleaner.start();
-      },
-    );
-  }
-
-  // Runtime credentials are minted per dispatch, so the table grows with
-  // traffic unless something retires them. The mint path supersedes its own
-  // siblings and the bearer gate refuses expired rows, but neither reaches
-  // credentials for connections that stopped dispatching, nor rows minted
-  // before expiry stamping existed. Interval `0` disables the job.
-  const runtimeCredentialReaperIntervalMs =
-    config.runtimeCredentialReaperIntervalMs ?? 3_600_000;
-  const runtimeCredentialReaper =
-    runtimeCredentialReaperIntervalMs > 0
-      ? new RuntimeCredentialReaper(
-          storage,
-          DEFAULT_RUNTIME_CREDENTIAL_TTL_MS,
-          runtimeCredentialReaperIntervalMs,
-          undefined,
-          storage.coordination,
-        )
-      : undefined;
-  if (runtimeCredentialReaper) {
-    scheduleJob(
-      {
-        name: "runtime-credential-reap",
-        logName: "Runtime credential reap",
-        intervalMs: runtimeCredentialReaperIntervalMs,
-        firstRunDelaySeconds: 30,
-        runOnce: () => runtimeCredentialReaper.runScheduled(),
-      },
-      () => {
-        runtimeCredentialReaper.start();
-      },
-    );
-  }
-
-  // Connections follow the manifest their own deployment ships. The boot
-  // reconcile registers new versions and re-binds nothing, so without this
-  // every manifest bump leaves drift standing until somebody clears it by
-  // hand, and a number that is never green is one nobody reads. A widening
-  // move still waits for a person.
-  const connectionUpgradeIntervalMs =
-    config.connectionUpgradeIntervalMs ?? 3_600_000;
-  const connectionUpgrader =
-    connectionUpgradeIntervalMs > 0
-      ? new ConnectionUpgrader(
-          storage,
-          connectionUpgradeIntervalMs,
-          storage.coordination,
-        )
-      : undefined;
-  if (connectionUpgrader) {
-    scheduleJob(
-      {
-        name: "connection-auto-upgrade",
-        logName: "Connection auto-upgrade",
-        intervalMs: connectionUpgradeIntervalMs,
-        // Behind the boot reconcile, which registers the versions this
-        // pass then moves connections onto.
-        firstRunDelaySeconds: 45,
-        runOnce: () => connectionUpgrader.runScheduled(),
-      },
-      () => {
-        connectionUpgrader.start();
-      },
-    );
+    blobOrphanCleaner.start();
   }
 
   // Text extraction from uploaded files, on by default: a document nobody
@@ -881,27 +371,7 @@ async function main() {
         })
       : undefined;
   if (enrichmentSweeper) {
-    scheduleJob(
-      {
-        name: "enrichment-sweep",
-        logName: "Text enrichment sweep",
-        intervalMs: config.enrichmentIntervalMs ?? 30_000,
-        firstRunDelaySeconds: 15,
-        // A tick is a batch of per-item extractions, each with its own
-        // 60s OCR budget, so a legitimate tick can far outrun twice the
-        // 30s interval the default expiry would allow.
-        expireInSeconds:
-          Math.ceil(
-            ((config.enrichmentBatchSize ?? 8) *
-              (config.enrichmentItemTimeoutMs ?? 60_000)) /
-              1000,
-          ) + 120,
-        runOnce: () => enrichmentSweeper.runScheduled(),
-      },
-      () => {
-        enrichmentSweeper.start();
-      },
-    );
+    enrichmentSweeper.start();
   }
 
   const bulkActionWorker = new BulkActionWorker({
@@ -912,241 +382,26 @@ async function main() {
   });
   // Enqueue wakes the worker. The route cannot hold a worker reference —
   // the app is constructed before the worker exists — so the signal is
-  // registered here, where both are in scope.
-  // Enqueue wakes the worker wherever it runs. In-process when this role
-  // carries one; over pg_notify otherwise, so a job enqueued on a web-role
-  // container does not wait out the worker's idle backoff (up to 60s). The
-  // notify is best-effort on top of the poll loop — the enqueue has already
-  // committed, so a lost wake costs latency, never the job.
+  // registered here, where both are in scope. The wake is best-effort on
+  // top of the poll loop — the enqueue has already committed, so a lost
+  // wake costs latency, never the job.
   setBulkJobEnqueueListener(() => {
-    if (runsWorker) bulkActionWorker.wake();
-    if (storage.pgDb !== undefined) {
-      void (storage.pgDb as PgDb)
-        .execute(sql`SELECT pg_notify(${BULK_JOB_WAKE_CHANNEL}, '')`)
-        .catch(() => undefined);
-    }
+    bulkActionWorker.wake();
   });
-  if (runsWorker) {
-    if (pgSessionClient) {
-      // Rides the same session-mode client event replication listens on;
-      // postgres.js multiplexes channels over one LISTEN connection and
-      // re-listens after a reconnect.
-      await pgSessionClient.listen(BULK_JOB_WAKE_CHANNEL, () => {
-        bulkActionWorker.wake();
-      });
-    }
-    await bulkActionWorker.start();
-  }
+  await bulkActionWorker.start();
   const bulkActionGc = new BulkActionJobGcSweeper(
     storage,
     config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000,
     config.bulkActionJobGcIntervalMs ?? 3_600_000,
     undefined,
-    storage.coordination,
   );
   // Gated the same way the sweeper's own start() gates itself: a zero or
-  // negative retention disables the job, and a queue chain for a job that
-  // always answers zero would tick forever for nothing.
+  // negative retention disables the job.
   if ((config.bulkActionJobRetentionMs ?? 7 * 24 * 3_600_000) > 0) {
-    scheduleJob(
-      {
-        name: "bulk-action-jobs-gc",
-        logName: "Bulk-action job GC",
-        intervalMs: config.bulkActionJobGcIntervalMs ?? 3_600_000,
-        firstRunDelaySeconds: 30,
-        runOnce: () => bulkActionGc.runOnce(),
-      },
-      () => {
-        bulkActionGc.start();
-      },
-    );
+    bulkActionGc.start();
   }
-
-  // What `GET /metrics` reports the jobs as having done. Installed in every
-  // role that has a queue, not only the one that runs the ticks: execution
-  // is pinned to the worker but the endpoint lives on the web role, and both
-  // build the same spec list above. Driven by that list rather than by the
-  // queue table, because an absent row and an absent job read identically
-  // there and "registered, never ticked" is the case this exists to name.
-  if (boss && storage.pgDb !== undefined) {
-    const jobNames = scheduledJobs.map((job) => job.name);
-    const jobMetricsDb = storage.pgDb as PgDb;
-    setScheduledJobsReporter(() => surveyScheduledJobs(jobMetricsDb, jobNames));
-  }
-
-  // Register the queue workers and seed the chains once every job above
-  // has contributed its spec. Idempotent across processes and restarts.
-  // Worker-role only: registering the workers is what pins scheduled
-  // execution to a process, so a web-role copy contributes nothing here
-  // and the queued chains simply wait for whichever process did register.
-  if (boss && runsWorker) {
-    await startPgBossSchedules(boss, scheduledJobs, {
-      isShuttingDown: () => shuttingDown,
-    });
-    log("info", "Scheduled jobs running on pg-boss", {
-      jobs: scheduledJobs.length,
-    });
-  } else if (boss) {
-    log("info", "Scheduled jobs deferred to the worker role", {
-      jobs: scheduledJobs.length,
-    });
-  }
-
-  // Construct the email transport once at boot and thread it into
-  // createApp. The factory's sender-domain check fails loud here if
-  // MARFA_EMAIL_FROM doesn't end @mail.marfa.so on the Cloudflare
-  // backend, preventing bad config reaching the request loop. The
-  // `none` default returns the explicit-failure transport so
-  // email-dependent flows surface a clean
-  // `email_transport_not_configured` error instead of silently
-  // dead-lettering.
-  // Treat empty strings from `config` as "unset" — env vars come back
-  // as "" rather than undefined, but the transport expects undefined
-  // for optional fields. `emptyToUndef` is the trivial nullable cast.
-  const emptyToUndef = (v: string | undefined): string | undefined =>
-    v && v.length > 0 ? v : undefined;
-  const emailTransport = await createEmailTransport({
-    backend: config.emailBackend ?? "none",
-    authMode: config.authMode,
-    from: emptyToUndef(config.emailFrom) ?? "Marfa <hello@mail.marfa.so>",
-    replyTo: emptyToUndef(config.emailReplyTo),
-    cloudflare:
-      emptyToUndef(config.cloudflareAccountId) &&
-      emptyToUndef(config.cloudflareEmailApiToken)
-        ? {
-            accountId: config.cloudflareAccountId ?? "",
-            apiToken: config.cloudflareEmailApiToken ?? "",
-          }
-        : undefined,
-    smtp: emptyToUndef(config.smtpHost)
-      ? {
-          host: config.smtpHost ?? "",
-          port: config.smtpPort ?? 587,
-          user: emptyToUndef(config.smtpUser),
-          pass: emptyToUndef(config.smtpPass),
-          secure: config.smtpSecure ?? false,
-        }
-      : undefined,
-  });
 
   const oidcSigner = await OidcSigner.init(storage);
-
-  // Bring the integration catalog up to what this build ships, before the
-  // runtime starts dispatching against it. Registers absent (name, version)
-  // pairs only: an existing row is the manifest some connection is already
-  // resolving, and moving a connection forward is a deliberate, consented
-  // act rather than a side effect of a deploy.
-  //
-  // Not gated on the dialect. Integrations only RUN on Postgres, but the
-  // catalog describes what is installable rather than what is dispatching,
-  // and a SQLite instance whose catalog silently disagreed with its build
-  // would be the same defect in a quieter place.
-  try {
-    const shipped = await reconcileShippedCatalog(storage, {
-      integrationsRoot: resolveIntegrationsRoot(),
-    });
-    for (const skip of shipped.skipped) {
-      log("warn", "Integration manifest not loaded for the catalog", {
-        integration: skip.dirName,
-        reason: skip.reason,
-      });
-    }
-    if (shipped.rootUnresolved) {
-      log(
-        "warn",
-        "No installed integrations reached the catalog: the integrations root could not be resolved. Set MARFA_INTEGRATIONS_ROOT.",
-      );
-    }
-    log("info", describeReconcile(shipped.result), {
-      registered: shipped.result.registered.map(
-        (r) => `${r.name}@${r.version}`,
-      ),
-      failed: shipped.result.failed,
-    });
-  } catch (err) {
-    // A catalog that could not reconcile is a stale catalog, which is the
-    // state this instance was already in. Say so and boot; refusing to
-    // start would turn a drift problem into an outage.
-    log("error", "Integration catalog reconcile failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  // Integrations run in-process (Node + pg-boss), which needs Postgres —
-  // on SQLite we skip them rather than crash the zero-config quickstart.
-  let localRuntime: LocalRuntimeBundle | null = null;
-  if (config.storageDialect !== "pg") {
-    // Don't construct pg-boss against a SQLite (empty) connection string —
-    // that crashes boot. Skip with a log instead.
-    log(
-      "info",
-      "Integrations are off: the integration runtime needs Postgres and this instance is on SQLite. " +
-        "Set DB_DIALECT=pg to enable in-process integrations.",
-    );
-  } else {
-    try {
-      const integrationsRoot = resolveIntegrationsRoot();
-      const registrations = integrationsRoot
-        ? await loadInTreeRegistrations({ integrationsRoot })
-        : [];
-      if (registrations.length === 0) {
-        log(
-          "warn",
-          "Integration runtime enabled but no integrations ship a dist/local.js handler entry.",
-        );
-      }
-      // The shared pg-boss instance always exists on this branch: it is
-      // constructed for every Postgres deployment above (direct-endpoint
-      // and bounded-pool handling included), and this block is unreachable
-      // on SQLite.
-      if (!boss) {
-        throw new Error(
-          "pg-boss instance missing on a Postgres deployment; the shared instance should have been constructed at boot",
-        );
-      }
-      localRuntime = await tryStartLocalIntegrationRuntime({
-        storage,
-        config,
-        registrations,
-        boss,
-        // Handlers write back over HTTP. Localhost is right whenever the
-        // web tier shares the process; a split worker container points
-        // MARFA_API_URL at the web service instead.
-        apiUrl: config.apiUrl ?? `http://localhost:${String(config.port)}`,
-        // The web role keeps the enqueue side (webhook receipt, the
-        // dead-letter admin surface, the bridge election) but registers
-        // no queue workers, so dispatch runs only where the role says.
-        dispatch: runsWorker,
-      });
-      log("info", "Local integration runtime started", {
-        registrations: registrations.length,
-        dispatch: runsWorker,
-      });
-    } catch (err) {
-      log("error", "Local integration runtime failed to start", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-  }
-
-  // Boot guard: warn loud if hosted mode runs with an empty CORS allowlist —
-  // browser clients would fail their cross-origin API calls with no obvious
-  // cause. A warning, not a hard stop (API-only hosted deployments are fine).
-  checkCorsOrigins({
-    authMode: config.authMode,
-    corsOrigins: config.corsOrigins,
-  });
-
-  // Boot guard, SQLite only: warn loud when several server processes appear
-  // to share one database. On SQLite realtime delivery is process-local, so
-  // the extra processes drop events silently — nothing surfaces at the API,
-  // so nothing else would say. Postgres deployments replicate events over
-  // pg_notify and coordinate through the database, so any process mix there
-  // is a supported topology, not a hazard.
-  if (config.storageDialect === "sqlite") {
-    checkMultiReplica();
-  }
 
   // Admit every space's runtime custom-namespace roots into the OAuth
   // scope allowlist, before the auth instance is built. Admission only —
@@ -1175,20 +430,15 @@ async function main() {
     config.permissionBundles = bundles;
   }
 
-  // The web role serves the full app; the worker role serves only /health
-  // on the same port, so the container image's HEALTHCHECK and the compose
-  // wiring stay identical across roles. The worker's health answer is
-  // process liveness — its real work is judged by the queues, not by HTTP.
   // **The bootstrap window, announced.** An instance that has never minted a
   // credential accepts one unauthenticated `POST /keys`, and the secret below
   // is what binds that call to whoever is running the instance rather than to
   // whoever reaches the port first. Printed at every boot until it is used, so
-  // a restart does not strand an operator who has already copied it, and
-  // printed by the web role only, since the worker serves no such route.
+  // a restart does not strand an operator who has already copied it.
   //
   // Nothing is printed on an instance that already holds a credential, which
   // is every deployment past its first minute.
-  if (runsWeb && !(await isBootstrapped(storage))) {
+  if (!(await isBootstrapped(storage))) {
     const secret = await ensureBootstrapSecret(storage);
     // **Kept out of the telemetry mirror.** The redactor rewrites attributes
     // and leaves the message body alone, on the reasoning that a body is
@@ -1209,37 +459,10 @@ async function main() {
     );
   }
 
-  let server: ReturnType<typeof serve>;
-  if (runsWeb) {
-    const app = createApp(
-      storage,
-      blobBackend,
-      config,
-      emailTransport,
-      oidcSigner,
-      localRuntime?.app,
-      localRuntime?.deadLetterOps,
-      localRuntime?.runtime,
-    );
-    server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-      log("info", `Marfa server listening on port ${String(info.port)}`);
-    });
-  } else {
-    const healthApp = new Hono();
-    healthApp.get("/health", (c) =>
-      c.json({
-        status: "ok",
-        role: "worker",
-        version: { sha: config.versionSha ?? "dev" },
-      }),
-    );
-    server = serve({ fetch: healthApp.fetch, port: config.port }, (info) => {
-      log(
-        "info",
-        `Marfa worker health endpoint listening on port ${String(info.port)}`,
-      );
-    });
-  }
+  const app = createApp(storage, blobBackend, config, oidcSigner);
+  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
+    log("info", `Marfa server listening on port ${String(info.port)}`);
+  });
 
   const shutdown = (): void => {
     // A second signal must not restart the sequence. The platform sends
@@ -1255,24 +478,9 @@ async function main() {
     // pipeline as early as possible — everything below only shortens the time
     // it has to get out.
     log("info", "Shutting down...");
-    // Before anything closes: the reporter closes over the pool, and a
-    // `/metrics` hit arriving mid-drain would otherwise ask a dying
-    // connection for the section. A draining process has nothing true to
-    // say about the queue, and absence is what that means here.
-    setScheduledJobsReporter(undefined);
     webhookConsumer.stop();
     webhookPoller.stop();
     heartbeat?.stop();
-    if (eventReplication) {
-      // Unlisten is a courtesy to the connection; the storage close below
-      // ends it regardless, so a failure here changes nothing.
-      void eventReplication.stop().catch(() => undefined);
-    }
-    if (consentLockClient) {
-      void consentLockClient.end({ timeout: 5 }).catch(() => undefined);
-    }
-    // Null on Postgres, where these jobs ran through pg-boss instead of
-    // timers; their queued chains persist across the restart by design.
     if (eventLogCleanupDelay) clearTimeout(eventLogCleanupDelay);
     if (eventLogCleanupInterval) clearInterval(eventLogCleanupInterval);
     if (auditCleanupDelay) clearTimeout(auditCleanupDelay);
@@ -1282,35 +490,14 @@ async function main() {
     activityPurger?.stop();
     revokedKeyReaper.stop();
     authSessionCleaner?.stop();
-    pendingDeletePurger?.stop();
     rateLimitCleaner.stop();
     dcrClientCleaner?.stop();
     revokedGrantPurger?.stop();
     grantInactivityRetirer?.stop();
-    deviceCodeCleaner.stop();
     blobOrphanCleaner?.stop();
-    runtimeCredentialReaper?.stop();
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();
     bulkActionGc.stop();
-    // pg-boss's stop must be AWAITED: its graceful path runs failWip only
-    // after in-flight handlers settle, and failWip is what frees each
-    // job's active slot so the queued successor is fetchable on the next
-    // boot. Fire-and-forget here loses that race to process.exit below,
-    // and every deploy then stalls each mid-tick job until its
-    // expireInSeconds elapses.
-    // The supervisor's stop() drains the shared pg-boss. `boss` without
-    // `localRuntime` cannot happen: both exist on every Postgres boot
-    // (a runtime start failure aborts boot before this handler is
-    // registered) and neither exists on SQLite.
-    if (localRuntime) {
-      await withTimeout(
-        localRuntime.bridge.stop(),
-        SHUTDOWN_STEP_TIMEOUT_MS,
-      ).catch(() => undefined);
-      await localRuntime.runtime.stop().catch(() => undefined);
-    }
-
     // Each step bounded and reported separately: a shared catch produced a
     // warning that could not say which step overran, and it fired on every
     // production shutdown for a week before anything made it loud.
@@ -1406,20 +593,6 @@ function closeServer(server: {
     // close open for the whole grace period.
     server.closeIdleConnections?.();
   });
-}
-
-/**
- * Where this deployment's installed integrations are, or null.
- *
- * There is no default. Integrations are not part of this repository, so
- * nothing relative to the running bundle names a directory that would hold
- * them: the packaged image sets `MARFA_INTEGRATIONS_ROOT` to the tree it
- * staged, and anything else that has integrations sets it to wherever it
- * put them. Null is reported rather than swallowed, so a deployment that
- * expected integrations and reconciled none is told why.
- */
-function resolveIntegrationsRoot(): string | null {
-  return process.env.MARFA_INTEGRATIONS_ROOT ?? null;
 }
 
 main().catch((err: unknown) => {

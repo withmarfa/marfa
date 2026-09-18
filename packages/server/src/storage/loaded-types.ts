@@ -34,7 +34,6 @@ import { safeJsonParse } from "./json-utils.js";
 /** The shape both dialects' `custom_types` selects return. */
 export interface CustomTypeRow {
   id: string;
-  space_id: string;
   schema: string;
   /** `NOT NULL DEFAULT 'user'` in both dialects, so never absent. */
   origin: string;
@@ -76,7 +75,6 @@ export function toLoadedTypes(rows: readonly CustomTypeRow[]): LoadedType[] {
     if (!parsed) continue;
     reportUnknownOrigin(row.origin, row.id);
     results.push({
-      space_id: row.space_id,
       schema: parsed,
       origin: row.origin as LoadedType["origin"],
       ...(row.family !== null && {

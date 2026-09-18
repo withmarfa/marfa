@@ -8,26 +8,22 @@
 # source. Building first keeps local typechecks aligned with what CI sees
 # on a fresh install.
 #
-# Scope: SQLite only, only tests whose files changed against `origin/main`.
-# Target runtime: sub-30s for a typical small change. The slim gate
-# trades dual-dialect coverage for speed — CI runs the full PG + SQLite
-# matrix on every PR push, and `pnpm test:full` is the explicit local
-# full-matrix run for the pre-PR moment.
+# Scope: only tests whose files changed against `origin/main`. CI runs
+# the full suite on every PR push, and `pnpm test:full` is the explicit
+# local full run for the pre-PR moment.
 #
-# Why slim. A pre-push that runs the full ~1800-test dual-dialect suite
-# is slow enough that contributors and agents bypass it with
-# `--no-verify`. A hook that's bypassed isn't a gate. The slim shape
-# stays useful while keeping the load-bearing coverage in CI.
+# Why slim. A pre-push that runs the whole suite is slow enough that
+# contributors and agents bypass it with `--no-verify`. A hook that's
+# bypassed isn't a gate. The slim shape stays useful while keeping the
+# load-bearing coverage in CI.
 #
-# Skippable: `git push --no-verify`. Still authorized when the hook
-# hits transient infrastructure flake (Docker daemon down etc.) — but
-# the slim shape should make those cases rare.
+# Skippable: `git push --no-verify`.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
 
 echo "═══ pre-push: build + typecheck + lint + format:check + test:changed ═══"
-echo "(slim gate; full matrix is \`pnpm test:full\`. skip with --no-verify.)"
+echo "(slim gate; full run is \`pnpm test:full\`. skip with --no-verify.)"
 echo
 
 pnpm build
@@ -50,4 +46,4 @@ fi
 
 echo
 echo "═══ ✓ pre-push passed ═══"
-echo "Full local matrix: \`pnpm test:full\` (build + typecheck + lint + both dialects)"
+echo "Full local run: \`pnpm test:full\` (build + typecheck + lint + the whole suite)"

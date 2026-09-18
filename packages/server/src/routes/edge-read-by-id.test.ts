@@ -26,10 +26,7 @@ import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
-const spaceA = `edge-read-a-${Math.random().toString(36).slice(2, 10)}`;
-const spaceB = `edge-read-b-${Math.random().toString(36).slice(2, 10)}`;
 let keyA: string;
-let keyB: string;
 
 interface EdgeBody {
   edge: {
@@ -49,7 +46,6 @@ interface ErrorBody {
 }
 
 async function mintKey(
-  spaceId: string,
   over: {
     type_permissions?: Record<string, "read" | "write" | "none">;
     edge_permissions?: Record<string, "read" | "write">;
@@ -67,7 +63,6 @@ async function mintKey(
       is_operator: false,
     },
     hashApiKey(raw, TEST_API_KEY_SALT),
-    spaceId,
   );
   return raw;
 }
@@ -104,8 +99,7 @@ async function createEdge(
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  keyA = await mintKey(spaceA);
-  keyB = await mintKey(spaceB);
+  keyA = await mintKey();
 });
 
 afterAll(async () => {
@@ -165,18 +159,9 @@ describe("GET /edges/:id", () => {
     expect(res.status).toBe(401);
   });
 
-  it("404s across a space boundary rather than 403ing", async () => {
-    // The cloak update and delete already apply. A space-scoped caller must
-    // not learn that another space's edge exists, and a 403 would say so.
-    const { id } = await createEdge(keyA);
-    const res = await request(ctx.app, "GET", `/edges/${id}`, { key: keyB });
-    expect(res.status).toBe(404);
-    expect(((await res.json()) as ErrorBody).error.code).toBe("edge_not_found");
-  });
-
   it("refuses a caller without read on the source item's type", async () => {
     const { id } = await createEdge(keyA);
-    const key = await mintKey(spaceA, {
+    const key = await mintKey({
       type_permissions: { "core.file": "read" },
       edge_permissions: { "*": "read" },
     });
@@ -186,7 +171,7 @@ describe("GET /edges/:id", () => {
 
   it("refuses a caller without read on the edge type", async () => {
     const { id } = await createEdge(keyA);
-    const key = await mintKey(spaceA, {
+    const key = await mintKey({
       type_permissions: { "*": "read" },
       edge_permissions: { "in-thread": "read" },
     });
@@ -211,7 +196,7 @@ describe("GET /edges/:id", () => {
       { key: keyA, body: { state: "trashed" } },
     );
     expect(trashed.status).toBe(200);
-    const key = await mintKey(spaceA, {
+    const key = await mintKey({
       type_permissions: { "core.file": "read" },
       edge_permissions: { "*": "read" },
     });

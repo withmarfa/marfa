@@ -1,5 +1,5 @@
 import { getTypeSchema } from "@withmarfa/shared";
-import type { CoordinationStore, VersionStore } from "./interface.js";
+import type { VersionStore } from "./interface.js";
 import {
   computeVersionsToDelete,
   resolvePolicy,
@@ -20,7 +20,6 @@ export class VersionThinner {
     private versionStore: VersionStore,
     private globalDefaults: ResolvedPolicy,
     private intervalMs: number,
-    private coordination?: CoordinationStore,
   ) {}
 
   start(): void {
@@ -42,20 +41,14 @@ export class VersionThinner {
   }
 
   /** One tick, for schedulers that own the cadence themselves. Keeps the
-   *  coordination lock and failure logging the timer path applies. */
+   *  failure logging the timer path applies. */
   runOnce(): Promise<void> {
     return this.poll();
   }
 
   private async poll(): Promise<void> {
     try {
-      if (this.coordination) {
-        await this.coordination.withJobLock("version-thinning", () =>
-          this.doPoll(),
-        );
-      } else {
-        await this.doPoll();
-      }
+      await this.doPoll();
     } catch (err) {
       logJobTickFailure("Version thinning", err, this.stopped);
     }
@@ -69,11 +62,7 @@ export class VersionThinner {
 
     let totalDeleted = 0;
     for (const candidate of candidates) {
-      const deleted = await this.thinItem(
-        candidate.itemId,
-        candidate.type,
-        candidate.spaceId,
-      );
+      const deleted = await this.thinItem(candidate.itemId, candidate.type);
       totalDeleted += deleted;
     }
 
@@ -85,14 +74,9 @@ export class VersionThinner {
     }
   }
 
-  private async thinItem(
-    itemId: string,
-    itemType: string,
-    spaceId: string | null,
-  ): Promise<number> {
-    // Resolve the type within its owning space so a custom type's
-    // version_policy is honored; core types resolve regardless.
-    const typeSchema = getTypeSchema(itemType, spaceId);
+  private async thinItem(itemId: string, itemType: string): Promise<number> {
+    // Resolve the type so a custom type's version_policy is honored.
+    const typeSchema = getTypeSchema(itemType);
     const typePolicy = typeSchema?.version_policy;
     const policy = resolvePolicy(typePolicy, this.globalDefaults);
 

@@ -61,10 +61,7 @@ beforeAll(async () => {
     } as unknown as ApiKey);
     await next();
   });
-  app.route(
-    "/events",
-    eventRoutes(ctx.storage, { rlsEnforce: false, pgClient: null }),
-  );
+  app.route("/events", eventRoutes(ctx.storage));
 });
 
 afterAll(async () => {

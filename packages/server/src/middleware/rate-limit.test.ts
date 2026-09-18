@@ -34,9 +34,7 @@ async function buildCtx(): Promise<Ctx> {
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: join(tmpDir, "blobs"),
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -49,7 +47,6 @@ async function buildCtx(): Promise<Ctx> {
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: true,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -65,10 +62,7 @@ async function buildCtx(): Promise<Ctx> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 2,
     rateLimitWindowMs: 60_000,
     // Disable the aggregate per-identifier window for the per-path /
@@ -77,12 +71,10 @@ async function buildCtx(): Promise<Ctx> {
     // window, which the aggregate cap would otherwise trip. The
     // aggregate window has its own dedicated test context.
     rateLimitAggregateMultiplier: 0,
-    mcpEnabled: false,
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_rl_space_${suffix}`;
-  const space = await storage.spaces?.create("rate-limit");
   await storage.keys.create(
     {
       label: "rl-space",
@@ -93,7 +85,6 @@ async function buildCtx(): Promise<Ctx> {
       default_tier: "feed",
     },
     hashApiKey(rawKey, SALT),
-    space?.id,
   );
   await storage.settings.set("bootstrapped", "true");
 
@@ -251,9 +242,7 @@ async function buildAggCtx(): Promise<Ctx> {
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: join(tmpDir, "blobs"),
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -266,7 +255,6 @@ async function buildAggCtx(): Promise<Ctx> {
     apiKeySalt: SALT,
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: true,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -282,22 +270,17 @@ async function buildAggCtx(): Promise<Ctx> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     // defaultLimit 2 → GET path window resolves to 4. Aggregate
     // multiplier 2 → aggregate cap = defaultLimit * 2 = 4, keyed on the
     // identifier alone.
     rateLimitDefaultLimit: 2,
     rateLimitWindowMs: 60_000,
     rateLimitAggregateMultiplier: 2,
-    mcpEnabled: false,
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
   const rawKey = `marfa_k1_rl_agg_${suffix}`;
-  const space = await storage.spaces?.create("rate-limit-aggregate");
   await storage.keys.create(
     {
       label: "rl-agg-space",
@@ -308,7 +291,6 @@ async function buildAggCtx(): Promise<Ctx> {
       default_tier: "feed",
     },
     hashApiKey(rawKey, SALT),
-    space?.id,
   );
   await storage.settings.set("bootstrapped", "true");
 

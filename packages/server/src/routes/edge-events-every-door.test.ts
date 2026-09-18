@@ -29,7 +29,6 @@ import {
   runBulkActionAsync,
 } from "../test-utils.js";
 import type { EdgeEventWithId } from "../pubsub.js";
-import { seedStarterContent } from "../auth/starter-content.js";
 import { generateId } from "@withmarfa/shared";
 import type { TestContext } from "../test-utils.js";
 
@@ -386,15 +385,12 @@ describe("the remaining doors that write an edge", () => {
     // The `derived-from` edge is the whole point of a promotion: a device
     // told about the new item and not about the edge holds an item that
     // appears to have come from nowhere.
-    const mirror = await ctx.storage.items.create(
-      {
-        type: "core.note",
-        properties: { body: "an upstream record" },
-        source: "integration:acme.promotefixture",
-        source_id: `mirror-${Math.random().toString(36).slice(2, 8)}`,
-      },
-      ctx.spaceId,
-    );
+    const mirror = await ctx.storage.items.create({
+      type: "core.note",
+      properties: { body: "an upstream record" },
+      source: "integration:acme.promotefixture",
+      source_id: `mirror-${Math.random().toString(36).slice(2, 8)}`,
+    });
 
     let promotedId = "";
     const heard = await edgeEventsDuring(async () => {
@@ -496,26 +492,6 @@ describe("the two doors this suite would otherwise leave uncovered", () => {
     const event = await announced;
     expect(event.edge.source_id).toBe(source);
     expect(event.edge.target_id).toBe(target);
-    expect(event.edge.edge_type).toBe("references");
-  });
-
-  it("sign-up starter content announces the edge it seeds", async () => {
-    // Provisioning writes one `references` edge through the same shared
-    // helper. A space being provisioned has no subscribers of its own, so
-    // this is the one door whose silence nobody would ever report — which
-    // is why it gets a test rather than an assumption.
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const space = await spaces.create(
-      `starter-${Math.random().toString(36).slice(2, 8)}`,
-    );
-
-    const announced = nextEdgeEvent(
-      (e) => e.type === "edge_created" && e.edge.space_id === space.id,
-    );
-    await seedStarterContent(ctx.storage, space.id);
-
-    const event = await announced;
     expect(event.edge.edge_type).toBe("references");
   });
 });
@@ -652,64 +628,5 @@ describe("the properties the announcement itself has to hold", () => {
     expect(
       heard.filter((e) => e.type === "edge_deleted" && e.edge.id === edgeId),
     ).toHaveLength(0);
-  });
-
-  it("the batch deletes stop at the space they are given", async () => {
-    // The batch deletes take a space id now, and this pins the parameter
-    // rather than the route: `POST /items/bulk-actions` purge is
-    // `requireOperatorKey`, which refuses a space-bound key, so every purge
-    // through that door runs unscoped and cannot reach the fence. Tested
-    // at the store because that is where it is reachable — and where the
-    // next caller of these methods will meet it.
-    const spaces = ctx.storage.spaces;
-    if (!spaces) throw new Error("this test needs a space store");
-    const mine = await spaces.create(
-      `fence-mine-${Math.random().toString(36).slice(2, 8)}`,
-    );
-    const theirs = await spaces.create(
-      `fence-theirs-${Math.random().toString(36).slice(2, 8)}`,
-    );
-
-    const shared = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "target" } },
-      mine.id,
-    );
-    const mySource = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "my source" } },
-      mine.id,
-    );
-    const theirSource = await ctx.storage.items.create(
-      { type: "core.note", properties: { body: "their source" } },
-      theirs.id,
-    );
-
-    const myEdge = await ctx.storage.edges.createRaw(
-      {
-        source_id: mySource.id,
-        target_id: shared.id,
-        edge_type: "references",
-      },
-      mine.id,
-    );
-    // Reachable by the same target id, and belonging to another space.
-    const theirEdge = await ctx.storage.edges.createRaw(
-      {
-        source_id: theirSource.id,
-        target_id: shared.id,
-        edge_type: "references",
-      },
-      theirs.id,
-    );
-
-    const removed = await ctx.storage.edges.deleteByTargetBatch(
-      [shared.id],
-      undefined,
-      mine.id,
-    );
-    expect(removed.map((e) => e.id)).toEqual([myEdge.id]);
-    // Still there, and not reported as removed — a fence that only
-    // narrowed the return value would leave the row deleted and the
-    // subscriber merely uninformed.
-    expect(await ctx.storage.edges.get(theirEdge.id)).not.toBeNull();
   });
 });

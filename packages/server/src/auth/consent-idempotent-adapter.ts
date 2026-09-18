@@ -4,14 +4,15 @@
  * found — but that lookup keys on `(clientId, userId, referenceId)`, and
  * the underlying drizzle `create` is an unconditional INSERT with no
  * unique constraint to back it. A consent for the same `(clientId, userId)`
- * pair with a different (or newly-resolved) `referenceId` therefore slips
- * past the plugin's dedup and inserts a second row, leaving duplicate
- * consent records for one user-client relationship.
+ * pair with a different `referenceId` therefore slips past the plugin's
+ * dedup and inserts a second row, leaving duplicate consent records for one
+ * user-client relationship. Marfa writes no reference, so the plugin's own
+ * null is the only value the column carries.
  *
  * This wrapper makes the adapter's `create` on the `oauthConsent` model
  * idempotent on `(clientId, userId)` — the same pair the unique constraint
  * enforces. An existing row is updated in place (refreshing scopes +
- * updatedAt + referenceId, matching what the plugin would write) instead
+ * updatedAt, matching what the plugin would write) instead
  * of inserting a duplicate; a missing row falls through to the real
  * create. Every other model and method delegates untouched.
  *
@@ -101,17 +102,12 @@ export function withIdempotentConsent<
       }
 
       // Refresh the grant in place. Mirror the fields the plugin's own
-      // re-consent update writes (scopes + updatedAt) and additionally
-      // re-stamp referenceId so a space binding resolved on this consent
-      // supersedes whatever the prior row held — the row is the single
-      // record for this `(clientId, userId)` pair.
+      // re-consent update writes (scopes + updatedAt) — the row is the
+      // single record for this `(clientId, userId)` pair.
       const update: Record<string, unknown> = {
         scopes: args.data.scopes,
         updatedAt: args.data.updatedAt ?? new Date(),
       };
-      if ("referenceId" in args.data) {
-        update.referenceId = args.data.referenceId;
-      }
 
       await adapter.update({
         model: OAUTH_CONSENT_MODEL,

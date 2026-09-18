@@ -66,7 +66,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createTestContext,
-  markEmailVerified,
+  createTestAccount,
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
@@ -106,10 +106,8 @@ const bundleScopes = new Set(
  *  catch-up, so the catch-up is not just "the ceiling stopped mattering". */
 const NON_BUNDLE_SCOPE = "core.*:read";
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 /**
@@ -126,7 +124,7 @@ async function seedClient(
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -135,19 +133,13 @@ async function seedClient(
       };
     };
   };
-  const isPg = c.storage.betterAuthDialect === "pg";
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${randomBytes(5).toString("hex")}`,
     clientId,
     name: "Narrowing Test Client",
-    redirectUris: isPg ? [CALLBACK] : JSON.stringify([CALLBACK]),
-    scopes:
-      scopes === undefined
-        ? null
-        : isPg
-          ? [...scopes]
-          : JSON.stringify([...scopes]),
+    redirectUris: JSON.stringify([CALLBACK]),
+    scopes: scopes === undefined ? null : JSON.stringify([...scopes]),
     disabled: false,
     createdAt: now,
     updatedAt: now,
@@ -171,14 +163,7 @@ async function storedCeiling(
 
 async function signInUser(c: TestContext, email: string): Promise<string> {
   const password = "correct horse battery";
-  const signUpRes = await request(c.app, "POST", "/auth/sign-up/email", {
-    body: { email, password, name: "Test User" },
-    headers: { origin: ORIGIN },
-  });
-  if (signUpRes.status !== 200) {
-    throw new Error(`sign-up failed (${String(signUpRes.status)})`);
-  }
-  await markEmailVerified(c.storage, email);
+  await createTestAccount(c, email, password, "Test User");
   const signInRes = await request(c.app, "POST", "/auth/sign-in/email", {
     body: { email, password },
     headers: { origin: ORIGIN },
@@ -298,7 +283,7 @@ async function acceptConsent(
 
 describe("authorize scope narrowing", () => {
   it("a stale ceiling missing a live scope reaches consent instead of dead-ending", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-stale@example.com");
 
     // The production shape exactly: a ceiling frozen before a type landed,
@@ -330,7 +315,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("never offers a scope for a type this server no longer carries", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-retired@example.com");
 
     // The snapshot is stale in BOTH directions, and this is the second one:
@@ -379,7 +364,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("the token response names exactly the narrowed set", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-token@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
@@ -418,7 +403,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("still fails when nothing in the request is grantable", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-none@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
@@ -440,7 +425,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("treats an empty stored ceiling as a real ceiling, not an absent one", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-empty@example.com");
 
     // `client.scopes ?? opts.scopes` is null-coalescing, so `[]` does not
@@ -466,7 +451,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("refuses rather than silently dropping a session-critical scope", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-session@example.com");
 
     // A ceiling that omits `offline_access` — the shape of a client whose
@@ -493,7 +478,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("defaults an omitted scope to the live part of the ceiling", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-noscope@example.com");
     // A ceiling holding a scope for a deleted type. The plugin defaults an
     // omitted `scope` to this stored snapshot, which would put the dead
@@ -523,7 +508,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("leaves an omitted scope alone when the ceiling is fully live", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-noscope-live@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
@@ -554,7 +539,7 @@ describe("authorize scope narrowing", () => {
   // registered after it had. Nothing reported it, the consent screen went on
   // offering them, and no grant on either environment held any of the six.
   it("grants a client a bundle scope for a type registered after it was", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-aged-out@example.com");
 
     // The production shape: a ceiling frozen before the type landed.
@@ -607,7 +592,7 @@ describe("authorize scope narrowing", () => {
   // client gets when it omits `scope`, so a wholesale widening would turn
   // every no-scope authorize into a request for everything.
   it("widens by what was requested rather than to the whole bundle set", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-minimal@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
@@ -629,7 +614,7 @@ describe("authorize scope narrowing", () => {
   // The control. If the catch-up admitted anything requestable it would not
   // be a catch-up, it would be the ceiling quietly ceasing to exist.
   it("leaves the ceiling governing a scope no bundle advertises", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-wildcard@example.com");
 
     expect(buildAllowedScopes()).toContain(NON_BUNDLE_SCOPE);
@@ -657,7 +642,7 @@ describe("authorize scope narrowing", () => {
   // An empty ceiling is a deliberate statement that this client may have
   // nothing, and the catch-up must not read it as "not configured yet".
   it("does not fill in an empty ceiling", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-empty-ceiling@example.com");
     const clientId = await seedClient(ctx, []);
 
@@ -677,7 +662,7 @@ describe("authorize scope narrowing", () => {
   // be replacing a set that follows the registry with a snapshot that does
   // not — the exact defect, introduced by its own repair.
   it("does not write a ceiling onto a client that has none", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-null-ceiling@example.com");
     const clientId = await seedClient(ctx);
 
@@ -694,7 +679,7 @@ describe("authorize scope narrowing", () => {
   });
 
   it("a client with no stored ceiling tracks the live allowlist", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-null@example.com");
 
     const clientId = await seedClient(ctx);
@@ -718,7 +703,7 @@ describe("authorize scope narrowing", () => {
 
 describe("authorize scope narrowing on a form POST", () => {
   it("narrows a form POST exactly as it narrows a GET", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-post-stale@example.com");
 
     // The GET case's ceiling, unchanged: frozen before `core.task:read`
@@ -761,7 +746,7 @@ describe("authorize scope narrowing on a form POST", () => {
   });
 
   it("refuses rather than silently dropping a session-critical scope on a form POST", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-post-session@example.com");
 
     // A ceiling that omits `offline_access`. The refusal, not the reading,
@@ -789,7 +774,7 @@ describe("authorize scope narrowing on a form POST", () => {
   });
 
   it("follows the provider onto the body when the query carries parameters too", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-post-both@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 
@@ -833,7 +818,7 @@ describe("authorize scope narrowing on a form POST", () => {
   });
 
   it("leaves a POST whose parameters are only on the query entirely alone", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-post-queryonly@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
     const before = await storedCeiling(ctx, clientId);
@@ -870,7 +855,7 @@ describe("authorize scope narrowing on a form POST", () => {
   });
 
   it("carries a narrowed form POST through consent to a token", async () => {
-    ctx = await createTestContext({ authMode: "hosted" });
+    ctx = await createTestContext({});
     const cookie = await signInUser(ctx, "narrow-post-token@example.com");
     const clientId = await seedClient(ctx, ["openid", "core.note:read"]);
 

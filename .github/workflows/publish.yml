@@ -15,18 +15,15 @@ concurrency:
 jobs:
   require-green-ci:
     name: Require green CI
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     permissions:
       contents: read
       actions: read
     steps:
       # A tag points at a commit that already went through `ci.yml` on main:
-      # build, typecheck, lint, format, the SQLite and Postgres suites,
-      # fresh-migrate and the smoke tests. Re-running any of that here
-      # recomputes a known answer on the slowest runner in the estate, because
-      # publishing is pinned to the hosted lane for OIDC. On v11.0.0 that cost
-      # over 26 minutes for a suite the self-hosted pool finishes in about one.
+      # build, typecheck, lint, format and the suite. Re-running any of that
+      # here recomputes a known answer.
       #
       # So verify the result instead of recomputing it. That is strictly
       # stronger than what it replaces: nothing previously stopped a tag being
@@ -54,11 +51,11 @@ jobs:
   publish-dependency-chain:
     name: Publish dependency chain
     needs: require-green-ci
-    # Hardcoded hosted — npm OIDC trusted-publisher provenance only works on a
-    # GitHub-hosted runner; honoring CI_RUNNER (self-hosted) breaks the
-    # provenance attestation on publish. This workflow must not pick up the
-    # org/repo CI_RUNNER override the way the test workflows do.
-    runs-on: ubuntu-latest
+    # On the pool like every other workflow. npm's trusted publishing
+    # exchanges the job's OIDC token for a publish token on any runner;
+    # provenance attestation is generated only on a hosted runner, so a
+    # publish from here carries none.
+    runs-on: self-hosted
     timeout-minutes: 15
     permissions:
       contents: read
@@ -75,7 +72,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
       - run: pnpm install --frozen-lockfile
@@ -86,7 +82,6 @@ jobs:
       # Pack + publish pattern: pnpm pack resolves workspace:* specifiers
       # to actual versions in the resulting tarball; npm publish gives us
       # OIDC trusted-publisher auth. Neither tool alone does both.
-      # Provenance attaches automatically via OIDC.
       #
       # Each package is gated by a pre-check against the npm registry: if
       # the local version is already published, the publish step is
@@ -134,108 +129,3 @@ jobs:
         run: |
           pnpm pack
           npm publish withmarfa-sdk-*.tgz --access=public
-
-      # The authoring contract for an integration. Published because an
-      # integration lives in another repository and cannot depend on a
-      # workspace reference.
-      - name: Check @withmarfa/runtime-sdk publish status
-        id: check_runtime_sdk
-        working-directory: packages/runtime-sdk
-        run: |
-          local_version=$(node -p "require('./package.json').version")
-          published_versions=$(npm view @withmarfa/runtime-sdk versions --json 2>/dev/null || echo '[]')
-          if echo "$published_versions" | grep -q "\"$local_version\""; then
-            echo "@withmarfa/runtime-sdk@$local_version is already published — skipping"
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "@withmarfa/runtime-sdk@$local_version is new — will publish"
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish @withmarfa/runtime-sdk
-        if: steps.check_runtime_sdk.outputs.should_publish == 'true'
-        working-directory: packages/runtime-sdk
-        run: |
-          pnpm pack
-          npm publish withmarfa-runtime-sdk-*.tgz --access=public
-
-      # The harness an integration tests its handlers against, in memory,
-      # without booting a server. Published for the same reason as the kit
-      # above and one step further: an integration outside this repository
-      # cannot reach a workspace reference, and one that cannot run its own
-      # tests is not something a third party can be asked to maintain.
-      #
-      # After the kit deliberately, because it depends on it and `pnpm pack`
-      # resolves that workspace reference to a concrete version at pack time.
-      # Packing it before the kit's version exists on the registry produces a
-      # tarball nobody can install.
-      - name: Check @withmarfa/runtime-test publish status
-        id: check_runtime_test
-        working-directory: packages/runtime-test
-        run: |
-          local_version=$(node -p "require('./package.json').version")
-          published_versions=$(npm view @withmarfa/runtime-test versions --json 2>/dev/null || echo '[]')
-          if echo "$published_versions" | grep -q "\"$local_version\""; then
-            echo "@withmarfa/runtime-test@$local_version is already published — skipping"
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "@withmarfa/runtime-test@$local_version is new — will publish"
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish @withmarfa/runtime-test
-        if: steps.check_runtime_test.outputs.should_publish == 'true'
-        working-directory: packages/runtime-test
-        run: |
-          pnpm pack
-          npm publish withmarfa-runtime-test-*.tgz --access=public
-
-  publish-webhooks:
-    name: Publish webhooks
-    needs: require-green-ci
-    # Webhooks has no dependency on the ordered package chain, so it publishes
-    # independently once the tagged commit's CI result has been verified.
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-
-      # Node 24 ships with npm 11+, which has OIDC trusted-publisher support.
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: pnpm
-          registry-url: "https://registry.npmjs.org"
-
-      - run: pnpm install --frozen-lockfile
-
-      # `pnpm pack` publishes the built package output rather than the sources.
-      - run: pnpm build
-
-      - name: Check @withmarfa/webhooks publish status
-        id: check_webhooks
-        working-directory: packages/webhooks
-        run: |
-          local_version=$(node -p "require('./package.json').version")
-          published_versions=$(npm view @withmarfa/webhooks versions --json 2>/dev/null || echo '[]')
-          if echo "$published_versions" | grep -q "\"$local_version\""; then
-            echo "@withmarfa/webhooks@$local_version is already published — skipping"
-            echo "should_publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "@withmarfa/webhooks@$local_version is new — will publish"
-            echo "should_publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Publish @withmarfa/webhooks
-        if: steps.check_webhooks.outputs.should_publish == 'true'
-        working-directory: packages/webhooks
-        run: |
-          pnpm pack
-          npm publish withmarfa-webhooks-*.tgz --access=public

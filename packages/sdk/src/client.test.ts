@@ -20,13 +20,11 @@ import {
 } from "./errors.js";
 import type { Storage } from "@withmarfa/server";
 import type { Item } from "@withmarfa/shared";
-import { SPACE_PERMISSIONS } from "@withmarfa/shared";
 
 let client: MarfaClient;
 let testFetchFn: typeof globalThis.fetch;
 let spaceKey: string;
 let testStorage: Storage;
-let testSpaceId: string;
 let cleanup: () => void;
 
 function createTestFetch(app: {
@@ -54,9 +52,7 @@ beforeAll(async () => {
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: "",
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -69,7 +65,6 @@ beforeAll(async () => {
     apiKeySalt: "test-salt",
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -84,13 +79,9 @@ beforeAll(async () => {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: false,
-    seedStarterContent: false,
     authSecret: "test-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
   });
 
   testFetchFn = createTestFetch(app);
@@ -118,39 +109,29 @@ beforeAll(async () => {
       default_tier: "feed",
     }),
   });
-  const { key: operatorKey } = (await bootstrapRes.json()) as { key: string };
-  const operatorHeaders = {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${operatorKey}`,
-  };
-  const spaceRes = await testFetch("http://localhost/admin/spaces", {
+  // Bootstrap hands back the operator key, which is not a working key; the
+  // operator mints one through the same door, and a body naming nothing takes
+  // everything. The fixture runs as that working key, which is the setup keys
+  // mode is meant to follow.
+  const bootstrap = (await bootstrapRes.json()) as { key: string };
+  const workingRes = await testFetch("http://localhost/keys", {
     method: "POST",
-    headers: operatorHeaders,
-    body: JSON.stringify({ name: "sdk-test" }),
-  });
-  ({ id: testSpaceId } = (await spaceRes.json()) as { id: string });
-
-  // Named rather than implied: the working key used to carry a rank that
-  // bypassed the permission maps, and the maps and the permission list are now
-  // the whole of a credential's reach.
-  const workerRes = await testFetch(
-    `http://localhost/admin/spaces/${testSpaceId}/keys`,
-    {
-      method: "POST",
-      headers: operatorHeaders,
-      body: JSON.stringify({
-        label: "test-admin",
-        source: "sdk-test-admin",
-        default_tier: "feed",
-        space_permissions: [...SPACE_PERMISSIONS],
-        type_permissions: { "*": "write" },
-        extension_permissions: { "*": "write" },
-        edge_permissions: { "*": "write" },
-        metadata_permissions: { "*": "write" },
-      }),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${bootstrap.key}`,
     },
-  );
-  const { key } = (await workerRes.json()) as { key: string };
+    body: JSON.stringify({
+      label: "test-working",
+      source: "sdk-test",
+      default_tier: "library",
+    }),
+  });
+  if (workingRes.status !== 201) {
+    throw new Error(
+      `keys-mode working key mint answered ${String(workingRes.status)}: ${await workingRes.text()}`,
+    );
+  }
+  const key = ((await workingRes.json()) as { key: string }).key;
   spaceKey = key;
 
   client = new MarfaClient({
@@ -2237,16 +2218,13 @@ describe("the paging helpers and the system opt-in", () => {
       properties: { body: marker },
       tags: [marker],
     });
-    const device = await testStorage.items.create(
-      {
-        type: "system.device",
-        properties: { name: marker, kind: "laptop" },
-        tags: [marker],
-        source: "sdk-test",
-        tier: "library",
-      },
-      testSpaceId,
-    );
+    const device = await testStorage.items.create({
+      type: "system.device",
+      properties: { name: marker, kind: "laptop" },
+      tags: [marker],
+      source: "sdk-test",
+      tier: "library",
+    });
     return { noteId: note.id, deviceId: device.id };
   }
 

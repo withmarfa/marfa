@@ -16,9 +16,7 @@ async function main(): Promise<void> {
   const blob = new FilesystemBlobBackend(join(dir, "blobs"));
   const app = createApp(storage, blob, {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: "",
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -31,7 +29,6 @@ async function main(): Promise<void> {
     apiKeySalt: "s",
     corsOrigins: [],
     cdnBaseUrl: "",
-    authMode: "keys",
     rateLimitEnabled: false,
     enableHsts: false,
     auditRetentionDays: 90,
@@ -47,13 +44,9 @@ async function main(): Promise<void> {
     errorWebhookUrl: "",
     trustedProxyCidrs: [],
     authBaseUrl: "http://localhost:0",
-    authAllowSignup: true,
-    seedStarterContent: false,
     authSecret: "test-auth-secret",
-    oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
   });
   const raw = "marfa_k1_bench";
   await storage.keys.create(

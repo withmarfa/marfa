@@ -42,7 +42,6 @@ interface RestoreResult {
 }
 
 async function buildArchive(opts: {
-  spaceId: string | null;
   itemLines: string[];
   edgeLines: string[];
   blobs?: { hash: string; data: Buffer }[];
@@ -58,7 +57,6 @@ async function buildArchive(opts: {
     version: 1,
     format: "marfa-archive-v1",
     created_at: new Date().toISOString(),
-    space_id: opts.spaceId,
     item_count: opts.itemLines.length,
     edge_count: opts.edgeLines.length,
     blob_count: blobs.length,
@@ -112,17 +110,12 @@ const A = "01912345-0000-7000-8000-0000000000a1";
 const B = "01912345-0000-7000-8000-0000000000b2";
 const C = "01912345-0000-7000-8000-0000000000c3";
 
-/**
- * Restore into the context's own space. The route is operator-gated and the
- * operator key carries no space of its own, so the space is named on the
- * query string.
- */
+/** Restore an archive. The route is operator-gated. */
 async function restoreInto(
   ctx: TestContext,
-  space: string,
   archive: Buffer,
 ): Promise<Response> {
-  return ctx.app.request(`/admin/restore-archive?target_space_id=${space}`, {
+  return ctx.app.request(`/admin/restore-archive`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${ctx.operatorKey}`,
@@ -138,9 +131,7 @@ async function restoreEdges(
   itemTypes: Record<string, string> = {},
 ): Promise<{ result: RestoreResult; edgeCount: number }> {
   const ctx = await newContext();
-  const space = ctx.spaceId;
   const archive = await buildArchive({
-    spaceId: space,
     itemLines: [
       noteLine(A, "a", itemTypes[A]),
       noteLine(B, "b", itemTypes[B]),
@@ -148,10 +139,10 @@ async function restoreEdges(
     ],
     edgeLines,
   });
-  const res = await restoreInto(ctx, space, archive);
+  const res = await restoreInto(ctx, archive);
   expect(res.status).toBe(200);
   const result = (await res.json()) as RestoreResult;
-  const edges = await ctx.storage.edges.list({ spaceId: space });
+  const edges = await ctx.storage.edges.list({});
   return { result, edgeCount: edges.data.length };
 }
 
@@ -261,45 +252,20 @@ describe("restore validates the edges it writes", () => {
 });
 
 describe("a refused restore leaves no blobs behind", () => {
-  it("writes nothing when the manifest names a different space", async () => {
-    const ctx = await newContext();
-    const space = ctx.spaceId;
-    const blob = blobOf(`refused blob ${space}`);
-    const archive = await buildArchive({
-      // A space the restore is not targeting: the 403 fires before the
-      // transaction, and the blobs used to be written before the 403.
-      spaceId: "some-other-space",
-      itemLines: [noteLine(A, "a")],
-      edgeLines: [],
-      blobs: [blob],
-    });
-
-    const res = await restoreInto(ctx, space, archive);
-    expect(res.status).toBe(403);
-
-    // Bytes and row both. They were registered, not merely dropped on disk,
-    // so a refused restore used to leave the target space permanently larger
-    // and its quota usage permanently higher.
-    expect(await ctx.storage.blobs.get(blob.hash, space)).toBeNull();
-    expect(await ctx.blobBackend.exists(blob.hash)).toBe(false);
-  });
-
   it("still restores blobs when the archive is accepted", async () => {
     const ctx = await newContext();
-    const space = ctx.spaceId;
-    const blob = blobOf(`accepted blob ${space}`);
+    const blob = blobOf(`accepted blob`);
     const archive = await buildArchive({
-      spaceId: space,
       itemLines: [noteLine(A, "a")],
       edgeLines: [],
       blobs: [blob],
     });
 
-    const res = await restoreInto(ctx, space, archive);
+    const res = await restoreInto(ctx, archive);
     expect(res.status).toBe(200);
     const result = (await res.json()) as RestoreResult;
     expect(result.blobs_imported).toBe(1);
-    expect(await ctx.storage.blobs.get(blob.hash, space)).not.toBeNull();
+    expect(await ctx.storage.blobs.get(blob.hash)).not.toBeNull();
     expect(await ctx.blobBackend.exists(blob.hash)).toBe(true);
   });
 });

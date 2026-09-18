@@ -40,16 +40,13 @@ import {
  * that names a type nobody has registered is the case this exists to
  * refuse, until the type is registered again.
  */
-export function assertTypeFilter(
-  type: string | undefined,
-  spaceId: string | undefined,
-): void {
+export function assertTypeFilter(type: string | undefined): void {
   if (!type) return;
   if (type === GLOBAL_TYPE_WILDCARD || !isValidTypePattern(type)) {
     throw new MarfaError(ErrorCode.VALIDATION_ERROR, "Invalid type identifier");
   }
   if (type.endsWith(".*")) return;
-  if (getTypeSchema(type, spaceId) === undefined) {
+  if (getTypeSchema(type) === undefined) {
     throw new MarfaError(ErrorCode.UNKNOWN_TYPE, `Unknown type: ${type}`);
   }
 }

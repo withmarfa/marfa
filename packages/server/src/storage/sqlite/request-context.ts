@@ -13,7 +13,7 @@ import type { DrizzleDb } from "./connection.js";
  * challenge is threading `tx` to every store method without changing
  * every signature in the storage layer.
  *
- * This module mirrors the PG version (`storage/pg/request-context.ts`):
+ * Two parts:
  *
  * 1. `sqliteRequestContext` — an AsyncLocalStorage holding the active
  *    transaction object. Set by the `.transaction(...)` interception

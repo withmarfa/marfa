@@ -184,9 +184,8 @@ describe("RateLimitStore — multi-instance cluster-shared invariant", () => {
   it("concurrent increments against the same key see strictly increasing counts", async () => {
     ctx = await createTestContext();
     // Fire N parallel upserts; the post-increment counts the store
-    // returns must be the set {1, 2, ..., N} in some order. Postgres
-    // row-level locking on the upsert guarantees serialization; SQLite
-    // is single-process so BEGIN IMMEDIATE serializes identically.
+    // returns must be the set {1, 2, ..., N} in some order: BEGIN
+    // IMMEDIATE serializes the upserts.
     const N = 20;
     const now = new Date(1_000_000).toISOString();
     const results = await Promise.all(
@@ -286,9 +285,8 @@ describe("RateLimitStore — batched increments", () => {
       60_000,
       now,
     );
-    // Without deduplication a multi-row upsert on one key is an error on
-    // Postgres ("cannot affect row a second time"), so one entry at
-    // count 1 is the load-bearing assertion.
+    // Without deduplication a multi-row upsert on one key would count the
+    // key twice, so one entry at count 1 is the load-bearing assertion.
     expect(map.size).toBe(1);
     expect(map.get("dup-key")?.count).toBe(1);
 

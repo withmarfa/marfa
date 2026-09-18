@@ -162,9 +162,6 @@ export { SPACE_ROOT } from "./scope-roots.js";
  */
 export type SpacePermission =
   | "space.webhooks"
-  | "space.connections"
-  | "space.upstream_access"
-  | "space.credentials"
   | "space.keys"
   | "space.app_grants"
   | "space.settings"
@@ -194,14 +191,11 @@ export type SpacePermission =
  */
 export const SPACE_PERMISSIONS: readonly SpacePermission[] = [
   "space.webhooks",
-  "space.connections",
   "space.schema",
   "space.usage",
   "space.settings",
   "space.audit_read",
   "space.item_purge",
-  "space.upstream_access",
-  "space.credentials",
   "space.keys",
   "space.app_grants",
 ];
@@ -495,16 +489,14 @@ const SCOPE_RE = /^(\*|[a-z][a-z0-9_.*-]*):(read|write)$/;
 // the only expression reaching a space's runtime-registered relation edges
 // short of the global wildcard.
 //
-// **Narrowing was held up on what the merge owes a literal a validator
-// refuses but a stored grant still carries, and that question already had an
-// answer.** `device-scope-merge.ts` sorts every scope into `resolvableScopes`
-// or `membershipScopes`, and an unparseable literal goes to the second: it is
-// carried, unioned, never pruned, and never enters the map a candidate is
-// measured against. So a stored `edge.*.*:write` does not stop being reasoned
-// about when it stops parsing — it moves to the branch that cannot draw a
-// wrong conclusion from it, which is strictly safer than the one it was on.
-// The two regressions in `device-scope-merge.test.ts` keep their subjects and
-// only their preconditions move.
+// **Narrowing was held up on what a merge owes a literal a validator
+// refuses but a stored grant still carries, and that question has an
+// answer.** A stored literal is carried by membership: the device approval
+// unions the ticked set into the standing grant and prunes nothing, and a
+// candidate is measured against the map only after it parses. So a stored
+// `edge.*.*:write` does not stop being reasoned about when it stops parsing —
+// it is carried whole, which is strictly safer than being reasoned about
+// wrongly.
 const EDGE_SCOPE_RE =
   /^edge\.(\*|[a-z][a-z0-9_-]*(?:\.[a-z0-9_-]+)*(?:\.\*)?):(read|write)$/;
 // `metadata.<subresource>:<verb>` — sub-resource is a single dot-free

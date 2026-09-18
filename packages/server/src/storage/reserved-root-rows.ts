@@ -77,7 +77,6 @@ export function reportReservedRootRows(
       row_id: id,
       reserved_root: root,
       origin: row.origin,
-      space_id: row.space_id,
       action: "reported, not removed",
     });
   }

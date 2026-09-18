@@ -10,9 +10,8 @@
  * was the exception and, not coincidentally, the one honest counter in the
  * uninstall pipeline. These are the other three brought up to it.
  *
- * Runs against real storage in whichever dialect the suite is running, so
- * the Postgres `RETURNING` and the SQLite `rowsAffected` shapes are held to
- * the same contract rather than only one of them being covered.
+ * Runs against real storage, so the `rowsAffected` shape is held to the
+ * contract rather than assumed.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -47,7 +46,6 @@ describe("keys.revoke", () => {
         is_operator: true,
       },
       hashApiKey(`marfa_k1_affected_rows_${suffix}`, TEST_API_KEY_SALT),
-      undefined,
     );
 
     expect(await ctx.storage.keys.revoke(key.id)).toBe("revoked");
@@ -62,60 +60,5 @@ describe("keys.revoke", () => {
   // skips the space fence was told success for both.
   it("names a key that does not exist rather than lumping it in", async () => {
     expect(await ctx.storage.keys.revoke(randomUUID())).toBe("not_found");
-  });
-});
-
-describe("connectionOauthTokens.delete", () => {
-  it("answers true for the delete that removes the row and false when there was none", async () => {
-    const connectionId = randomUUID();
-
-    // Nothing stored yet: the honest answer is that nothing was deleted.
-    expect(
-      await ctx.storage.connectionOauthTokens.delete(connectionId, undefined),
-    ).toBe(false);
-
-    await ctx.storage.connectionOauthTokens.upsert({
-      connection_id: connectionId,
-      access_token_encrypted: "a|b|c",
-      refresh_token_encrypted: null,
-      expires_at: new Date(Date.now() + 3_600_000).toISOString(),
-      scopes: ["read"],
-    });
-
-    expect(
-      await ctx.storage.connectionOauthTokens.delete(connectionId, undefined),
-    ).toBe(true);
-    expect(
-      await ctx.storage.connectionOauthTokens.delete(connectionId, undefined),
-    ).toBe(false);
-  });
-});
-
-describe("inboundWebhooks.setDisabled", () => {
-  it("answers true only when the flag moves", async () => {
-    const id = randomUUID();
-    await ctx.storage.inboundWebhooks.create({
-      id,
-      connection_id: randomUUID(),
-      secret_encrypted: "a|b|c",
-      verification_method: "hmac-sha256",
-      events: ["thing.happened"],
-    });
-
-    expect(await ctx.storage.inboundWebhooks.setDisabled(id, true)).toBe(true);
-    // Back on again: the flag moved, so this one counts too. The store
-    // answers "did this call change the row", not "is the row disabled".
-    expect(await ctx.storage.inboundWebhooks.setDisabled(id, false)).toBe(true);
-    // Already where it is being put. Counting this would report a
-    // subscription an uninstall disabled when something else had.
-    expect(await ctx.storage.inboundWebhooks.setDisabled(id, false)).toBe(
-      false,
-    );
-  });
-
-  it("answers false for a subscription that does not exist", async () => {
-    expect(
-      await ctx.storage.inboundWebhooks.setDisabled(randomUUID(), true),
-    ).toBe(false);
   });
 });

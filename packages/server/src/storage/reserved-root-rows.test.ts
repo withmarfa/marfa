@@ -16,7 +16,7 @@ import * as logger from "../middleware/logger.js";
 function row(part: Partial<LoadedType> & { id: string }): LoadedType {
   const { id, ...rest } = part;
   const schema: TypeSchema = { id, version: 1, fields: {} };
-  return { space_id: "", schema, origin: "user", ...rest };
+  return { schema, origin: "user", ...rest };
 }
 
 let logSpy: MockInstance<typeof logger.log>;

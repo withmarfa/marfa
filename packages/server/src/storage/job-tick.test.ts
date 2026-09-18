@@ -2,12 +2,12 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isConnectionLostError, logJobTickFailure } from "./job-tick.js";
-import { RuntimeCredentialReaper } from "./retention.js";
+import { RevokedKeyReaper } from "./retention.js";
 import type { Storage } from "./interface.js";
 
-/** Shaped the way postgres.js raises them: a plain Error carrying a code. */
-function pgError(code: string): Error {
-  return Object.assign(new Error(`write ${code} db.example:5432`), { code });
+/** Shaped the way libsql raises them: an Error carrying a code. */
+function dbError(code: string): Error {
+  return Object.assign(new Error(`libsql ${code}`), { code });
 }
 
 interface CapturedLine {
@@ -38,29 +38,20 @@ afterEach(() => {
 });
 
 describe("isConnectionLostError", () => {
-  // The codes postgres.js rejects in-flight queries with when the pool
-  // closes. The boot-time retryable set carries none of them, so a
-  // classifier built on that alone would have missed every real instance.
-  it.each(["CONNECTION_ENDED", "CONNECTION_DESTROYED", "CONNECTION_CLOSED"])(
-    "recognizes %s",
-    (code) => {
-      expect(isConnectionLostError(pgError(code))).toBe(true);
-    },
-  );
-
-  it("recognizes the network-shaped failures the boot wait already knows", () => {
-    expect(isConnectionLostError(pgError("ECONNRESET"))).toBe(true);
+  // The code libsql rejects a query with once the client is closed.
+  it("recognizes CLIENT_CLOSED", () => {
+    expect(isConnectionLostError(dbError("CLIENT_CLOSED"))).toBe(true);
   });
 
-  it("follows the causal chain, since postgres.js wraps some failures", () => {
+  it("follows the causal chain, since a wrapped failure carries the code on its cause", () => {
     const wrapped = new Error("query failed", {
-      cause: pgError("CONNECTION_DESTROYED"),
+      cause: dbError("CLIENT_CLOSED"),
     });
     expect(isConnectionLostError(wrapped)).toBe(true);
   });
 
   it("rejects a failure the statement caused itself", () => {
-    expect(isConnectionLostError(pgError("42703"))).toBe(false);
+    expect(isConnectionLostError(dbError("SQLITE_ERROR"))).toBe(false);
     expect(isConnectionLostError(new Error("column does not exist"))).toBe(
       false,
     );
@@ -72,38 +63,28 @@ describe("isConnectionLostError", () => {
 describe("logJobTickFailure", () => {
   it("stands a cancelled tick down at info", () => {
     const captured = captureLog();
-    logJobTickFailure(
-      "Runtime credential reap",
-      pgError("CONNECTION_DESTROYED"),
-      true,
-    );
+    logJobTickFailure("Revoked key reap", dbError("CLIENT_CLOSED"), true);
     captured.restore();
 
     expect(captured.lines).toHaveLength(1);
     expect(captured.lines[0]?.level).toBe("info");
-    expect(captured.lines[0]?.message).toBe(
-      "Runtime credential reap stood down",
-    );
+    expect(captured.lines[0]?.message).toBe("Revoked key reap stood down");
   });
 
   it("keeps error for a connection failure while the job is still running", () => {
     const captured = captureLog();
-    logJobTickFailure(
-      "Runtime credential reap",
-      pgError("CONNECTION_DESTROYED"),
-      false,
-    );
+    logJobTickFailure("Revoked key reap", dbError("CLIENT_CLOSED"), false);
     captured.restore();
 
     expect(captured.lines[0]?.level).toBe("error");
-    expect(captured.lines[0]?.message).toBe("Runtime credential reap error");
+    expect(captured.lines[0]?.message).toBe("Revoked key reap error");
   });
 
   it("keeps error for a genuine query failure during shutdown", () => {
     // Being stopped is not on its own a reason to discount a failure: a
     // broken statement is broken whenever it runs.
     const captured = captureLog();
-    logJobTickFailure("Runtime credential reap", pgError("42703"), true);
+    logJobTickFailure("Revoked key reap", dbError("SQLITE_ERROR"), true);
     captured.restore();
 
     expect(captured.lines[0]?.level).toBe("error");
@@ -114,50 +95,43 @@ describe("a retention job interrupted by shutdown", () => {
   function rejectingStorage(err: Error): Storage {
     return {
       keys: {
-        revokeExpiredRuntimeCredentials: () => Promise.reject(err),
-        revokeRuntimeCredentialsWithoutExpiryOlderThan: () =>
-          Promise.resolve(0),
-        deleteRevokedRuntimeCredentialsOlderThan: () => Promise.resolve(0),
+        deleteRevokedKeysOlderThan: () => Promise.reject(err),
       },
     } as unknown as Storage;
   }
 
   it("reports at error while running and at info once stopped", async () => {
-    const reaper = new RuntimeCredentialReaper(
-      rejectingStorage(pgError("CONNECTION_DESTROYED")),
-      3_600_000,
+    const reaper = new RevokedKeyReaper(
+      rejectingStorage(dbError("CLIENT_CLOSED")),
       3_600_000,
     );
 
     const running = captureLog();
-    await reaper.pollForTest();
+    await reaper.runScheduled();
     running.restore();
 
-    // Shutdown stops every job before it closes the pool, so this ordering
+    // Shutdown stops every job before it closes the client, so this ordering
     // is the one the process actually produces.
     reaper.stop();
 
     const stopped = captureLog();
-    await reaper.pollForTest();
+    await reaper.runScheduled();
     stopped.restore();
 
     expect(running.lines[0]?.level).toBe("error");
     expect(stopped.lines[0]?.level).toBe("info");
-    expect(stopped.lines[0]?.message).toBe(
-      "Runtime credential reap stood down",
-    );
+    expect(stopped.lines[0]?.message).toBe("Revoked key reap stood down");
   });
 
   it("still reports a real fault at error after shutdown began", async () => {
-    const reaper = new RuntimeCredentialReaper(
+    const reaper = new RevokedKeyReaper(
       rejectingStorage(new Error("relation api_keys does not exist")),
-      3_600_000,
       3_600_000,
     );
     reaper.stop();
 
     const captured = captureLog();
-    await reaper.pollForTest();
+    await reaper.runScheduled();
     captured.restore();
 
     expect(captured.lines[0]?.level).toBe("error");
