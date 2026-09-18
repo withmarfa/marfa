@@ -25,10 +25,10 @@ pnpm test:conformance
 pnpm marfa:down
 ```
 
-`pnpm marfa:up` builds the workspace packages if they are not
-built, starts the server with `tsx` (never watch mode), waits for `/health`,
-reads the one-time bootstrap secret from the server's own log, mints the first
-key with it, and writes `.marfa-state/env`. The state directory holds the
+`pnpm marfa:up` builds the workspace packages if they are not built, starts
+the server with `tsx` (never watch mode), waits for `/health`, reads the
+one-time bootstrap secret from the server's own log, mints the first key with
+it, and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the blob folder, the server log, the pid and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
 
@@ -121,6 +121,6 @@ lane, boots that same checkout's server on SQLite with `pnpm marfa:up`, runs
 no pinned server commit and no second checkout: the tree under test is the
 tree the suite runs against.
 
-Typecheck and formatting are not repeated there. The repository's own
+Typecheck and formatting are not repeated there. The repository root's
 `pnpm typecheck` and `pnpm format:check` reach this package, and both run in
 the `CI (SQLite)` job.

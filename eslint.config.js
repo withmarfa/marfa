@@ -122,22 +122,25 @@ export default [
       "**/_ignore/**",
       // The Rust core workspace; its Node binding is linted where it lives.
       "core/",
-      // The conformance suite, which is held by `tsc --noEmit` and Prettier
-      // rather than by this config.
+      // The conformance suite, held by `conformance/tsconfig.json` and
+      // Prettier rather than by this config.
       //
-      // Two reasons, and the first is the load-bearing one. A black-box
-      // suite asserts over what a server sent, not over what a type says it
-      // must have sent; its client types are hand-written declarations of
-      // what the contract claims, so the checks that `no-unnecessary-
-      // condition` and `no-unnecessary-type-assertion` call redundant are
-      // exactly the ones a referee should keep. Linting it under
-      // `strictTypeChecked` would delete assertions in the name of tidiness.
+      // The rules that fire are the ones that read a declared type as the
+      // truth, and in this directory it is not. The fixtures assert over
+      // what a server sent, against hand-written declarations of what the
+      // contract claims it sends, so the checks `no-unnecessary-condition`
+      // and `no-unnecessary-type-assertion` call redundant are exactly the
+      // ones a referee should keep. The suite's tsconfig does not extend
+      // `tsconfig.base.json`, so its types are weaker again: without
+      // `noUncheckedIndexedAccess` an array index reads as defined, and
+      // every `?? ""` behind one is reported as pointless when removing it
+      // would be a defect. Turning that on instead is not a small change —
+      // it reports 107 times across the fixtures.
       //
-      // The second is that the suite arrived written against a different
-      // config, and the difference is style: 148 of its 341 reports were
-      // `${count}` where this config wants `String(count)`. Rewriting a
-      // fixture corpus whose readability is the specification, to satisfy a
-      // preference, is a poor trade.
+      // Style is the rest of it: 148 of the 341 reports were `${count}`
+      // where this config wants `String(count)`. Rewriting a fixture corpus
+      // whose readability is the specification, to satisfy a preference, is
+      // a poor trade.
       "conformance/",
     ],
   },

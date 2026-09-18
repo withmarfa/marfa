@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync, existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * Every citation in `spec/` must name a fixture that exists: a file under
@@ -8,7 +9,9 @@ import { resolve } from "node:path";
  * A statement whose citation does not resolve is a statement nothing asserts.
  */
 
-const root = resolve(process.cwd());
+// From this file rather than from the working directory, which is the package
+// root only when the run was started there.
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const specDir = resolve(root, "spec");
 const suitesDir = resolve(root, "src/suites");
 

@@ -25,7 +25,7 @@ This starts the server on `http://localhost:8600` with a local SQLite database.
 ## Code style
 
 - TypeScript strict mode, ESM-only
-- Prettier with single quotes (run `pnpm format`)
+- Prettier on its defaults, no config file (run `pnpm format`)
 - ESLint (run `pnpm lint`)
 - Explicit `import type` for type-only imports
 - File extensions required in imports (`.js` for TS files)
