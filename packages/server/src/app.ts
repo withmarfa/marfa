@@ -62,12 +62,10 @@ import { authConsentRoutes } from "./routes/auth-consent.js";
 import { authErrorRoutes } from "./routes/auth-error.js";
 import { loggerMiddleware } from "./middleware/logger.js";
 import { otelCorrelationMiddleware } from "./middleware/otel-correlation.js";
-import { rlsSpaceContextMiddleware } from "./middleware/rls-space-context.js";
 import {
   idempotencyMiddleware,
   IDEMPOTENT_WRITE_DOORS,
 } from "./middleware/idempotency.js";
-import type { PgClient, PgDb } from "./storage/pg/connection.js";
 import { healthRoutes } from "./routes/health.js";
 export function createApp(
   storage: Storage,
@@ -398,10 +396,10 @@ export function createApp(
   // lost a response can ask what its first attempt did instead of asking
   // the door again and being told about the second ask.
   //
-  // **Registered ahead of the RLS wrapper deliberately.** A claim has to
-  // commit whether or not the write's own transaction does; inside the
-  // wrapper it would roll back with a failed write and the retry would
-  // then write for real, which is the defect this removes.
+  // **Registered outside any write transaction deliberately.** A claim has
+  // to commit whether or not the write's own transaction does; inside it
+  // the claim would roll back with a failed write and the retry would then
+  // write for real, which is the defect this removes.
   //
   // Registered per door through Hono's own router rather than matched by
   // hand: the table is the registered patterns, so the coverage test can
@@ -413,22 +411,6 @@ export function createApp(
     if (method === undefined || path === undefined) continue;
     app.on(method, path, idempotency);
   }
-
-  // Postgres RLS request-level enforcement. Wraps each space-bounded
-  // request in a transaction with `SET LOCAL ROLE marfa_app` and
-  // `set_config('marfa.space_id', $space, true)` so the per-table RLS
-  // policies actually filter queries. Pass-through when
-  // `MARFA_RLS_ENFORCE=false`, when storage is SQLite (`pgDb` undefined),
-  // or when the request has no space on its api key (the operator key /
-  // public routes). See `middleware/rls-space-context.ts` for the full
-  // contract — including the streaming-response exemption.
-  app.use(
-    "*",
-    rlsSpaceContextMiddleware({
-      rlsEnforce: config.rlsEnforce ?? false,
-      db: (storage.pgDb as PgDb | undefined) ?? null,
-    }),
-  );
 
   // Better Auth setup. Instance is created up front so it can be passed
   // into authRoutes (the OAuth consent screen consumes its cookie-based
@@ -635,34 +617,7 @@ export function createApp(
     adminArchiveRoutes(storage, blobBackend, config.authMode),
   );
   app.route("/admin", adminPlatformTypeRoutes(storage));
-  // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
-  // session-level RLS on a reserved pool connection — for /export's whole
-  // bounded response, and for /events only during the replay phase (live
-  // SSE delivery runs off the emitter and holds no connection). SQLite +
-  // space-less callers continue to run on the owner connection (no
-  // DB-level fence).
-  const streamingRoutesOptions = {
-    rlsEnforce: config.rlsEnforce ?? false,
-    // Prefer the dedicated stream client (direct/session-mode endpoint) so
-    // streaming's session-level `SET ROLE` can't strand on the app's
-    // transaction-mode pooled connections; fall back to the main client when
-    // no direct endpoint is configured.
-    pgClient:
-      ((storage.pgStreamClient ?? storage.pgClient) as PgClient | undefined) ??
-      null,
-  };
-  // `/events` also makes one bounded, request-shaped read before its body
-  // starts — the log head it announces on connect — which takes the
-  // ordinary pool and the ordinary transaction fence rather than a
-  // streaming reservation.
-  const eventsRoutesOptions = {
-    ...streamingRoutesOptions,
-    pgDb: (storage.pgDb as PgDb | undefined) ?? null,
-  };
-  app.route(
-    "/export",
-    exportRoutes(storage, blobBackend, streamingRoutesOptions),
-  );
+  app.route("/export", exportRoutes(storage, blobBackend));
   app.route(
     "/auth",
     authRoutes(
@@ -746,7 +701,6 @@ export function createApp(
   app.route(
     "/events",
     eventRoutes(storage, {
-      ...eventsRoutesOptions,
       maxViewers: config.sseMaxViewers ?? 0,
     }),
   );

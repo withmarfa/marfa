@@ -29,9 +29,7 @@ async function buildCtx(isProduction: boolean): Promise<Ctx> {
   const app = createApp(storage, blobBackend, {
     isProduction,
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: join(tmpDir, "blobs"),
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,

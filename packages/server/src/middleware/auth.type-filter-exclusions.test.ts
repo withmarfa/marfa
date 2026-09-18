@@ -12,7 +12,7 @@
  * `auth.type-filter-agreement.test.ts`, which is the acceptance; these are
  * the unit assertions underneath it. Asserting on a `GET /items` response
  * instead would prove nothing either way: the storage layer's own space
- * fence and Postgres RLS can hide system rows independently, so the route
+ * fence can hide system rows independently, so the route
  * passes with the filter broken.
  *
  * How a sign-in's granted scopes reach this same map is not the subject
@@ -199,8 +199,8 @@ describe("computeTypeFilter — explicit no-access entries", () => {
   it("is independent of the space, because the space fence is not its job", () => {
     // The old filter enumerated `listTypes(space)`, so it could not name
     // another space's type — a property of the enumeration rather than a
-    // security boundary. Cross-space isolation is `spaceCondition` in both
-    // item stores plus Postgres RLS, and both still apply. Pinned so the
+    // security boundary. Cross-space isolation is `spaceCondition` in the
+    // item store, which still applies. Pinned so the
     // removal of the enumeration is not later read as having dropped a
     // fence that lived somewhere else all along.
     const perms: Record<string, TypePermission> = {

@@ -8,19 +8,9 @@ export default defineConfig({
     // ./dist/instrumentation.js` before the main entry so HTTP
     // instrumentation patches modules before they load.
     instrumentation: "src/instrumentation.ts",
-    // Standalone migrator so an image-based deploy can run migrations
-    // (`node dist/migrate.js`) without tsx — used by the docker-compose
-    // self-host path.
+    // Standalone migrator so a deployment can run migrations
+    // (`node dist/migrate.js`) without tsx.
     migrate: "src/storage/migrate.ts",
-    // Ships for the same reason the migrator does: a managed database accepts
-    // connections only from inside its own network, so the deployment host is
-    // the only place this can run, and there is no checkout there to run tsx
-    // against.
-    "seed-oauth-clients": "src/scripts/seed-oauth-clients.ts",
-    // The hosted pre-deploy step: migrations then OAuth client seeding, in one
-    // process, because Railway execs the pre-deploy command rather than running
-    // it through a shell and `a && b` silently runs only `a`.
-    predeploy: "src/scripts/predeploy.ts",
   },
   format: ["esm"],
   // Declarations for the one entry anything imports. `exports` exposes
@@ -28,17 +18,11 @@ export default defineConfig({
   // their generated declarations came to between 13 and 507 bytes each while
   // costing a full type-graph pass apiece in the dts worker.
   //
-  // That cost was not free. Adding a sixth entry took the worker past the
-  // memory it gets inside the image build, and deploys to both environments
-  // failed with ERR_WORKER_OUT_OF_MEMORY having passed every local build and
-  // the whole CI matrix, none of which built the image. The `Server image`
-  // workflow does now, on merges, so the next thing that grows past that
-  // ceiling turns `main` red rather than blocking a release.
+  // That cost was not free. Adding a sixth entry once took the worker past
+  // the memory it had in a container build, and the deploy failed with
+  // ERR_WORKER_OUT_OF_MEMORY having passed every local build.
   dts: { entry: { lib: "src/lib.ts" } },
   clean: true,
   target: "node20",
-  // pg-boss opens its own pg pool and creates the pgboss schema; resolve it
-  // from node_modules at runtime rather than bundling it. Only the local (pg)
-  // integration substrate imports it, dynamically.
-  external: ["@withmarfa/shared", "pg-boss"],
+  external: ["@withmarfa/shared"],
 });

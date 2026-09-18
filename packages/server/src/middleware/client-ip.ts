@@ -21,7 +21,7 @@
  * Some platforms cannot be expressed as a CIDR list. They terminate every
  * connection at an edge whose addresses are undocumented and free to
  * change, and they overwrite a single header with the client address —
- * Railway sends `X-Real-IP` and no `X-Forwarded-For` at all. Pinning a
+ * Some proxies send `X-Real-IP` and no `X-Forwarded-For` at all. Pinning a
  * CIDR there means guessing at a range the platform never promised, and
  * getting it wrong fails silently: every request resolves to the edge, so
  * per-client rate limiting collapses into one bucket and every audit row

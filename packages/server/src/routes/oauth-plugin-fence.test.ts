@@ -105,10 +105,8 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
   return match[1];
 }
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 interface InsertingDb {
@@ -121,7 +119,7 @@ interface InsertingDb {
 }
 
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -142,11 +140,9 @@ async function authUserIdFor(c: TestContext, email: string): Promise<string> {
 /** A client row for the consent row to point at, and something a successful
  *  `create-client` or `delete-client` would visibly change. */
 async function seedClient(c: TestContext): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as InsertingDb;
-  const isPg = c.storage.betterAuthDialect === "pg";
-  const asColumn = (v: readonly string[]): unknown =>
-    isPg ? [...v] : JSON.stringify(v);
+  const asColumn = (v: readonly string[]): unknown => JSON.stringify(v);
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   const now = new Date();
   const op = db.insert(schema.auth_oauth_client).values({
@@ -174,7 +170,7 @@ async function seedConsent(
   clientId: string,
   authUserId: string,
 ): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as InsertingDb;
   const now = new Date();
   const id = `cons_${Math.random().toString(36).slice(2)}`;
@@ -182,10 +178,7 @@ async function seedConsent(
     id,
     clientId,
     userId: authUserId,
-    scopes:
-      c.storage.betterAuthDialect === "pg"
-        ? SEEDED_SCOPES
-        : JSON.stringify(SEEDED_SCOPES),
+    scopes: JSON.stringify(SEEDED_SCOPES),
     consentGiven: true,
     createdAt: now,
     updatedAt: now,
@@ -201,7 +194,7 @@ async function consentScopes(
   clientId: string,
   authUserId: string,
 ): Promise<string[][]> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -227,7 +220,7 @@ async function consentScopes(
 }
 
 async function countClients(c: TestContext): Promise<number> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as {
     select: () => { from: (table: unknown) => Promise<unknown[]> };
   };

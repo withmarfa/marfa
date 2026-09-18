@@ -1,16 +1,7 @@
 /**
- * Cross-dialect FTS parity.
- *
- * The two dialects have different mechanics — SQLite uses an FTS5 virtual
- * table (`items_fts`) populated at write time; PG uses a `tsvector`-typed
- * column (`search_vector`) on `items` populated at write time, queried via
- * a GIN index. Both consult the shared `extractSearchableText` helper for
- * "what text contributes to FTS for this item", so the same fixture should
- * produce the same query results across dialects.
- *
- * The suite runs against whichever dialect the test process targets
- * (`DB_DIALECT=sqlite` or `pg`). The CI matrix runs both, so a regression
- * in either dialect surfaces as a failed PR check.
+ * Full-text search over the FTS5 virtual table (`items_fts`), populated at
+ * write time from the shared `extractSearchableText` helper, which decides
+ * what text contributes to FTS for an item.
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
@@ -122,8 +113,7 @@ describe("FTS dialect parity", () => {
     expect(publicHits.map((h) => h.item.id)).toContain(secretItem.id);
 
     // internal_secret content should NOT match — the field is
-    // searchable: false. Without this, PG would index every string
-    // property at query time, bypassing the opt-out.
+    // searchable: false, so it must not be indexed at write time.
     const secretHits = await search("quagga");
     expect(secretHits.map((h) => h.item.id)).not.toContain(secretItem.id);
   });

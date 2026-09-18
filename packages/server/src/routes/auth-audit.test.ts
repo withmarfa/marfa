@@ -161,26 +161,13 @@ describe("auth audit-row hardening", () => {
       return_to: "/",
     });
     // Read the verification row that better-auth wrote.
-    const verRows = (
+    const verRows = (await (
       ctx.storage as unknown as {
-        __sqliteAll?: (q: string) => Promise<unknown[]>;
-        __pgClient?: (q: string) => Promise<unknown[]>;
+        __sqliteAll: (q: string) => Promise<unknown[]>;
       }
-    ).__sqliteAll
-      ? ((await (
-          ctx.storage as unknown as {
-            __sqliteAll: (q: string) => Promise<unknown[]>;
-          }
-        ).__sqliteAll(
-          `SELECT identifier FROM auth_verification WHERE identifier LIKE 'reset-password:%' ORDER BY created_at DESC LIMIT 1`,
-        )) as { identifier: string }[])
-      : ((await (
-          ctx.storage as unknown as {
-            __pgClient: (q: string) => Promise<unknown[]>;
-          }
-        ).__pgClient(
-          `SELECT identifier FROM auth_verification WHERE identifier LIKE 'reset-password:%' ORDER BY created_at DESC LIMIT 1`,
-        )) as { identifier: string }[]);
+    ).__sqliteAll(
+      `SELECT identifier FROM auth_verification WHERE identifier LIKE 'reset-password:%' ORDER BY created_at DESC LIMIT 1`,
+    )) as { identifier: string }[];
     const token = verRows[0]?.identifier.slice("reset-password:".length);
     expect(token).toBeTruthy();
 

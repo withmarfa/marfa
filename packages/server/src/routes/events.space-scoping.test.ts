@@ -47,13 +47,7 @@ function makeApp(spaceId: string | undefined): Hono<AppEnv> {
     c.set("apiKey", keyFor(spaceId));
     await next();
   });
-  app.route(
-    "/events",
-    eventRoutes(ctx.storage, {
-      rlsEnforce: false,
-      pgClient: null,
-    }),
-  );
+  app.route("/events", eventRoutes(ctx.storage, {}));
   return app;
 }
 

@@ -31,8 +31,6 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 const SALT = "test-salt";
 
-const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
-
 /** Sign up through the real hosted path so the provisioning hook runs. */
 async function signUp(
   c: TestContext,
@@ -105,23 +103,14 @@ async function countHandles(
  * situation that cannot occur.
  */
 async function runBackfillMigration(storage: Storage): Promise<void> {
-  const file = isPg()
-    ? "../../drizzle/pg/0072_backfill_account_holder_items.sql"
-    : "../../drizzle/sqlite/0059_backfill_account_holder_items.sql";
+  const file = "../../drizzle/sqlite/0059_backfill_account_holder_items.sql";
   const sql = readFileSync(new URL(file, import.meta.url), "utf8")
     .replace(/\btenant_id\b/g, "space_id")
     .replace(/\btenants\b/g, "spaces");
-  if (isPg()) {
-    const s = storage as unknown as {
-      __pgClient: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(sql);
-  } else {
-    const s = storage as unknown as {
-      __sqliteRun: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-    };
-    await s.__sqliteRun(sql, []);
-  }
+  const s = storage as unknown as {
+    __sqliteRun: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+  };
+  await s.__sqliteRun(sql, []);
 }
 
 describe("account-holder provisioning", () => {

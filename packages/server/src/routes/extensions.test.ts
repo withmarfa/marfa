@@ -57,8 +57,8 @@ afterAll(async () => {
 });
 
 // Audit writes in the route handlers are fire-and-forget
-// (`void storage.audit.log(...)`). Under Postgres the write is genuinely
-// async — poll briefly so the test doesn't race the pending insert.
+// (`void storage.audit.log(...)`) — poll briefly so the test doesn't race
+// the pending insert.
 interface AuditRow {
   action: string;
   resource_id: string | null;

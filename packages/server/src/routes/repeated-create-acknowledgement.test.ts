@@ -326,9 +326,8 @@ describe("the gates an acknowledgement still runs", () => {
     // Matching the trashed natural-key branch it sits beside.
     //
     // Scoped to this item's own id rather than counting the whole table.
-    // Audit writes are fire-and-forget and genuinely async on Postgres,
-    // so a global count races every other test's pending inserts — which
-    // is exactly how this first failed, on the Postgres dialect only.
+    // Audit writes are fire-and-forget, so a global count races every
+    // other test's pending inserts — which is exactly how this first failed.
     const id = generateId();
     expect((await createNote(id)).status).toBe(201);
     // Wait for the create's own row, so the comparison below is against a

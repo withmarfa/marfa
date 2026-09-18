@@ -42,59 +42,56 @@ const seeded: Record<string, unknown>[] = [
   { empty_obj: {}, empty_arr: [], escaped: 'quote " backslash \\ newline\n' },
 ];
 
-describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
-  "0062 items properties migration",
-  () => {
-    it("converts existing text rows to JSONB blobs, object-equivalently", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await db.execute(OLD_ITEMS);
-        for (let i = 0; i < seeded.length; i++) {
-          await db.execute({
-            sql: `INSERT INTO items (id, type, properties, created_at, updated_at, timestamp)
+describe("0062 items properties migration", () => {
+  it("converts existing text rows to JSONB blobs, object-equivalently", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await db.execute(OLD_ITEMS);
+      for (let i = 0; i < seeded.length; i++) {
+        await db.execute({
+          sql: `INSERT INTO items (id, type, properties, created_at, updated_at, timestamp)
                   VALUES (?, 'core.note', ?, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
-            args: [`item-${String(i)}`, JSON.stringify(seeded[i])],
-          });
-        }
-
-        for (const stmt of MIGRATION.split("--> statement-breakpoint")) {
-          const sql = stmt
-            .split("\n")
-            .filter((l) => !l.trimStart().startsWith("--"))
-            .join("\n")
-            .trim();
-          if (sql.length > 0) await db.execute(sql);
-        }
-
-        const rows = await db.execute(
-          "SELECT id, typeof(properties) AS enc, json(properties) AS props FROM items ORDER BY id",
-        );
-        expect(rows.rows.length).toBe(seeded.length);
-        for (let i = 0; i < seeded.length; i++) {
-          const row = rows.rows[i] as unknown as {
-            id: string;
-            enc: string;
-            props: string;
-          };
-          expect(row.enc).toBe("blob");
-          expect(JSON.parse(row.props)).toEqual(seeded[i]);
-        }
-
-        // The rebuild must put every index back, the unique dedup included.
-        const indexes = await db.execute("PRAGMA index_list('items')");
-        const names = indexes.rows.map((r) => (r as { name?: unknown }).name);
-        for (const expected of [
-          "idx_items_type",
-          "idx_items_state",
-          "idx_items_created_at",
-          "idx_items_timestamp",
-          "idx_items_source_dedup",
-        ]) {
-          expect(names).toContain(expected);
-        }
-      } finally {
-        db.close();
+          args: [`item-${String(i)}`, JSON.stringify(seeded[i])],
+        });
       }
-    });
-  },
-);
+
+      for (const stmt of MIGRATION.split("--> statement-breakpoint")) {
+        const sql = stmt
+          .split("\n")
+          .filter((l) => !l.trimStart().startsWith("--"))
+          .join("\n")
+          .trim();
+        if (sql.length > 0) await db.execute(sql);
+      }
+
+      const rows = await db.execute(
+        "SELECT id, typeof(properties) AS enc, json(properties) AS props FROM items ORDER BY id",
+      );
+      expect(rows.rows.length).toBe(seeded.length);
+      for (let i = 0; i < seeded.length; i++) {
+        const row = rows.rows[i] as unknown as {
+          id: string;
+          enc: string;
+          props: string;
+        };
+        expect(row.enc).toBe("blob");
+        expect(JSON.parse(row.props)).toEqual(seeded[i]);
+      }
+
+      // The rebuild must put every index back, the unique dedup included.
+      const indexes = await db.execute("PRAGMA index_list('items')");
+      const names = indexes.rows.map((r) => (r as { name?: unknown }).name);
+      for (const expected of [
+        "idx_items_type",
+        "idx_items_state",
+        "idx_items_created_at",
+        "idx_items_timestamp",
+        "idx_items_source_dedup",
+      ]) {
+        expect(names).toContain(expected);
+      }
+    } finally {
+      db.close();
+    }
+  });
+});

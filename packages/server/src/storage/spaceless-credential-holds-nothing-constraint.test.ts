@@ -26,11 +26,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createClient } from "@libsql/client";
-import postgres from "postgres";
-import { runPgMigrations, runSqliteMigrations } from "./migrate.js";
-
-const isPg = (process.env.DB_DIALECT ?? "sqlite") === "pg";
-const adminUrl = process.env.MARFA_TEST_PG_ADMIN_URL ?? "";
+import { runSqliteMigrations } from "./migrate.js";
 
 const NOW = "2026-01-02T03:04:05.000Z";
 const WIDE = '{"*":"write"}';
@@ -92,7 +88,7 @@ function valuesFor(
   return values;
 }
 
-describe.skipIf(isPg)("the SQLite space-less-holds-nothing constraint", () => {
+describe("the SQLite space-less-holds-nothing constraint", () => {
   const workDir = mkdtempSync(join(tmpdir(), "marfa-spaceless-check-"));
   afterAll(() => {
     rmSync(workDir, { recursive: true, force: true });
@@ -156,72 +152,3 @@ describe.skipIf(isPg)("the SQLite space-less-holds-nothing constraint", () => {
     ).rejects.toThrow(new RegExp(CONSTRAINT));
   });
 });
-
-describe.skipIf(!isPg || !adminUrl)(
-  "the Postgres space-less-holds-nothing constraint",
-  () => {
-    const dbName = `marfa_spaceless_check_${Math.random().toString(36).slice(2, 10)}`;
-    let admin: postgres.Sql | null = null;
-
-    afterAll(async () => {
-      if (!admin) return;
-      await admin.unsafe(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-      await admin.end({ timeout: 5 });
-    });
-
-    it("refuses a space-less row carrying a permission, and admits the two shapes that are legal", async () => {
-      admin = postgres(adminUrl, { max: 1, onnotice: () => undefined });
-      await admin.unsafe(`CREATE DATABASE ${dbName}`);
-      const url = adminUrl.replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
-      await runPgMigrations(url);
-
-      const sql = postgres(url, { max: 2, onnotice: () => undefined });
-      try {
-        await sql`INSERT INTO spaces (id, name, created_at) VALUES ('space-a', 'A', ${NOW})`;
-
-        // The row is handed to postgres.js as an object, so the column list
-        // and the values both come from `EMPTY` rather than from two
-        // hand-kept positional lists that agree until one of them does not.
-        const insert = (
-          id: string,
-          spaceId: string | null,
-          isOperator: boolean,
-          over?: [PermissionColumn, string],
-        ) => {
-          const row = {
-            id,
-            space_id: spaceId,
-            key_hash: `hash-${id}`,
-            label: id,
-            source: id,
-            is_operator: isOperator,
-            created_at: NOW,
-            ...valuesFor(over),
-          };
-          return sql`INSERT INTO api_keys ${sql(row)}`;
-        };
-
-        for (const over of OVER_FULL) {
-          await expect(
-            insert(`over-${over[0]}`, null, true, over),
-            over[0],
-          ).rejects.toThrow(new RegExp(CONSTRAINT));
-        }
-
-        await insert("operator", null, true);
-        await insert("working", "space-a", false, ["type_permissions", WIDE]);
-
-        const rows = await sql<{ id: string }[]>`
-          SELECT id FROM api_keys ORDER BY id
-        `;
-        expect(rows.map((r) => r.id)).toEqual(["operator", "working"]);
-
-        await expect(
-          sql`UPDATE api_keys SET type_permissions = ${WIDE} WHERE id = 'operator'`,
-        ).rejects.toThrow(new RegExp(CONSTRAINT));
-      } finally {
-        await sql.end({ timeout: 5 });
-      }
-    });
-  },
-);

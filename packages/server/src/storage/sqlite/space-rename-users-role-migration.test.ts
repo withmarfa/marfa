@@ -53,71 +53,68 @@ const roles = async (db: Awaited<ReturnType<typeof fixture>>) =>
     (r) => `${r.id as string}:${r.role as string}`,
   );
 
-describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
-  "0079 the space rename reaches the users table",
-  () => {
-    it("moves a stale role forward", async () => {
-      const db = await fixture();
-      try {
-        await db.execute("INSERT INTO users VALUES ('u1', 'tenant_admin')");
-        await replay(db);
-        expect(await roles(db)).toEqual(["u1:space_admin"]);
-      } finally {
-        db.close();
-      }
-    });
+describe("0079 the space rename reaches the users table", () => {
+  it("moves a stale role forward", async () => {
+    const db = await fixture();
+    try {
+      await db.execute("INSERT INTO users VALUES ('u1', 'tenant_admin')");
+      await replay(db);
+      expect(await roles(db)).toEqual(["u1:space_admin"]);
+    } finally {
+      db.close();
+    }
+  });
 
-    it("leaves every other role alone", async () => {
-      const db = await fixture();
-      try {
-        await db.execute("INSERT INTO users VALUES ('u1', 'member')");
-        await db.execute("INSERT INTO users VALUES ('u2', 'admin')");
-        await replay(db);
-        expect(await roles(db)).toEqual(["u1:member", "u2:admin"]);
-      } finally {
-        db.close();
-      }
-    });
+  it("leaves every other role alone", async () => {
+    const db = await fixture();
+    try {
+      await db.execute("INSERT INTO users VALUES ('u1', 'member')");
+      await db.execute("INSERT INTO users VALUES ('u2', 'admin')");
+      await replay(db);
+      expect(await roles(db)).toEqual(["u1:member", "u2:admin"]);
+    } finally {
+      db.close();
+    }
+  });
 
-    it("leaves a row that is already correct untouched", async () => {
-      const db = await fixture();
-      try {
-        await db.execute("INSERT INTO users VALUES ('u1', 'space_admin')");
-        await replay(db);
-        expect(await roles(db)).toEqual(["u1:space_admin"]);
-      } finally {
-        db.close();
-      }
-    });
+  it("leaves a row that is already correct untouched", async () => {
+    const db = await fixture();
+    try {
+      await db.execute("INSERT INTO users VALUES ('u1', 'space_admin')");
+      await replay(db);
+      expect(await roles(db)).toEqual(["u1:space_admin"]);
+    } finally {
+      db.close();
+    }
+  });
 
-    it("does not touch api_keys, which an earlier migration already moved", async () => {
-      const db = await fixture();
-      try {
-        // Seeded stale on purpose. Seeding a row that is already correct
-        // would pass whether or not someone widened the statement to both
-        // tables, which is no guard at all. The rename migration already
-        // moved `api_keys`; a second pass over it would be harmless today
-        // and misleading forever, because it would suggest the earlier one
-        // had not run.
-        await db.execute("INSERT INTO api_keys VALUES ('k1', 'tenant_admin')");
-        await replay(db);
-        const rows = await db.execute("SELECT role FROM api_keys");
-        expect(rows.rows.map((r) => r.role)).toEqual(["tenant_admin"]);
-      } finally {
-        db.close();
-      }
-    });
+  it("does not touch api_keys, which an earlier migration already moved", async () => {
+    const db = await fixture();
+    try {
+      // Seeded stale on purpose. Seeding a row that is already correct
+      // would pass whether or not someone widened the statement to both
+      // tables, which is no guard at all. The rename migration already
+      // moved `api_keys`; a second pass over it would be harmless today
+      // and misleading forever, because it would suggest the earlier one
+      // had not run.
+      await db.execute("INSERT INTO api_keys VALUES ('k1', 'tenant_admin')");
+      await replay(db);
+      const rows = await db.execute("SELECT role FROM api_keys");
+      expect(rows.rows.map((r) => r.role)).toEqual(["tenant_admin"]);
+    } finally {
+      db.close();
+    }
+  });
 
-    it("is idempotent", async () => {
-      const db = await fixture();
-      try {
-        await db.execute("INSERT INTO users VALUES ('u1', 'tenant_admin')");
-        await replay(db);
-        await replay(db);
-        expect(await roles(db)).toEqual(["u1:space_admin"]);
-      } finally {
-        db.close();
-      }
-    });
-  },
-);
+  it("is idempotent", async () => {
+    const db = await fixture();
+    try {
+      await db.execute("INSERT INTO users VALUES ('u1', 'tenant_admin')");
+      await replay(db);
+      await replay(db);
+      expect(await roles(db)).toEqual(["u1:space_admin"]);
+    } finally {
+      db.close();
+    }
+  });
+});

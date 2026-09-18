@@ -293,10 +293,9 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
   }
 
   async revokeAuthorizationCodesForClient(clientId: string): Promise<number> {
-    // No `RETURNING` here, deliberately, where the Postgres twin needs one:
-    // libsql reports zero rows affected for any statement that returns data,
-    // so making the two symmetric would restore the always-zero count in the
-    // direction nothing fails on.
+    // No `RETURNING` here, deliberately: libsql reports zero rows affected
+    // for any statement that returns data, so a `RETURNING` would restore
+    // the always-zero count in the direction nothing fails on.
     const result = await this.db.run(sql`
       DELETE FROM auth_verification
       WHERE json_extract(value, '$.type') = 'authorization_code'
@@ -709,8 +708,9 @@ export class SqliteOauthProviderStore implements OauthProviderStore {
     scopes: readonly string[];
   }): Promise<void> {
     const now = new Date();
-    // One statement, arbitrated by `uq_auth_oauth_consent_client_user`; see
-    // the Postgres twin for why the update half re-stamps `referenceId`.
+    // One statement, arbitrated by `uq_auth_oauth_consent_client_user`. The
+    // update half re-stamps `referenceId` so a re-consent under a new space
+    // binding moves the standing grant with it.
     await this.db
       .insert(auth_oauth_consent)
       .values({

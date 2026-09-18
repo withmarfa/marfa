@@ -419,7 +419,7 @@ describe("a displaced writer cannot touch the claim that replaced it", () => {
  * store actually does.
  */
 describe("every writer of a claim row is fenced", () => {
-  const STORE_SOURCES = ["pg", "sqlite"] as const;
+  const STORE_SOURCES = ["sqlite"] as const;
 
   /**
    * Every method that touches the table, and what it does there.

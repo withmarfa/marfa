@@ -190,8 +190,8 @@ describe("GET /audit", () => {
 
     // Look up the audit row for the item we just created — most reliable
     // way to find our own row vs. unrelated noise from other tests.
-    // Poll briefly because `audit.log` is fire-and-forget — under PG the
-    // insert sometimes lands after this GET would otherwise return.
+    // Poll briefly because `audit.log` is fire-and-forget — the insert can
+    // land after this GET would otherwise return.
     const body = await waitForAudit(
       async () => {
         const listRes = await request(
@@ -359,11 +359,8 @@ describe("GET /audit", () => {
   });
 
   // NOTE: this test creates a SECOND TestContext with custom config.
-  // Under PG, `createTestContext` truncates the shared database, so
-  // any test running AFTER this one against the original `ctx` would
-  // see its key wiped. Keep this test LAST in the describe
-  // block — fresh-context tests must not run before any test that
-  // relies on the file-level fixture.
+  // Keep this test LAST in the describe block so fresh-context tests do
+  // not run before any test that relies on the file-level fixture.
   it("honors TRUSTED_PROXY_CIDRS when stamping the audit IP", async () => {
     // Stand up a fresh app whose config trusts 10.0.0.0/8 as a proxy
     // CIDR. A request whose peer is in 10.0.0.0/8 and whose

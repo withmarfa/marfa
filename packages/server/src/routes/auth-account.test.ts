@@ -39,21 +39,6 @@ async function readLatestVerification(
   storage: TestContext["storage"],
   prefix: string,
 ): Promise<string | null> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const pg = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pg.__pgClient) return null;
-    const rows = (await pg.__pgClient(
-      `SELECT identifier FROM auth_verification
-        WHERE identifier LIKE $1
-        ORDER BY created_at DESC LIMIT 1`,
-      [`${prefix}%`],
-    )) as { identifier: string }[];
-    if (rows.length === 0) return null;
-    return rows[0]?.identifier.slice(prefix.length) ?? null;
-  }
   const sqlite = storage as unknown as {
     __sqliteAll?: (q: string) => Promise<unknown[]>;
   };
@@ -347,26 +332,13 @@ describe("account deletion routes", () => {
 
     // Backdate expiresAt.
     const past = new Date(Date.now() - 60_000);
-    const dialect = process.env.DB_DIALECT ?? "sqlite";
-    if (dialect === "pg") {
-      const pg = ctx.storage as unknown as {
-        __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-      };
-      // `client.unsafe(query, params)` doesn't accept Date binds —
-      // send ISO; the TIMESTAMP column parses them.
-      await pg.__pgClient?.(
-        `UPDATE auth_verification SET expires_at = $1 WHERE identifier = $2`,
-        [past.toISOString(), `account-delete:${token ?? ""}`],
-      );
-    } else {
-      const sqlite = ctx.storage as unknown as {
-        __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-      };
-      await sqlite.__sqliteRun?.(
-        `UPDATE auth_verification SET expires_at = ? WHERE identifier = ?`,
-        [Math.floor(past.getTime() / 1000), `account-delete:${token ?? ""}`],
-      );
-    }
+    const sqlite = ctx.storage as unknown as {
+      __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+    };
+    await sqlite.__sqliteRun?.(
+      `UPDATE auth_verification SET expires_at = ? WHERE identifier = ?`,
+      [Math.floor(past.getTime() / 1000), `account-delete:${token ?? ""}`],
+    );
     const confirm = await request(
       ctx.app,
       "GET",
@@ -655,19 +627,6 @@ async function countCancelTokens(
   storage: TestContext["storage"],
   authUserId: string,
 ): Promise<number> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const pg = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pg.__pgClient) return 0;
-    const rows = (await pg.__pgClient(
-      `SELECT COUNT(*)::int AS c FROM auth_verification
-        WHERE value = $1 AND identifier LIKE 'account-cancel:%'`,
-      [authUserId],
-    )) as { c: number }[];
-    return rows[0]?.c ?? 0;
-  }
   const sqlite = storage as unknown as {
     __sqliteAll?: (q: string) => Promise<unknown[]>;
   };
@@ -921,31 +880,10 @@ async function reinsertCancelToken(
   token: string,
   authUserId: string,
 ): Promise<void> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const id = randomBytes(16).toString("hex");
   const identifier = `account-cancel:${token}`;
   const expiresAt = new Date(Date.now() + 30 * 86_400_000);
   const now = new Date();
-  if (dialect === "pg") {
-    const pg = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pg.__pgClient) throw new Error("pg client unavailable in test");
-    await pg.__pgClient(
-      `INSERT INTO auth_verification
-         (id, identifier, value, expires_at, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        id,
-        identifier,
-        authUserId,
-        expiresAt.toISOString(),
-        now.toISOString(),
-        now.toISOString(),
-      ],
-    );
-    return;
-  }
   const sqlite = storage as unknown as {
     __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
   };
@@ -1061,25 +999,14 @@ describe("cancel route honesty when cascade wins the race", () => {
     );
     const authUserId = byEmail?.auth_user_id ?? "";
     expect(authUserId).toBeTruthy();
-    const dialect = process.env.DB_DIALECT ?? "sqlite";
     const nowIso = new Date().toISOString();
-    if (dialect === "pg") {
-      const pg = ctx.storage as unknown as {
-        __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-      };
-      await pg.__pgClient?.(
-        `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = $1 WHERE id = $2`,
-        [nowIso, authUserId],
-      );
-    } else {
-      const sqlite = ctx.storage as unknown as {
-        __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-      };
-      await sqlite.__sqliteRun?.(
-        `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = ? WHERE id = ?`,
-        [nowIso, authUserId],
-      );
-    }
+    const sqlite = ctx.storage as unknown as {
+      __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+    };
+    await sqlite.__sqliteRun?.(
+      `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = ? WHERE id = ?`,
+      [nowIso, authUserId],
+    );
     const afterFlip = await lifecycle.getAccountLifecycle(authUserId);
     expect(afterFlip?.deletion_state).toBe("pending_deletion");
 
@@ -1192,24 +1119,13 @@ async function flipToPendingDeletion(
   const authUserId = byEmail?.auth_user_id ?? "";
   if (!authUserId) throw new Error(`no auth_user for ${email}`);
   const nowIso = new Date().toISOString();
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const pg = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    await pg.__pgClient?.(
-      `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = $1 WHERE id = $2`,
-      [nowIso, authUserId],
-    );
-  } else {
-    const sqlite = storage as unknown as {
-      __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-    };
-    await sqlite.__sqliteRun?.(
-      `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = ? WHERE id = ?`,
-      [nowIso, authUserId],
-    );
-  }
+  const sqlite = storage as unknown as {
+    __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+  };
+  await sqlite.__sqliteRun?.(
+    `UPDATE auth_user SET deletion_state = 'pending_deletion', pending_deletion_at = ? WHERE id = ?`,
+    [nowIso, authUserId],
+  );
   const after = await lifecycle.getAccountLifecycle(authUserId);
   expect(after?.deletion_state).toBe("pending_deletion");
   return authUserId;

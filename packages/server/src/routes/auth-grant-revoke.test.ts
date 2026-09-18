@@ -65,10 +65,7 @@ async function seedClient(c: TestContext): Promise<string> {
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -77,8 +74,7 @@ async function seedClient(c: TestContext): Promise<string> {
       };
     };
   };
-  const asColumn = (v: readonly string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? [...v] : JSON.stringify(v);
+  const asColumn = (v: readonly string[]): unknown => JSON.stringify(v);
   const redirectUris = asColumn([`${ORIGIN}/callback`]);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
@@ -106,10 +102,7 @@ async function seedAccessToken(
   scopes: string[],
 ): Promise<string> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -127,8 +120,7 @@ async function seedAccessToken(
     referenceId: null,
     expiresAt: new Date(Date.now() + 3600_000),
     createdAt: new Date(),
-    scopes:
-      c.storage.betterAuthDialect === "pg" ? scopes : JSON.stringify(scopes),
+    scopes: JSON.stringify(scopes),
   });
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
   return tokenHash;
@@ -158,10 +150,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 
 /** The Better Auth user id for a signed-up email. */
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -385,10 +374,7 @@ async function seedAuthorizationCode(
   identifier?: string,
 ): Promise<string> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -428,10 +414,7 @@ async function seedConsent(
   authUserId: string,
 ): Promise<void> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -445,10 +428,7 @@ async function seedConsent(
     id: `cons_${Math.random().toString(36).slice(2)}`,
     clientId,
     userId: authUserId,
-    scopes:
-      c.storage.betterAuthDialect === "pg"
-        ? ["core.note:read"]
-        : JSON.stringify(["core.note:read"]),
+    scopes: JSON.stringify(["core.note:read"]),
     consentGiven: true,
     createdAt: now,
     updatedAt: now,
@@ -975,10 +955,7 @@ function hashCode(code: string): string {
 async function countAuthorizationCodes(
   c: TestContext,
 ): Promise<Map<string, number>> {
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     select: () => {
       from: (t: unknown) => Promise<{ value: string }[]>;
@@ -1007,10 +984,7 @@ async function dropConsent(
   clientId: string,
   authUserId: string,
 ): Promise<void> {
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     delete: (t: unknown) => {

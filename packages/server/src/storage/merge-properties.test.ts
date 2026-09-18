@@ -60,9 +60,8 @@ describe("an ordinary update", () => {
   });
 
   it("resolves a type registered by a space, not only a shipped one", () => {
-    // The two stores disagreed here: one passed the space through and one
-    // did not, so the same null was dropped on Postgres and written as null
-    // on SQLite.
+    // The store once resolved the type without the space, so the same
+    // null was written as null on a space-registered type.
     expect(
       resolveIncomingProperties(CUSTOM_TYPE, { note: null }, false, SPACE),
     ).toEqual({});

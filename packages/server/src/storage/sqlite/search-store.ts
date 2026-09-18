@@ -105,7 +105,7 @@ export class SqliteSearchStore implements SearchStore {
       conditions.push("AND i.type NOT LIKE 'system.%'");
     }
 
-    // The Postgres store's twin, and deliberately the same expression:
+    // The item store's twin, and deliberately the same expression:
     // `COALESCE(timestamp, created_at)`, inclusive, normalized to the
     // stored width before a lexical text comparison sees it.
     const timestampAfter = normalizeTimeBound(
@@ -167,9 +167,7 @@ export class SqliteSearchStore implements SearchStore {
 
     const sourceLever = sourceFilterToRawSql(
       filters.source_filter,
-      "sqlite",
       "i",
-      1,
       filters.spaceId ?? null,
     );
     if (sourceLever) {
@@ -181,9 +179,7 @@ export class SqliteSearchStore implements SearchStore {
       const expr = parseFilter(filters.filter);
       const { clause, params: filterParams } = filterToRawSql(
         expr,
-        "sqlite",
         "i",
-        1,
         filters.spaceId,
       );
       conditions.push(`AND ${clause}`);

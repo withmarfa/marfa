@@ -12,8 +12,6 @@ afterEach(async () => {
   await ctx.cleanup();
 });
 
-const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
-
 const id = (suffix: string): string =>
   `019d0000-0000-7000-a000-${suffix.padStart(12, "0")}`;
 
@@ -37,16 +35,6 @@ const gnarly: Record<string, unknown> = {
 };
 
 async function storedTypeOf(itemId: string): Promise<string> {
-  if (isPg()) {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = (await s.__pgClient(
-      "SELECT pg_typeof(properties)::text AS t FROM items WHERE id = $1",
-      [itemId],
-    )) as { t: string }[];
-    return rows[0]?.t ?? "missing";
-  }
   const s = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };
@@ -63,7 +51,7 @@ describe("items.properties is stored natively structured", () => {
       { id: itemId, type: "core.note", properties: gnarly, tier: "library" },
       undefined,
     );
-    expect(await storedTypeOf(itemId)).toBe(isPg() ? "jsonb" : "blob");
+    expect(await storedTypeOf(itemId)).toBe("blob");
   });
 
   it("round-trips gnarly properties object-equivalently through create and get", async () => {
@@ -86,7 +74,7 @@ describe("items.properties is stored natively structured", () => {
       properties: { title: "replaced", added: [1, 2, 3] },
     });
     expect("error" in updated).toBe(false);
-    expect(await storedTypeOf(itemId)).toBe(isPg() ? "jsonb" : "blob");
+    expect(await storedTypeOf(itemId)).toBe("blob");
     const item = await ctx.storage.items.get(itemId);
     expect(item?.properties.title).toBe("replaced");
     expect(item?.properties.added).toEqual([1, 2, 3]);
@@ -107,7 +95,7 @@ describe("items.properties is stored natively structured", () => {
       undefined,
     );
     await ctx.storage.oauth.updateLastUsedAt(itemId, null, 0);
-    expect(await storedTypeOf(itemId)).toBe(isPg() ? "jsonb" : "blob");
+    expect(await storedTypeOf(itemId)).toBe("blob");
     const item = await ctx.storage.items.get(itemId);
     expect(typeof item?.properties.last_used_at).toBe("string");
     expect(item?.properties.client_id).toBe("c1");

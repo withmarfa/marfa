@@ -51,10 +51,7 @@ async function ownerCookie(c: TestContext, email: string): Promise<string> {
 async function seedClient(c: TestContext, name: string): Promise<string> {
   const clientId = `client_${Math.random().toString(36).slice(2, 10)}`;
   if (!c.storage.betterAuthDb) throw new Error("betterAuthDb missing");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -63,8 +60,7 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
       };
     };
   };
-  const asColumn = (v: readonly string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? [...v] : JSON.stringify(v);
+  const asColumn = (v: readonly string[]): unknown => JSON.stringify(v);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${Math.random().toString(36).slice(2, 10)}`,

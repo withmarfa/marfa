@@ -31,9 +31,8 @@ import {
 /**
  * One context for every integration test in this file.
  *
- * Standing up a context is expensive on Postgres — it clones the template
- * database and drops the clone afterwards, and that DDL serializes against
- * every other test file doing the same. Per-test contexts put that cost
+ * Standing up a context is not free: it opens a database and a blob root
+ * and seeds both. Per-test contexts put that cost
  * inside the test body, which is budgeted by `testTimeout`; a shared
  * context puts it in a hook, budgeted by the much larger `hookTimeout`
  * (see this package's `vitest.config.ts`). Under a loaded runner the

@@ -47,9 +47,7 @@ describe("bootstrap mode", () => {
     const blobBackend = new FilesystemBlobBackend(join(freshTmpDir, "blobs"));
     const app = createApp(storage, blobBackend, {
       port: 0,
-      storageDialect: "sqlite",
       sqlitePath: "",
-      databaseUrl: "",
       blobPath: "",
       blobBackend: "fs",
       maxBlobSize: 50 * 1024 * 1024,

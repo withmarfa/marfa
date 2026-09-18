@@ -2,8 +2,8 @@
  * The OAuth grant's `last_used_at` stamp is fire-and-forget from the
  * bearer middleware, so nothing awaits it — and a stamp still opening its
  * connection when `storage.close()` ends the pool used to surface as an
- * unhandled rejection (`write CONNECTION_CLOSED` on the Postgres leg,
- * observed in CI with every test passing and the run failing anyway).
+ * unhandled rejection (observed in CI with every test passing and the
+ * run failing anyway).
  * The audit store gained a drain for exactly this class; these tests pin
  * the same guarantee for the stamp.
  */

@@ -31,16 +31,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
-import postgres from "postgres";
-import {
-  runPgMigrations,
-  runPgMigrationsThrough,
-  runSqliteMigrations,
-  runSqliteMigrationsThrough,
-} from "./migrate.js";
-
-const isPg = (process.env.DB_DIALECT ?? "sqlite") === "pg";
-const adminUrl = process.env.MARFA_TEST_PG_ADMIN_URL ?? "";
+import { runSqliteMigrations, runSqliteMigrationsThrough } from "./migrate.js";
 
 const DRIZZLE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -72,7 +63,7 @@ function tagBefore(dialect: "pg" | "sqlite"): string {
 
 const NOW = "2026-01-02T03:04:05.000Z";
 
-describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
+describe("the SQLite keys-mode space migration", () => {
   const workDir = mkdtempSync(join(tmpdir(), "marfa-keys-mode-space-"));
   afterAll(() => {
     rmSync(workDir, { recursive: true, force: true });
@@ -453,115 +444,3 @@ describe.skipIf(isPg)("the SQLite keys-mode space migration", () => {
     expect(after.rows[0]!.space_id).toBeNull();
   });
 });
-
-describe.skipIf(!isPg || !adminUrl)(
-  "the Postgres keys-mode space migration",
-  () => {
-    const dbName = `marfa_keys_mode_space_${Math.random().toString(36).slice(2, 10)}`;
-    let admin: postgres.Sql | null = null;
-    const created: string[] = [];
-
-    afterAll(async () => {
-      if (!admin) return;
-      for (const name of created) {
-        await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-      }
-      await admin.end({ timeout: 5 });
-    });
-
-    /** A fresh database migrated to the statement before this one. */
-    async function freshUrl(suffix: string): Promise<string> {
-      admin ??= postgres(adminUrl, { max: 1, onnotice: () => undefined });
-      const name = `${dbName}_${suffix}`;
-      created.push(name);
-      await admin.unsafe(`CREATE DATABASE ${name}`);
-      const url = adminUrl.replace(/\/[^/?]+(\?|$)/, `/${name}$1`);
-      await runPgMigrationsThrough(url, tagBefore("pg"));
-      return url;
-    }
-
-    it("provisions for an instance whose only data is its own registered types", async () => {
-      const url = await freshUrl("types");
-      const sql = postgres(url, { max: 2, onnotice: () => undefined });
-      try {
-        const before = await sql<
-          { n: string }[]
-        >`SELECT COUNT(*)::text AS n FROM spaces`;
-        expect(Number(before[0]!.n)).toBe(0);
-
-        await sql`
-        INSERT INTO api_keys (id, space_id, key_hash, label, source, is_operator, created_at)
-        VALUES ('operator', NULL, 'h', 'operator', 'bootstrap', true, ${NOW})
-      `;
-        await sql`
-        INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
-        VALUES ('catalog', NULL, 'system.integration', 'active', '{}'::jsonb, ${NOW}, ${NOW}, ${NOW})
-      `;
-        await sql`
-        INSERT INTO custom_types (space_id, id, schema, origin, created_at, updated_at)
-        VALUES ('', 'my.recipe', '{}'::jsonb, 'user', ${NOW}, ${NOW})
-      `;
-
-        await runPgMigrations(url);
-
-        const spaces = await sql<{ id: string }[]>`SELECT id FROM spaces`;
-        expect(spaces.map((r) => r.id)).toEqual([PROVISIONED]);
-        const types = await sql<{ space_id: string }[]>`
-        SELECT space_id FROM custom_types WHERE id = 'my.recipe'
-      `;
-        expect(types[0]!.space_id).toBe(PROVISIONED);
-        const catalog = await sql<{ space_id: string | null }[]>`
-        SELECT space_id FROM items WHERE id = 'catalog'
-      `;
-        expect(catalog[0]!.space_id).toBeNull();
-      } finally {
-        await sql.end({ timeout: 5 });
-      }
-    });
-
-    it("does not provision for an instance holding only an OAuth grant projection", async () => {
-      const url = await freshUrl("grant");
-      const sql = postgres(url, { max: 2, onnotice: () => undefined });
-      try {
-        await sql`
-        INSERT INTO api_keys (id, space_id, key_hash, label, source, is_operator, created_at)
-        VALUES ('operator', NULL, 'h', 'operator', 'bootstrap', true, ${NOW})
-      `;
-        await sql`
-        INSERT INTO items (id, space_id, type, state, properties, created_at, updated_at, timestamp)
-        VALUES ('grant', NULL, 'system.connection', 'active', '{"kind":"app"}'::jsonb, ${NOW}, ${NOW}, ${NOW})
-      `;
-
-        await runPgMigrations(url);
-
-        const spaces = await sql<
-          { n: string }[]
-        >`SELECT COUNT(*)::text AS n FROM spaces`;
-        expect(Number(spaces[0]!.n)).toBe(0);
-      } finally {
-        await sql.end({ timeout: 5 });
-      }
-    });
-
-    it("refuses a hosted instance still holding a live space-less ordinary key", async () => {
-      const url = await freshUrl("stray");
-      const sql = postgres(url, { max: 2, onnotice: () => undefined });
-      try {
-        await sql`INSERT INTO spaces (id, name, created_at) VALUES ('space-a', 'A', ${NOW})`;
-        await sql`
-        INSERT INTO api_keys (id, space_id, key_hash, label, source, is_operator, created_at)
-        VALUES ('stray', NULL, 'h', 'stray', 'stray', false, ${NOW})
-      `;
-
-        await expect(runPgMigrations(url)).rejects.toThrow();
-
-        const after = await sql<{ space_id: string | null }[]>`
-        SELECT space_id FROM api_keys WHERE id = 'stray'
-      `;
-        expect(after[0]!.space_id).toBeNull();
-      } finally {
-        await sql.end({ timeout: 5 });
-      }
-    });
-  },
-);

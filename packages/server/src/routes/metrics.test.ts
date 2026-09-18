@@ -48,7 +48,7 @@ describe("GET /metrics", () => {
       cached_at: unknown;
     };
 
-    // Every counter must be a JS number. Regression guard against Postgres
+    // Every counter must be a JS number. Regression guard against a driver
     // `bigint` leaking through as a string (which historically produced a
     // string-concat `items.total` like "01135389" in the reduce).
     expect(typeof body.items.total).toBe("number");

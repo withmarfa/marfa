@@ -400,10 +400,7 @@ async function detachAccountFromItsSpace(
   const authUserId = await authUserIdFor(c, email);
   const row = await users.getByAuthUserId(authUserId);
   expect(row).not.toBeNull();
-  const schema =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schema = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     delete: (table: unknown) => {
       where: (clause: unknown) => {
@@ -420,10 +417,7 @@ async function detachAccountFromItsSpace(
 
 /** The Better Auth user id behind an email, read the way the bridge reads it. */
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schema = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     select: (cols: unknown) => {
       from: (table: unknown) => {

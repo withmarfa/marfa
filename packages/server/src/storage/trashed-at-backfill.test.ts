@@ -29,16 +29,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
-import postgres from "postgres";
-import {
-  runPgMigrations,
-  runPgMigrationsThrough,
-  runSqliteMigrations,
-  runSqliteMigrationsThrough,
-} from "./migrate.js";
-
-const isPg = (process.env.DB_DIALECT ?? "sqlite") === "pg";
-const adminUrl = process.env.MARFA_TEST_PG_ADMIN_URL ?? "";
+import { runSqliteMigrations, runSqliteMigrationsThrough } from "./migrate.js";
 
 const DRIZZLE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -92,7 +83,7 @@ const SEEDED = [
   { id: "backfill-revoked", state: "revoked", stamped: false },
 ] as const;
 
-describe.skipIf(isPg)("the SQLite backfill", () => {
+describe("the SQLite backfill", () => {
   const workDir = mkdtempSync(join(tmpdir(), "marfa-trashed-at-backfill-"));
   afterAll(() => {
     rmSync(workDir, { recursive: true, force: true });
@@ -156,64 +147,6 @@ describe.skipIf(isPg)("the SQLite backfill", () => {
       }
     } finally {
       client.close();
-    }
-  });
-});
-
-describe.skipIf(!isPg || !adminUrl)("the Postgres backfill", () => {
-  const dbName = `marfa_trashed_at_backfill_${Math.random().toString(36).slice(2, 10)}`;
-  let admin: postgres.Sql | null = null;
-
-  afterAll(async () => {
-    if (!admin) return;
-    await admin.unsafe(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
-    await admin.end({ timeout: 5 });
-  });
-
-  it("takes the modification time for trashed rows and leaves the rest null", async () => {
-    admin = postgres(adminUrl, { max: 1, onnotice: () => undefined });
-    await admin.unsafe(`CREATE DATABASE ${dbName}`);
-    const dbUrl = adminUrl.replace(/\/[^/?]+(\?|$)/, `/${dbName}$1`);
-
-    await runPgMigrationsThrough(dbUrl, tagBefore("pg"));
-
-    const sql = postgres(dbUrl, { max: 2, onnotice: () => undefined });
-    try {
-      const columnsBefore = await sql<{ column_name: string }[]>`
-        SELECT column_name FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'items'
-      `;
-      expect(columnsBefore.map((r) => r.column_name)).not.toContain(
-        "trashed_at",
-      );
-
-      for (const row of SEEDED) {
-        await sql`
-          INSERT INTO items
-            (id, type, state, properties, created_at, updated_at, timestamp)
-          VALUES (${row.id}, 'core.note', ${row.state}, '{}'::jsonb,
-                  ${CREATED}, ${CHOSEN}, ${TIMESTAMP})
-        `;
-      }
-
-      await runPgMigrations(dbUrl);
-
-      const after = await sql<
-        { id: string; trashed_at: string | null; updated_at: string }[]
-      >`SELECT id, trashed_at, updated_at FROM items ORDER BY id`;
-      const byId = new Map(after.map((r) => [r.id, r]));
-      expect(byId.size).toBe(SEEDED.length);
-
-      for (const row of SEEDED) {
-        const got = byId.get(row.id);
-        expect(got, row.id).toBeDefined();
-        expect(got!.trashed_at, `${row.id} (${row.state})`).toBe(
-          row.stamped ? CHOSEN : null,
-        );
-        expect(got!.updated_at, row.id).toBe(CHOSEN);
-      }
-    } finally {
-      await sql.end({ timeout: 5 });
     }
   });
 });

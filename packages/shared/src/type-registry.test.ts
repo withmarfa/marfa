@@ -452,7 +452,7 @@ describe("validateProperties", () => {
     }
   });
   it("round-trips other Unicode and control chars unchanged", () => {
-    // Only U+0000 is illegal for Postgres TEXT; emoji, RTL marks, accents,
+    // Only U+0000 is refused; emoji, RTL marks, accents,
     // newline, and tab must all pass validation untouched.
     const body = "emoji 😀 rtl ‮ accent é em—dash\ttab\nnewline";
     const result = validateProperties("core.note", { body });

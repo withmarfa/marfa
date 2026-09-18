@@ -16,9 +16,7 @@ async function main(): Promise<void> {
   const blob = new FilesystemBlobBackend(join(dir, "blobs"));
   const app = createApp(storage, blob, {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: "",
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,

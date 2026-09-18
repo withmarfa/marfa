@@ -2041,7 +2041,7 @@ export interface OauthProviderStore {
    *  exercised on Marfa deployments. */
   createClient(input: CreateClientInput): Promise<CreateClientResult>;
   /** Existence check on `(clientId)` for the registration route to surface
-   *  a clean 409 instead of a Postgres unique-violation. */
+   *  a clean 409 instead of a unique-violation. */
   clientExists(clientId: string): Promise<boolean>;
   /**
    * Every `system.connection { kind: "app" }` projection carrying this
@@ -2597,8 +2597,7 @@ export interface EdgeStore {
    * dropped every property it did not name — and a client that queues a
    * patch, which is what the local engine does, lost the rest of the edge
    * with nothing reporting it. The merge is computed from a read, so this
-   * takes a transaction and locks the row on Postgres; a replacing write
-   * had neither and needed neither.
+   * takes a transaction; a replacing write had none and needed none.
    *
    * **There is no way to remove a single property from an edge**, and the
    * two things that look like one are not. These doors carry no
@@ -2977,10 +2976,9 @@ export interface RateLimitStore {
    * post-increment count and the row's current `expires_at`.
    *
    * Callers compare `count` against their cap and reject when over.
-   * The single-row UPDATE serializes concurrent writers via Postgres
-   * row-level locking (and via SQLite's BEGIN IMMEDIATE on libsql), so
-   * two instances racing the same key cannot both observe `count == 1`
-   * inside one window.
+   * The single-row UPDATE serializes concurrent writers via SQLite's
+   * BEGIN IMMEDIATE on libsql, so two callers racing the same key cannot
+   * both observe `count == 1` inside one window.
    */
   incrementWindow(
     family: string,
@@ -3013,9 +3011,9 @@ export interface RateLimitStore {
 
 /**
  * Typed handle that storage implementations expose for the better-auth
- * integration (§3.13). The two dialect-specific Drizzle handles diverge
- * structurally; the public Storage contract carries them as `unknown`
- * so the consumer (auth/instance.ts) is the single site that narrows.
+ * integration (§3.13). The public Storage contract carries the Drizzle
+ * handle as `unknown` so the consumer (auth/instance.ts) is the single
+ * site that narrows.
  *
  * Both fields are optional on `Storage` because not every test fixture
  * needs to wire better-auth — leaving them unset disables the adapter
@@ -3026,9 +3024,9 @@ export interface BetterAuthStorageAdapter {
    *  stays portable; `auth/instance.ts` casts via `Parameters<typeof
    *  drizzleAdapter>[0]` so the surface is still typed at the consumer. */
   betterAuthDb: unknown;
-  /** Dialect discriminator — `auth/instance.ts` uses this to pick the
-   *  right Drizzle schema bundle. */
-  betterAuthDialect: "sqlite" | "pg";
+  /** Dialect discriminator, kept so `auth/instance.ts` names the schema
+   *  bundle it mounts. */
+  betterAuthDialect: "sqlite";
 }
 
 // ---------------------------------------------------------------------------
@@ -3102,14 +3100,11 @@ export interface BulkActionJobStore {
    *  No space permission says "read another credential's bulk jobs". */
   getById(id: string): Promise<BulkActionJobRow | null>;
   /**
-   * Atomically claim the next queued job. On Postgres, wraps a single
-   * UPDATE in `SELECT … FOR UPDATE SKIP LOCKED` so multiple server
-   * processes coordinate naturally. Sets `status='in_progress'`,
+   * Atomically claim the next queued job: a plain
+   * `UPDATE WHERE status='queued' RETURNING …` with `LIMIT 1`, which is
+   * enough for the one process that runs it. Sets `status='in_progress'`,
    * `started_at`, `worker_id`, `worker_heartbeat_at`. Returns the
    * claimed row, or `null` if the queue is empty.
-   *
-   * SQLite has no FOR UPDATE — single-process by design, so a plain
-   * `UPDATE WHERE status='queued' RETURNING …` with `LIMIT 1` suffices.
    */
   claimNext(workerId: string, now: string): Promise<BulkActionJobRow | null>;
   /** Bump progress counts + heartbeat. Idempotent — over-writes
@@ -3259,33 +3254,6 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   /** Deterministic text-enrichment bookkeeping. Always wired by both
    *  dialect factories; the sweeper is the only consumer. */
   enrichment: EnrichmentStore;
-  /**
-   * Optional reference to the wrapped Postgres Drizzle instance, exposed
-   * so the RLS middleware can drive `db.transaction(...)` to wrap each
-   * space-bounded request. Set only on the PG storage; `undefined` on
-   * SQLite (RLS is PG-only). The middleware skips the role-switch wrapping
-   * when this is undefined. Typed `unknown` for portability; the middleware
-   * casts via the PgDb type at consumer-site.
-   */
-  pgDb?: unknown;
-  /**
-   * Optional reference to the underlying postgres-js client. Exposed so
-   * streaming routes can `client.reserve()` a dedicated pool connection for
-   * session-level RLS (the per-request middleware uses a transaction; streams
-   * can't hold one open). Set only on the PG storage; `undefined` on SQLite.
-   * Typed `unknown` for the same portability reason as `pgDb`; consumer-site
-   * casts to `PgClient`.
-   */
-  pgClient?: unknown;
-  /**
-   * Dedicated postgres-js client for streaming RLS reservations. On the
-   * direct (session-mode) endpoint when one is configured, so streaming's
-   * session-level `SET ROLE` never strands on the app's transaction-mode
-   * pooled connections; otherwise the same handle as `pgClient`. Set only on
-   * PG storage; `undefined` on SQLite. Typed `unknown` for portability;
-   * consumer-site casts to `PgClient`.
-   */
-  pgStreamClient?: unknown;
   runInTransaction<T>(fn: () => T | Promise<T>): Promise<T>;
   /**
    * Hard-delete every artifact tied to the given `auth_user.id`. Single

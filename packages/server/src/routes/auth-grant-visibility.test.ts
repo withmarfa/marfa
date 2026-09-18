@@ -62,10 +62,7 @@ async function seedClient(c: TestContext): Promise<string> {
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -74,8 +71,7 @@ async function seedClient(c: TestContext): Promise<string> {
       };
     };
   };
-  const asColumn = (v: readonly string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? [...v] : JSON.stringify(v);
+  const asColumn = (v: readonly string[]): unknown => JSON.stringify(v);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${Math.random().toString(36).slice(2, 10)}`,

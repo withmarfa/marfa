@@ -12,17 +12,12 @@
  * response. The item is forced to a fixed past timestamp first, so the
  * assertion is "the write moved it" rather than a comparison against a
  * clock the test would otherwise have to out-wait.
- *
- * Runs against whichever dialect the suite is running, so Postgres and
- * SQLite are held to one contract rather than one of them being covered.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
-
-const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
 
 /** Old enough that no clock skew or test ordering could produce it. */
 const PAST = "2000-01-01T00:00:00.000Z";
@@ -41,36 +36,16 @@ afterAll(async () => {
  * way to make "did this move" a question with a stable answer.
  */
 async function forceUpdatedAt(itemId: string, iso: string): Promise<void> {
-  if (isPg()) {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
-      iso,
-      itemId,
-    ]);
-  } else {
-    const s = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-    };
-    await s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
-      iso,
-      itemId,
-    ]);
-  }
+  const s = ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  await s.__sqliteRun("UPDATE items SET updated_at = ? WHERE id = ?", [
+    iso,
+    itemId,
+  ]);
 }
 
 async function readUpdatedAt(itemId: string): Promise<string | undefined> {
-  if (isPg()) {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = (await s.__pgClient(
-      `SELECT updated_at FROM items WHERE id = $1`,
-      [itemId],
-    )) as { updated_at: string }[];
-    return rows[0]?.updated_at;
-  }
   const s = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };

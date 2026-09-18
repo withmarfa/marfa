@@ -3,27 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "LICENSE"
   pull_request:
-    # No paths-ignore here: a required status check must report on every PR,
-    # including documentation-only ones, or branch protection blocks the
-    # merge waiting for a check that will never arrive. Skipping the work
-    # rather than the trigger is the `changes` job's job.
     branches: [main]
-  # Manual dispatch remains available for an ad-hoc check against a branch,
-  # but nothing owes one: the freshness jobs run on the pull request itself,
-  # gated on the paths that can stale each artifact.
-  #
-  # Jobs normally use CI_RUNNER. CI (Postgres) can use a dedicated runner for
-  # pushes to main via CI_POSTGRES_RUNNER; pull requests continue to use the
-  # normal CI runner. The two fresh-migrate jobs can use a dedicated runner
-  # via CI_FRESH_MIGRATE_RUNNER, on every event rather than pushes only:
-  # they are short and never the slowest job in a run, so where they execute
-  # does not move when the run finishes.
   workflow_dispatch:
 
 # Cancels a superseded run on a branch, and deliberately does not on `main`.
@@ -36,11 +17,6 @@ on:
 # permanently unpublishable — silently, because nothing errors and the commit
 # looks fine. Six consecutive commits were in that state in one evening.
 #
-# The cost is queue time: main runs now stack rather than supersede, in the
-# `marfa-suite-shared-host` group below. That is affordable because main pushes
-# are merges, bounded by how fast people and sessions merge, where branch
-# pushes are not — and those keep their cancellation.
-#
 # Before adding `cancel-in-progress` to any group, ask what consumes the run's
 # result at a specific SHA. Cancellation is safe where only the latest answer
 # is wanted and unsafe wherever a per-commit answer is a gate.
@@ -48,138 +24,35 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+# Every job runs on the self-hosted pool and nothing falls back to a hosted
+# runner: a job waiting for a pool that is down is the correct behavior, and
+# a hosted macOS minute costs ten times a Linux one.
+#
+# No `actions/setup-node` cache anywhere in this file. The pool keeps its
+# pnpm store between jobs, so the cache restores nothing, and its post step
+# would tar the whole store — about 12 GB — on every job.
 jobs:
-  # Classifies the diff so the expensive jobs below can skip work they cannot
-  # be affected by. Gating happens at STEP level, not job level: `CI (SQLite)`
-  # is a required status check, and a job skipped by an `if:` never reports,
-  # which leaves branch protection waiting forever on a check that will never
-  # arrive. Keeping the job and emptying it is the only shape that both skips
-  # the work and satisfies the gate.
-  #
-  # Fails open by design. Anything this cannot classify counts as code, so an
-  # unrecognized path runs the full suite rather than silently skipping it.
-  # A missed run is a bad merge; a redundant run is a few minutes on a runner
-  # the project already owns.
-  changes:
-    name: Detect changed paths
-    timeout-minutes: 10
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    outputs:
-      code: ${{ steps.filter.outputs.code }}
-      sqlite_migrations: ${{ steps.filter.outputs.sqlite_migrations }}
-      types_src: ${{ steps.filter.outputs.types_src }}
-      openapi_src: ${{ steps.filter.outputs.openapi_src }}
-      schema_sql_src: ${{ steps.filter.outputs.schema_sql_src }}
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - id: filter
-        env:
-          BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          set -euo pipefail
-
-          # A first push to a branch reports an all-zero `before`, and a shallow
-          # or grafted history can leave the base unreachable. Either way the
-          # diff is unknowable, so run everything.
-          if [ -z "${BASE_SHA:-}" ] || [ "${BASE_SHA}" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
-            echo "Base commit unavailable — treating as a code change."
-            echo "code=true" >> "$GITHUB_OUTPUT"
-            echo "sqlite_migrations=true" >> "$GITHUB_OUTPUT"
-            echo "types_src=true" >> "$GITHUB_OUTPUT"
-            echo "openapi_src=true" >> "$GITHUB_OUTPUT"
-            echo "schema_sql_src=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          changed="$(git diff --name-only "${BASE_SHA}" "${GITHUB_SHA}")"
-          echo "Changed files:"; echo "${changed}" | sed 's/^/  /'
-
-          # Paths that cannot alter runtime behavior. Everything else is code.
-          #
-          # The example and ignore files are tracked but nothing reads them: no
-          # build, lint, typecheck or test script references them, and .npmrc is
-          # generated fresh by this workflow rather than copied from the example.
-          # Matched at any depth so a package's own copy counts the same as the
-          # root's.
-          docs_only='^(docs/|\.github/ISSUE_TEMPLATE/|LICENSE$|\.github/dependabot\.yml$|[^/]*\.md$|.*/[^/]*\.md$|(.*/)?\.env\.example$|(.*/)?\.gitignore$|(.*/)?\.dockerignore$|(.*/)?\.npmrc\.example$)'
-          if [ -z "${changed}" ] || [ -z "$(echo "${changed}" | grep -Ev "${docs_only}" || true)" ]; then
-            echo "code=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "code=true" >> "$GITHUB_OUTPUT"
-          fi
-
-          # A here-string rather than a pipe, and the reason is not style.
-          # `grep -q` exits on its first match, so the producer feeding it can
-          # be left writing into a closed pipe — and with `pipefail` set, that
-          # makes the whole pipeline non-zero even though grep matched. The
-          # `if` then takes the else branch and this guard reports false when
-          # the answer is true, silently and green.
-          if grep -qE '^packages/server/drizzle/sqlite/' <<< "${changed}"; then
-            echo "sqlite_migrations=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "sqlite_migrations=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          # Per-artifact trigger paths for the three freshness jobs below.
-          # These are narrower than `code` on purpose: the jobs are real
-          # pull-request checks now, so the majority of pull requests that
-          # cannot possibly stale a generated artifact must not pay for them.
-          # The path sets are the ones enumerated in the repository's agent
-          # instructions; keep the two in step.
-          emit() {
-            local name="$1" pattern="$2"
-            # Here-string, for the reason given above the sqlite check.
-            if grep -qE "${pattern}" <<< "${changed}"; then
-              echo "${name}=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "${name}=false" >> "$GITHUB_OUTPUT"
-            fi
-          }
-
-          # Each set covers the sources that can stale the artifact AND the
-          # artifact itself. Including the artifact matters: it is the one
-          # path where a hand-edit is the defect, and without it a pull
-          # request that touches only the generated file runs no check at
-          # all — which is the shape this gating exists to close.
-
-          # Type registry: the JSON the generator reads, the schema contract
-          # and validator, the generator itself, and the output.
-          emit types_src '^packages/types/(core|integrations|src|scripts|generated)/'
-
-          # OpenAPI spec: route definitions, the generator entry points, the
-          # wire schemas the routes build their shapes from, and the spec.
-          emit openapi_src '^(packages/server/src/routes/|packages/server/src/openapi(-finalize|-published)?\.ts$|packages/shared/src/|packages/types/(core|integrations|src|scripts|generated)/|openapi\.json$)'
-
-          # SCHEMA_SQL bootstrap: the Drizzle migrations that drive it, the
-          # generator that reads them, and the two generated modules.
-          emit schema_sql_src '^(packages/server/drizzle/(pg|sqlite)/|packages/server/scripts/generate-schema-sql\.ts$|packages/server/src/storage/(pg|sqlite)/schema-sql\.generated\.ts$)'
-
-  # Freshness jobs — catch generated-artifact drift, on every event
-  # including pull requests, gated on the paths that can actually stale the
-  # artifact each one checks.
-  #
-  # They were excluded from pull-request events to keep PR CI cheap, with a
-  # written rule that whoever touched a trigger path fired the workflow by
-  # hand and read the result before merging. That control has a demonstrated
-  # failure: the dispatch was fired as the rule required, it failed, the pull
-  # request merged eleven minutes later on its own green checks, and main
-  # went red. A gate that depends on someone remembering to ask a question,
-  # and then remembering to read the answer, is not a gate.
-  #
-  # The cost that justified the exclusion also moved. It was billed minutes
-  # on hosted runners; CI runs on a self-hosted pool now. What remains is
-  # machine time on a shared box, which the narrow path filters keep off the
-  # majority of pull requests that cannot stale anything.
-  types-freshness:
-    name: Types codegen freshness
-    needs: changes
-    # Manual dispatch still runs it: `changes` reports an unknowable base as
-    # every trigger path touched, which is the conservative answer.
-    if: needs.changes.outputs.types_src == 'true'
-    timeout-minutes: 15
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+  ci-sqlite:
+    name: CI (SQLite)
+    timeout-minutes: 60
+    runs-on: self-hosted
+    # One suite at a time across every ref in this repository.
+    #
+    # The resource is the machine. This job runs vitest's `forks` pool at its
+    # default `cpus - 1`, which is one job short of the whole box that hosts
+    # the pool, so two of these at once manufactures timeouts in files the
+    # branch never touched. Two sessions hit exactly that within an hour and
+    # both first read it as a defect in their own branch.
+    #
+    # `queue: max` rather than the default. The default keeps at most one
+    # pending entry per group and CANCELS the previous one when a new job
+    # arrives, which would trade a false red for a silently cancelled check —
+    # strictly worse, because a cancelled required check blocks a merge with
+    # nothing to read. `max` queues up to a hundred, FIFO.
+    concurrency:
+      group: marfa-suite-shared-host
+      cancel-in-progress: false
+      queue: max
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -190,63 +63,38 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # Cache only on runners known to keep no store between jobs. Every
-          # `actions/setup-node` step in this file carries the same rule,
-          # resolved through its own job's runs-on chain, and
-          # `ci/cache-rule.test.ts` holds each one to it. This is the copy
-          # with the reasoning; the other eight point here.
-          #
-          # It is an allowlist rather than an exclusion, so a label nobody
-          # recognizes gets no cache. A missed cache costs one slow install.
-          # A wrongly enabled one costs `actions/setup-node`'s post step
-          # tarring the self-hosted pool's pnpm store, which already persists
-          # at ~/Library/pnpm/store and so restores nothing, and which is
-          # about 12 GB. Several jobs finishing together is what made runs
-          # take about an hour with every visible step green, on a machine
-          # every repository's CI shares.
-          #
-          # `ubuntu-` and `blacksmith-` only. `macos-` is absent
-          # deliberately, not by oversight. Nothing here runs on hosted
-          # macOS, the self-hosted pool is macOS, and its labels sit
-          # alongside `self-hosted`, `macOS` and `ARM64`. A second pool
-          # called something like `macos-pool-1` is the plausible next
-          # label, and a `macos-` prefix would match it and switch the tar
-          # back on. Add it only together with something that separates a
-          # hosted macOS runner from a pool that happens to run macOS.
-          #
-          # The same trust runs the other way and is worth saying to whoever
-          # names the next pool: these prefixes assume a label describes the
-          # machine behind it. A self-hosted pool called `ubuntu-pool-1` or
-          # `blacksmith-2` would match, switch the tar back on, and pass every
-          # check here. Keep a pool label clear of both prefixes.
-          #
-          # Two shapes look right and are not. `!= 'self-hosted'` is correct
-          # only while the pool is spelled that way, and the runner variables
-          # exist precisely so a job can be pointed at a pool with another
-          # name. `runner.environment` reports `self-hosted` for third-party
-          # ephemeral runners too, because they register through GitHub's
-          # self-hosted API, so it would drop the cache where it pays.
-          #
-          # The chain is written twice, here and in runs-on. `runs-on` cannot
-          # read `env`, which is the usual explanation and is not the whole
-          # one: `runs-on` can read `needs`, and every job carrying this rule
-          # already has `needs: changes`, so the `changes` job could emit the
-          # resolved runner once and both keys could read it. That route was
-          # declined rather than overlooked. It moves where a job runs out of
-          # the job and into another job's output, so `runs-on` stops telling
-          # you where the job runs and you have to trace an output to find
-          # out. The legibility is worth more than the second copy, now that
-          # `ci/cache-rule.test.ts` holds the copy to the original.
-          #
-          # Nothing in a green run shows either that or the rule above: on
-          # the pool the old `!= 'self-hosted'` test and this one both
-          # resolve to no cache, so a run passes whichever is in the file.
-          # The test is what checks it, and it runs in `pnpm test`.
-          cache: >-
-            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
+      - name: Configure registry auth
+        env:
+          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+      # MARFA_TEST_OCR runs the real tesseract engine (ocr.real.test.ts).
+      # `MARFA_ENRICHMENT_TESSDATA_DIR` is a cache path the engine may write
+      # to; the test resolves its model from the installed package, so
+      # nothing here is load bearing.
+      - run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
 
+  # Freshness jobs — catch generated-artifact drift, on every event. They
+  # were once gated on the paths that could stale each artifact; on the pool
+  # the work costs seconds, and a gate that skips is a gate that can be wrong.
+  types-freshness:
+    name: Types codegen freshness
+    timeout-minutes: 15
+    runs-on: self-hosted
+    env:
+      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
       - name: Configure registry auth
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -261,76 +109,10 @@ jobs:
             exit 1
           fi
 
-  surface-lock-drift:
-    name: Published surface holds its version
-    # Deliberately not gated on `needs.changes`. The change that motivates
-    # this check touches no file in the package it breaks: widening a type in
-    # `shared` moves what a `sdk` consumer compiles against while no `sdk`
-    # source is touched. A path filter derived from the affected package is
-    # exactly the filter that would let it through.
-    timeout-minutes: 10
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    # Only where there is something to refuse. On a push to `main` the merge
-    # has happened and the comparison has nothing left to say.
-    #
-    # This job is not yet in the branch ruleset's required contexts, so today
-    # it reports and does not block. Adding it is a one-line ruleset change
-    # and is the intent, but it cannot happen while pull requests opened
-    # before this job existed are still open: a required context that never
-    # reports blocks them forever. It goes in once this is on `main` and the
-    # open branches have picked it up.
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          # The base commit is the whole comparison. A shallow clone leaves
-          # the check unable to read its baseline, which it reports as a
-          # failure rather than as agreement.
-          fetch-depth: 0
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-      - run: pnpm install --frozen-lockfile
-      # No build step: the comparison reads two committed JSON files and the
-      # module it imports depends on nothing but `node:crypto`.
-      # The base comes from the checkout rather than from the event payload,
-      # and the two are not always the same commit. `actions/checkout` builds
-      # `refs/pull/N/merge` against the base branch as it stands now, while
-      # the payload replays the `base.sha` recorded when the run was created.
-      # On a re-run of an older run those diverge, and every disagreement
-      # between them lands on the version-moved branch, which is a silent
-      # skip. Re-running a job is standing practice here, so that window is
-      # not hypothetical. `HEAD^1` is the base parent of the merge commit,
-      # which is the commit the lock on disk was actually merged against.
-      - name: Compare the lock against the base it merges into
-        run: |
-          base="$(git rev-parse HEAD^1)"
-          echo "comparing against base $base"
-          pnpm --filter @withmarfa/server run surface-lock:drift "$base"
-
   openapi-freshness:
     name: OpenAPI spec freshness
-    needs: changes
-    if: needs.changes.outputs.openapi_src == 'true'
     timeout-minutes: 15
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: self-hosted
     env:
       NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -341,16 +123,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
       - name: Configure registry auth
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -367,417 +139,43 @@ jobs:
             exit 1
           fi
 
-  # Detects drift between the Drizzle migrations and the auto-generated
-  # SCHEMA_SQL bootstrap. Boots a real Postgres, which is the main reason its
-  # path filter is the narrowest of the three: only a migration or the
-  # generator itself can stale this artifact.
-  schema-sql-freshness:
-    name: SCHEMA_SQL generator freshness
-    needs: changes
-    if: needs.changes.outputs.schema_sql_src == 'true'
-    timeout-minutes: 15
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      - name: Regenerate SQLite SCHEMA_SQL
-        run: pnpm --filter @withmarfa/server run schema-sql:generate:sqlite
-      - name: Regenerate Postgres SCHEMA_SQL
-        # Through the wrapper, which is also what a contributor runs locally.
-        # It exports `PG_CONTAINER_NAME`, so the generator reaches pg_dump by
-        # `docker exec` into the same `postgres:17` it just started and the
-        # dump is version-matched by construction.
-        #
-        # The alternative, a service container plus a host pg_dump, needed the
-        # host binary installed and its version reconciled by hand: pg_dump
-        # refuses to dump a newer server, and on the hosted image `/usr/bin/
-        # pg_dump` is a wrapper that resolves to whichever client it prefers
-        # rather than the one just installed. None of that survives here.
-        run: bash packages/server/scripts/with-temp-pg.sh pnpm --filter @withmarfa/server exec tsx scripts/generate-schema-sql.ts --dialect=pg
-      - name: Check for drift
-        run: |
-          if ! git diff --exit-code packages/server/src/storage/{pg,sqlite}/schema-sql.generated.ts; then
-            echo "SCHEMA_SQL is out of date. Run 'pnpm --filter @withmarfa/server schema-sql:generate' and commit."
-            exit 1
-          fi
-
-  # Lints SQLite migrations for the `--> statement-breakpoint` marker
-  # between `;`-terminated statements. Drizzle's libsql migrator splits
-  # each `.sql` file on the literal marker and runs each chunk through
-  # libsql's single-statement `execute()` — multiple statements in one
-  # chunk silently drop all but the first. T-145 surfaced three pre-
-  # existing instances of this class of bug (0043 / 0044 / 0046); this
-  # gate prevents the next one from landing.
-  sqlite-migrations-lint:
-    name: SQLite migrations — statement-breakpoint lint
-    needs: changes
-    if: needs.changes.outputs.sqlite_migrations == 'true'
+  surface-lock-drift:
+    name: Published surface holds its version
     timeout-minutes: 10
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    runs-on: self-hosted
+    # Only where there is something to refuse. On a push to `main` the merge
+    # has happened and the comparison has nothing left to say.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The base commit is the whole comparison. A shallow clone leaves
+          # the check unable to read its baseline, which it reports as a
+          # failure rather than as agreement.
+          fetch-depth: 0
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
         with:
           node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
       - name: Configure registry auth
         env:
           NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @withmarfa/server run lint:sqlite-migrations
-
-  # Test jobs — run on every PR and on main pushes. These are the fast
-  # pre-merge signal and are considered load-bearing for merge decisions.
-  ci-sqlite:
-    name: CI (SQLite)
-    needs: changes
-    if: github.event_name != 'workflow_dispatch'
-    timeout-minutes: 60
-    runs-on: ${{ github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
-    # Both suite jobs below share one concurrency group, so only one of them
-    # runs at a time across every ref in this repository.
-    #
-    # The resource is the machine, not the database. Each of these jobs runs
-    # vitest's `forks` pool at its default `cpus - 1`, which is thirteen child
-    # processes on the fourteen-core box that hosts the pool — one job alone
-    # is already the whole machine. The pool has four runners, so before this
-    # nothing stopped four of these starting at once: fifty-two forked test
-    # processes, and up to four Postgres clusters and PgBouncers beside them,
-    # because `scripts/test-pg.sh` boots a container per run rather than
-    # sharing one.
-    #
-    # What that produced was not slowness, it was wrong answers. On 31 August
-    # two of these overlapped for four minutes and the second reported twenty
-    # failures across ten files, every one of them a timeout, none of them in
-    # code the branch touched. It failed in *more* files on its second attempt
-    # than its first, which a defect does not do. The same suite passed
-    # locally on the same commit. Two sessions hit it independently within an
-    # hour and both first read it as a defect in their own branch.
-    #
-    # Raising the budgets is the tempting answer and is the wrong one: these
-    # are already 60s and 120s, chosen rather than inherited, and raising them
-    # makes every real failure slower to arrive in exchange for hiding this
-    # one. Adding runners is worse — it multiplies the callers of something
-    # the machine serializes anyway.
-    #
-    # `queue: max` rather than the default. The default keeps at most one
-    # pending entry per group and CANCELS the previous one when a new job
-    # arrives, which would trade a false red for a silently cancelled check —
-    # strictly worse, because a cancelled required check blocks a merge with
-    # nothing to read. `max` queues up to a hundred, FIFO, and cannot be
-    # combined with `cancel-in-progress: true`.
-    #
-    # The ref-scoped group on the workflow above still cancels a superseded
-    # run on the same branch — though no longer on `main`, where a per-commit
-    # result is a publish gate — which is what keeps this
-    # queue bounded by the number of live branches rather than by the number
-    # of pushes.
-    #
-    # Two things this deliberately does not do. It does not serialize against
-    # other repositories on the same pool: a concurrency group is scoped to
-    # one repository, so a name shared with another repository's workflow is
-    # two independent groups. That needs a single-slot runner label, which is
-    # pool configuration rather than anything expressible here. And it does
-    # not name the runner: these two jobs are on the pool by a standing
-    # decision, and writing the `runs-on` chain out a third time to make the
-    # group conditional would add the drift this file already polices in
-    # `ci/cache-rule.test.ts`. If they ever move to a hosted runner the group
-    # costs wall clock and never correctness, and pending jobs say so.
-    concurrency:
-      group: marfa-suite-shared-host
-      cancel-in-progress: false
-      queue: max
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      # This job always runs so the required check reports. When the diff is
-      # documentation only it reports green without doing the work.
-      - name: Nothing to test
-        if: needs.changes.outputs.code != 'true'
-        run: echo "Documentation-only change — the suite cannot be affected by it."
-
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
-      - uses: pnpm/action-setup@v6
-        if: needs.changes.outputs.code == 'true'
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        if: needs.changes.outputs.code == 'true'
-        with:
-          node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((github.event_name == 'push' && vars.CI_SQLITE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
-      - name: Configure registry auth
-        if: needs.changes.outputs.code == 'true'
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-      - if: needs.changes.outputs.code == 'true'
-        run: pnpm install --frozen-lockfile
-      - if: needs.changes.outputs.code == 'true'
-        run: pnpm build
-      - if: needs.changes.outputs.code == 'true'
-        run: pnpm typecheck
-      - if: needs.changes.outputs.code == 'true'
-        run: pnpm lint
-      - if: needs.changes.outputs.code == 'true'
-        run: pnpm format:check
-      # MARFA_TEST_OCR runs the real tesseract engine (ocr.real.test.ts)
-      # in this lane only — the PG lane covers dialect behavior, not the
-      # OCR library.
-      #
-      # `MARFA_ENRICHMENT_TESSDATA_DIR` is passed because the engine takes
-      # a cache path, and nothing writes to it. This said for a long time
-      # that the language model caches there on the pool so only the first
-      # run pays the download, and an ephemeral runner briefly grew an
-      # `actions/cache` step on that basis. Both were wrong: the directory
-      # does not exist on the pool, has never existed, and the cache step
-      # found nothing to restore and nothing to save. The test resolves
-      # its model from the installed package instead, which is why it
-      # takes about the same second on a managed runner as on the pool.
-      #
-      # Kept as a directory the engine may write to rather than removed,
-      # because a cache path it can use is cheaper than finding out later
-      # that it needed one. What is gone is the claim that it is load
-      # bearing.
-      - if: needs.changes.outputs.code == 'true'
-        run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
-
-  ci-pg:
-    name: CI (Postgres)
-    needs: changes
-    if: github.event_name != 'workflow_dispatch'
-    timeout-minutes: 60
-    runs-on: ${{ github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
-    # Shares `ci-sqlite`'s concurrency group, and the reasoning is written out
-    # there. In short: one job is already thirteen forked processes on a
-    # fourteen-core machine, so two of these at once manufactures timeouts in
-    # files the branch never touched.
-    concurrency:
-      group: marfa-suite-shared-host
-      cancel-in-progress: false
-      queue: max
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      # Gated at step level rather than job level, the same shape `ci-sqlite`
-      # uses and for the same reason: this is a required check now, and a
-      # required check that never reports leaves a documentation-only pull
-      # request pending forever with nothing an agent can do to clear it. The
-      # job always runs and always reports; when the diff is documentation only
-      # it reports green without doing the work.
-      - name: Nothing to test
-        if: needs.changes.outputs.code != 'true'
-        run: echo "Documentation-only change — the suite cannot be affected by it."
-
-      - uses: actions/checkout@v7
-        if: needs.changes.outputs.code == 'true'
-      - uses: pnpm/action-setup@v6
-        if: needs.changes.outputs.code == 'true'
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        if: needs.changes.outputs.code == 'true'
-        with:
-          node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((github.event_name == 'push' && vars.CI_POSTGRES_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
-      - name: Configure registry auth
-        if: needs.changes.outputs.code == 'true'
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-      - run: pnpm install --frozen-lockfile
-        if: needs.changes.outputs.code == 'true'
-      - run: pnpm build
-        if: needs.changes.outputs.code == 'true'
-      # No typecheck or lint here: `ci-sqlite` runs both, on the same source,
-      # with the same commands, from the same checkout.
-      #
-      # What keeps that safe is not that the two jobs happen to run together.
-      # It is that `ci-sqlite` still runs those two steps and `CI (SQLite)` is
-      # still a required status check in the repository ruleset. Both halves
-      # matter and only the first is visible in this file.
-      #
-      # So the change to watch for is not either job's `if:`. Removing a job
-      # that branch protection requires is the loudest failure available — the
-      # check never reports and the pull request hangs unmergeable, which is
-      # what the comment above `ci-sqlite` describes. The quiet ones are:
-      # deleting these steps from `ci-sqlite`, where both required checks stay
-      # green and nothing type-checks at all; renaming that job, which detaches
-      # it from the required context; and dropping `CI (SQLite)` from the
-      # ruleset, which is edited through the API and leaves no diff to review.
-      #
-      # Before this, two required checks each ran typecheck and lint, so losing
-      # one still caught a type error. Now one does. That is the cost, taken
-      # deliberately: `pnpm format:check` already had single-lane coverage, and
-      # Postgres is the longer lane in sixteen of the last twenty-one runs at a
-      # median of 444 seconds, so these two steps were about a fifth of the
-      # critical path being spent twice.
-      #
-      # If you put them back, put them here, below the build. Cross-package
-      # typechecks resolve workspace dependencies through each package's
-      # `dist/*.d.ts`, which do not exist on a fresh checkout until the build
-      # has run.
-      # The same script a contributor runs locally, rather than a second
-      # definition of the same environment in YAML. It boots its own
-      # `postgres:17`, waits on a real `SELECT 1`, exports both PG URLs the
-      # vitest globalSetup needs, and tears the container down on exit.
-      #
-      # `services:` would be the obvious shape and cannot be used: the Actions
-      # runner only performs container operations on Linux, so a service
-      # container pinned this job to a hosted runner. An ordinary `docker run`
-      # is not that feature and works anywhere Docker does, which is what moves
-      # the job onto the pool the project already owns.
-      - run: pnpm test:pg
-        if: needs.changes.outputs.code == 'true'
-      # Boots the built dist/index.js (migrate first, then one boot per
-      # process role) against its own throwaway Postgres. Catches the class
-      # of failure the unit suites structurally cannot: boot-time crashes in
-      # the real composition, which have shipped through a green matrix and
-      # crash-looped the first deployment to run them.
-      - run: pnpm --filter @withmarfa/server run smoke:boot
-        if: needs.changes.outputs.code == 'true'
-
-  # Exercises the full drizzle migration chain end-to-end against a fresh,
-  # empty database — no SCHEMA_SQL bootstrap. The existing ci-sqlite / ci-pg
-  # jobs run the app test suite, which can mask migration breakage when tests
-  # bootstrap via SCHEMA_SQL. This job exists to catch future migration-chain
-  # breakage on PR before it lands.
-  ci-fresh-migrate-sqlite:
-    name: CI (Fresh migrate, SQLite)
-    needs: changes
-    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
-    timeout-minutes: 25
-    runs-on: ${{ vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DB_DIALECT: sqlite
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-
-      - name: Prepare fresh empty sqlite DB path
+      # No build step: the comparison reads two committed JSON files and the
+      # module it imports depends on nothing but `node:crypto`.
+      # The base comes from the checkout rather than from the event payload,
+      # and the two are not always the same commit. `actions/checkout` builds
+      # `refs/pull/N/merge` against the base branch as it stands now, while
+      # the payload replays the `base.sha` recorded when the run was created.
+      # On a re-run of an older run those diverge, and every disagreement
+      # between them lands on the version-moved branch, which is a silent
+      # skip. `HEAD^1` is the base parent of the merge commit, which is the
+      # commit the lock on disk was actually merged against.
+      - name: Compare the lock against the base it merges into
         run: |
-          mkdir -p "${RUNNER_TEMP}/marfa-migrate"
-          echo "SQLITE_PATH=${RUNNER_TEMP}/marfa-migrate/fresh.db" >> "$GITHUB_ENV"
-
-      - name: Run migrations against fresh DB
-        run: pnpm --filter @withmarfa/server migrate
-
-  ci-fresh-migrate-pg:
-    name: CI (Fresh migrate, Postgres)
-    needs: changes
-    if: github.event_name != 'workflow_dispatch' && needs.changes.outputs.code == 'true'
-    timeout-minutes: 25
-    runs-on: ${{ vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest' }}
-    env:
-      NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      DB_DIALECT: pg
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          # Cache only on runners known to keep no store between jobs. The
-          # rule, the reasoning and why `macos-` is left out are on the
-          # first `actions/setup-node` step in this file, in
-          # `types-freshness`. `ci/cache-rule.test.ts` holds every copy to
-          # its own job's runs-on.
-          cache: >-
-            ${{ (startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'ubuntu-')
-            || startsWith((vars.CI_FRESH_MIGRATE_RUNNER || vars.CI_RUNNER || 'ubuntu-latest'), 'blacksmith-'))
-            && 'pnpm' || '' }}
-
-      - name: Configure registry auth
-        env:
-          NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      # The wrapper supplies an empty `postgres:17` and exports `DATABASE_URL`
-      # at it, which is exactly what this job needs: a database with no
-      # SCHEMA_SQL bootstrap, so the migration chain has to stand on its own.
-      # A `services:` container would do the same and would pin the job to a
-      # hosted Linux runner to do it.
-      - name: Run migrations against fresh DB
-        run: bash packages/server/scripts/with-temp-pg.sh pnpm --filter @withmarfa/server migrate
+          base="$(git rev-parse HEAD^1)"
+          echo "comparing against base $base"
+          pnpm --filter @withmarfa/server run surface-lock:drift "$base"

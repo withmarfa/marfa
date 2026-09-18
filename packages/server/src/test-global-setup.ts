@@ -1,15 +1,10 @@
 /**
  * Vitest global setup for the server package.
  *
- * Three jobs. First, it refuses to run against a stale build (see
+ * Two jobs. First, it refuses to run against a stale build (see
  * `assertBuiltDepsAreFresh`). Second, it sweeps temporary directories
- * abandoned by earlier runs (see `sweepStaleTempDirs`). Third, when
- * DB_DIALECT=pg, it builds the template database once before any test runs
- * and drops it once after all tests finish; per-file clones are owned by
- * `createPgTestStorage` in `test-utils.ts`.
- *
- * On the default sqlite path the database half is a no-op — sqlite tests
- * already get per-file isolation via `mkdtempSync` in `createTestContext`.
+ * abandoned by earlier runs (see `sweepStaleTempDirs`). Every test file
+ * gets its own database via `mkdtempSync` in `createTestContext`.
  *
  * Returned function is invoked by vitest at teardown.
  */
@@ -17,7 +12,6 @@
 import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildTemplate, dropTemplate } from "./storage/pg/test-template.js";
 
 /**
  * Directories older than this cannot belong to a run that is still going,
@@ -158,20 +152,9 @@ function assertBuiltDepsAreFresh(): void {
   );
 }
 
-export default async function setup(): Promise<() => Promise<void>> {
+export default function setup(): () => Promise<void> {
   assertBuiltDepsAreFresh();
   sweepStaleTempDirs();
 
-  if (process.env.DB_DIALECT !== "pg") {
-    // sqlite path — nothing to do here.
-    return async () => {
-      /* no PG resources to release on the sqlite path */
-    };
-  }
-
-  await buildTemplate();
-
-  return async () => {
-    await dropTemplate();
-  };
+  return () => Promise.resolve();
 }

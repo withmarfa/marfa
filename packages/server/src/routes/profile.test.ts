@@ -7,11 +7,7 @@ import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
 import { FilesystemBlobBackend } from "../storage/blob-backend.js";
 import { hashApiKey } from "../middleware/auth.js";
-import {
-  createPgTestStorage,
-  request,
-  seedOauthBearer,
-} from "../test-utils.js";
+import { request, seedOauthBearer } from "../test-utils.js";
 import type { AppEnv } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import {
@@ -46,27 +42,16 @@ interface HostedContext {
 }
 
 async function createHostedContext(): Promise<HostedContext> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-profile-test-"));
   const blobPath = join(tmpDir, "blobs");
 
-  let storage: Storage;
-  let pgCleanup: (() => Promise<void>) | undefined;
-  if (dialect === "pg") {
-    const pg = await createPgTestStorage({ authMode: "hosted" });
-    storage = pg.storage;
-    pgCleanup = pg.cleanup;
-  } else {
-    const dbPath = join(tmpDir, "test.db");
-    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
-  }
+  const dbPath = join(tmpDir, "test.db");
+  const storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath,
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -107,12 +92,7 @@ async function createHostedContext(): Promise<HostedContext> {
     app,
     storage,
     cleanup: async () => {
-      if (pgCleanup) {
-        // PG path: closes the pool AND drops the cloned test database.
-        await pgCleanup();
-      } else {
-        await storage.close();
-      }
+      await storage.close();
       // The directory holds this file's sqlite database and blob
       // root; nothing else removes it.
       rmSync(tmpDir, { recursive: true, force: true });
@@ -209,30 +189,8 @@ async function insertAuthUser(
     updatedAt: Date;
   },
 ): Promise<void> {
-  // Better-auth's drizzleAdapter in pg uses date columns; in sqlite,
-  // text. The storage interface doesn't surface a typed handle, but
-  // both dialects expose the underlying drizzle handle via
-  // `betterAuthDb`. Use it directly — same shape as the prod code.
-  const dialect = (storage as { betterAuthDialect?: string }).betterAuthDialect;
-  if (dialect === "pg") {
-    const db = (
-      storage as unknown as {
-        pgDb?: { execute: (q: unknown) => Promise<unknown> };
-      }
-    ).pgDb;
-    if (!db) throw new Error("pgDb missing on storage");
-    const { sql } = await import("drizzle-orm");
-    // postgres-js doesn't auto-cast Date in raw-SQL parameter binding;
-    // pass ISO strings and let the driver coerce to TIMESTAMPTZ.
-    const createdAtIso = row.createdAt.toISOString();
-    const updatedAtIso = row.updatedAt.toISOString();
-    await db.execute(
-      sql`INSERT INTO auth_user (id, email, name, email_verified, created_at, updated_at) VALUES (${row.id}, ${row.email}, ${row.name}, ${row.emailVerified}, ${createdAtIso}, ${updatedAtIso})`,
-    );
-    return;
-  }
-  // SQLite path — use the storage facade's typed run helper. The async
-  // libsql client returns a Promise; await is load-bearing.
+  // Use the storage facade's typed run helper. The async libsql client
+  // returns a Promise; await is load-bearing.
   const runner = (
     storage as unknown as {
       __sqliteRun?: (

@@ -86,7 +86,7 @@ function connectionRefused(): AggregateError {
   return new AggregateError([mk("::1"), mk("127.0.0.1")], "");
 }
 
-/** A `postgres.js` server-side error: SQLSTATE 55P03 is lock_not_available. */
+/** A database error carrying an SQLSTATE: 55P03 is lock_not_available. */
 function lockNotAvailable(): Error {
   return Object.assign(new Error("canceling statement due to lock timeout"), {
     code: "55P03",
@@ -109,7 +109,7 @@ describe("formatErrorSummary", () => {
     expect(summary).toContain("5432");
   });
 
-  it("keeps the SQLSTATE code on a Postgres lock failure", () => {
+  it("keeps the SQLSTATE code on a lock failure", () => {
     const summary = formatErrorSummary(lockNotAvailable());
     expect(summary).toContain("lock timeout");
     expect(summary).toContain("55P03");
@@ -159,7 +159,7 @@ describe("serializeError", () => {
     });
   });
 
-  it("keeps the Postgres diagnostic fields", () => {
+  it("keeps the driver's diagnostic fields", () => {
     const out = serializeError(lockNotAvailable()) as Record<string, unknown>;
     expect(out.code).toBe("55P03");
     expect(out.severity).toBe("ERROR");
@@ -263,7 +263,7 @@ describe("log payload serialization", () => {
     return JSON.parse(written.join("")) as Record<string, unknown>;
   }
 
-  /** Shape of a `postgres.js` privilege error, SQLSTATE and all. */
+  /** Shape of a database privilege error, SQLSTATE and all. */
   function permissionDenied(): Error {
     return Object.assign(
       new Error("permission denied for table auth_session"),

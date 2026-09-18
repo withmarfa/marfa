@@ -414,8 +414,7 @@ export function authRoutes(
   // per hour. Sits on top of the per-IP rate limit — per-IP bounds a
   // noisy client; per-email bounds the address itself so a burst from
   // many IPs can't drown one user's inbox. Counter lives in
-  // `storage.rateLimits`: cluster-shared on Postgres, in-process on
-  // SQLite single-process self-hosts.
+  // `storage.rateLimits`.
   const forgotPasswordThrottle = new PerEmailThrottle(storage, {
     limit: 3,
     windowMs: 60 * 60 * 1000,

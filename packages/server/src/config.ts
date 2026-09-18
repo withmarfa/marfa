@@ -6,7 +6,6 @@ import {
   parseTrustedProxyHeader,
 } from "./middleware/client-ip.js";
 import type { CidrRange } from "./middleware/client-ip.js";
-import { isSamePgEndpoint, pgEndpointLabel } from "./storage/pg/endpoint.js";
 
 /**
  * Numeric env-var read with explicit "missing or empty → default" semantics.
@@ -25,32 +24,6 @@ export function envNumber(raw: string | undefined, fallback: number): number {
   return raw !== undefined && raw !== "" ? Number(raw) : fallback;
 }
 
-/**
- * How the endpoint `DATABASE_URL` points at multiplexes connections.
- *
- * `session` — one client link maps 1:1 to a real backend for its lifetime.
- * True of a direct Postgres connection and of a session-mode pooler.
- *
- * `transaction` — a pooler (PgBouncer, Neon's `-pooler` endpoint) hands out a
- * backend per transaction, so session-level state set outside a transaction
- * lands on whichever backend served that statement and is inherited by later,
- * unrelated queries. Streaming RLS sets exactly that kind of state, so this
- * mode requires a separate direct endpoint to reserve from.
- */
-export type DbPoolMode = "session" | "transaction";
-
-/**
- * Every role `MARFA_PROCESS_ROLE` may name, in one place because more than
- * one thing has to enumerate them: `parseProcessRole` accepts exactly these,
- * and `/health` builds the set of `application_name` labels it recognizes by
- * running each of them through `pgApplicationName`. A role added here reaches
- * both; a role added to only one of them would connect under a label the
- * reading cannot attribute.
- */
-export const PROCESS_ROLES = ["web", "worker", "both"] as const;
-
-export type ProcessRole = (typeof PROCESS_ROLES)[number];
-
 export interface AppConfig {
   /** True when `NODE_ENV === "production"`. Gates production-only
    *  hardenings (e.g. CORS localhost auto-reflection is dev-only).
@@ -59,45 +32,7 @@ export interface AppConfig {
    *  non-production. `loadConfig` always populates it. */
   isProduction?: boolean;
   port: number;
-  storageDialect: "sqlite" | "pg";
   sqlitePath: string;
-  databaseUrl: string;
-  /**
-   * Direct (session-mode) Postgres URL for streaming RLS, from
-   * `MARFA_DATABASE_URL_DIRECT`. Streaming issues a session-level `SET ROLE`,
-   * which must run on a connection that owns its backend outright. Required
-   * when `dbPoolMode` is `transaction`; unset is fine otherwise, and streaming
-   * then reuses the main client.
-   */
-  databaseUrlDirect?: string;
-  /**
-   * What kind of endpoint `databaseUrl` points at, from `MARFA_DB_POOL_MODE`.
-   * Defaults to `session`, which is what a self-host talking straight to
-   * Postgres has. Hosted deployments behind a transaction-mode pooler declare
-   * `transaction`, which makes `databaseUrlDirect` mandatory. Optional on the
-   * type so test contexts constructing `AppConfig` literals compile; readers
-   * treat `undefined` as `session`, and `loadConfig` always populates it.
-   */
-  dbPoolMode?: DbPoolMode;
-  /**
-   * What this process does, from `MARFA_PROCESS_ROLE`. `web` serves HTTP
-   * (API, SSE, webhook receipt, consent); `worker` runs the pg-boss
-   * consumers (scheduled jobs, integration dispatch, enrichment, bulk
-   * actions) behind a minimal health endpoint; `both` is the default and
-   * the single-container self-host shape. Coordination goes through
-   * Postgres, so any mix of roles against one database is valid — which
-   * is also why a role other than `both` requires the pg dialect.
-   * Optional on the type so test contexts constructing `AppConfig`
-   * literals compile; readers treat `undefined` as `both`.
-   */
-  processRole?: ProcessRole;
-  /**
-   * Main Postgres pool cap, from `MARFA_DB_POOL_SIZE` (default 10). The
-   * session/streaming pool follows as `min(this, 5)`. Exists so a split
-   * deployment can budget web + worker under a managed tier's connection
-   * ceiling; the arithmetic lives in the deployment's env template.
-   */
-  dbPoolSize?: number;
   blobPath: string;
   blobBackend: "fs" | "s3";
   /** Maximum blob upload size in bytes. Uploads exceeding this are rejected
@@ -136,18 +71,6 @@ export interface AppConfig {
   authMode: "hosted" | "keys";
   rateLimitEnabled: boolean;
   enableHsts: boolean;
-  /**
-   * When `true`, wraps each space-bounded Postgres request in a
-   * transaction with `SET LOCAL ROLE marfa_app` and
-   * `SET LOCAL marfa.space_id = '<id>'` so RLS policies enforce
-   * space isolation at the DB layer (defense-in-depth beneath the
-   * application-layer scoping). Defaults to `true`. See
-   * `packages/server/CLAUDE.md` under "Postgres RLS".
-   *
-   * Optional on the type so test contexts that construct AppConfig
-   * literals continue to compile.
-   */
-  rlsEnforce?: boolean;
   auditRetentionDays: number;
   auditCleanupIntervalMs: number;
   /** Days a `system.activity` item survives before the purger drops it.
@@ -158,8 +81,8 @@ export interface AppConfig {
    *  runs that found nothing to do, so this is the fastest-growing item
    *  type on a space with connections and nothing aged it out before.
    *
-   *  Optional on the type for the same reason `rlsEnforce` is: a dozen
-   *  test contexts build `AppConfig` literals, and a required field with
+   *  Optional on the type because a dozen test contexts build
+   *  `AppConfig` literals, and a required field with
    *  a sensible default would churn every one of them to say what the
    *  default already says. */
   activityRetentionDays?: number;
@@ -454,12 +377,6 @@ export interface AppConfig {
   /** Heartbeat cadence in ms (`MARFA_HEARTBEAT_INTERVAL_MS`, default
    *  60000). Ignored while `heartbeatUrl` is unset. */
   heartbeatIntervalMs?: number;
-  /** How long boot waits for the database before giving up
-   *  (`MARFA_DB_STARTUP_WAIT_MS`, default 90000; `0` = fail fast).
-   *  Covers the slow-Postgres-after-reboot case that otherwise turns a
-   *  supervised server into a crash loop. Only connection-shaped
-   *  failures wait; misconfiguration still fails immediately. */
-  dbStartupWaitMs?: number;
   /** Ceiling on concurrent SSE viewers per server instance
    *  (`MARFA_SSE_MAX_VIEWERS`, default 0 = uncapped). A deliberate
    *  memory bound: viewers hold no database connection, so any limit is
@@ -715,114 +632,10 @@ export function getPermissionBundles(): PermissionBundle[] {
   );
 }
 
-/**
- * Parse `MARFA_DB_POOL_MODE`. Unset → `session`, so a self-host connecting
- * straight to Postgres is unaffected by the guard below.
- *
- * Unlike the other enum parsers in this file, an unrecognized value throws
- * rather than warning and falling back. The fallback here is the permissive
- * mode, and resolving a typo to it would silently re-open exactly the
- * misconfiguration this setting exists to close.
- */
-export function parseDbPoolMode(raw: string | undefined): DbPoolMode {
-  if (raw === undefined || raw === "") return "session";
-  if (raw === "session" || raw === "transaction") return raw;
-  throw new Error(
-    `Unknown MARFA_DB_POOL_MODE=${raw}. Legal values: session | transaction.`,
-  );
-}
-
-function parseProcessRole(raw: string | undefined): ProcessRole {
-  const value = raw?.trim().toLowerCase();
-  if (value === undefined || value === "") return "both";
-  if ((PROCESS_ROLES as readonly string[]).includes(value))
-    return value as ProcessRole;
-  // A typo silently defaulting to `both` would run every consumer twice
-  // across a split deployment, so an unknown value refuses to boot.
-  throw new Error(
-    `Unknown MARFA_PROCESS_ROLE=${raw ?? ""}. Legal values: ${PROCESS_ROLES.join(" | ")}.`,
-  );
-}
-
-function parseDbPoolSize(raw: string | undefined): number | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  const parsed = Number(raw);
-  // The pool cap is a connection-budget control; a NaN or non-positive
-  // value silently falling back to the default would blow exactly the
-  // budget it exists to hold, so it refuses to boot instead.
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(
-      `MARFA_DB_POOL_SIZE must be a positive integer, got ${raw}.`,
-    );
-  }
-  return parsed;
-}
-
 export function loadConfig(): AppConfig {
   const corsRaw = process.env.CORS_ORIGINS ?? "";
   const apiKeySalt = process.env.API_KEY_SALT ?? DEFAULT_SALT;
   const authSecret = process.env.MARFA_AUTH_SECRET ?? "";
-  const storageDialect = process.env.DB_DIALECT === "pg" ? "pg" : "sqlite";
-  const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
-  const processRole = parseProcessRole(process.env.MARFA_PROCESS_ROLE);
-  const dbPoolSize = parseDbPoolSize(process.env.MARFA_DB_POOL_SIZE);
-
-  // The split's coordination is all Postgres: pg-boss pins scheduled and
-  // dispatch work to whichever process registered the workers, pg_notify
-  // replicates events between processes, and the consent lock's
-  // cross-process backend is an advisory lock. SQLite has none of that, so
-  // a role other than `both` there would silently run half a deployment.
-  if (processRole !== "both" && storageDialect !== "pg") {
-    throw new Error(
-      `MARFA_PROCESS_ROLE=${processRole} requires DB_DIALECT=pg. ` +
-        "Role-split deployments coordinate through Postgres; SQLite runs one process with the default role (both).",
-    );
-  }
-  const databaseUrl = process.env.DATABASE_URL ?? "";
-  // Trimmed here so every consumer sees the same value the guards below
-  // judged: createConnection trims its copy, and an untrimmed
-  // whitespace-only value passing this check would hand downstream
-  // consumers (the pg-boss endpoint choice) a string that is truthy and
-  // useless.
-  const databaseUrlDirect = (
-    process.env.MARFA_DATABASE_URL_DIRECT ?? ""
-  ).trim();
-
-  if (storageDialect === "pg" && dbPoolMode === "transaction") {
-    // Fail closed. Streaming RLS issues a session-level `SET ROLE marfa_app`;
-    // over a transaction-mode pooler that role strands on a shared backend and
-    // is inherited by later, unrelated queries, including Better Auth's session
-    // reads on tables the role holds no grant on. Falling back to the pooled
-    // client when the direct endpoint is missing is a silent downgrade from
-    // "isolated" to "leaks across the whole instance", so refuse to start
-    // instead. Disabling streaming RLS as the fallback would be no better: that
-    // trades a visible outage for an invisible loss of space isolation.
-    if (databaseUrlDirect === "") {
-      throw new Error(
-        "MARFA_DATABASE_URL_DIRECT is required when MARFA_DB_POOL_MODE=transaction. " +
-          "Streaming RLS sets a session-level role, which strands on a shared backend " +
-          "over a transaction-mode pooler; point this at the direct (unpooled) " +
-          "endpoint of the same database as DATABASE_URL.",
-      );
-    }
-    // Presence is not directness. The two hosts are resolved from adjacent
-    // variable names in the deploy tooling, and on Neon they differ by the
-    // six characters of the `-pooler` suffix, so the plausible misconfiguration
-    // is not "unset" but "set to the pooled endpoint again" — which satisfies
-    // every other signal (a distinct client, a `direct` boot log) while
-    // reproducing the outage exactly.
-    if (isSamePgEndpoint(databaseUrl, databaseUrlDirect)) {
-      throw new Error(
-        "MARFA_DATABASE_URL_DIRECT points at the same endpoint as DATABASE_URL " +
-          `(${pgEndpointLabel(databaseUrlDirect)}), so it is the pooled one. ` +
-          "Streaming RLS needs an endpoint that owns its backend outright; a " +
-          "session-level SET ROLE over a transaction-mode pooler strands on a " +
-          "shared backend. On Neon the direct host is the pooled host without " +
-          "the `-pooler` suffix.",
-      );
-    }
-  }
-
   if (process.env.NODE_ENV === "production") {
     if (!apiKeySalt || apiKeySalt === DEFAULT_SALT) {
       throw new Error(
@@ -854,13 +667,7 @@ export function loadConfig(): AppConfig {
   return {
     isProduction: process.env.NODE_ENV === "production",
     port,
-    storageDialect,
     sqlitePath: process.env.SQLITE_PATH ?? "./data/marfa.db",
-    databaseUrl,
-    databaseUrlDirect,
-    dbPoolMode,
-    processRole,
-    ...(dbPoolSize !== undefined && { dbPoolSize }),
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
     maxBlobSize: envNumber(process.env.MAX_BLOB_SIZE, 50 * 1024 * 1024),
@@ -882,10 +689,6 @@ export function loadConfig(): AppConfig {
     authMode: process.env.AUTH_MODE === "hosted" ? "hosted" : "keys",
     rateLimitEnabled: process.env.RATE_LIMIT_ENABLED !== "false",
     enableHsts: process.env.ENABLE_HSTS === "true",
-    // RLS enforces by default; explicit opt-out is `MARFA_RLS_ENFORCE=false`.
-    // SQLite is unaffected — the middleware skips when `storage.pgDb` is
-    // undefined regardless of this flag.
-    rlsEnforce: process.env.MARFA_RLS_ENFORCE !== "false",
     auditRetentionDays: envNumber(process.env.AUDIT_RETENTION_DAYS, 90),
     revokedGrantRetentionDays: envNumber(
       process.env.MARFA_REVOKED_GRANT_RETENTION_DAYS,
@@ -1079,7 +882,6 @@ export function loadConfig(): AppConfig {
       process.env.MARFA_HEARTBEAT_INTERVAL_MS,
       60_000,
     ),
-    dbStartupWaitMs: envNumber(process.env.MARFA_DB_STARTUP_WAIT_MS, 90_000),
     sseMaxViewers: parseSseMaxViewers(process.env.MARFA_SSE_MAX_VIEWERS),
   };
 }

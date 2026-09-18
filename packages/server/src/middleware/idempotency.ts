@@ -308,7 +308,7 @@ function errorCodeOf(body: string): string | null {
 /**
  * `Idempotency-Key` on the item and edge write doors.
  *
- * **Mounted outside the RLS transaction wrapper**, which is not a
+ * **Mounted outside any write transaction**, which is not a
  * preference: the claim must commit whether or not the write's own
  * transaction does, or a rolled-back write would take the record of it
  * with it and the second attempt would write for real.

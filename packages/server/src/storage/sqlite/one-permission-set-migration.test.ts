@@ -250,138 +250,131 @@ async function run(db: Client): Promise<void> {
   }
 }
 
-describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
-  "0090 one permission set per credential",
-  () => {
-    it("stamps every key the role bypass admitted, and only those", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await seed(db);
-        await run(db);
-        const { rows } = await db.execute(
-          `SELECT id, space_permissions, type_permissions, edge_permissions,
+describe("0090 one permission set per credential", () => {
+  it("stamps every key the role bypass admitted, and only those", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await seed(db);
+      await run(db);
+      const { rows } = await db.execute(
+        `SELECT id, space_permissions, type_permissions, edge_permissions,
                   metadata_permissions, extension_permissions, profile_permissions
              FROM api_keys ORDER BY id`,
-        );
-        const byId = new Map(rows.map((r) => [text(r.id), r]));
+      );
+      const byId = new Map(rows.map((r) => [text(r.id), r]));
 
-        for (const id of ["empty-maps", "partial-maps"]) {
-          const row = byId.get(id);
-          expect(JSON.parse(text(row?.space_permissions)), id).toEqual(ELEVEN);
-          for (const map of [
-            "type_permissions",
-            "edge_permissions",
-            "metadata_permissions",
-            "extension_permissions",
-            "profile_permissions",
-          ]) {
-            expect(text(row?.[map]), `${id}.${map}`).toBe(WILDCARD);
-          }
+      for (const id of ["empty-maps", "partial-maps"]) {
+        const row = byId.get(id);
+        expect(JSON.parse(text(row?.space_permissions)), id).toEqual(ELEVEN);
+        for (const map of [
+          "type_permissions",
+          "edge_permissions",
+          "metadata_permissions",
+          "extension_permissions",
+          "profile_permissions",
+        ]) {
+          expect(text(row?.[map]), `${id}.${map}`).toBe(WILDCARD);
         }
-
-        // A runtime credential keeps exactly its manifest bounds and holds no
-        // space permission: its whole reach is what the manifest declared.
-        const runtime = byId.get("runtime");
-        expect(text(runtime?.type_permissions)).toBe('{"core.note":"write"}');
-        expect(JSON.parse(text(runtime?.space_permissions))).toEqual([]);
-
-        // A key minted through a sign-in was already held to its maps, so it
-        // has nothing to be given back.
-        const session = byId.get("from-session");
-        expect(text(session?.type_permissions)).toBe('{"core.note":"read"}');
-        expect(JSON.parse(text(session?.space_permissions))).toEqual([]);
-
-        // The operator key takes nothing: running the instance is fenced
-        // outside the permission model rather than expressed inside it.
-        const operator = byId.get("operator");
-        expect(text(operator?.type_permissions)).toBe(EMPTY);
-        expect(JSON.parse(text(operator?.space_permissions))).toEqual([]);
-
-        // **A keys-mode working key is stamped, and the pair above is what
-        // makes that assertion mean something.** Both rows are space-less;
-        // only the operator flag separates them, so a criterion keyed on the
-        // space binding would have stamped neither and left such an instance
-        // with no credential that reaches anything.
-        const keysMode = byId.get("keys-mode-admin");
-        expect(JSON.parse(text(keysMode?.space_permissions))).toEqual(ELEVEN);
-        expect(text(keysMode?.type_permissions)).toBe(WILDCARD);
-      } finally {
-        db.close();
       }
-    });
 
-    it("clears only the revoked rows the constraint would refuse", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await seed(db);
-        await run(db);
-        const { rows } = await db.execute(
-          `SELECT id FROM api_keys ORDER BY id`,
-        );
-        const ids = rows.map((r) => text(r.id));
-        expect(ids).not.toContain("revoked-escalate");
-        expect(ids).toContain("revoked-sound");
-        expect(ids).toContain("revoked-keys-mode");
-        // A revoked row is not stamped, because it can never authenticate.
-        const { rows: kept } = await db.execute(
-          `SELECT space_permissions FROM api_keys WHERE id = 'revoked-sound'`,
-        );
-        expect(JSON.parse(text(kept[0]?.space_permissions))).toEqual([]);
-      } finally {
-        db.close();
-      }
-    });
+      // A runtime credential keeps exactly its manifest bounds and holds no
+      // space permission: its whole reach is what the manifest declared.
+      const runtime = byId.get("runtime");
+      expect(text(runtime?.type_permissions)).toBe('{"core.note":"write"}');
+      expect(JSON.parse(text(runtime?.space_permissions))).toEqual([]);
 
-    it("makes the escalation shape unrepresentable, and leaves keys mode alone", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await seed(db);
-        await run(db);
-        const insert = (id: string, space: string | null, operator: 0 | 1) =>
-          db.execute({
-            sql: `INSERT INTO api_keys (id, space_id, key_hash, label, source, is_operator, created_at)
+      // A key minted through a sign-in was already held to its maps, so it
+      // has nothing to be given back.
+      const session = byId.get("from-session");
+      expect(text(session?.type_permissions)).toBe('{"core.note":"read"}');
+      expect(JSON.parse(text(session?.space_permissions))).toEqual([]);
+
+      // The operator key takes nothing: running the instance is fenced
+      // outside the permission model rather than expressed inside it.
+      const operator = byId.get("operator");
+      expect(text(operator?.type_permissions)).toBe(EMPTY);
+      expect(JSON.parse(text(operator?.space_permissions))).toEqual([]);
+
+      // **A keys-mode working key is stamped, and the pair above is what
+      // makes that assertion mean something.** Both rows are space-less;
+      // only the operator flag separates them, so a criterion keyed on the
+      // space binding would have stamped neither and left such an instance
+      // with no credential that reaches anything.
+      const keysMode = byId.get("keys-mode-admin");
+      expect(JSON.parse(text(keysMode?.space_permissions))).toEqual(ELEVEN);
+      expect(text(keysMode?.type_permissions)).toBe(WILDCARD);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("clears only the revoked rows the constraint would refuse", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await seed(db);
+      await run(db);
+      const { rows } = await db.execute(`SELECT id FROM api_keys ORDER BY id`);
+      const ids = rows.map((r) => text(r.id));
+      expect(ids).not.toContain("revoked-escalate");
+      expect(ids).toContain("revoked-sound");
+      expect(ids).toContain("revoked-keys-mode");
+      // A revoked row is not stamped, because it can never authenticate.
+      const { rows: kept } = await db.execute(
+        `SELECT space_permissions FROM api_keys WHERE id = 'revoked-sound'`,
+      );
+      expect(JSON.parse(text(kept[0]?.space_permissions))).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("makes the escalation shape unrepresentable, and leaves keys mode alone", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await seed(db);
+      await run(db);
+      const insert = (id: string, space: string | null, operator: 0 | 1) =>
+        db.execute({
+          sql: `INSERT INTO api_keys (id, space_id, key_hash, label, source, is_operator, created_at)
                   VALUES (?, ?, ?, 'l', 'p', ?, '2026-01-01T00:00:00.000Z')`,
-            args: [id, space, id, operator],
-          });
-        // Space-bound and claiming the instance tier: judged by both rules at
-        // once, which is the shape the constraint exists to refuse.
-        await expect(insert("probe-bound-operator", "s1", 1)).rejects.toThrow();
-        await expect(insert("probe-operator", null, 1)).resolves.toBeDefined();
-        await expect(
-          insert("probe-space-bound", "s1", 0),
-        ).resolves.toBeDefined();
-        // Keys mode binds nothing to a space and its credentials are not
-        // operator keys, so the equivalence waits for the change that gives it
-        // a real one.
-        await expect(insert("probe-keys-mode", null, 0)).resolves.toBeDefined();
-      } finally {
-        db.close();
-      }
-    });
+          args: [id, space, id, operator],
+        });
+      // Space-bound and claiming the instance tier: judged by both rules at
+      // once, which is the shape the constraint exists to refuse.
+      await expect(insert("probe-bound-operator", "s1", 1)).rejects.toThrow();
+      await expect(insert("probe-operator", null, 1)).resolves.toBeDefined();
+      await expect(insert("probe-space-bound", "s1", 0)).resolves.toBeDefined();
+      // Keys mode binds nothing to a space and its credentials are not
+      // operator keys, so the equivalence waits for the change that gives it
+      // a real one.
+      await expect(insert("probe-keys-mode", null, 0)).resolves.toBeDefined();
+    } finally {
+      db.close();
+    }
+  });
 
-    it("leaves no role or scope_enforced column behind", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await seed(db);
-        await run(db);
-        const keyCols = (
-          await db.execute(`PRAGMA table_info(api_keys)`)
-        ).rows.map((r) => text(r.name));
-        expect(keyCols).not.toContain("role");
-        expect(keyCols).not.toContain("scope_enforced");
-        expect(keyCols).not.toContain("is_platform");
-        expect(keyCols).toContain("is_operator");
-        expect(keyCols).toContain("space_permissions");
-        expect(keyCols).toContain("oauth_client_id");
-        expect(keyCols).toContain("profile_permissions");
+  it("leaves no role or scope_enforced column behind", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await seed(db);
+      await run(db);
+      const keyCols = (
+        await db.execute(`PRAGMA table_info(api_keys)`)
+      ).rows.map((r) => text(r.name));
+      expect(keyCols).not.toContain("role");
+      expect(keyCols).not.toContain("scope_enforced");
+      expect(keyCols).not.toContain("is_platform");
+      expect(keyCols).toContain("is_operator");
+      expect(keyCols).toContain("space_permissions");
+      expect(keyCols).toContain("oauth_client_id");
+      expect(keyCols).toContain("profile_permissions");
 
-        const userCols = (
-          await db.execute(`PRAGMA table_info(users)`)
-        ).rows.map((r) => text(r.name));
-        expect(userCols).not.toContain("role");
-      } finally {
-        db.close();
-      }
-    });
-  },
-);
+      const userCols = (await db.execute(`PRAGMA table_info(users)`)).rows.map(
+        (r) => text(r.name),
+      );
+      expect(userCols).not.toContain("role");
+    } finally {
+      db.close();
+    }
+  });
+});

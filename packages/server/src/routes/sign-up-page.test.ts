@@ -3,11 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Hono } from "hono";
-import {
-  createPgTestStorage,
-  createTestContext,
-  request,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { renderSignUpPage } from "./sign-up-page.js";
 import { createApp } from "../app.js";
@@ -495,27 +491,16 @@ interface HostedSignUpContext {
 }
 
 async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-signup-test-"));
   const blobPath = join(tmpDir, "blobs");
 
-  let storage: Storage;
-  let pgCleanup: (() => Promise<void>) | undefined;
-  if (dialect === "pg") {
-    const pg = await createPgTestStorage({ authMode: "hosted" });
-    storage = pg.storage;
-    pgCleanup = pg.cleanup;
-  } else {
-    const dbPath = join(tmpDir, "test.db");
-    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
-  }
+  const dbPath = join(tmpDir, "test.db");
+  const storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath,
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -557,11 +542,7 @@ async function createHostedSignUpContext(): Promise<HostedSignUpContext> {
     app,
     storage,
     cleanup: async () => {
-      if (pgCleanup) {
-        await pgCleanup();
-      } else {
-        await storage.close();
-      }
+      await storage.close();
       // The directory holds this file's sqlite database and blob
       // root; nothing else removes it.
       rmSync(tmpDir, { recursive: true, force: true });
@@ -701,33 +682,13 @@ describe("POST /auth/sign-up — hosted-mode invariants", () => {
     expect(res.headers.get("location")).toContain("error=handle_reserved");
 
     // The invariant: pre-validation runs BEFORE forwarding to Better
-    // Auth, so no auth_user row should exist. The SQLite path uses the
-    // typed helper; the PG path drops to drizzle-orm directly because
-    // there's no equivalent facade.
-    const dialect = (hosted.storage as { betterAuthDialect?: string })
-      .betterAuthDialect;
-    let count: number | undefined;
-    if (dialect === "pg") {
-      const db = (
-        hosted.storage as unknown as {
-          pgDb?: { execute: (q: unknown) => Promise<unknown> };
-        }
-      ).pgDb;
-      if (db) {
-        const { sql } = await import("drizzle-orm");
-        const rows = (await db.execute(
-          sql`SELECT COUNT(*)::int AS n FROM auth_user`,
-        )) as { n: number }[];
-        count = rows[0]?.n;
+    // Auth, so no auth_user row should exist.
+    const rows = await (
+      hosted.storage as unknown as {
+        __sqliteAll?: (q: string) => Promise<{ n: number }[]>;
       }
-    } else {
-      const rows = await (
-        hosted.storage as unknown as {
-          __sqliteAll?: (q: string) => Promise<{ n: number }[]>;
-        }
-      ).__sqliteAll?.("SELECT COUNT(*) as n FROM auth_user");
-      count = rows?.[0]?.n;
-    }
+    ).__sqliteAll?.("SELECT COUNT(*) as n FROM auth_user");
+    const count = rows?.[0]?.n;
     expect(count).toBe(0);
   });
 });

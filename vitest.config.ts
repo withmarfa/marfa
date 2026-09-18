@@ -32,12 +32,6 @@ export default defineConfig({
     // because an inline project is the only kind that inherits them. The
     // per-package budget lives in `vitest.shared.ts`, and `ci/test-budget.test.ts`
     // holds every package to having one.
-    //
-    // PG parallelism is owned by the server package's own vitest config:
-    // each test file clones a fresh PG database from the template
-    // (`packages/server/src/storage/pg/test-template.ts`), so workers
-    // don't share state and file-parallelism is safe. SQLite was always
-    // parallel-safe (each file uses its own tmpdir DB).
     testTimeout: 20_000,
     hookTimeout: 20_000,
   },

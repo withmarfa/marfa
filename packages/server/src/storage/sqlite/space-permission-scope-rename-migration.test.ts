@@ -168,136 +168,133 @@ async function run(db: Client): Promise<void> {
   }
 }
 
-describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
-  "0089 space permission scopes take the space root",
-  () => {
-    it("moves every stored place, and drops the prefix on the two that stutter", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await seed(db);
-        await run(db);
+describe("0089 space permission scopes take the space root", () => {
+  it("moves every stored place, and drops the prefix on the two that stutter", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await seed(db);
+      await run(db);
 
-        const json = async (sql: string): Promise<unknown> => {
-          const { rows } = await db.execute(sql);
-          return parsed(rows[0]?.[0]);
-        };
+      const json = async (sql: string): Promise<unknown> => {
+        const { rows } = await db.execute(sql);
+        return parsed(rows[0]?.[0]);
+      };
 
-        expect(
-          await json(
-            `SELECT scopes FROM auth_oauth_client WHERE id = 'client-live'`,
-          ),
-        ).toEqual(NEW_SET);
-        expect(
-          await json(
-            `SELECT client_credentials_scopes FROM auth_oauth_client WHERE id = 'client-live'`,
-          ),
-        ).toEqual(M2M_SET_AFTER);
-        expect(
-          await json(
-            `SELECT scopes FROM auth_oauth_access_token WHERE id = 'at-1'`,
-          ),
-        ).toEqual(NEW_SET);
-        expect(
-          await json(
-            `SELECT scopes FROM auth_oauth_refresh_token WHERE id = 'rt-1'`,
-          ),
-        ).toEqual(NEW_SET);
-        expect(
-          await json(
-            `SELECT scopes FROM auth_oauth_consent WHERE id = 'consent-1'`,
-          ),
-        ).toEqual(NEW_SET);
+      expect(
+        await json(
+          `SELECT scopes FROM auth_oauth_client WHERE id = 'client-live'`,
+        ),
+      ).toEqual(NEW_SET);
+      expect(
+        await json(
+          `SELECT client_credentials_scopes FROM auth_oauth_client WHERE id = 'client-live'`,
+        ),
+      ).toEqual(M2M_SET_AFTER);
+      expect(
+        await json(
+          `SELECT scopes FROM auth_oauth_access_token WHERE id = 'at-1'`,
+        ),
+      ).toEqual(NEW_SET);
+      expect(
+        await json(
+          `SELECT scopes FROM auth_oauth_refresh_token WHERE id = 'rt-1'`,
+        ),
+      ).toEqual(NEW_SET);
+      expect(
+        await json(
+          `SELECT scopes FROM auth_oauth_consent WHERE id = 'consent-1'`,
+        ),
+      ).toEqual(NEW_SET);
 
-        const { rows: device } = await db.execute(
-          `SELECT id, scope FROM oauth_device_codes ORDER BY id`,
-        );
-        expect(device.map((r) => r.scope)).toEqual([
-          "openid core.note:read space.usage space.webhooks",
-          "openid core.note:read",
-        ]);
+      const { rows: device } = await db.execute(
+        `SELECT id, scope FROM oauth_device_codes ORDER BY id`,
+      );
+      expect(device.map((r) => r.scope)).toEqual([
+        "openid core.note:read space.usage space.webhooks",
+        "openid core.note:read",
+      ]);
 
-        const { rows: verification } = await db.execute(
-          `SELECT id, value FROM auth_verification ORDER BY id`,
-        );
-        expect(parsed(verification[0]?.value)).toMatchObject({
-          query: { scope: "openid space.keys space.settings" },
-        });
-        // The non-JSON row in the same table is untouched, which is why the
-        // rewrite goes through text rather than the JSON functions.
-        expect(text(verification[1]?.value)).toBe("a-plain-verification-token");
+      const { rows: verification } = await db.execute(
+        `SELECT id, value FROM auth_verification ORDER BY id`,
+      );
+      expect(parsed(verification[0]?.value)).toMatchObject({
+        query: { scope: "openid space.keys space.settings" },
+      });
+      // The non-JSON row in the same table is untouched, which is why the
+      // rewrite goes through text rather than the JSON functions.
+      expect(text(verification[1]?.value)).toBe("a-plain-verification-token");
 
-        const { rows: grants } = await db.execute(
-          `SELECT id, json_extract(properties, '$.scopes') AS scopes FROM items ORDER BY id`,
-        );
-        const byId = new Map(grants.map((r) => [text(r.id), r.scopes]));
-        expect(parsed(byId.get("grant-live"))).toEqual(NEW_SET);
-        // A revoked projection still holds a scope list, and the surfaces
-        // that render its history read the same names as the live ones.
-        expect(parsed(byId.get("grant-revoked"))).toEqual(["space.audit_read"]);
+      const { rows: grants } = await db.execute(
+        `SELECT id, json_extract(properties, '$.scopes') AS scopes FROM items ORDER BY id`,
+      );
+      const byId = new Map(grants.map((r) => [text(r.id), r.scopes]));
+      expect(parsed(byId.get("grant-live"))).toEqual(NEW_SET);
+      // A revoked projection still holds a scope list, and the surfaces
+      // that render its history read the same names as the live ones.
+      expect(parsed(byId.get("grant-revoked"))).toEqual(["space.audit_read"]);
 
-        // The rest of the document survives. A statement that replaced the
-        // whole properties bag rather than the one path would pass every
-        // assertion above and lose the grant's identity.
-        const { rows: kept } = await db.execute(
-          `SELECT json_extract(properties, '$.kind') AS kind,
+      // The rest of the document survives. A statement that replaced the
+      // whole properties bag rather than the one path would pass every
+      // assertion above and lose the grant's identity.
+      const { rows: kept } = await db.execute(
+        `SELECT json_extract(properties, '$.kind') AS kind,
                   json_extract(properties, '$.client_id') AS client_id,
                   typeof(properties) AS storage
              FROM items WHERE id = 'grant-live'`,
-        );
-        expect(kept[0]?.kind).toBe("app");
-        expect(kept[0]?.client_id).toBe("client-live");
-        // And it is still SQLite's binary JSONB rather than JSON text. A
-        // `json_set` without the `jsonb(...)` wrapper reverts the encoding for
-        // the rows it touches, which nothing else here would notice.
-        expect(kept[0]?.storage).toBe("blob");
-      } finally {
-        db.close();
-      }
-    });
+      );
+      expect(kept[0]?.kind).toBe("app");
+      expect(kept[0]?.client_id).toBe("client-live");
+      // And it is still SQLite's binary JSONB rather than JSON text. A
+      // `json_set` without the `jsonb(...)` wrapper reverts the encoding for
+      // the rows it touches, which nothing else here would notice.
+      expect(kept[0]?.storage).toBe("blob");
+    } finally {
+      db.close();
+    }
+  });
 
-    it("leaves an integration manifest's capability alone", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await seed(db);
-        await run(db);
-        const { rows } = await db.execute(
-          `SELECT json_extract(properties, '$.manifest.oauth_requirements') AS req
+  it("leaves an integration manifest's capability alone", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await seed(db);
+      await run(db);
+      const { rows } = await db.execute(
+        `SELECT json_extract(properties, '$.manifest.oauth_requirements') AS req
              FROM items WHERE id = 'conn-integration'`,
-        );
-        expect(parsed(rows[0]?.req)).toEqual({
-          "capability.drive.upload": "leased",
-        });
-      } finally {
-        db.close();
-      }
-    });
+      );
+      expect(parsed(rows[0]?.req)).toEqual({
+        "capability.drive.upload": "leased",
+      });
+    } finally {
+      db.close();
+    }
+  });
 
-    it("stays put on a second run", async () => {
-      const db = createClient({ url: ":memory:" });
-      try {
-        await seed(db);
-        await run(db);
-        // Every column, not just one: the two rewritten with `replace()`
-        // rather than through the JSON functions are where a second pass is
-        // most plausibly not a no-op.
-        const snapshot = async () =>
-          (
-            await db.execute(
-              `SELECT (SELECT scopes FROM auth_oauth_consent WHERE id = 'consent-1') AS consent,
+  it("stays put on a second run", async () => {
+    const db = createClient({ url: ":memory:" });
+    try {
+      await seed(db);
+      await run(db);
+      // Every column, not just one: the two rewritten with `replace()`
+      // rather than through the JSON functions are where a second pass is
+      // most plausibly not a no-op.
+      const snapshot = async () =>
+        (
+          await db.execute(
+            `SELECT (SELECT scopes FROM auth_oauth_consent WHERE id = 'consent-1') AS consent,
                       (SELECT scope  FROM oauth_device_codes  WHERE id = 'dc-1')      AS device,
                       (SELECT value  FROM auth_verification   WHERE id = 'v-code')    AS code,
                       (SELECT json_extract(properties, '$.scopes')
                          FROM items WHERE id = 'grant-live')                          AS grant_scopes`,
-            )
-          ).rows[0];
-        const first = await snapshot();
-        await run(db);
-        const second = await snapshot();
-        expect(parsed(second?.consent)).toEqual(NEW_SET);
-        expect(second).toEqual(first);
-      } finally {
-        db.close();
-      }
-    });
-  },
-);
+          )
+        ).rows[0];
+      const first = await snapshot();
+      await run(db);
+      const second = await snapshot();
+      expect(parsed(second?.consent)).toEqual(NEW_SET);
+      expect(second).toEqual(first);
+    } finally {
+      db.close();
+    }
+  });
+});

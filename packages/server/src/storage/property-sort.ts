@@ -16,7 +16,6 @@
 
 import { sql, type SQL } from "drizzle-orm";
 import { getResolvedFields } from "@withmarfa/shared";
-import type { SqlDialect } from "./filter-sql.js";
 import type { parseSortField } from "./interface.js";
 
 /**
@@ -71,28 +70,16 @@ function isNumericSortField(
   return def?.type === "integer" || def?.type === "number";
 }
 
-/** The SQL expression that extracts a property value as text, per dialect. */
-function textExtract(
-  propertiesCol: unknown,
-  field: string,
-  dialect: SqlDialect,
-): SQL {
-  return dialect === "sqlite"
-    ? sql`json_extract(${propertiesCol}, ${"$." + field})`
-    : sql`${propertiesCol}->>${field}`;
+/** The SQL expression that extracts a property value as text. */
+function textExtract(propertiesCol: unknown, field: string): SQL {
+  return sql`json_extract(${propertiesCol}, ${"$." + field})`;
 }
 
-/** The SQL expression that extracts a property value as a number, per dialect.
- *  SQLite's `CAST(... AS REAL)` yields 0 for non-numeric text, so callers must
- *  only reach this when the field is known numeric. */
-function numericExtract(
-  propertiesCol: unknown,
-  field: string,
-  dialect: SqlDialect,
-): SQL {
-  return dialect === "sqlite"
-    ? sql`CAST(json_extract(${propertiesCol}, ${"$." + field}) AS REAL)`
-    : sql`(${propertiesCol}->>${field})::numeric`;
+/** The SQL expression that extracts a property value as a number.
+ *  `CAST(... AS REAL)` yields 0 for non-numeric text, so callers must only
+ *  reach this when the field is known numeric. */
+function numericExtract(propertiesCol: unknown, field: string): SQL {
+  return sql`CAST(json_extract(${propertiesCol}, ${"$." + field}) AS REAL)`;
 }
 
 export interface PropertySortExpr {
@@ -110,13 +97,12 @@ export interface PropertySortExpr {
 export function buildPropertySortExpr(
   propertiesCol: unknown,
   field: string,
-  dialect: SqlDialect,
   typeFilter: string | undefined,
   spaceId: string | undefined,
 ): PropertySortExpr {
   const numeric = isNumericSortField(field, typeFilter, spaceId);
   const expr = numeric
-    ? numericExtract(propertiesCol, field, dialect)
-    : textExtract(propertiesCol, field, dialect);
+    ? numericExtract(propertiesCol, field)
+    : textExtract(propertiesCol, field);
   return { expr, numeric };
 }

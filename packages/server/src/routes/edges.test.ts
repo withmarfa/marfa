@@ -1383,7 +1383,7 @@ describe("PATCH/DELETE /edges/:id — source-type gate on trashed source", () =>
   });
 });
 
-// On SQLite / RLS-off deployments the application-layer fence is the only
+// The application-layer fence is the only
 // thing standing between space A and space B's edges on the single-edge
 // PATCH/DELETE path. These tests run in hosted mode with two spaces and a
 // space-scoped key for space A, then attempt to mutate/delete an edge that

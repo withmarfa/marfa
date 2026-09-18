@@ -3,11 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Hono } from "hono";
-import {
-  createPgTestStorage,
-  createTestContext,
-  request,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { createApp } from "../app.js";
 import { createSqliteStorage } from "../storage/sqlite/index.js";
@@ -34,27 +30,16 @@ interface HostedContext {
 }
 
 async function createHostedContext(): Promise<HostedContext> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const tmpDir = mkdtempSync(join(tmpdir(), "marfa-users-test-"));
   const blobPath = join(tmpDir, "blobs");
 
-  let storage: Storage;
-  let pgCleanup: (() => Promise<void>) | undefined;
-  if (dialect === "pg") {
-    const pg = await createPgTestStorage({ authMode: "hosted" });
-    storage = pg.storage;
-    pgCleanup = pg.cleanup;
-  } else {
-    const dbPath = join(tmpDir, "test.db");
-    storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
-  }
+  const dbPath = join(tmpDir, "test.db");
+  const storage = await createSqliteStorage(dbPath, { authMode: "hosted" });
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath,
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -95,11 +80,7 @@ async function createHostedContext(): Promise<HostedContext> {
     app,
     storage,
     cleanup: async () => {
-      if (pgCleanup) {
-        await pgCleanup();
-      } else {
-        await storage.close();
-      }
+      await storage.close();
       // The directory holds this file's sqlite database and blob
       // root; nothing else removes it.
       rmSync(tmpDir, { recursive: true, force: true });

@@ -72,9 +72,7 @@ function createTestFetch(app: AppRequest): typeof globalThis.fetch {
 function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
   return {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: "",
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,

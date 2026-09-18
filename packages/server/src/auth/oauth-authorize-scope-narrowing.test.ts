@@ -106,10 +106,8 @@ const bundleScopes = new Set(
  *  catch-up, so the catch-up is not just "the ceiling stopped mattering". */
 const NON_BUNDLE_SCOPE = "core.*:read";
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 /**
@@ -126,7 +124,7 @@ async function seedClient(
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -135,19 +133,13 @@ async function seedClient(
       };
     };
   };
-  const isPg = c.storage.betterAuthDialect === "pg";
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${randomBytes(5).toString("hex")}`,
     clientId,
     name: "Narrowing Test Client",
-    redirectUris: isPg ? [CALLBACK] : JSON.stringify([CALLBACK]),
-    scopes:
-      scopes === undefined
-        ? null
-        : isPg
-          ? [...scopes]
-          : JSON.stringify([...scopes]),
+    redirectUris: JSON.stringify([CALLBACK]),
+    scopes: scopes === undefined ? null : JSON.stringify([...scopes]),
     disabled: false,
     createdAt: now,
     updatedAt: now,

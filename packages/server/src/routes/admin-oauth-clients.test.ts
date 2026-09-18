@@ -34,10 +34,8 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 async function seedClient(c: TestContext): Promise<string> {
@@ -136,7 +134,7 @@ async function clientRows(
   c: TestContext,
   clientId: string,
 ): Promise<ClientRows> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   type Column = Parameters<typeof eq>[0];
   const db = c.storage.betterAuthDb as {
@@ -192,7 +190,7 @@ async function seedAuthorizationCode(
   clientId: string,
   authUserId: string,
 ): Promise<void> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -218,7 +216,7 @@ async function seedAuthorizationCode(
 }
 
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {

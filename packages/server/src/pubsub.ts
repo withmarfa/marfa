@@ -64,22 +64,11 @@ export interface ItemEventWithId extends ItemEvent {
   /** event_log.id assigned by storage. `bigint` so values above
    *  Number.MAX_SAFE_INTEGER round-trip without truncation. */
   eventId?: bigint;
-  /**
-   * True when this event was published by ANOTHER process and replicated
-   * here through the database (see event-replication.ts). Subscribers
-   * that produce side effects exactly once per event — outbound webhook
-   * delivery — skip remote events, because the origin process already
-   * produced them; pure fan-out (SSE, the reactive bridge's elected
-   * drainer) treats local and remote alike.
-   */
-  remote?: boolean;
 }
 
 export interface EdgeEventWithId extends EdgeEvent {
   /** event_log.id assigned by storage. `bigint` — see ItemEventWithId. */
   eventId?: bigint;
-  /** Replicated from another process — see ItemEventWithId.remote. */
-  remote?: boolean;
 }
 
 export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
@@ -88,57 +77,25 @@ export type PubsubEventWithId = ItemEventWithId | EdgeEventWithId;
  * Process-local event bus: the distribution channel for Server-Sent
  * Events, outbound webhook dispatch, and the reactive bridges.
  *
- * On Postgres this emitter is no longer the whole story. `publish()`
- * announces every appended event over pg_notify (the `notifyRemote` hook,
- * wired by index.ts to event-replication.ts), and every sibling process
- * hydrates the announcement from event_log and re-emits it here marked
- * `remote: true` — so a subscriber on any process sees the deployment's
- * events, not one process's. Subscribers with exactly-once side effects
- * (webhook delivery) skip remote events; pure fan-out treats local and
- * remote alike. On SQLite one process is the deployment and no hook is
- * wired, which restores the old purely-local behavior by construction.
- *
- * What still assumes few processes lives elsewhere: the in-memory
- * per-email throttle, the rate-limit and space-cap caches, and the
- * `last_used_at` debounce all tolerate multiple copies (they degrade to
- * per-process granularity) but are not shared state. The realtime loss
- * that made one process a hard requirement is what this closes.
+ * One process is the deployment, so this emitter is the whole story: every
+ * subscriber sees every event the process publishes.
  */
 const emitter = new EventEmitter();
 emitter.setMaxListeners(envNumber(process.env.MAX_SUBSCRIPTION_LISTENERS, 100));
 
 let eventLogStore: EventLogStore | null = null;
-let notifyRemote: ((eventId: bigint) => Promise<void>) | null = null;
-
-export interface InitEventLogOptions {
-  /**
-   * Cross-process announcement of a freshly-appended event, fired after
-   * the event_log append with the id it assigned. The Postgres wiring
-   * issues pg_notify on the request-context connection, so the
-   * announcement joins the surrounding transaction and is delivered only
-   * on commit. Unset on SQLite, where one process is the deployment.
-   */
-  notifyRemote?: (eventId: bigint) => Promise<void>;
-}
 
 /** Call once at startup to enable event persistence. */
-export function initEventLog(
-  store: EventLogStore,
-  options?: InitEventLogOptions,
-): void {
+export function initEventLog(store: EventLogStore): void {
   eventLogStore = store;
-  notifyRemote = options?.notifyRemote ?? null;
 }
 
 /**
- * Reset the event-log wiring (test-only). Detaches the remote-announcement
- * hook, so a test that wired a notifier over a since-dropped database does
- * not leave it bound for whatever runs next in the same process, and the
- * store itself, so a test that wired the log to its own context does not
- * leave it bound for everything that runs afterwards in the same file.
+ * Reset the event-log wiring (test-only). Detaches the store, so a test
+ * that wired the log to its own context does not leave it bound for
+ * everything that runs afterwards in the same file.
  */
 export function __resetEventLogForTests(): void {
-  notifyRemote = null;
   eventLogStore = null;
 }
 
@@ -233,8 +190,6 @@ export async function publish(input: ItemEvent): Promise<bigint | undefined> {
     });
   }
 
-  await announceRemote(eventId);
-
   emitter.emit("ITEM_CHANGED", {
     ...event,
     enableFanout,
@@ -283,8 +238,6 @@ export async function publishEdge(
     });
   }
 
-  await announceRemote(eventId);
-
   emitter.emit("EDGE_CHANGED", {
     ...event,
     enableFanout,
@@ -294,65 +247,20 @@ export async function publishEdge(
 }
 
 /**
- * Tell sibling processes an event landed, so their subscribers see the
- * deployment's events rather than one process's.
- *
- * A failed announcement must not suppress local delivery: outside a request
- * transaction the append has already committed, and inside one a failed
- * statement aborts the transaction regardless — either way this process's
- * own subscribers keep the event they always got.
- */
-async function announceRemote(eventId: bigint | undefined): Promise<void> {
-  if (eventId === undefined || !notifyRemote) return;
-  try {
-    await notifyRemote(eventId);
-  } catch (err) {
-    logRemoteNotifyFailure(eventId, err);
-  }
-}
-
-function logRemoteNotifyFailure(eventId: bigint, err: unknown): void {
-  log("warn", "Remote event announcement failed; siblings missed one", {
-    event_id: String(eventId),
-    error: err instanceof Error ? err.message : String(err),
-  });
-}
-
-/**
- * Emit an event into this process's subscribers without persisting or
- * announcing it. For in-process wake sentinels only — a shutdown wake
- * has to unblock local for-await loops, and it neither belongs in
- * event_log nor deserves broadcast to sibling processes as a fabricated
- * event on every rolling deploy.
+ * Emit an event into this process's subscribers without persisting it.
+ * For in-process wake sentinels only — a shutdown wake has to unblock
+ * local for-await loops, and it does not belong in event_log.
  */
 export function emitWake(event: PubsubEventWithId): void {
-  // `isEdgeEvent` rather than a list of edge type names. Both this and
-  // `emitReplicated` enumerated the two that existed, so adding a third
-  // meant remembering two sites that mention neither edges nor events in
-  // their names — and an event routed to the wrong emitter is delivered to
-  // nobody rather than failing. The discriminant is the payload shape,
+  // `isEdgeEvent` rather than a list of edge type names. This once
+  // enumerated the two that existed, so adding a third meant remembering a
+  // site that mentions neither edges nor events in its name — and an event
+  // routed to the wrong emitter is delivered to nobody rather than failing. The discriminant is the payload shape,
   // which cannot fall behind the union.
   if (isEdgeEvent(event)) {
     emitter.emit("EDGE_CHANGED", event);
   } else {
     emitter.emit("ITEM_CHANGED", event);
-  }
-}
-
-/**
- * Emit an event replicated from another process into this process's
- * subscribers, marked `remote: true`. No event_log append and no remote
- * announcement: the origin process did both, and repeating either here
- * would duplicate the row or echo the event around the cluster forever.
- * Only event-replication.ts calls this.
- */
-export function emitReplicated(event: PubsubEventWithId): void {
-  const marked = { ...event, remote: true };
-  // Shape, not a name list — see `emitWake`.
-  if (isEdgeEvent(event)) {
-    emitter.emit("EDGE_CHANGED", marked);
-  } else {
-    emitter.emit("ITEM_CHANGED", marked);
   }
 }
 

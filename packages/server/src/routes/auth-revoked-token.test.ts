@@ -39,10 +39,7 @@ function spaces() {
  *  provider plugin's session-delete hook does to the tokens issued under a
  *  session that has just ended. */
 async function revokeAccessTokens(clientId: string): Promise<void> {
-  const schemaModule =
-    ctx.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = ctx.storage.betterAuthDb as {
     update: (table: unknown) => {
       set: (v: Record<string, unknown>) => {

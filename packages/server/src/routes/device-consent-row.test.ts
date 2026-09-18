@@ -47,10 +47,8 @@ const ORIGIN = "http://localhost:0";
 const CALLBACK = "http://localhost:0/callback";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 /** A public client registered for the device grant and the code flow, with
@@ -61,7 +59,7 @@ async function seedClient(c: TestContext): Promise<string> {
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -70,9 +68,8 @@ async function seedClient(c: TestContext): Promise<string> {
       };
     };
   };
-  const isPg = c.storage.betterAuthDialect === "pg";
   const asColumn = (values: readonly string[]): unknown =>
-    isPg ? [...values] : JSON.stringify([...values]);
+    JSON.stringify([...values]);
   const now = new Date();
   const op = db.insert(schema.auth_oauth_client).values({
     id: `pk_${randomBytes(5).toString("hex")}`,
@@ -117,7 +114,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 }
 
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -170,7 +167,7 @@ async function driftReferenceId(
   clientId: string,
   authUserId: string,
 ): Promise<void> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     update: (table: unknown) => {
@@ -197,7 +194,7 @@ async function consentRows(
   clientId: string,
   authUserId: string,
 ): Promise<{ scopes: string[]; referenceId: string | null }[]> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {

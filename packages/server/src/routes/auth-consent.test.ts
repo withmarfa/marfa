@@ -64,10 +64,7 @@ async function seedClient(
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -77,13 +74,9 @@ async function seedClient(
     };
   };
   const now = new Date();
-  // PG has native `text[]` columns for the plugin's `string[]` fields
-  // (see migration 0059); SQLite stays on `text` with JSON-serialized
+  // The plugin's `string[]` fields are `text` columns holding JSON-serialized
   // arrays via the Better Auth adapter (`supportsArrays: false`).
-  const redirectUris: unknown =
-    c.storage.betterAuthDialect === "pg"
-      ? ["http://localhost:0/callback"]
-      : JSON.stringify(["http://localhost:0/callback"]);
+  const redirectUris: unknown = JSON.stringify(["http://localhost:0/callback"]);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -233,10 +226,7 @@ async function seedAccessToken(
   scopes: string[],
 ): Promise<string> {
   if (!c.storage.betterAuthDb) throw new Error("no betterAuthDb");
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -254,8 +244,7 @@ async function seedAccessToken(
     referenceId: null,
     expiresAt: new Date(Date.now() + 3600_000),
     createdAt: new Date(),
-    scopes:
-      c.storage.betterAuthDialect === "pg" ? scopes : JSON.stringify(scopes),
+    scopes: JSON.stringify(scopes),
   });
   await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
   return tokenHash;
@@ -1082,10 +1071,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     // Seed an access token row directly (simulates the token a real
     // /oauth2/token call would have minted at the wide scope).
     if (!ctx.storage.betterAuthDb) throw new Error("no betterAuthDb");
-    const schemaModule =
-      ctx.storage.betterAuthDialect === "pg"
-        ? await import("../storage/pg/schema.js")
-        : await import("../storage/sqlite/schema.js");
+    const schemaModule = await import("../storage/sqlite/schema.js");
     const db = ctx.storage.betterAuthDb as unknown as {
       insert: (table: unknown) => {
         values: (v: Record<string, unknown>) => {
@@ -1097,8 +1083,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const now = new Date();
     const tokenId = `at_${Math.random().toString(36).slice(2)}`;
     const tokenHash = `hash_${Math.random().toString(36).slice(2)}`;
-    // PG: `scopes` is native `text[]`; SQLite: JSON-serialized text.
-    // See migration 0059 + `auth_oauth_client.scopes` schema comment.
+    // `scopes` is JSON-serialized text; see the `auth_oauth_client.scopes`
+    // schema comment.
     const wideScopes = [
       "openid",
       "core.note:read",
@@ -1113,10 +1099,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       referenceId: null,
       expiresAt: new Date(now.getTime() + 3600_000),
       createdAt: now,
-      scopes:
-        ctx.storage.betterAuthDialect === "pg"
-          ? wideScopes
-          : JSON.stringify(wideScopes),
+      scopes: JSON.stringify(wideScopes),
     });
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 
@@ -1225,10 +1208,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const authUserId = items1.data[0]!.properties.user_id as string;
 
     if (!ctx.storage.betterAuthDb) throw new Error("no betterAuthDb");
-    const schemaModule =
-      ctx.storage.betterAuthDialect === "pg"
-        ? await import("../storage/pg/schema.js")
-        : await import("../storage/sqlite/schema.js");
+    const schemaModule = await import("../storage/sqlite/schema.js");
     const db = ctx.storage.betterAuthDb as unknown as {
       insert: (table: unknown) => {
         values: (v: Record<string, unknown>) => {
@@ -1247,11 +1227,8 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       referenceId: null,
       expiresAt: new Date(Date.now() + 3600_000),
       createdAt: new Date(),
-      // PG: native `text[]`; SQLite: JSON-serialized text.
-      scopes:
-        ctx.storage.betterAuthDialect === "pg"
-          ? sameScopes
-          : JSON.stringify(sameScopes),
+      // JSON-serialized text.
+      scopes: JSON.stringify(sameScopes),
     });
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 
@@ -1313,10 +1290,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
     const authUserId = items1.data[0]!.properties.user_id as string;
 
     if (!ctx.storage.betterAuthDb) throw new Error("no betterAuthDb");
-    const schemaModule =
-      ctx.storage.betterAuthDialect === "pg"
-        ? await import("../storage/pg/schema.js")
-        : await import("../storage/sqlite/schema.js");
+    const schemaModule = await import("../storage/sqlite/schema.js");
     const db = ctx.storage.betterAuthDb as unknown as {
       insert: (table: unknown) => {
         values: (v: Record<string, unknown>) => {
@@ -1335,10 +1309,7 @@ describe("POST /auth/authorize/decision (consent decision proxy)", () => {
       referenceId: null,
       expiresAt: new Date(Date.now() + 3600_000),
       createdAt: new Date(),
-      scopes:
-        ctx.storage.betterAuthDialect === "pg"
-          ? heldScopes
-          : JSON.stringify(heldScopes),
+      scopes: JSON.stringify(heldScopes),
     });
     await (op.execute?.() ?? op.run?.() ?? Promise.resolve());
 

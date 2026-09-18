@@ -143,8 +143,6 @@ function wake(itemId: string): void {
 describe("GET /events — the cursor announcement is bounded", () => {
   it("announces nothing and releases the hold when the head read outruns its budget", async () => {
     const app = makeApp(withStalledHeadRead(ctx.storage), {
-      rlsEnforce: false,
-      pgClient: null,
       headReadTimeoutMs: 150,
     });
     const open = await openStream(app);
@@ -175,8 +173,6 @@ describe("GET /events — the cursor announcement is bounded", () => {
     // announces for reasons of its own, which is the same result and a
     // different fact.
     const app = makeApp(ctx.storage, {
-      rlsEnforce: false,
-      pgClient: null,
       headReadTimeoutMs: 150,
     });
     const open = await openStream(app);

@@ -4,8 +4,6 @@
  * Converts a FilterExpression AST into SQL conditions for both:
  * - Drizzle ORM (used by item stores): returns SQL[] to compose with and()/or()
  * - Raw SQL strings (used by search stores): returns parameterized clause strings
- *
- * Supports both SQLite and Postgres dialects.
  */
 
 import { sql, type SQL } from "drizzle-orm";
@@ -23,12 +21,11 @@ import type {
 /**
  * Escape LIKE pattern characters so they are treated as literals.
  *
- * Only half the job: the escape character has to be declared too. Postgres
- * defaults to backslash, SQLite has no default at all, so on SQLite an
- * unaccompanied `\_` is a literal backslash followed by the single-character
- * wildcard — a `contains` filter for `web_gallery` silently matches nothing.
- * Every LIKE built from this must carry `LIKE_ESCAPE_CLAUSE`, which reads the
- * same on both dialects.
+ * Only half the job: the escape character has to be declared too. SQLite
+ * has no default, so an unaccompanied `\_` is a literal backslash followed
+ * by the single-character wildcard — a `contains` filter for `web_gallery`
+ * silently matches nothing. Every LIKE built from this must carry
+ * `LIKE_ESCAPE_CLAUSE`.
  */
 function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, "\\$&");
@@ -38,26 +35,16 @@ function escapeLike(s: string): string {
 const LIKE_ESCAPE_CLAUSE = " ESCAPE '\\'";
 
 /**
- * The text operators mean the same thing on both dialects, and that
- * meaning is case-insensitive. SQLite's LIKE is already case-insensitive
- * over ASCII (and the folder query's index is collated NOCASE to match),
- * but Postgres's LIKE is case-sensitive, so the same filter used to
- * return different rows depending on which engine a deployment runs — a
- * storage detail leaking through a public surface. On Postgres both
- * sides are lowered, and the functional index on lower(source_id) is
- * what keeps the folder query on an index scan. SQLite's own
- * case-insensitivity is ASCII-only, an engine limitation documented in
- * the query reference rather than papered over here.
+ * The text operators are case-insensitive: SQLite's LIKE is
+ * case-insensitive over ASCII, and the folder query's index is collated
+ * NOCASE to match. That case-insensitivity is ASCII-only, an engine
+ * limitation documented in the query reference rather than papered over
+ * here.
  */
-function likePattern(value: unknown): string {
-  return escapeLike(String(value).toLowerCase());
-}
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-export type SqlDialect = "sqlite" | "pg";
 
 /** Table reference with the columns we need for condition generation. */
 interface ItemsTableRef {
@@ -78,7 +65,6 @@ interface ItemsTableRef {
 export interface RawSqlResult {
   clause: string;
   params: unknown[];
-  nextParamIdx: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,7 +94,6 @@ function getSystemColumn(table: ItemsTableRef, column: string): unknown {
 
 function conditionToSql(
   condition: FilterCondition,
-  dialect: SqlDialect,
   table: ItemsTableRef,
   spaceId: string | undefined,
 ): SQL {
@@ -116,11 +101,11 @@ function conditionToSql(
 
   if (field.kind === "system") {
     const col = getSystemColumn(table, field.column);
-    return systemFieldSql(col, op, value, dialect);
+    return systemFieldSql(col, op, value);
   }
 
   if (field.kind === "property") {
-    return propertyFieldSql(table.properties, field.path, op, value, dialect);
+    return propertyFieldSql(table.properties, field.path, op, value);
   }
 
   if (field.kind === "edge") {
@@ -135,7 +120,7 @@ function conditionToSql(
   }
 
   // tags
-  return tagsFieldSql(table.id, op, value, dialect);
+  return tagsFieldSql(table.id, op, value);
 }
 
 /**
@@ -220,22 +205,15 @@ function edgeFieldSql(
   }
 }
 
-/** better-sqlite3 cannot bind booleans natively (the column is INTEGER
- * under the hood); coerce to 0/1 for the SQLite path. Postgres needs the
- * boolean itself because boolean columns are real `bool` and `boolean =
- * integer` is a type error. */
-function bindable(value: unknown, dialect: SqlDialect): unknown {
-  if (typeof value === "boolean" && dialect === "sqlite") return value ? 1 : 0;
+/** libsql cannot bind booleans natively (the column is INTEGER under the
+ * hood); coerce to 0/1. */
+function bindable(value: unknown): unknown {
+  if (typeof value === "boolean") return value ? 1 : 0;
   return value;
 }
 
-function systemFieldSql(
-  col: unknown,
-  op: ComparisonOp,
-  value: unknown,
-  dialect: SqlDialect,
-): SQL {
-  const v = bindable(value, dialect);
+function systemFieldSql(col: unknown, op: ComparisonOp, value: unknown): SQL {
+  const v = bindable(value);
   switch (op) {
     case "eq":
       return sql`${col} = ${v}`;
@@ -250,13 +228,9 @@ function systemFieldSql(
     case "lte":
       return sql`${col} <= ${v}`;
     case "contains":
-      return dialect === "pg"
-        ? sql`LOWER(${col}) LIKE ${"%" + likePattern(value) + "%"} ESCAPE '\\'`
-        : sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return sql`${col} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "starts_with":
-      return dialect === "pg"
-        ? sql`LOWER(${col}) LIKE ${likePattern(value) + "%"} ESCAPE '\\'`
-        : sql`${col} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return sql`${col} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     default:
       throw new Error(`Unsupported operator "${op}" for system field`);
   }
@@ -267,23 +241,15 @@ function propertyFieldSql(
   path: string,
   op: ComparisonOp,
   value: unknown,
-  dialect: SqlDialect,
 ): SQL {
   const jsonPath = `$.${path}`;
   const isNumeric = typeof value === "number";
 
-  // JSON extraction expression varies by dialect: sqlite's json_extract
-  // reads the JSONB blob directly; pg reads the jsonb column natively.
-  const extract =
-    dialect === "sqlite"
-      ? sql`json_extract(${propertiesCol}, ${jsonPath})`
-      : sql`${propertiesCol}->>${path}`;
+  // json_extract reads the JSONB blob directly.
+  const extract = sql`json_extract(${propertiesCol}, ${jsonPath})`;
 
   // Numeric extraction for comparison operators
-  const numericExtract =
-    dialect === "sqlite"
-      ? sql`CAST(json_extract(${propertiesCol}, ${jsonPath}) AS REAL)`
-      : sql`(${propertiesCol}->>${path})::numeric`;
+  const numericExtract = sql`CAST(json_extract(${propertiesCol}, ${jsonPath}) AS REAL)`;
 
   switch (op) {
     case "eq":
@@ -307,13 +273,9 @@ function propertyFieldSql(
         ? sql`${numericExtract} <= ${value}`
         : sql`${extract} <= ${value}`;
     case "contains":
-      return dialect === "pg"
-        ? sql`LOWER(${extract}) LIKE ${"%" + likePattern(value) + "%"} ESCAPE '\\'`
-        : sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return sql`${extract} LIKE ${"%" + escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "starts_with":
-      return dialect === "pg"
-        ? sql`LOWER(${extract}) LIKE ${likePattern(value) + "%"} ESCAPE '\\'`
-        : sql`${extract} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
+      return sql`${extract} LIKE ${escapeLike(String(value)) + "%"} ESCAPE '\\'`;
     case "exists":
       return sql`${extract} IS NOT NULL`;
     case "not_exists":
@@ -325,52 +287,25 @@ function propertyFieldSql(
   }
 }
 
-function tagsFieldSql(
-  idCol: unknown,
-  op: ComparisonOp,
-  value: unknown,
-  dialect: SqlDialect,
-): SQL {
+function tagsFieldSql(idCol: unknown, op: ComparisonOp, value: unknown): SQL {
   if (op === "contains") {
-    if (dialect === "sqlite") {
-      return sql`EXISTS (
-        SELECT 1 FROM metadata m, json_each(m.tags) je
-        WHERE m.item_id = ${idCol} AND je.value = ${value}
-      )`;
-    }
-    // Postgres: wrap value in array for jsonb containment
     return sql`EXISTS (
-      SELECT 1 FROM metadata m
-      WHERE m.item_id = ${idCol}
-        AND m.tags::jsonb @> ${JSON.stringify([value])}::jsonb
+      SELECT 1 FROM metadata m, json_each(m.tags) je
+      WHERE m.item_id = ${idCol} AND je.value = ${value}
     )`;
   }
 
   if (op === "exists") {
-    if (dialect === "sqlite") {
-      return sql`EXISTS (
-        SELECT 1 FROM metadata m, json_each(m.tags) je
-        WHERE m.item_id = ${idCol}
-      )`;
-    }
     return sql`EXISTS (
-      SELECT 1 FROM metadata m
+      SELECT 1 FROM metadata m, json_each(m.tags) je
       WHERE m.item_id = ${idCol}
-        AND jsonb_array_length(m.tags::jsonb) > 0
     )`;
   }
 
   if (op === "not_exists") {
-    if (dialect === "sqlite") {
-      return sql`NOT EXISTS (
-        SELECT 1 FROM metadata m, json_each(m.tags) je
-        WHERE m.item_id = ${idCol}
-      )`;
-    }
     return sql`NOT EXISTS (
-      SELECT 1 FROM metadata m
+      SELECT 1 FROM metadata m, json_each(m.tags) je
       WHERE m.item_id = ${idCol}
-        AND jsonb_array_length(m.tags::jsonb) > 0
     )`;
   }
 
@@ -388,11 +323,10 @@ function tagsFieldSql(
  */
 export function filterToSqlConditions(
   expr: FilterExpression,
-  dialect: SqlDialect,
   table: ItemsTableRef,
   spaceId?: string,
 ): SQL[] {
-  return expr.conditions.map((c) => conditionToSql(c, dialect, table, spaceId));
+  return expr.conditions.map((c) => conditionToSql(c, table, spaceId));
 }
 
 // ---------------------------------------------------------------------------
@@ -401,36 +335,18 @@ export function filterToSqlConditions(
 
 function conditionToRawSql(
   condition: FilterCondition,
-  dialect: SqlDialect,
   tableAlias: string,
   params: unknown[],
-  paramIdx: number,
   spaceId: string | undefined,
-): { fragment: string; paramIdx: number } {
+): string {
   const { field, op, value } = condition;
 
   if (field.kind === "system") {
-    return systemFieldRawSql(
-      tableAlias,
-      field.column,
-      op,
-      value,
-      dialect,
-      params,
-      paramIdx,
-    );
+    return systemFieldRawSql(tableAlias, field.column, op, value, params);
   }
 
   if (field.kind === "property") {
-    return propertyFieldRawSql(
-      tableAlias,
-      field.path,
-      op,
-      value,
-      dialect,
-      params,
-      paramIdx,
-    );
+    return propertyFieldRawSql(tableAlias, field.path, op, value, params);
   }
 
   if (field.kind === "edge") {
@@ -440,15 +356,13 @@ function conditionToRawSql(
       field.direction,
       op,
       value,
-      dialect,
       params,
-      paramIdx,
       spaceId,
     );
   }
 
   // tags
-  return tagsFieldRawSql(tableAlias, op, value, dialect, params, paramIdx);
+  return tagsFieldRawSql(tableAlias, op, value, params);
 }
 
 function edgeFieldRawSql(
@@ -457,57 +371,36 @@ function edgeFieldRawSql(
   direction: "outbound" | "backref",
   op: ComparisonOp,
   value: unknown,
-  dialect: SqlDialect,
   params: unknown[],
-  idx: number,
   spaceId: string | undefined,
-): { fragment: string; paramIdx: number } {
+): string {
   const idColumn = direction === "outbound" ? "e.source_id" : "e.target_id";
   const otherColumn = direction === "outbound" ? "e.target_id" : "e.source_id";
 
   if (op === "exists" || op === "not_exists") {
-    const typePh = placeholder(dialect, idx);
     params.push(edgeType);
-    let nextIdx = idx + 1;
     let spaceFragment = "";
     if (spaceId !== undefined) {
-      const spacePh = placeholder(dialect, nextIdx);
       params.push(spaceId);
-      spaceFragment = ` AND e.space_id = ${spacePh}`;
-      nextIdx += 1;
+      spaceFragment = " AND e.space_id = ?";
     }
     const prefix = op === "exists" ? "EXISTS" : "NOT EXISTS";
-    return {
-      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh}${spaceFragment})`,
-      paramIdx: nextIdx,
-    };
+    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ?${spaceFragment})`;
   }
 
   if (op === "eq" || op === "neq") {
-    const typePh = placeholder(dialect, idx);
     params.push(edgeType);
-    const valPh = placeholder(dialect, idx + 1);
     params.push(value);
-    let nextIdx = idx + 2;
     let spaceFragment = "";
     if (spaceId !== undefined) {
-      const spacePh = placeholder(dialect, nextIdx);
       params.push(spaceId);
-      spaceFragment = ` AND e.space_id = ${spacePh}`;
-      nextIdx += 1;
+      spaceFragment = " AND e.space_id = ?";
     }
     const prefix = op === "eq" ? "EXISTS" : "NOT EXISTS";
-    return {
-      fragment: `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ${typePh} AND ${otherColumn} = ${valPh}${spaceFragment})`,
-      paramIdx: nextIdx,
-    };
+    return `${prefix} (SELECT 1 FROM edges e WHERE ${idColumn} = ${alias}.id AND e.edge_type = ? AND ${otherColumn} = ?${spaceFragment})`;
   }
 
   throw new Error(`Unsupported operator "${op}" for edge reference in raw SQL`);
-}
-
-function placeholder(dialect: SqlDialect, idx: number): string {
-  return dialect === "sqlite" ? "?" : `$${String(idx)}`;
 }
 
 function systemFieldRawSql(
@@ -515,50 +408,35 @@ function systemFieldRawSql(
   column: string,
   op: ComparisonOp,
   value: unknown,
-  dialect: SqlDialect,
   params: unknown[],
-  idx: number,
-): { fragment: string; paramIdx: number } {
+): string {
   const col = `${alias}.${column}`;
-  const p = placeholder(dialect, idx);
 
   switch (op) {
     case "eq":
       params.push(value);
-      return { fragment: `${col} = ${p}`, paramIdx: idx + 1 };
+      return `${col} = ?`;
     case "neq":
       params.push(value);
-      return { fragment: `${col} != ${p}`, paramIdx: idx + 1 };
+      return `${col} != ?`;
     case "gt":
       params.push(value);
-      return { fragment: `${col} > ${p}`, paramIdx: idx + 1 };
+      return `${col} > ?`;
     case "gte":
       params.push(value);
-      return { fragment: `${col} >= ${p}`, paramIdx: idx + 1 };
+      return `${col} >= ?`;
     case "lt":
       params.push(value);
-      return { fragment: `${col} < ${p}`, paramIdx: idx + 1 };
+      return `${col} < ?`;
     case "lte":
       params.push(value);
-      return { fragment: `${col} <= ${p}`, paramIdx: idx + 1 };
-    case "contains": {
-      const ci = dialect === "pg";
-      params.push(
-        "%" + (ci ? likePattern(value) : escapeLike(String(value))) + "%",
-      );
-      return {
-        fragment: `${ci ? `LOWER(${col})` : col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
-        paramIdx: idx + 1,
-      };
-    }
-    case "starts_with": {
-      const ci = dialect === "pg";
-      params.push((ci ? likePattern(value) : escapeLike(String(value))) + "%");
-      return {
-        fragment: `${ci ? `LOWER(${col})` : col} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
-        paramIdx: idx + 1,
-      };
-    }
+      return `${col} <= ?`;
+    case "contains":
+      params.push("%" + escapeLike(String(value)) + "%");
+      return `${col} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
+    case "starts_with":
+      params.push(escapeLike(String(value)) + "%");
+      return `${col} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
     default:
       throw new Error(
         `Unsupported operator "${op}" for system field in raw SQL`,
@@ -571,112 +449,50 @@ function propertyFieldRawSql(
   path: string,
   op: ComparisonOp,
   value: unknown,
-  dialect: SqlDialect,
   params: unknown[],
-  idx: number,
-): { fragment: string; paramIdx: number } {
+): string {
   const isNumeric = typeof value === "number";
-
-  if (dialect === "sqlite") {
-    const pathPlaceholder = placeholder(dialect, idx);
-    const jsonPath = `$.${path}`;
-    params.push(jsonPath);
-    idx++;
-    const extract = `json_extract(${alias}.properties, ${pathPlaceholder})`;
-    const numExtract = `CAST(${extract} AS REAL)`;
-
-    return propertyOpRawSql(
-      op,
-      extract,
-      numExtract,
-      isNumeric,
-      value,
-      dialect,
-      params,
-      idx,
-    );
-  }
-
-  // Postgres: the jsonb column answers ->> natively
-  const pathPlaceholder = placeholder(dialect, idx);
-  params.push(path);
-  idx++;
-  const extract = `${alias}.properties->>${pathPlaceholder}`;
-  const numExtract = `(${extract})::numeric`;
-
-  return propertyOpRawSql(
-    op,
-    extract,
-    numExtract,
-    isNumeric,
-    value,
-    dialect,
-    params,
-    idx,
-  );
-}
-
-function propertyOpRawSql(
-  op: ComparisonOp,
-  extract: string,
-  numExtract: string,
-  isNumeric: boolean,
-  value: unknown,
-  dialect: SqlDialect,
-  params: unknown[],
-  idx: number,
-): { fragment: string; paramIdx: number } {
-  const p = placeholder(dialect, idx);
+  params.push(`$.${path}`);
+  const extract = `json_extract(${alias}.properties, ?)`;
+  const numExtract = `CAST(${extract} AS REAL)`;
 
   switch (op) {
     case "eq":
       params.push(value);
-      return { fragment: `${extract} = ${p}`, paramIdx: idx + 1 };
+      return `${extract} = ?`;
     case "neq":
       params.push(value);
-      return { fragment: `${extract} != ${p}`, paramIdx: idx + 1 };
+      return `${extract} != ?`;
     case "gt": {
       const expr = isNumeric ? numExtract : extract;
       params.push(value);
-      return { fragment: `${expr} > ${p}`, paramIdx: idx + 1 };
+      return `${expr} > ?`;
     }
     case "gte": {
       const expr = isNumeric ? numExtract : extract;
       params.push(value);
-      return { fragment: `${expr} >= ${p}`, paramIdx: idx + 1 };
+      return `${expr} >= ?`;
     }
     case "lt": {
       const expr = isNumeric ? numExtract : extract;
       params.push(value);
-      return { fragment: `${expr} < ${p}`, paramIdx: idx + 1 };
+      return `${expr} < ?`;
     }
     case "lte": {
       const expr = isNumeric ? numExtract : extract;
       params.push(value);
-      return { fragment: `${expr} <= ${p}`, paramIdx: idx + 1 };
+      return `${expr} <= ?`;
     }
-    case "contains": {
-      const ci = dialect === "pg";
-      params.push(
-        "%" + (ci ? likePattern(value) : escapeLike(String(value))) + "%",
-      );
-      return {
-        fragment: `${ci ? `LOWER(${extract})` : extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
-        paramIdx: idx + 1,
-      };
-    }
-    case "starts_with": {
-      const ci = dialect === "pg";
-      params.push((ci ? likePattern(value) : escapeLike(String(value))) + "%");
-      return {
-        fragment: `${ci ? `LOWER(${extract})` : extract} LIKE ${p}${LIKE_ESCAPE_CLAUSE}`,
-        paramIdx: idx + 1,
-      };
-    }
+    case "contains":
+      params.push("%" + escapeLike(String(value)) + "%");
+      return `${extract} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
+    case "starts_with":
+      params.push(escapeLike(String(value)) + "%");
+      return `${extract} LIKE ?${LIKE_ESCAPE_CLAUSE}`;
     case "exists":
-      return { fragment: `${extract} IS NOT NULL`, paramIdx: idx };
+      return `${extract} IS NOT NULL`;
     case "not_exists":
-      return { fragment: `${extract} IS NULL`, paramIdx: idx };
+      return `${extract} IS NULL`;
     default:
       throw new Error(
         `Unsupported operator "${String(op)}" for property in raw SQL`,
@@ -688,51 +504,19 @@ function tagsFieldRawSql(
   alias: string,
   op: ComparisonOp,
   value: unknown,
-  dialect: SqlDialect,
   params: unknown[],
-  idx: number,
-): { fragment: string; paramIdx: number } {
+): string {
   if (op === "contains") {
-    if (dialect === "sqlite") {
-      const p = placeholder(dialect, idx);
-      params.push(value);
-      return {
-        fragment: `EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id AND je.value = ${p})`,
-        paramIdx: idx + 1,
-      };
-    }
-    const p = placeholder(dialect, idx);
-    params.push(JSON.stringify([value]));
-    return {
-      fragment: `EXISTS (SELECT 1 FROM metadata m WHERE m.item_id = ${alias}.id AND m.tags::jsonb @> ${p}::jsonb)`,
-      paramIdx: idx + 1,
-    };
+    params.push(value);
+    return `EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id AND je.value = ?)`;
   }
 
   if (op === "exists") {
-    if (dialect === "sqlite") {
-      return {
-        fragment: `EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id)`,
-        paramIdx: idx,
-      };
-    }
-    return {
-      fragment: `EXISTS (SELECT 1 FROM metadata m WHERE m.item_id = ${alias}.id AND jsonb_array_length(m.tags::jsonb) > 0)`,
-      paramIdx: idx,
-    };
+    return `EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id)`;
   }
 
   if (op === "not_exists") {
-    if (dialect === "sqlite") {
-      return {
-        fragment: `NOT EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id)`,
-        paramIdx: idx,
-      };
-    }
-    return {
-      fragment: `NOT EXISTS (SELECT 1 FROM metadata m WHERE m.item_id = ${alias}.id AND jsonb_array_length(m.tags::jsonb) > 0)`,
-      paramIdx: idx,
-    };
+    return `NOT EXISTS (SELECT 1 FROM metadata m, json_each(m.tags) je WHERE m.item_id = ${alias}.id)`;
   }
 
   throw new Error(`Unsupported operator "${op}" for tags in raw SQL`);
@@ -742,34 +526,20 @@ function tagsFieldRawSql(
  * Convert a FilterExpression into a raw SQL WHERE clause fragment.
  *
  * @param expr - The parsed filter expression
- * @param dialect - "sqlite" or "pg"
  * @param tableAlias - Table alias used in the query (e.g., "i")
- * @param startParamIdx - Starting parameter index (Postgres only, default 1)
  * @param spaceId - Optional space scope for edge subqueries (defense-in-depth)
- * @returns The SQL clause, parameter values, and next parameter index
+ * @returns The SQL clause and its positional parameter values
  */
 export function filterToRawSql(
   expr: FilterExpression,
-  dialect: SqlDialect,
   tableAlias: string,
-  startParamIdx = 1,
   spaceId?: string,
 ): RawSqlResult {
   const params: unknown[] = [];
-  let paramIdx = startParamIdx;
   const fragments: string[] = [];
 
   for (const condition of expr.conditions) {
-    const result = conditionToRawSql(
-      condition,
-      dialect,
-      tableAlias,
-      params,
-      paramIdx,
-      spaceId,
-    );
-    fragments.push(result.fragment);
-    paramIdx = result.paramIdx;
+    fragments.push(conditionToRawSql(condition, tableAlias, params, spaceId));
   }
 
   const joiner = expr.logical === "OR" ? " OR " : " AND ";
@@ -778,7 +548,7 @@ export function filterToRawSql(
       ? (fragments[0] ?? "")
       : `(${fragments.join(joiner)})`;
 
-  return { clause, params, nextParamIdx: paramIdx };
+  return { clause, params };
 }
 
 // ---------------------------------------------------------------------------
@@ -866,7 +636,7 @@ export function sourceFilterToSql(
         );
 
   // An empty source list approves nothing, so covered rows drop out entirely.
-  // Emitting `IN ()` instead is a syntax error on both dialects.
+  // Emitting `IN ()` instead is a syntax error.
   if (filter.sources.length === 0) return sql`NOT (${covered})`;
 
   const list = filter.sources
@@ -887,9 +657,7 @@ export function sourceFilterToSql(
  */
 export function sourceFilterToRawSql(
   filter: SourceFilterSettings | undefined,
-  dialect: SqlDialect,
   tableAlias: string,
-  startParamIdx = 1,
   spaceId?: string | null,
 ): RawSqlResult | null {
   if (!filter) return null;
@@ -897,7 +665,6 @@ export function sourceFilterToRawSql(
   if (!global && pairs.length === 0) return null;
 
   const params: unknown[] = [];
-  let idx = startParamIdx;
   const typeCol = `${tableAlias}.type`;
 
   let covered: string;
@@ -906,29 +673,25 @@ export function sourceFilterToRawSql(
   } else {
     covered = pairs
       .map((p) => {
-        const exactPh = placeholder(dialect, idx++);
         params.push(p.exact);
-        const likePh = placeholder(dialect, idx++);
         params.push(p.descendantPattern);
-        return `(${typeCol} = ${exactPh} OR ${typeCol} LIKE ${likePh}${LIKE_ESCAPE_CLAUSE})`;
+        return `(${typeCol} = ? OR ${typeCol} LIKE ?${LIKE_ESCAPE_CLAUSE})`;
       })
       .join(" OR ");
   }
 
   if (filter.sources.length === 0) {
-    return { clause: `NOT (${covered})`, params, nextParamIdx: idx };
+    return { clause: `NOT (${covered})`, params };
   }
 
   const list = filter.sources
     .map((s) => {
-      const ph = placeholder(dialect, idx++);
       params.push(s);
-      return ph;
+      return "?";
     })
     .join(", ");
   return {
     clause: `(NOT (${covered}) OR ${tableAlias}.source IN (${list}))`,
     params,
-    nextParamIdx: idx,
   };
 }

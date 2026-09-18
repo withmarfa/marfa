@@ -91,9 +91,8 @@ export async function createSqliteStorage(
     if (!isCoreEdgeType(schema.id)) registerEdgeTypeSchema(schema, space_id);
   }
 
-  // Awaited, unlike the fire-and-forget this used to be. The Postgres path
-  // has always awaited its equivalent; the asymmetry was harmless only while
-  // the platform vocabulary was compiled in and resolved before any request
+  // Awaited, unlike the fire-and-forget this used to be. That was harmless
+  // only while the platform vocabulary was compiled in and resolved before any request
   // could arrive. It is seeded data now, so returning storage before the
   // registry is filled opens a window in which `core.note` does not resolve
   // and ordinary writes fail validation for a type that plainly exists.
@@ -166,19 +165,17 @@ export async function createSqliteStorage(
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,
-    // Account-lifecycle store reads/writes auth_user's deletion columns.
-    // SQLite has no RLS so we use the wrapped instance like the other
-    // auth-* stores; transactional consistency is preserved via Drizzle's
-    // ALS routing.
+    // Account-lifecycle store reads/writes auth_user's deletion columns on
+    // the wrapped instance like the other auth-* stores; transactional
+    // consistency is preserved via Drizzle's ALS routing.
     accountLifecycle: new SqliteAccountLifecycleStore(db),
     settings: new SqliteSettingsStore(db),
     coordination: new SqliteCoordinationStore(),
     // Async bulk-action substrate — single-process; see
     // bulk-action-job-store.ts for the claim-without-FOR-UPDATE path.
     bulkActionJobs: new SqliteBulkActionJobStore(db),
-    // Same reasoning as the Postgres wiring: a claim has to commit
-    // whether or not the write's own transaction does. SQLite has no RLS
-    // wrapper to escape, so `db` is already the only instance there is.
+    // A claim has to commit whether or not the write's own transaction
+    // does, and `db` is the only instance there is.
     idempotency: new SqliteIdempotencyStore(db),
     spaceQuotas: new SqliteSpaceQuotaStore(db),
     // Rate-limit + per-email throttle counters. Same shape as the PG

@@ -6,7 +6,7 @@
  * reason this exists. An in-process server shares a process, a clock and a
  * filesystem with the client driving it, so the things it cannot show are
  * exactly the things a real deployment breaks on: a reconnect over a real
- * socket, a Postgres event log rather than SQLite, backpressure, and a
+ * socket, a deployment's own event log, backpressure, and a
  * proxy in front of the whole thing.
  *
  * **A verification on one instance is a verification of that instance.**
@@ -41,7 +41,7 @@ import type { LocalEngineEvent } from "../src/local/types.js";
  * points the run at it. That is the third target this needs and the only
  * one anybody can run without a deployment, and it is deliberately
  * the same code path as the hosted targets: a real listener, a real socket,
- * a real HTTP client. The one thing it does not exercise is Postgres.
+ * a real HTTP client.
  *
  * The event log has to be wired explicitly. Without it a subscription's
  * frames carry no id, the cursor never moves off its announced value, and

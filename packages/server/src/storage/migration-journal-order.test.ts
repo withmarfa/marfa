@@ -63,7 +63,7 @@ const REPO_ROOT = resolve(
  * its name everywhere, and the journal inside it.
  */
 interface Chain {
-  /** e.g. `packages/server/drizzle/pg`. Names the chain in every message. */
+  /** e.g. `packages/server/drizzle/sqlite`. Names the chain in every message. */
   id: string;
   journalPath: string;
 }
@@ -90,7 +90,7 @@ interface Violation {
  * `meta/_journal.json`.
  *
  * Keyed on the journal rather than on a dialect name, because the dialect is
- * the part that varies -- `pg`, `sqlite`, and a kit's `local` store are three
+ * the part that varies -- `sqlite` and a kit's `local` store are two
  * different words for one structure, and a union of them is a list to forget
  * to extend. The journal file is what the migrator actually reads, so finding
  * it is finding the thing the rule is about.
@@ -141,24 +141,7 @@ interface AcceptedPair extends Violation {
   reason: string;
 }
 
-const ACCEPTED: readonly AcceptedPair[] = [
-  {
-    chain: "packages/server/drizzle/pg",
-    tag: "0057_grant_marfa_app_membership",
-    when: 1779028180997,
-    afterTag: "0056_auth_jwks",
-    afterWhen: 1779638402000,
-    reason:
-      "Stamped about seven days before its predecessor despite landing a day later, " +
-      "so it is skipped on any database that had already applied 0056. It is recorded " +
-      "rather than re-stamped because re-stamping an applied migration makes it run " +
-      "again everywhere that already has it, and this one grants marfa_app membership: " +
-      "a grant that is already in place on every instance serving tenant-scoped traffic, " +
-      "whether by the migration or by an operator running it by hand, which its own " +
-      "comment contemplates. A latent hazard rather than a live outage, and the check " +
-      "holds every entry added after it.",
-  },
-];
+const ACCEPTED: readonly AcceptedPair[] = [];
 
 function readJournalEntries(chain: Chain): JournalEntry[] {
   const journal = JSON.parse(readFileSync(chain.journalPath, "utf-8")) as {
@@ -301,7 +284,7 @@ describe("describeViolation", () => {
   it("names the chain, both tags, both stamps and the consequence", () => {
     const message = describeViolation(
       {
-        id: "packages/server/drizzle/pg",
+        id: "packages/server/drizzle/sqlite",
         journalPath: "/anywhere/meta/_journal.json",
       },
       { tag: "0099_late", when: 111, afterTag: "0098_early", afterWhen: 222 },
@@ -311,7 +294,9 @@ describe("describeViolation", () => {
     expect(message).toContain("when=111");
     expect(message).toContain("when=222");
     expect(message).toContain("will never be applied");
-    expect(message).toContain("packages/server/drizzle/pg/meta/_journal.json");
+    expect(message).toContain(
+      "packages/server/drizzle/sqlite/meta/_journal.json",
+    );
   });
 
   it("names a chain it has never seen rather than a dialect it assumed", () => {
@@ -358,12 +343,12 @@ describe("discoverChains", () => {
 
   it("finds a chain under any package, not only the server's", () => {
     const root = scratchRepo({
-      "packages/server/drizzle/pg": [{ tag: "0000_a", when: 1000 }],
+      "packages/server/drizzle/sqlite": [{ tag: "0000_a", when: 1000 }],
       "packages/sdk/drizzle/local": [{ tag: "0000_a", when: 1000 }],
     });
     expect(discoverChains(root).map((c) => c.id)).toEqual([
       "packages/sdk/drizzle/local",
-      "packages/server/drizzle/pg",
+      "packages/server/drizzle/sqlite",
     ]);
   });
 
@@ -374,7 +359,7 @@ describe("discoverChains", () => {
     // in a package that is not the server, breaking the rule, named in the
     // output rather than merely counted.
     const root = scratchRepo({
-      "packages/server/drizzle/pg": [{ tag: "0000_a", when: 1000 }],
+      "packages/server/drizzle/sqlite": [{ tag: "0000_a", when: 1000 }],
       "packages/sdk/drizzle/local": [
         { tag: "0000_a", when: 3000 },
         { tag: "0001_b", when: 2000 },
@@ -395,7 +380,7 @@ describe("discoverChains", () => {
 
   it("does not mistake a directory that merely has a meta folder", () => {
     const root = scratchRepo({});
-    mkdirSync(join(root, "packages/server/drizzle/pg/meta"), {
+    mkdirSync(join(root, "packages/server/drizzle/sqlite/meta"), {
       recursive: true,
     });
     expect(discoverChains(root)).toEqual([]);
@@ -405,7 +390,7 @@ describe("discoverChains", () => {
     // A dependency shipping its own journal is not ours to hold to this rule,
     // and there are enough of them to make the suite unusable.
     const root = scratchRepo({
-      "node_modules/some-dep/drizzle/pg": [{ tag: "0000_a", when: 1000 }],
+      "node_modules/some-dep/drizzle/sqlite": [{ tag: "0000_a", when: 1000 }],
     });
     expect(discoverChains(root)).toEqual([]);
   });
@@ -417,14 +402,11 @@ describe("migration journals", () => {
   it("finds every chain in the repository", () => {
     // The control. Discovery that walks the wrong root returns nothing and
     // every check below passes vacuously, which reads exactly like a clean
-    // repository. These two are the chains on this branch; the assertion is a
-    // floor rather than an equality so that landing a third covers it here
+    // repository. This is the chain on this branch; the assertion is a floor
+    // rather than an equality so that landing a second covers it here
     // instead of failing here.
     expect(chains.map((c) => c.id)).toEqual(
-      expect.arrayContaining([
-        "packages/server/drizzle/pg",
-        "packages/server/drizzle/sqlite",
-      ]),
+      expect.arrayContaining(["packages/server/drizzle/sqlite"]),
     );
   });
 
@@ -439,23 +421,6 @@ describe("migration journals", () => {
       ).toBe("");
     },
   );
-
-  it("catches the pair already in the pg journal when it is not excepted", () => {
-    // The synthetic cases above prove the comparison. This proves it against
-    // the real shape, so the exception below is the only thing standing
-    // between this journal and a failure.
-    const pg = chains.find((c) => c.id === "packages/server/drizzle/pg");
-    expect(pg).toBeDefined();
-    const violations = findNonIncreasingStamps(readJournalEntries(pg!));
-    expect(violations).toEqual([
-      {
-        tag: "0057_grant_marfa_app_membership",
-        when: 1779028180997,
-        afterTag: "0056_auth_jwks",
-        afterWhen: 1779638402000,
-      },
-    ]);
-  });
 
   it("holds every accepted pair to a violation that is really there", () => {
     // An exception nothing matches is dead configuration, and the shape it

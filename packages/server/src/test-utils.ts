@@ -7,9 +7,6 @@ import { resolveSpaceIdForAuthUser } from "./auth/grant-space.js";
 import type { AppConfig } from "./config.js";
 import type { EmailTransport } from "./email/transport.js";
 import { createSqliteStorage } from "./storage/sqlite/index.js";
-import { createPgStorage } from "./storage/pg/index.js";
-import { pgApplicationName } from "./storage/pg/connection.js";
-import { cloneTemplate } from "./storage/pg/test-template.js";
 import { FilesystemBlobBackend } from "./storage/blob-backend.js";
 import type { BlobBackend } from "./storage/blob-backend.js";
 import { hashApiKey } from "./middleware/auth.js";
@@ -31,9 +28,9 @@ export const TEST_API_KEY_SALT = "test-salt";
 const SALT = TEST_API_KEY_SALT;
 
 /**
- * Resolve the raw-SQL test escape hatches off the storage object, throwing
- * if they're absent. These are test-only internals (`__sqliteRun` /
- * `__pgClient`) the storage layer exposes for direct setup writes. An
+ * Resolve the raw-SQL test escape hatch off the storage object, throwing
+ * if it is absent. It is a test-only internal (`__sqliteRun`) the storage
+ * layer exposes for direct setup writes. An
  * earlier version silently no-op'd when they were missing — so a change to
  * the storage shape would quietly skip the setup and surface as a confusing
  * downstream failure. Fail loudly instead.
@@ -50,20 +47,6 @@ function requireSqliteRun(
     );
   }
   return s.__sqliteRun;
-}
-
-function requirePgClient(
-  storage: Storage,
-): (sql: string, params?: unknown[]) => Promise<unknown> {
-  const s = storage as unknown as {
-    __pgClient?: (sql: string, params?: unknown[]) => Promise<unknown>;
-  };
-  if (!s.__pgClient) {
-    throw new Error(
-      "test-utils: storage.__pgClient escape hatch missing — PG test storage internals changed",
-    );
-  }
-  return s.__pgClient;
 }
 
 export interface TestContext {
@@ -103,106 +86,9 @@ export interface TestContext {
 }
 
 /**
- * Clone the PG template database and build a Storage against it. Returns
- * the storage plus an awaitable cleanup callback that closes the pool
- * and drops the clone with `WITH (FORCE)` so any lingering connections
- * are terminated.
- *
- * Used by `createTestContext` for the standard path and by the few test
- * files that roll their own storage (custom `authMode`, etc.) instead
- * of going through `createTestContext`.
- *
- * Cleanup is async + awaitable. With parallel test files all doing
- * per-test clone/drop traffic against the same admin URL, an unawaited
- * fire-and-forget drop queues against everyone else's drops; the
- * afterAll hooks of long-running files can sit behind a multi-second
- * queue. Awaiting cleanup bounds per-file work.
- */
-/**
- * Connections a test file's pool may open. Named because the config a test
- * app is built with has to state the same number: `/health` reports the pool
- * against `dbPoolSize`, so a config that omits it describes a pool ten wide
- * that is actually three, and the figure reads as permanently roomy.
- */
-export const TEST_POOL_SIZE = 3;
-
-export async function createPgTestStorage(options?: {
-  authMode?: "hosted" | "keys";
-  /** Override the default pool-size cap. Default is `TEST_POOL_SIZE` — see
-   *  the comment inside this function for the rationale. */
-  maxPoolSize?: number;
-}): Promise<{ storage: Storage; cleanup: () => Promise<void> }> {
-  const clone = await cloneTemplate();
-  // Cap at 3 connections per test file. With ~CPU-count parallel workers,
-  // the default max=10 quickly exhausts Postgres's default max_connections=100.
-  // Skip bootstrap — the cloned DB already has the schema baked in from the
-  // template, saving hundreds of ms per storage creation under parallel load.
-  const storage = await createPgStorage(clone.url, {
-    ...options,
-    maxPoolSize: options?.maxPoolSize ?? TEST_POOL_SIZE,
-    // Named rather than left to default, because this pool stands in for a
-    // server's own and `/health` finds that pool by its label. Unnamed it
-    // would carry `PG_UNNAMED_APPLICATION_NAME`, which is deliberately not a
-    // label any role produces, and the endpoint would report a pool it never
-    // found as an idle one. `buildTestContext` builds its `AppConfig` with no
-    // `processRole`, so this is the same expression the endpoint evaluates.
-    applicationName: pgApplicationName(undefined),
-    skipBootstrap: true,
-  });
-  return {
-    storage,
-    cleanup: async () => {
-      // Close first, bounded — then drop. These used to run in parallel,
-      // which raced the DROP's `WITH (FORCE)` against the drain inside
-      // `storage.close()`: FORCE terminates backends server-side, so a
-      // tracked fire-and-forget write (audit row, oauth last-used stamp)
-      // still on the wire died mid-socket-write. The tracker catches the
-      // write's own rejection, but postgres-js leaks a second, unowned
-      // rejection when a socket is killed mid-write, and that one fails
-      // whichever test is running as an unhandled rejection — rarely on a
-      // quiet machine, reliably under load. Sequencing lets the drain
-      // finish before anything is terminated. The bound stays because
-      // pool-close can hang on in-flight SSE / export streams; a close
-      // that overruns it is then cleaned up by the FORCE drop, accepting
-      // the rare leaked rejection in exchange for never wedging afterAll.
-      await Promise.race([
-        storage.close().catch(() => undefined),
-        new Promise<void>((resolve) => {
-          setTimeout(() => {
-            resolve();
-          }, 5_000);
-        }),
-      ]);
-      await clone.drop().catch(() => undefined);
-    },
-  };
-}
-
-/**
- * Close a file's accumulated test contexts without the teardown cost growing
- * linearly with the number of tests.
- *
- * **Why this exists rather than a `for` loop.** Each `cleanup()` races
- * `storage.close()` against a five-second bound before dropping the clone, and
- * that bound is reached whenever the machine is busy — a pool close waits on
- * in-flight work. Closed serially, a file holding N contexts therefore spends
- * up to `N * 5s` in its `afterAll`, against Vitest's 120-second default. At 38
- * contexts that is 190 seconds of budget for a hook allowed 120, and the file
- * failed twice in one evening on a loaded machine while every assertion in the
- * run passed.
- *
- * **Bounded rather than unbounded, and the bound is not arbitrary.** Closing
- * all of them at once would put N pool closes and N `DROP DATABASE ... WITH
- * (FORCE)` statements against one Postgres simultaneously, which trades a slow
- * teardown for a contended one. Eight at a time is what `conformance`'s own
- * cleanup settled on for the same question.
- *
- * **Concurrency is across contexts, never inside one.** `cleanup()` sequences
- * its own close before its own drop deliberately: running those two in
- * parallel raced the FORCE against the drain and killed a tracked write
- * mid-socket, which surfaces as an unhandled rejection in whichever test is
- * running. That ordering is untouched here — each context still closes then
- * drops, and only different contexts overlap.
+ * Close a file's accumulated test contexts eight at a time, so a file
+ * holding many of them does not spend its whole hook budget closing them
+ * one by one, and does not close them all at once either.
  */
 export async function closeTestContexts(
   contexts: readonly { cleanup: () => Promise<void> }[],
@@ -269,7 +155,6 @@ export async function seedOauthBearer(
 
   // Seed the OAuth client row directly (the plugin's own DCR endpoint
   // would create the same row — we shortcut for test setup speed).
-  const dialect = storage.betterAuthDialect;
   const db = storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -284,40 +169,22 @@ export async function seedOauthBearer(
   const authUserId =
     opts.authUserId ?? `auth_user_${Math.random().toString(36).slice(2, 10)}`;
   if (!opts.authUserId) {
-    if (dialect === "sqlite") {
-      await requireSqliteRun(storage)(
-        "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
-        [
-          authUserId,
-          "Test User",
-          `${authUserId}@test.local`,
-          Math.floor(now.getTime() / 1000),
-          Math.floor(now.getTime() / 1000),
-        ],
-      );
-    } else {
-      await requirePgClient(storage)(
-        "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES ($1, $2, $3, true, $4, $4, 'active') ON CONFLICT (id) DO NOTHING",
-        [
-          authUserId,
-          "Test User",
-          `${authUserId}@test.local`,
-          now.toISOString(),
-        ],
-      );
-    }
+    await requireSqliteRun(storage)(
+      "INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at, deletion_state) VALUES (?, ?, ?, 1, ?, ?, 'active')",
+      [
+        authUserId,
+        "Test User",
+        `${authUserId}@test.local`,
+        Math.floor(now.getTime() / 1000),
+        Math.floor(now.getTime() / 1000),
+      ],
+    );
   }
 
-  const schemaModule =
-    dialect === "pg"
-      ? await import("./storage/pg/schema.js")
-      : await import("./storage/sqlite/schema.js");
-  // PG: `redirect_uris` is native `text[]` (migration 0059); SQLite:
-  // plain `text` with JSON-serialized array via the Better Auth adapter.
-  const redirectUrisValue: unknown =
-    dialect === "pg"
-      ? ["http://localhost:5173/callback"]
-      : JSON.stringify(["http://localhost:5173/callback"]);
+  const schemaModule = await import("./storage/sqlite/schema.js");
+  // `redirect_uris` is plain `text` holding a JSON-serialized array, the
+  // shape the Better Auth adapter writes.
+  const redirectUrisValue = JSON.stringify(["http://localhost:5173/callback"]);
   const insertOp = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -448,15 +315,7 @@ export async function markEmailVerified(
   storage: Storage,
   email: string,
 ): Promise<void> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const lower = email.toLowerCase();
-  if (dialect === "pg") {
-    await requirePgClient(storage)(
-      `UPDATE auth_user SET email_verified = TRUE WHERE LOWER(email) = $1`,
-      [lower],
-    );
-    return;
-  }
   await requireSqliteRun(storage)(
     "UPDATE auth_user SET email_verified = 1 WHERE LOWER(email) = ?",
     [lower],
@@ -478,20 +337,6 @@ export async function markEmailVerified(
 export async function readLatestResetToken(
   storage: Storage,
 ): Promise<string | null> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const pg = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pg.__pgClient) return null;
-    const rows = (await pg.__pgClient(
-      `SELECT identifier FROM auth_verification
-        WHERE identifier LIKE 'reset-password:%'
-        ORDER BY created_at DESC LIMIT 1`,
-    )) as { identifier: string }[];
-    if (rows.length === 0) return null;
-    return rows[0]?.identifier.slice("reset-password:".length) ?? null;
-  }
   const sqlite = storage as unknown as {
     __sqliteAll?: (q: string) => Promise<unknown[]>;
   };
@@ -521,15 +366,8 @@ export async function authUserExists(
   storage: Storage,
   email: string,
 ): Promise<boolean> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const lower = email.toLowerCase();
   const query = `SELECT email FROM auth_user`;
-  if (dialect === "pg") {
-    const rows = (await requirePgClient(storage)(query)) as {
-      email: string;
-    }[];
-    return rows.some((r) => r.email.toLowerCase() === lower);
-  }
   const sqlite = storage as unknown as {
     __sqliteAll?: (q: string) => Promise<unknown[]>;
   };
@@ -556,7 +394,7 @@ export async function authUserExists(
  * Returns the final result so the caller can chain assertions.
  *
  * Bounded to ~2s with 25ms polls — long enough to cover any audit
- * insert latency on a loaded Docker Postgres, short enough that a real
+ * insert latency on a loaded machine, short enough that a real
  * regression (the row genuinely never lands) still surfaces fast.
  */
 export async function waitForAudit<T>(
@@ -699,39 +537,18 @@ async function buildUnbootstrappedApp(
   overrides?: Partial<AppConfig>,
   emailTransport?: EmailTransport,
 ): Promise<UnbootstrappedTestApp> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const blobPath = join(tmpDir, "blobs");
 
   const storageAuthMode: "keys" | "hosted" = overrides?.authMode ?? "keys";
-  let storage: Storage;
-  let pgCleanup: (() => Promise<void>) | undefined;
-  if (dialect === "pg") {
-    // `dbPoolSize` is a real config field, so a test that sets it means
-    // it: a suite about what a request does to the pool needs the pool it
-    // asked for, and the default of three hides an exhaustion the code
-    // would reach at one. Absent, the default stands.
-    const clone = await createPgTestStorage({
-      authMode: storageAuthMode,
-      ...(overrides?.dbPoolSize !== undefined && {
-        maxPoolSize: overrides.dbPoolSize,
-      }),
-    });
-    storage = clone.storage;
-    pgCleanup = clone.cleanup;
-  } else {
-    const dbPath = join(tmpDir, "test.db");
-    storage = await createSqliteStorage(dbPath, { authMode: storageAuthMode });
-  }
+  const dbPath = join(tmpDir, "test.db");
+  const storage = await createSqliteStorage(dbPath, {
+    authMode: storageAuthMode,
+  });
 
   const blobBackend = new FilesystemBlobBackend(blobPath);
   const config: AppConfig = {
     port: 0,
-    // What `createPgTestStorage` actually builds. Unset, `/health` would
-    // report this pool against the production default instead.
-    dbPoolSize: TEST_POOL_SIZE,
-    storageDialect: dialect as "sqlite" | "pg",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath,
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -789,14 +606,10 @@ async function buildUnbootstrappedApp(
     tmpDir,
     cleanup: async () => {
       try {
-        if (pgCleanup) {
-          await pgCleanup();
-        } else {
-          try {
-            await storage.close();
-          } catch {
-            // Best-effort.
-          }
+        try {
+          await storage.close();
+        } catch {
+          // Best-effort.
         }
       } finally {
         // In `finally` because a failed close must not strand the

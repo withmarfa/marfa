@@ -104,10 +104,8 @@ const RP_REFERER = "https://rp.example.com/sign-in";
 const TEST_AUTH_SECRET =
   "test-auth-secret-change-in-production-not-required-here";
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 /** Seed an `auth_oauth_client` row directly (same shape the plugin's DCR
@@ -121,7 +119,7 @@ async function seedClient(
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -131,14 +129,11 @@ async function seedClient(
     };
   };
   const now = new Date();
-  // PG has native `text[]` columns for the plugin's `string[]` fields;
-  // SQLite stays on `text` with JSON-serialized arrays.
+  // The plugin's `string[]` fields are `text` columns holding JSON-serialized
+  // arrays.
   const registeredRedirectUris =
     typeof redirectUri === "string" ? [redirectUri] : [...redirectUri];
-  const redirectUris: unknown =
-    c.storage.betterAuthDialect === "pg"
-      ? registeredRedirectUris
-      : JSON.stringify(registeredRedirectUris);
+  const redirectUris: unknown = JSON.stringify(registeredRedirectUris);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,
@@ -156,7 +151,7 @@ async function seedClient(
 
 /** Flip an existing client to `disabled` — the operator kill switch. */
 async function disableClient(c: TestContext, clientId: string): Promise<void> {
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as {
     update: (table: unknown) => {
       set: (v: Record<string, unknown>) => {
@@ -1554,9 +1549,8 @@ describe("a scope named twice is stored once on the skip path", () => {
     // re-authorized without anybody being asked.
     // **Polled, not read once.** `auditGrantReused` is dispatched with `void`
     // and deliberately so — a best-effort audit write must never block the
-    // redirect. On SQLite it lands before the response is even read; on
-    // Postgres it is two async lookups and a pool round-trip behind, so a
-    // bare read races it and fails on that dialect alone. `waitForAudit` is
+    // redirect. It usually lands before the response is even read, but a
+    // bare read races it. `waitForAudit` is
     // the helper this file already uses for the same action a few cases up.
     const storage = ctx.storage;
     const reused = await waitForAudit(

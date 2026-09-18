@@ -154,8 +154,7 @@ export const items = sqliteTable(
       .where(sql`source IS NOT NULL`),
     // Serves the folder query: a folder is a path prefix, so
     // `source_id starts_with 'Notes/'` is a range scan within a space.
-    // `COLLATE NOCASE` is the counterpart to the Postgres side's
-    // `text_pattern_ops` — an index only serves a prefix match when its
+    // `COLLATE NOCASE` because an index only serves a prefix match when its
     // collation matches the one the match uses, and SQLite's LIKE is
     // case-insensitive over ASCII. Under a BINARY index the planner declines
     // the range and scans the whole space.
@@ -1066,8 +1065,8 @@ export const auth_oauth_access_token = sqliteTable(
     clientId: text("client_id").notNull(),
     /** The session this token was issued under, and what a sign-out matches
      *  on to revoke it. `set null` rather than `cascade`, so the row outlives
-     *  the session and loses the record of which one. See the note on the
-     *  Postgres side of this column for why that matters. */
+     *  the session and loses the record of which one: a sign-out revokes
+     *  the token, and the token then outlives the session row. */
     sessionId: text("session_id").references(() => auth_session.id, {
       onDelete: "set null",
     }),

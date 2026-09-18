@@ -35,8 +35,6 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
-const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
-
 class ForcedFailure extends Error {
   constructor(what: string) {
     super(`forced failure at ${what}`);
@@ -71,16 +69,6 @@ function breakWrite<O extends object>(
 }
 
 async function readUpdatedAt(itemId: string): Promise<string | undefined> {
-  if (isPg()) {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = (await s.__pgClient(
-      `SELECT updated_at FROM items WHERE id = $1`,
-      [itemId],
-    )) as { updated_at: string }[];
-    return rows[0]?.updated_at;
-  }
   const s = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };

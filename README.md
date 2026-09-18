@@ -8,7 +8,7 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 | ---------------------------------------- | ----------------------------------------------------------- |
 | [`@withmarfa/types`](./packages/types)   | Core type + edge JSON schemas; emits the runtime registries |
 | [`@withmarfa/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes             |
-| [`@withmarfa/server`](./packages/server) | Hono HTTP server with SQLite and Postgres support           |
+| [`@withmarfa/server`](./packages/server) | Hono HTTP server on SQLite                                  |
 | [`@withmarfa/sdk`](./packages/sdk)       | TypeScript HTTP client                                      |
 
 `@withmarfa/shared` and `@withmarfa/sdk` publish to npm; the rest stay private.
@@ -22,7 +22,7 @@ pnpm install
 pnpm test
 ```
 
-Run the server locally with SQLite (no Postgres required):
+Run the server locally:
 
 ```bash
 cd packages/server

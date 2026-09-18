@@ -13,11 +13,9 @@
  *   []    → a real ceiling permitting nothing
  *   [...] → a real ceiling permitting exactly those
  *
- * The failure mode this file exists to catch is not symmetric between
- * dialects. Postgres stores a native `text[]`, where the plausible mistake is
- * `[...(input.scopes ?? [])]` — it writes an empty array, a real ceiling
- * permitting nothing. SQLite stores JSON in a `text` column, where
- * `JSON.stringify(null)` is the four-character string `"null"`.
+ * The failure mode this file exists to catch: `scopes` is JSON in a `text`
+ * column, where `JSON.stringify(null)` is the four-character string
+ * `"null"`, a present value the plugin then reads as a ceiling.
  *
  * **These assertions read the raw column, not `getClient`.** A first version
  * of this file round-tripped through the store's own reader and passed
@@ -48,8 +46,8 @@ function nextClientId(): string {
 /**
  * Create a client, then read `scopes` straight out of the table.
  *
- * Returns the raw column: SQL NULL surfaces as `null`, a Postgres `text[]`
- * as an array, a SQLite JSON payload as the string that was stored. The
+ * Returns the raw column: SQL NULL surfaces as `null`, a JSON payload as
+ * the string that was stored. The
  * caller asserts on that, so a value that only *looks* absent after parsing
  * cannot pass.
  */
@@ -78,17 +76,10 @@ async function createAndReadRawColumn(
     execute?: (q: unknown) => Promise<unknown>;
     all?: (q: unknown) => Promise<unknown>;
   };
-  const result =
-    c.storage.betterAuthDialect === "pg"
-      ? await db.execute?.(query)
-      : await db.all?.(query);
+  const result = await db.all?.(query);
   const row = (result as Record<string, unknown>[] | undefined)?.[0];
   if (!row) throw new Error(`client ${clientId} did not persist`);
   return row.scopes;
-}
-
-function isPgContext(c: TestContext): boolean {
-  return c.storage.betterAuthDialect === "pg";
 }
 
 /** True only for SQL NULL — never for `"null"`, `"[]"` or `[]`. */
@@ -100,9 +91,8 @@ describe("oauth client scope ceiling", () => {
   it("writes SQL NULL for no ceiling, on either dialect", async () => {
     ctx = await createTestContext({ authMode: "hosted" });
     const stored = await createAndReadRawColumn(ctx, null);
-    // The two near-misses this rules out: Postgres writing `{}` from
-    // `[...(scopes ?? [])]`, and SQLite writing the string `"null"` from
-    // `JSON.stringify(null)`. Both are present values, so the plugin's
+    // The near-miss this rules out: writing the string `"null"` from
+    // `JSON.stringify(null)`. That is a present value, so the plugin's
     // `client.scopes ?? opts.scopes` stops falling through and the client
     // is pinned to a ceiling nobody meant to give it.
     expect(stored).not.toBe("null");
@@ -116,7 +106,7 @@ describe("oauth client scope ceiling", () => {
     // `??` does not fall through on `[]`. If this ever became NULL, a client
     // registered for nothing would silently gain the whole allowlist.
     expect(isAbsent(stored)).toBe(false);
-    expect(isPgContext(ctx) ? stored : JSON.parse(String(stored))).toEqual([]);
+    expect(JSON.parse(String(stored))).toEqual([]);
   });
 
   it("preserves a real ceiling verbatim", async () => {
@@ -124,9 +114,7 @@ describe("oauth client scope ceiling", () => {
     const scopes = ["openid", "core.note:read", "core.task:write"];
     const stored = await createAndReadRawColumn(ctx, scopes);
     expect(isAbsent(stored)).toBe(false);
-    expect(isPgContext(ctx) ? stored : JSON.parse(String(stored))).toEqual(
-      scopes,
-    );
+    expect(JSON.parse(String(stored))).toEqual(scopes);
   });
 
   it("the three values stay mutually distinguishable in the column", async () => {

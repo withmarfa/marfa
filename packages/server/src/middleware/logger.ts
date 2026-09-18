@@ -343,7 +343,7 @@ function viaToJson(value: object): { handled: boolean; value?: unknown } {
 /**
  * Fields worth lifting off a thrown value so a failure is diagnosable from
  * the log line alone. Node socket errors carry `code` / `errno` / `syscall` /
- * `address` / `port`; `postgres.js` carries the SQLSTATE `code` plus
+ * `address` / `port`; a database driver carries its own `code` plus
  * `detail` / `routine` / `severity` — the difference between "the database
  * refused the connection" and "a lock is held" lives in exactly these.
  */

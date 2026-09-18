@@ -25,16 +25,6 @@ async function readColumns(
   storage: Storage,
   id: string,
 ): Promise<InstantRow | undefined> {
-  const pg = storage as unknown as {
-    __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-  };
-  if (pg.__pgClient) {
-    const rows = (await pg.__pgClient(
-      `SELECT starts_at_utc, ends_at_utc FROM items WHERE id = $1`,
-      [id],
-    )) as InstantRow[];
-    return rows[0];
-  }
   const sqlite = storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };

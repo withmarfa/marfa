@@ -26,16 +26,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@libsql/client";
-import postgres from "postgres";
-import {
-  runPgMigrations,
-  runPgMigrationsThrough,
-  runSqliteMigrations,
-  runSqliteMigrationsThrough,
-} from "./migrate.js";
-
-const isPg = (process.env.DB_DIALECT ?? "sqlite") === "pg";
-const adminUrl = process.env.MARFA_TEST_PG_ADMIN_URL ?? "";
+import { runSqliteMigrations, runSqliteMigrationsThrough } from "./migrate.js";
 
 const DRIZZLE_ROOT = resolve(
   dirname(fileURLToPath(import.meta.url)),
@@ -78,7 +69,7 @@ const EMPTY = {
 
 const COLUMNS = Object.keys(EMPTY).join(", ");
 
-describe.skipIf(isPg)("the SQLite space-less-holds-nothing migration", () => {
+describe("the SQLite space-less-holds-nothing migration", () => {
   const workDir = mkdtempSync(join(tmpdir(), "marfa-spaceless-nothing-"));
   afterAll(() => {
     rmSync(workDir, { recursive: true, force: true });
@@ -148,77 +139,3 @@ describe.skipIf(isPg)("the SQLite space-less-holds-nothing migration", () => {
     });
   });
 });
-
-describe.skipIf(!isPg || !adminUrl)(
-  "the Postgres space-less-holds-nothing migration",
-  () => {
-    const dbName = `marfa_spaceless_nothing_${Math.random().toString(36).slice(2, 10)}`;
-    let admin: postgres.Sql | null = null;
-    const created: string[] = [];
-
-    afterAll(async () => {
-      if (!admin) return;
-      for (const name of created) {
-        await admin.unsafe(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-      }
-      await admin.end({ timeout: 5 });
-    });
-
-    /** A fresh database migrated to the statement before this one. */
-    async function freshUrl(suffix: string): Promise<string> {
-      admin ??= postgres(adminUrl, { max: 1, onnotice: () => undefined });
-      const name = `${dbName}_${suffix}`;
-      created.push(name);
-      await admin.unsafe(`CREATE DATABASE ${name}`);
-      const url = adminUrl.replace(/\/[^/?]+(\?|$)/, `/${name}$1`);
-      await runPgMigrationsThrough(url, tagBefore("pg"));
-      return url;
-    }
-
-    it("clears every space-less row and leaves a space-bound one alone", async () => {
-      const url = await freshUrl("clear");
-      const sql = postgres(url, { max: 2, onnotice: () => undefined });
-      try {
-        await sql`INSERT INTO spaces (id, name, created_at) VALUES ('space-a', 'A', ${NOW})`;
-        for (const [id, spaceId, isOperator, revokedAt] of [
-          ["widened-operator", null, true, null],
-          ["revoked-operator", null, true, NOW],
-          ["working-key", "space-a", false, null],
-        ] as const) {
-          await sql`
-            INSERT INTO api_keys
-              (id, space_id, key_hash, label, source, is_operator, created_at, revoked_at,
-               type_permissions, edge_permissions, metadata_permissions,
-               extension_permissions, profile_permissions, space_permissions)
-            VALUES (${id}, ${spaceId}, ${`hash-${id}`}, ${id}, ${id}, ${isOperator},
-                    ${NOW}, ${revokedAt},
-                    ${WIDE}, ${WIDE}, ${WIDE}, ${WIDE}, ${WIDE},
-                    ${EVERY_SPACE_PERMISSION})
-          `;
-        }
-
-        await runPgMigrations(url);
-
-        for (const id of ["widened-operator", "revoked-operator"]) {
-          const row = await sql<Record<string, string>[]>`
-            SELECT type_permissions, edge_permissions, metadata_permissions,
-                   extension_permissions, profile_permissions, space_permissions
-            FROM api_keys WHERE id = ${id}
-          `;
-          expect(row[0], id).toMatchObject(EMPTY);
-        }
-
-        const kept = await sql<Record<string, string>[]>`
-          SELECT type_permissions, space_permissions
-          FROM api_keys WHERE id = 'working-key'
-        `;
-        expect(kept[0]).toMatchObject({
-          type_permissions: WIDE,
-          space_permissions: EVERY_SPACE_PERMISSION,
-        });
-      } finally {
-        await sql.end({ timeout: 5 });
-      }
-    });
-  },
-);

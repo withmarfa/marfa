@@ -23,15 +23,6 @@ body:
       description: What did you expect to happen?
     validations:
       required: true
-  - type: dropdown
-    id: storage
-    attributes:
-      label: Storage dialect
-      options:
-        - SQLite
-        - Postgres
-        - Both
-        - Not sure
   - type: input
     id: version
     attributes:

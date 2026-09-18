@@ -3,7 +3,6 @@ export { loadConfig } from "./config.js";
 export type { AppConfig } from "./config.js";
 export type { Storage } from "./storage/interface.js";
 export { createSqliteStorage } from "./storage/sqlite/index.js";
-export { createPgStorage } from "./storage/pg/index.js";
 export { FilesystemBlobBackend } from "./storage/blob-backend.js";
 export { S3BlobBackend } from "./storage/blob-s3.js";
 export type { BlobBackend } from "./storage/blob-backend.js";

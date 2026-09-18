@@ -39,14 +39,8 @@ env:
 jobs:
   drift:
     name: Published spec matches this one
-    # What the notifier reports. `cmp` below decides whether this job passes;
-    # these say what the difference was, which an exit code cannot.
-    outputs:
-      verdict: ${{ steps.finding.outputs.verdict }}
-      detail: ${{ steps.finding.outputs.detail }}
-      fields: ${{ steps.finding.outputs.fields }}
     timeout-minutes: 10
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: self-hosted
     permissions:
       contents: read
     steps:
@@ -58,10 +52,10 @@ jobs:
         run: |
           set -euo pipefail
           # Every branch that ends this step writes its finding into
-          # `finding/` before it exits. The `Publish the finding` step is the
-          # only thing that writes $GITHUB_OUTPUT, and it runs on
-          # `if: always()` — which is what carries a finding out of a failed
-          # job. Nothing here infers a verdict from silence: a `run:` block
+          # `finding/` before it exits. The `Publish the finding` step prints
+          # it, and it runs on `if: always()` — which is what carries a
+          # finding out of a failed job. Nothing here infers a verdict from
+          # silence: a `run:` block
           # runs under `bash -e`, so a failing `gh api` kills this step where
           # it stands, and the absence of a verdict has to mean "nothing was
           # established" rather than "the two match".
@@ -159,18 +153,18 @@ jobs:
           PY
           exit 1
 
-      # The only step in this job that writes $GITHUB_OUTPUT for the notifier,
-      # and `if: always()` is what carries a finding out of a job that failed.
-      # The default verdict is `inconclusive` rather than `current`, so a step
-      # that died before reaching a verdict cannot resolve an open alert.
+      # Prints the finding to the job log, so a reader sees what the
+      # difference was rather than only that there was one; `if: always()`
+      # is what carries a finding out of a job that failed. The default
+      # verdict is `inconclusive` rather than `current`, so a step that died
+      # before reaching a verdict cannot report agreement.
       #
       # **`finding/` must not survive between runs, and on this job that is
-      # not free.** Unlike its sibling guard, `drift` can be routed onto the
-      # self-hosted pool through `CI_RUNNER`, where the workspace is reused
-      # rather than being a fresh container. A `finding/verdict` left saying
-      # `current` by yesterday's clean run would then be read by a run whose
-      # comparison died early, and would resolve an open alert on evidence
-      # from a different day. Nothing here clears it: `actions/checkout`
+      # not free.** The pool reuses the workspace rather than giving each run
+      # a fresh container. A `finding/verdict` left saying `current` by
+      # yesterday's clean run would then be read by a run whose comparison
+      # died early, and would report agreement on evidence from a different
+      # day. Nothing here clears it: `actions/checkout`
       # does, through its `clean` input, which defaults to true and removes
       # untracked files before fetching. That default is load-bearing, so do
       # not set `clean: false` on the checkout above without giving this
@@ -183,7 +177,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p finding
-          python3 - >> "$GITHUB_OUTPUT" <<'PY'
+          python3 - <<'PY'
           import json, os, pathlib
 
           finding = pathlib.Path("finding")
@@ -208,127 +202,3 @@ jobs:
           print("detail=" + " ".join(read("detail").split()))
           print("fields=" + json.dumps(fields, separators=(",", ":")))
           PY
-
-  notify:
-    # Reports what the guard found to the configured alert destination. Runs
-    # hosted rather than on the self-hosted pool deliberately: when the pool is
-    # the thing that broke, a notifier living on it cannot tell anyone.
-    #
-    # A dispatch of `main` reports as well as the schedule, and that is a fix
-    # rather than a convenience. When this guard fails it prints instructions
-    # for repairing the drift, and re-running it is how anybody establishes
-    # the repair worked. Reporting only on the schedule meant the run that
-    # proves the fix could not clear the alert the failure raised, so an alert
-    # outlived its condition by two days with nothing wrong.
-    #
-    # `main` is load-bearing. A dispatch can name any ref, this alert key is
-    # the estate's state for this guard, and a branch's spec is not the
-    # estate's, so reporting a branch outcome under it would be a lie in the
-    # other direction.
-    #
-    # A cancelled run reports inconclusive rather than staying silent: the
-    # drift job runs on the self-hosted pool (CI_RUNNER), and a run queued
-    # there that never gets picked up is cancelled by GitHub's queue limit,
-    # which is the pool-down case this job exists for. A rare deliberate
-    # cancel pays one benign alert that the next scheduled run resolves,
-    # which is cheap against the guard silently going dark.
-    needs: [drift]
-    # Skipped when no alert destination is configured, so a fork sends nothing.
-    if: >-
-      always() && (github.event_name == 'schedule'
-      || (github.event_name == 'workflow_dispatch'
-      && github.ref == 'refs/heads/main'))
-      && vars.ALERT_WEBHOOK_URL != ''
-    timeout-minutes: 5
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report the finding
-        env:
-          ALERT_URL: ${{ vars.ALERT_WEBHOOK_URL }}
-          ALERT_TOKEN: ${{ secrets.ALERT_WEBHOOK_TOKEN }}
-          VERDICT: ${{ needs.drift.outputs.verdict }}
-          DETAIL: ${{ needs.drift.outputs.detail }}
-          EXTRA_FIELDS: ${{ needs.drift.outputs.fields }}
-          RESULTS: ${{ join(needs.*.result, ',') }}
-          WORKFLOW: ${{ github.workflow }}
-          REPO: ${{ github.repository }}
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          # The verdict comes from the job's outputs, not from its result. The
-          # result says the job failed; only the outputs say whether that was
-          # drift or a guard that never reached the comparison.
-          #
-          # `needs.<job>.result` is one of success, failure, cancelled or
-          # skipped, and nothing else. A job past its timeout reports failure,
-          # so there is no `timed_out` to match. The two that leave no outputs
-          # at all are named here rather than left to fall through, so a
-          # reader does not have to derive them from an empty string.
-          case ",$RESULTS," in
-            *,cancelled,*|*,skipped,*) VERDICT=inconclusive ;;
-          esac
-
-          # An open state with nothing to state would post a bare subject, so
-          # it is treated as no finding at all.
-          if [ -z "${DETAIL:-}" ] && [ "${VERDICT:-}" != current ]; then
-            VERDICT=inconclusive
-          fi
-
-          case "${VERDICT:-}" in
-            current)
-              STATE=resolved
-              TITLE="OpenAPI reference: current"
-              ;;
-            drifted)
-              STATE=open
-              TITLE="OpenAPI reference: $DETAIL"
-              ;;
-            *)
-              # `inconclusive`, and every way of reaching no verdict at all.
-              # The subject deliberately changes to the check rather than the
-              # thing checked: nothing here is a statement about the spec.
-              STATE=open
-              TITLE="OpenAPI drift check: inconclusive"
-              ;;
-          esac
-
-          # The destination may or may not need a credential, so the header is
-          # built rather than hardcoded: an empty token would otherwise be sent
-          # as "Bearer " with nothing after it, which reads as a malformed
-          # request rather than an unauthenticated one.
-          AUTH=()
-          if [ -n "${ALERT_TOKEN:-}" ]; then
-            AUTH=(-H "Authorization: Bearer $ALERT_TOKEN")
-          fi
-
-          EXTRA="${EXTRA_FIELDS:-}"
-          [ -n "$EXTRA" ] || EXTRA='{}'
-
-          # `github.workflow` is the workflow's DISPLAY NAME, not its
-          # filename, and it is half the alert key. Renaming `name:` at the
-          # top of this file therefore re-keys every alert it sends: whatever
-          # is open under the old key never resolves, and anything filtering
-          # on the key silently stops matching. Rename it deliberately or not
-          # at all.
-          #
-          # Links belong in fields, as Markdown; the title stays plain prose.
-          BODY="$(
-            jq -n --arg t "$TITLE" --arg s "$STATE" --arg k "github/$REPO/$WORKFLOW" \
-                  --arg u "$RUN_URL" --arg r "[$REPO]($REPO_URL)" --arg j "$RESULTS" \
-                  --argjson x "$EXTRA" \
-              '{source:"github",severity:"warning",title:$t,state:$s,key:$k,link:$u,
-                fields:({Repository:$r} + $x + {Jobs:$j})}'
-          )" || {
-            echo "::error::The alert body could not be built. Nothing was sent."
-            exit 1
-          }
-          if [ -z "$BODY" ]; then
-            echo "::error::The alert body came out empty. Nothing was sent."
-            exit 1
-          fi
-
-          printf '%s' "$BODY" \
-          | curl -sS --fail-with-body --max-time 20 -X POST "$ALERT_URL" \
-              "${AUTH[@]}" \
-              -H "Content-Type: application/json" --data @- \
-          || echo "Alert POST did not succeed (see above); not failing the run over it."

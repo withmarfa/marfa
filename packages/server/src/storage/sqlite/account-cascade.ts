@@ -8,11 +8,9 @@
 /**
  * SQLite account hard-delete cascade.
  *
- * Mirrors pg/account-cascade.ts step-for-step. See that file for the
- * full design notes including the race-safety re-check at step 0.
- * The libsql adapter exposes the same Drizzle
- * `db.transaction(async tx => …)` shape as postgres-js, so the
- * end-to-end transactional guarantee is real.
+ * The libsql adapter exposes Drizzle's `db.transaction(async tx => …)`
+ * shape, so the end-to-end transactional guarantee is real; the
+ * race-safety re-check is step 0 below.
  *
  * **Concurrency note for SQLite:** there is no `FOR UPDATE` — libsql
  * serializes all writes via the database file lock, so any concurrent
@@ -48,8 +46,7 @@ type SqliteTx = Parameters<Parameters<DrizzleDb["transaction"]>[0]>[0];
 
 /**
  * Delete every row scoped to a space, leaving the `spaces` row and the
- * auth island alone. The SQLite half of the pair; see the PG copy in
- * `storage/pg/account-cascade.ts` for the reasoning.
+ * auth island alone.
  *
  * The caller owns the transaction and the decision about whether the
  * space may go at all.
@@ -192,7 +189,7 @@ export async function sqliteDeleteAccountCascade(
       await tx.delete(users).where(eq(users.auth_user_id, authUserId)).run();
       // Drop the space only when no other users reference it (the
       // deleted row is already gone, so this counts genuinely-other
-      // users). Mirrors pg/account-cascade.ts.
+      // users).
       const remaining = await tx
         .select({ id: users.id })
         .from(users)
@@ -217,8 +214,7 @@ export async function sqliteDeleteAccountCascade(
     // The row is on this transaction, so a rollback takes it with it. That
     // is the wrapper's doing rather than this file's: the SQLite proxy
     // intercepts `transaction` and installs the active tx on its ALS, and
-    // the audit store holds the wrapped instance. Postgres has no such
-    // trap and its cascade installs the context by hand.
+    // the audit store holds the wrapped instance.
     await storage.audit.logOrThrow({
       action: "auth.account.hard_deleted",
       resource_type: "auth_account",

@@ -6,7 +6,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  createPgTestStorage,
   createTestContext,
   request,
   seedOauthBearer,
@@ -375,10 +374,9 @@ describe("DELETE /keys/{id} — the answer is what happened", () => {
 
 describe("bootstrap sentinel", () => {
   // Builds a fresh app with NO existing key and NO sentinel set —
-  // mirrors a brand-new installation. Dialect-aware: under
-  // PG: cloned from the test-template, so tables are empty and the
-  // `bootstrapped` sentinel isn't set — bootstrap path can fire cleanly.
-  // SQLite: fresh tmp DB. Cannot use `createTestContext` because that
+  // mirrors a brand-new installation: a fresh tmp DB, so the
+  // `bootstrapped` sentinel isn't set and the bootstrap path can fire
+  // cleanly. Cannot use `createTestContext` because that
   // pre-creates the bootstrap credential and stamps the bootstrapped sentinel.
   async function freshApp(overrides?: {
     authMode?: "keys" | "hosted";
@@ -397,29 +395,13 @@ describe("bootstrap sentinel", () => {
      *  removes it. */
     tmpDir: string;
   }> {
-    const dialect = process.env.DB_DIALECT ?? "sqlite";
-    let storage: Storage;
-    let blobPath: string;
-    let tmpDir: string;
-    if (dialect === "pg") {
-      const pg = await createPgTestStorage();
-      storage = pg.storage;
-      // pg.cleanup leaks here intentionally — `freshApp` doesn't have
-      // a returned-cleanup contract with its callers; the leaked clone
-      // is mopped up by the next test-run's dropStaleClones pass.
-      tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-pg-"));
-      blobPath = join(tmpDir, "blobs");
-    } else {
-      tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-"));
-      storage = await createSqliteStorage(join(tmpDir, "test.db"));
-      blobPath = join(tmpDir, "blobs");
-    }
+    const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-"));
+    const storage = await createSqliteStorage(join(tmpDir, "test.db"));
+    const blobPath = join(tmpDir, "blobs");
     const blobBackend = new FilesystemBlobBackend(blobPath);
     const app = createApp(storage, blobBackend, {
       port: 0,
-      storageDialect: dialect as "sqlite" | "pg",
       sqlitePath: "",
-      databaseUrl: "",
       blobPath,
       blobBackend: "fs",
       maxBlobSize: 50 * 1024 * 1024,
@@ -907,9 +889,8 @@ describe("bootstrap sentinel", () => {
   it("operator-issued POST /keys emits `key.create`, not `key.bootstrap`", async () => {
     // Self-contained — bootstrap a fresh app, then use the first key it
     // mints to mint a second on the now-closed (non-bootstrap) branch.
-    // Avoids depending on the shared `ctx` because freshApp() tests under
-    // PG truncate the shared container, which would wipe the ctx's key and
-    // sentinel between tests.
+    // Uses its own app rather than the shared `ctx` so the closed branch is
+    // reached from a known state.
     const { app, storage, bootstrapSecret, tmpDir } = await freshApp();
     try {
       const bootstrapRes = await request(app, "POST", "/keys", {
@@ -1047,104 +1028,90 @@ describe("bootstrap sentinel", () => {
     }
   });
 
-  // The following assertions exercise SQLite-specific introspection
-  // (`__sqliteAll`, `runSqliteMigrations`). The PG side is exercised by
-  // the production server boot path under `DB_DIALECT=pg` and by the
-  // SCHEMA_SQL diff itself; running these on PG would require parallel
-  // PG-flavored queries for marginal additional coverage.
-  const SKIP_SQLITE_ONLY = (process.env.DB_DIALECT ?? "sqlite") !== "sqlite";
+  // The following assertions exercise SQLite introspection (`__sqliteAll`,
+  // `runSqliteMigrations`).
+  it("bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (sqlite)", async () => {
+    const { storage, tmpDir } = (await freshApp()) as unknown as {
+      storage: Awaited<ReturnType<typeof createSqliteStorage>>;
+      tmpDir: string;
+    };
+    try {
+      const rows = (await storage.__sqliteAll(
+        "SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at ASC",
+      )) as { hash: string; created_at: number }[];
+      // At least one stamped row exists, hashes are non-empty, timestamps
+      // are positive — the row shape Drizzle's migrator writes after each
+      // applied migration. Drizzle's skip-decision is "if any row's
+      // created_at >= migration.folderMillis, skip", so a single row with
+      // the latest timestamp would suffice; we stamp every entry to keep
+      // the table identical to a normally-migrated DB.
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.every((r) => /^[0-9a-f]{64}$/.test(r.hash))).toBe(true);
+      expect(rows.every((r) => r.created_at > 0)).toBe(true);
+    } finally {
+      await storage.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
-  it.skipIf(SKIP_SQLITE_ONLY)(
-    "bootstrap stamps __drizzle_migrations so a follow-up migrate is a no-op (sqlite)",
-    async () => {
-      const { storage, tmpDir } = (await freshApp()) as unknown as {
-        storage: Awaited<ReturnType<typeof createSqliteStorage>>;
-        tmpDir: string;
-      };
-      try {
-        const rows = (await storage.__sqliteAll(
-          "SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at ASC",
-        )) as { hash: string; created_at: number }[];
-        // At least one stamped row exists, hashes are non-empty, timestamps
-        // are positive — the row shape Drizzle's migrator writes after each
-        // applied migration. Drizzle's skip-decision is "if any row's
-        // created_at >= migration.folderMillis, skip", so a single row with
-        // the latest timestamp would suffice; we stamp every entry to keep
-        // the table identical to a normally-migrated DB.
-        expect(rows.length).toBeGreaterThan(0);
-        expect(rows.every((r) => /^[0-9a-f]{64}$/.test(r.hash))).toBe(true);
-        expect(rows.every((r) => r.created_at > 0)).toBe(true);
-      } finally {
-        await storage.close();
-        rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
-  );
+  it("bootstrap then `pnpm migrate` is a no-op — no DROP errors (sqlite)", async () => {
+    // Bootstrap a fresh DB at a known path, close it, then drive Drizzle's
+    // migrate runner against the same path. Pre-fix, the runner replays
+    // 0000 → latest and several DROP/ALTER migrations error against
+    // tables / objects the bootstrap shape never had. Post-fix the runner
+    // sees stamped rows and short-circuits.
+    const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-migrate-"));
+    const dbPath = join(tmpDir, "bootstrap-then-migrate.db");
+    const storage = await createSqliteStorage(dbPath);
+    const before = (await storage.__sqliteAll(
+      "SELECT COUNT(*) AS n FROM __drizzle_migrations",
+    )) as { n: number }[];
+    const beforeCount = before[0]?.n ?? 0;
+    expect(beforeCount).toBeGreaterThan(0);
+    await storage.close();
 
-  it.skipIf(SKIP_SQLITE_ONLY)(
-    "bootstrap then `pnpm migrate` is a no-op — no DROP errors (sqlite)",
-    async () => {
-      // Bootstrap a fresh DB at a known path, close it, then drive Drizzle's
-      // migrate runner against the same path. Pre-fix, the runner replays
-      // 0000 → latest and several DROP/ALTER migrations error against
-      // tables / objects the bootstrap shape never had. Post-fix the runner
-      // sees stamped rows and short-circuits.
-      const tmpDir = mkdtempSync(join(tmpdir(), "marfa-bootstrap-migrate-"));
-      const dbPath = join(tmpDir, "bootstrap-then-migrate.db");
-      const storage = await createSqliteStorage(dbPath);
-      const before = (await storage.__sqliteAll(
+    const { runSqliteMigrations } = await import("../storage/migrate.js");
+    await expect(runSqliteMigrations(dbPath)).resolves.toBeUndefined();
+
+    const reopened = await createSqliteStorage(dbPath);
+    try {
+      const after = (await reopened.__sqliteAll(
         "SELECT COUNT(*) AS n FROM __drizzle_migrations",
       )) as { n: number }[];
-      const beforeCount = before[0]?.n ?? 0;
-      expect(beforeCount).toBeGreaterThan(0);
+      expect(after[0]?.n ?? 0).toBe(beforeCount);
+    } finally {
+      await reopened.close();
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("bootstrap creates idx_api_keys_connection_id (sqlite)", async () => {
+    const { storage, tmpDir } = (await freshApp()) as unknown as {
+      storage: Awaited<ReturnType<typeof createSqliteStorage>>;
+      tmpDir: string;
+    };
+    try {
+      const indexes = (await storage.__sqliteAll(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_api_keys_connection_id'",
+      )) as { name: string }[];
+      expect(indexes.length).toBe(1);
+
+      // EXPLAIN must show the index is consulted on the runtime-credential
+      // lookup path. SQLite's planner reports `USING INDEX <name>` when it
+      // chooses an index; partial indexes need the WHERE predicate to match
+      // for the planner to pick them.
+      const plan = (await storage.__sqliteAll(
+        "EXPLAIN QUERY PLAN SELECT * FROM api_keys WHERE connection_id = 'x'",
+      )) as { detail: string }[];
+      const usesIndex = plan.some((row) =>
+        row.detail.includes("idx_api_keys_connection_id"),
+      );
+      expect(usesIndex).toBe(true);
+    } finally {
       await storage.close();
-
-      const { runSqliteMigrations } = await import("../storage/migrate.js");
-      await expect(runSqliteMigrations(dbPath)).resolves.toBeUndefined();
-
-      const reopened = await createSqliteStorage(dbPath);
-      try {
-        const after = (await reopened.__sqliteAll(
-          "SELECT COUNT(*) AS n FROM __drizzle_migrations",
-        )) as { n: number }[];
-        expect(after[0]?.n ?? 0).toBe(beforeCount);
-      } finally {
-        await reopened.close();
-        rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
-  );
-
-  it.skipIf(SKIP_SQLITE_ONLY)(
-    "bootstrap creates idx_api_keys_connection_id (sqlite)",
-    async () => {
-      const { storage, tmpDir } = (await freshApp()) as unknown as {
-        storage: Awaited<ReturnType<typeof createSqliteStorage>>;
-        tmpDir: string;
-      };
-      try {
-        const indexes = (await storage.__sqliteAll(
-          "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_api_keys_connection_id'",
-        )) as { name: string }[];
-        expect(indexes.length).toBe(1);
-
-        // EXPLAIN must show the index is consulted on the runtime-credential
-        // lookup path. SQLite's planner reports `USING INDEX <name>` when it
-        // chooses an index; partial indexes need the WHERE predicate to match
-        // for the planner to pick them.
-        const plan = (await storage.__sqliteAll(
-          "EXPLAIN QUERY PLAN SELECT * FROM api_keys WHERE connection_id = 'x'",
-        )) as { detail: string }[];
-        const usesIndex = plan.some((row) =>
-          row.detail.includes("idx_api_keys_connection_id"),
-        );
-        expect(usesIndex).toBe(true);
-      } finally {
-        await storage.close();
-        rmSync(tmpDir, { recursive: true, force: true });
-      }
-    },
-  );
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("POST /keys — a session mints, clamped to its own grant", () => {
@@ -1644,8 +1611,8 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
 describe("POST /keys — space binding", () => {
   // `POST /keys` mints into the caller's space, and the operator key has none
   // to give. A space-less credential is the instance tier — NULL space is the
-  // universal "all spaces" signal to the RLS policies and to the storage
-  // layer's space predicate — so the one credential this route can mint from
+  // universal "all spaces" signal to the storage layer's space predicate —
+  // so the one credential this route can mint from
   // an operator key is another operator key. Everything space-bound goes
   // through `POST /admin/spaces/{id}/keys`, which names the space in the path.
   let hostedCtx: TestContext;

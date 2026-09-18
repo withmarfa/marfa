@@ -52,36 +52,22 @@ async function seedItemWithUpdatedAt(opts: {
   if (opts.state !== "active") {
     await ctx.storage.items.transition(opts.id, opts.state, opts.spaceId);
   }
-  // Force the timestamps to a contrived value via raw SQL — both dialects
-  // expose `__pgClient` / `__sqliteAll` / `__sqliteRun` escape hatches on
-  // storage; here we just write directly through the Drizzle internals.
+  // Force the timestamps to a contrived value via raw SQL through the
+  // storage escape hatches.
   //
   // `trashed_at` moves with `updated_at`, because "seed a row this old" is
   // one intent and the trash sweep reads the stamp in preference to the
   // modification time. Left alone where it is null, so an active row does
   // not acquire a removal time it never had.
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(
-      `UPDATE items SET updated_at = $1,
-         trashed_at = CASE WHEN trashed_at IS NULL THEN NULL ELSE $1 END
-       WHERE id = $2`,
-      [opts.updatedAtIso, opts.id],
-    );
-  } else {
-    const s = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-    };
-    await s.__sqliteRun(
-      `UPDATE items SET updated_at = ?,
-         trashed_at = CASE WHEN trashed_at IS NULL THEN NULL ELSE ? END
-       WHERE id = ?`,
-      [opts.updatedAtIso, opts.updatedAtIso, opts.id],
-    );
-  }
+  const s = ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  await s.__sqliteRun(
+    `UPDATE items SET updated_at = ?,
+       trashed_at = CASE WHEN trashed_at IS NULL THEN NULL ELSE ? END
+     WHERE id = ?`,
+    [opts.updatedAtIso, opts.updatedAtIso, opts.id],
+  );
 }
 
 const id = (suffix: string): string =>
@@ -92,16 +78,6 @@ const id = (suffix: string): string =>
  * suppresses trashed rows, so we go straight to the table.
  */
 async function rowExists(itemId: string): Promise<boolean> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = await s.__pgClient("SELECT 1 FROM items WHERE id = $1", [
-      itemId,
-    ]);
-    return rows.length > 0;
-  }
   const s = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };
@@ -462,9 +438,8 @@ describe("runSpaceCleanup — audit and event-log fan-out", () => {
 /**
  * Insert an `auth_session` row directly via the storage escape hatches.
  * We seed a parent `auth_user` row first because of the FK constraint,
- * then plant the session with a contrived `expires_at`. PG accepts ISO
- * strings via `__pgClient`; SQLite stores `integer({ mode: "timestamp" })`
- * as Unix seconds.
+ * then plant the session with a contrived `expires_at`. The column is
+ * `integer({ mode: "timestamp" })`, stored as Unix seconds.
  */
 async function seedAuthSession(opts: {
   userId: string;
@@ -472,55 +447,24 @@ async function seedAuthSession(opts: {
   token: string;
   expiresAt: Date;
 }): Promise<void> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  const nowIso = new Date().toISOString();
-  const expiresIso = opts.expiresAt.toISOString();
-  if (dialect === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(
-      `INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $5)
-       ON CONFLICT (id) DO NOTHING`,
-      [opts.userId, "test", `${opts.userId}@example.com`, true, nowIso],
-    );
-    await s.__pgClient(
-      `INSERT INTO auth_session (id, expires_at, token, created_at, updated_at, user_id)
-       VALUES ($1, $2, $3, $4, $4, $5)`,
-      [opts.sessionId, expiresIso, opts.token, nowIso, opts.userId],
-    );
-  } else {
-    const s = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-    };
-    const nowSec = Math.floor(Date.now() / 1000);
-    const expiresSec = Math.floor(opts.expiresAt.getTime() / 1000);
-    await s.__sqliteRun(
-      `INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [opts.userId, "test", `${opts.userId}@example.com`, 1, nowSec, nowSec],
-    );
-    await s.__sqliteRun(
-      `INSERT INTO auth_session (id, expires_at, token, created_at, updated_at, user_id)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [opts.sessionId, expiresSec, opts.token, nowSec, nowSec, opts.userId],
-    );
-  }
+  const s = ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  const nowSec = Math.floor(Date.now() / 1000);
+  const expiresSec = Math.floor(opts.expiresAt.getTime() / 1000);
+  await s.__sqliteRun(
+    `INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [opts.userId, "test", `${opts.userId}@example.com`, 1, nowSec, nowSec],
+  );
+  await s.__sqliteRun(
+    `INSERT INTO auth_session (id, expires_at, token, created_at, updated_at, user_id)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [opts.sessionId, expiresSec, opts.token, nowSec, nowSec, opts.userId],
+  );
 }
 
 async function authSessionExists(sessionId: string): Promise<boolean> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = await s.__pgClient(
-      "SELECT 1 FROM auth_session WHERE id = $1",
-      [sessionId],
-    );
-    return rows.length > 0;
-  }
   const s = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };
@@ -611,65 +555,29 @@ async function seedOauthClient(opts: {
     redirectUris: ["http://localhost:5173/callback"],
     referenceId: null,
   });
-
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(
-      `UPDATE auth_oauth_client SET created_at = $1 WHERE client_id = $2`,
-      [opts.createdAt.toISOString(), opts.clientId],
-    );
-  } else {
-    const s = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-    };
-    await s.__sqliteRun(
-      `UPDATE auth_oauth_client SET created_at = ? WHERE client_id = ?`,
-      [Math.floor(opts.createdAt.getTime() / 1000), opts.clientId],
-    );
-  }
+  const s = ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  await s.__sqliteRun(
+    `UPDATE auth_oauth_client SET created_at = ? WHERE client_id = ?`,
+    [Math.floor(opts.createdAt.getTime() / 1000), opts.clientId],
+  );
 }
 
 /** Insert an auth_user so token FKs resolve (mirrors seedAuthSession). */
 async function seedAuthUser(userId: string): Promise<void> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  const nowIso = new Date().toISOString();
-  if (dialect === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(
-      `INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at)
-       VALUES ($1, $2, $3, true, $4, $4) ON CONFLICT (id) DO NOTHING`,
-      [userId, "test", `${userId}@example.com`, nowIso],
-    );
-  } else {
-    const s = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-    };
-    const nowSec = Math.floor(Date.now() / 1000);
-    await s.__sqliteRun(
-      `INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at)
-       VALUES (?, ?, ?, 1, ?, ?)`,
-      [userId, "test", `${userId}@example.com`, nowSec, nowSec],
-    );
-  }
+  const s = ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  const nowSec = Math.floor(Date.now() / 1000);
+  await s.__sqliteRun(
+    `INSERT OR IGNORE INTO auth_user (id, name, email, email_verified, created_at, updated_at)
+     VALUES (?, ?, ?, 1, ?, ?)`,
+    [userId, "test", `${userId}@example.com`, nowSec, nowSec],
+  );
 }
 
 async function oauthClientExists(clientId: string): Promise<boolean> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = await s.__pgClient(
-      "SELECT 1 FROM auth_oauth_client WHERE client_id = $1",
-      [clientId],
-    );
-    return rows.length > 0;
-  }
   const s = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };
@@ -809,24 +717,13 @@ async function seedItemWithCreatedAt(opts: {
     },
     opts.spaceId,
   );
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const st = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await st.__pgClient(`UPDATE items SET created_at = $1 WHERE id = $2`, [
-      opts.createdAtIso,
-      opts.id,
-    ]);
-  } else {
-    const st = ctx.storage as unknown as {
-      __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-    };
-    await st.__sqliteRun("UPDATE items SET created_at = ? WHERE id = ?", [
-      opts.createdAtIso,
-      opts.id,
-    ]);
-  }
+  const st = ctx.storage as unknown as {
+    __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+  };
+  await st.__sqliteRun("UPDATE items SET created_at = ? WHERE id = ?", [
+    opts.createdAtIso,
+    opts.id,
+  ]);
 }
 
 describe("ActivityPurger.runOnce — behavioral", () => {
@@ -900,16 +797,6 @@ describe("ActivityPurger.runOnce — behavioral", () => {
  *  rows, so a revoked-but-present key is indistinguishable from a
  *  deleted one through the store. */
 async function keyRowExists(keyId: string): Promise<boolean> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
-  if (dialect === "pg") {
-    const st = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    const rows = await st.__pgClient("SELECT 1 FROM api_keys WHERE id = $1", [
-      keyId,
-    ]);
-    return rows.length > 0;
-  }
   const st = ctx.storage as unknown as {
     __sqliteAll: (q: string) => Promise<unknown[]>;
   };
@@ -952,24 +839,13 @@ describe("RevokedKeyReaper.runOnce — behavioral", () => {
     );
 
     const setRevoked = async (keyId: string, iso: string): Promise<void> => {
-      const dialect = process.env.DB_DIALECT ?? "sqlite";
-      if (dialect === "pg") {
-        const st = ctx.storage as unknown as {
-          __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-        };
-        await st.__pgClient(
-          `UPDATE api_keys SET revoked_at = $1 WHERE id = $2`,
-          [iso, keyId],
-        );
-      } else {
-        const st = ctx.storage as unknown as {
-          __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
-        };
-        await st.__sqliteRun(
-          "UPDATE api_keys SET revoked_at = ? WHERE id = ?",
-          [iso, keyId],
-        );
-      }
+      const st = ctx.storage as unknown as {
+        __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
+      };
+      await st.__sqliteRun("UPDATE api_keys SET revoked_at = ? WHERE id = ?", [
+        iso,
+        keyId,
+      ]);
     };
     await setRevoked(
       oldRevoked.id,

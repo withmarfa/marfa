@@ -41,8 +41,8 @@ export class SqliteMetadataStore implements MetadataStore {
     // readable.
     //
     // **A global wildcard skips the clause only when nothing is excluded
-    // beside it** — see the sibling note in the Postgres store for what
-    // re-armed this and why it is two files from the change that did.
+    // beside it**: an exclusion under a wildcard is what narrows a grant, so
+    // dropping the clause for the wildcard alone would widen it back.
     const unrestricted =
       filters.allowedTypes?.includes(GLOBAL_TYPE_WILDCARD) === true &&
       excludedTypes.length === 0;
@@ -125,12 +125,10 @@ export class SqliteMetadataStore implements MetadataStore {
     // reads backwards — this method is about the sidecar, and the item is
     // the afterthought — so it invites being swapped back.
     //
-    // SQLite admits one writer at a time, so the deadlock this order
-    // prevents is not reachable here; the Postgres store carries the same
-    // order because there it is. Kept identical deliberately. These two
-    // files are read as a pair, and an ordering that mattered in only one
-    // of them would leave the next reader working out which — the answer
-    // being easy to get wrong and nothing failing when it is.
+    // SQLite admits one writer at a time, so the deadlock this order once
+    // prevented on a store with row locks is not reachable here. Kept
+    // deliberately: the order costs nothing and an engine with row locks
+    // would need it.
     // One bump for the whole write, however many namespaces it carries: a
     // caller writing several together means one change rather than one per
     // namespace.
@@ -406,12 +404,7 @@ export class SqliteMetadataStore implements MetadataStore {
 
   /**
    * SQLite has no row-level lock to take; the write transaction is the
-   * serialization point, since SQLite admits one writer at a time. The
-   * Postgres implementation adds `FOR UPDATE` for the same guarantee.
-   *
-   * That is also why the Postgres side claims the item row before its
-   * metadata lock and this one does not: with no row locks here there is
-   * no order between two of them to get wrong.
+   * serialization point, since SQLite admits one writer at a time.
    */
   async mutateExtension(
     itemId: string,

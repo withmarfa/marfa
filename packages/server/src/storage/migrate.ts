@@ -1,7 +1,7 @@
 /**
  * Standalone migration runner for Drizzle Kit migrations.
  *
- * Usage from CLI: tsx src/storage/migrate.ts [--dialect pg|sqlite]
+ * Usage from CLI: tsx src/storage/migrate.ts
  */
 
 import {
@@ -19,18 +19,17 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-export function getMigrationFolder(dialect: "pg" | "sqlite"): string {
+export function getMigrationFolder(): string {
   // Resolve relative to the running file so it works whether invoked as source
-  // (`tsx src/storage/migrate.ts` → ../../drizzle, used by the hosted deploy)
-  // or as the built standalone migrator (`node dist/migrate.js` → ../drizzle,
-  // used by the docker-compose self-host path).
+  // (`tsx src/storage/migrate.ts` → ../../drizzle) or as the built standalone
+  // migrator (`node dist/migrate.js` → ../drizzle).
   const candidates = [
-    join(__dirname, `../../drizzle/${dialect}`),
-    join(__dirname, `../drizzle/${dialect}`),
+    join(__dirname, "../../drizzle/sqlite"),
+    join(__dirname, "../drizzle/sqlite"),
   ];
   return (
     candidates.find((c) => existsSync(c)) ??
-    join(__dirname, `../../drizzle/${dialect}`)
+    join(__dirname, "../../drizzle/sqlite")
   );
 }
 
@@ -56,22 +55,19 @@ interface JournalEntry {
  *
  * The caller owns the returned directory and must remove it.
  */
-function partialMigrationFolder(
-  dialect: "pg" | "sqlite",
-  throughTag: string,
-): string {
-  const source = getMigrationFolder(dialect);
+function partialMigrationFolder(throughTag: string): string {
+  const source = getMigrationFolder();
   const journalPath = join(source, "meta", "_journal.json");
   const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
     entries: JournalEntry[];
   };
   const cut = journal.entries.findIndex((e) => e.tag === throughTag);
   if (cut === -1) {
-    throw new Error(`No ${dialect} migration tagged "${throughTag}"`);
+    throw new Error(`No migration tagged "${throughTag}"`);
   }
   const kept = journal.entries.slice(0, cut + 1);
 
-  const folder = mkdtempSync(join(tmpdir(), `marfa-migrations-${dialect}-`));
+  const folder = mkdtempSync(join(tmpdir(), "marfa-migrations-"));
   mkdirSync(join(folder, "meta"), { recursive: true });
   writeFileSync(
     join(folder, "meta", "_journal.json"),
@@ -84,44 +80,6 @@ function partialMigrationFolder(
     );
   }
   return folder;
-}
-
-async function applyPgMigrations(
-  connectionString: string,
-  migrationsFolder: string,
-): Promise<void> {
-  const { drizzle } = await import("drizzle-orm/postgres-js");
-  const { migrate } = await import("drizzle-orm/postgres-js/migrator");
-  const postgres = (await import("postgres")).default;
-
-  const client = postgres(connectionString, { max: 1 });
-  const db = drizzle(client);
-
-  try {
-    await migrate(db, { migrationsFolder });
-  } finally {
-    await client.end();
-  }
-}
-
-export async function runPgMigrations(connectionString: string): Promise<void> {
-  await applyPgMigrations(connectionString, getMigrationFolder("pg"));
-}
-
-/**
- * Migrate a Postgres database up to and including `throughTag`, stopping
- * there. `partialMigrationFolder` carries why this exists.
- */
-export async function runPgMigrationsThrough(
-  connectionString: string,
-  throughTag: string,
-): Promise<void> {
-  const folder = partialMigrationFolder("pg", throughTag);
-  try {
-    await applyPgMigrations(connectionString, folder);
-  } finally {
-    rmSync(folder, { recursive: true, force: true });
-  }
 }
 
 async function applySqliteMigrations(
@@ -148,7 +106,7 @@ async function applySqliteMigrations(
 }
 
 export async function runSqliteMigrations(sqlitePath: string): Promise<void> {
-  await applySqliteMigrations(sqlitePath, getMigrationFolder("sqlite"));
+  await applySqliteMigrations(sqlitePath, getMigrationFolder());
 }
 
 /**
@@ -159,7 +117,7 @@ export async function runSqliteMigrationsThrough(
   sqlitePath: string,
   throughTag: string,
 ): Promise<void> {
-  const folder = partialMigrationFolder("sqlite", throughTag);
+  const folder = partialMigrationFolder(throughTag);
   try {
     await applySqliteMigrations(sqlitePath, folder);
   } finally {
@@ -173,41 +131,16 @@ if (
   (process.argv[1].endsWith("migrate.ts") ||
     process.argv[1].endsWith("migrate.js"))
 ) {
-  const dialect = process.argv.includes("--dialect")
-    ? (process.argv[process.argv.indexOf("--dialect") + 1] as "pg" | "sqlite")
-    : process.env.DB_DIALECT === "pg"
-      ? "pg"
-      : "sqlite";
-
-  console.log(`Running ${dialect} migrations...`);
-
-  if (dialect === "pg") {
-    const url = process.env.DATABASE_URL;
-    if (!url) {
-      console.error("DATABASE_URL is required for Postgres migrations");
+  console.log("Running sqlite migrations...");
+  const path = process.env.SQLITE_PATH ?? "./data/marfa.db";
+  void (async () => {
+    try {
+      await runSqliteMigrations(path);
+      console.log("Migrations complete.");
+      process.exit(0);
+    } catch (err) {
+      console.error("Migration failed:", err);
       process.exit(1);
     }
-    void (async () => {
-      try {
-        await runPgMigrations(url);
-        console.log("Migrations complete.");
-        process.exit(0);
-      } catch (err) {
-        console.error("Migration failed:", err);
-        process.exit(1);
-      }
-    })();
-  } else {
-    const path = process.env.SQLITE_PATH ?? "./data/marfa.db";
-    void (async () => {
-      try {
-        await runSqliteMigrations(path);
-        console.log("Migrations complete.");
-        process.exit(0);
-      } catch (err) {
-        console.error("Migration failed:", err);
-        process.exit(1);
-      }
-    })();
-  }
+  })();
 }

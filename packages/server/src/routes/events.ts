@@ -17,16 +17,8 @@ import {
 } from "../pubsub.js";
 import type { EdgeEventWithId, ItemEventWithId } from "../pubsub.js";
 import type { Storage } from "../storage/interface.js";
-import type { PgClient, PgDb } from "../storage/pg/connection.js";
-import { withRlsSpaceTransaction } from "../middleware/rls-space-context.js";
 import type { ApiKey, Metadata } from "@withmarfa/shared";
 import { filterMetadataForCaller } from "./util.js";
-import { StreamPoolExhaustedError } from "../storage/pg/streaming-rls.js";
-import {
-  acquireStreamRls,
-  STREAM_RESERVE_TIMEOUT_MS,
-  type StreamRlsContext,
-} from "../storage/pg/streaming-rls.js";
 
 const KEEPALIVE_INTERVAL_MS = 30_000;
 const REPLAY_BATCH_SIZE = 500;
@@ -34,14 +26,9 @@ const REPLAY_BATCH_SIZE = 500;
 /**
  * How long the announcement waits for the log head before giving up on it.
  *
- * **Taken from the reservation window rather than chosen.** This route
- * already waits on the database once at stream setup — the replay slot —
- * and that wait is `STREAM_RESERVE_TIMEOUT_MS`, sized to ride out a burst
- * of stream turnover without leaving a client hanging. The head read asks
- * the same question at the same moment in a connection's life: how long
- * setup tolerates a database that is not answering. Importing the number
- * rather than restating it is what stops the two drifting, and the head
- * read is the half nobody would think to re-tune.
+ * Five seconds: how long stream setup tolerates a database that is not
+ * answering, sized to ride out a burst of stream turnover without leaving
+ * a client hanging.
  *
  * A bound is needed at all because the hold is new. Every connection now
  * withholds live delivery from its first moment so the announcement can
@@ -57,7 +44,7 @@ const REPLAY_BATCH_SIZE = 500;
  * That is a documented state its reconnect path already handles. A client
  * whose frames are held indefinitely is in no state at all.
  */
-const HEAD_READ_TIMEOUT_MS = STREAM_RESERVE_TIMEOUT_MS;
+const HEAD_READ_TIMEOUT_MS = 5_000;
 
 /**
  * What a head read that outran its budget resolves to.
@@ -223,34 +210,12 @@ type StreamIncompleteReason =
  */
 const MAX_HELD_FRAMES = 500;
 
-/**
- * Options for `eventRoutes`. `rlsEnforce` + `pgClient` enable
- * session-level RLS on a pool connection reserved ONLY for the replay
- * phase — live delivery flows from the in-process emitter, which the
- * subscription's space filter and the caller's type projection already
- * fence, so a viewer costs the database nothing once it is caught up.
- * Without both set the replay runs on the owner connection — used for
- * SQLite, for a space-less caller (which is the operator key and nothing
- * self-host), and when RLS enforcement is disabled instance-wide.
- */
 /** A live frame published while the stream was still holding delivery. */
 type HeldFrame =
   | { kind: "item"; event: ItemEventWithId }
   | { kind: "edge"; event: EdgeEventWithId };
 
 export interface EventRoutesOptions {
-  rlsEnforce: boolean;
-  pgClient: PgClient | null;
-  /**
-   * The request-context Drizzle instance, for the one bounded read this
-   * route makes outside the replay: the event-log head it announces on
-   * connect. Absent means that read runs unfenced on the owner
-   * connection, which is the SQLite and space-less shape anyway.
-   */
-  pgDb?: PgDb | null;
-  /** Override for the replay-slot reservation window; tests drive the
-   *  exhaustion path with a short one. Default lives in streaming-rls. */
-  streamReserveTimeoutMs?: number;
   /** Override for the head-read budget; tests drive the degraded path —
    *  no announcement, hold released — with a short one. Default is
    *  `HEAD_READ_TIMEOUT_MS`. */
@@ -365,7 +330,7 @@ function parseEdgeMode(raw: string | undefined): EdgeMode {
 
 export function eventRoutes(
   storage: Storage,
-  options: EventRoutesOptions = { rlsEnforce: false, pgClient: null },
+  options: EventRoutesOptions = {},
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   let liveViewers = 0;
@@ -383,7 +348,7 @@ export function eventRoutes(
     // cannot disagree about the same grant.
     const typeFilter = computeTypeFilter(apiKey);
 
-    return (async () => {
+    return (() => {
       const maxViewers = options.maxViewers ?? 0;
       if (maxViewers > 0 && liveViewers >= maxViewers) {
         throw new MarfaError(
@@ -395,19 +360,12 @@ export function eventRoutes(
       // Counted atomically with the check above — an await between them
       // would let a reconnect burst admit far more than the cap while
       // every request still saw room. Everything below that can throw is
-      // bracketed so a failed setup never strands the count or a
-      // reservation.
+      // bracketed so a failed setup never strands the count.
       liveViewers += 1;
 
-      // Object wrapper for the same reason as `state` below: the catch
-      // block's flow analysis does not credit an assignment made inside
-      // the try, and would read the reservation as never-held.
-      const reservation: { ctx: StreamRlsContext | null } = { ctx: null };
       try {
-        // event_log.id is PG bigint / SQLite INTEGER — parse as BigInt so
-        // cursors above Number.MAX_SAFE_INTEGER round-trip cleanly.
-        // Parsed before the stream exists because whether a replay will
-        // run decides whether a database connection is needed at all.
+        // event_log.id is an INTEGER rowid — parse as BigInt so cursors
+        // above Number.MAX_SAFE_INTEGER round-trip cleanly.
         let afterId: bigint | null = null;
         if (lastEventId) {
           try {
@@ -417,78 +375,24 @@ export function eventRoutes(
           }
         }
 
-        // A database connection is reserved ONLY when this viewer has a
-        // catch-up to run, and it is released the moment the replay ends
-        // — the stream's live phase never holds one. Acquired BEFORE the
-        // response exists, so a pool with no free slot answers a real
-        // 503 the client can retry on; acquired inside `start`, the
-        // failure could only surface as a broken stream behind a 200
-        // already sent.
-        if (
-          afterId !== null &&
-          options.rlsEnforce &&
-          options.pgClient !== null &&
-          spaceId
-        ) {
-          try {
-            reservation.ctx = await acquireStreamRls(
-              options.pgClient,
-              spaceId,
-              {
-                ...(options.streamReserveTimeoutMs !== undefined && {
-                  reserveTimeoutMs: options.streamReserveTimeoutMs,
-                }),
-              },
-            );
-          } catch (err) {
-            if (err instanceof StreamPoolExhaustedError) {
-              throw new MarfaError(
-                ErrorCode.STREAM_CAPACITY_EXHAUSTED,
-                "No replay capacity is available right now; retry shortly",
-                { reason: "replay_contention" },
-              );
-            }
-            throw err;
-          }
-        }
-
-        return buildStream(afterId, reservation.ctx);
+        return buildStream(afterId);
       } catch (err) {
         // The stream never started, so its cleanup will never run: the
-        // slot and any reservation are this path's to give back.
+        // slot is this path's to give back.
         liveViewers -= 1;
-        if (reservation.ctx) {
-          void reservation.ctx.release().catch(() => undefined);
-        }
         throw err;
       }
     })();
 
-    function buildStream(
-      afterId: bigint | null,
-      acquiredCtx: StreamRlsContext | null,
-    ): Response {
+    function buildStream(afterId: bigint | null): Response {
       // Set inside start(), fired from cancel(): a consumer that cancels
       // the stream (rather than dropping the connection, which fires the
-      // abort signal) must still release the viewer slot and any replay
-      // reservation.
+      // abort signal) must still release the viewer slot.
       let onCancel: (() => void) | null = null;
 
       const stream = new ReadableStream({
         start(controller) {
           const encoder = new TextEncoder();
-          const rlsCtx: StreamRlsContext | null = acquiredCtx;
-          let rlsReleased = false;
-          const releaseRls = (): void => {
-            if (rlsReleased || !rlsCtx) return;
-            rlsReleased = true;
-            // Fire-and-forget — must not block the abort/close path.
-            // Failures destroy the connection rather than risk a poisoned pool return.
-            const ctx = rlsCtx;
-            void ctx.release().catch(() => {
-              /* logged inside disposeReserved; swallow here */
-            });
-          };
           // Object wrapper prevents TS narrowing from assuming `closed` stays `false` across async closures.
           const state: { closed: boolean } = { closed: false };
 
@@ -522,7 +426,6 @@ export function eventRoutes(
             liveViewers -= 1;
             clearInterval(keepAlive);
             subscriptionAbort.abort();
-            releaseRls();
           };
 
           // Flush response headers immediately so reverse proxies that buffer
@@ -1131,26 +1034,9 @@ export function eventRoutes(
             heldFrames.length = 0;
           };
 
-          /**
-           * Read the log head this stream announces.
-           *
-           * Fenced the way an ordinary space-scoped read is fenced, and
-           * deliberately not through the streaming reservation: this is
-           * one scalar read at setup, not a walk over rows held open for
-           * the length of a response. Reserving here would put every
-           * fresh viewer in the same five-slot queue as every replaying
-           * one, and answer 503 to the client with nothing to catch up
-           * on.
-           */
-          const readHeadEventId = async (): Promise<bigint | null> => {
-            const read = (): Promise<bigint | null> =>
-              storage.eventLog.getMaxId(spaceId ?? undefined);
-            const pgDb = options.pgDb ?? null;
-            if (options.rlsEnforce && pgDb !== null && spaceId) {
-              return withRlsSpaceTransaction(pgDb, spaceId, read);
-            }
-            return read();
-          };
+          /** Read the log head this stream announces. */
+          const readHeadEventId = (): Promise<bigint | null> =>
+            storage.eventLog.getMaxId(spaceId ?? undefined);
 
           /**
            * The head read, bounded.
@@ -1255,19 +1141,8 @@ export function eventRoutes(
             // same thing as a catch-up that finished: either way what
             // was held is safe to deliver.
             let caughtUp = true;
-            try {
-              if (afterId !== null) {
-                const runReplay = (): Promise<boolean> => replay(afterId);
-                caughtUp = rlsCtx
-                  ? await rlsCtx.withInstalledContext(runReplay)
-                  : await runReplay();
-              }
-            } finally {
-              // The reservation exists for the replay alone; the live
-              // phase runs entirely off the emitter. Idempotent with
-              // cleanup()'s call, which stays as the safety net for a
-              // client that disconnects mid-replay.
-              releaseRls();
+            if (afterId !== null) {
+              caughtUp = await replay(afterId);
             }
             // A catch-up that could not finish has already told the
             // client and closed. Releasing the hold on top of that would

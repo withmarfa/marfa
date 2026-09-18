@@ -28,15 +28,6 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
-/**
- * Postgres only, and the reason is the same reason the fix is shaped the way
- * it is. SQLite admits one writer at a time, so the interleaving this guards
- * cannot occur there — and the in-memory test database does not merely pass,
- * it fails every genuinely concurrent request with SQLITE_BUSY, which would
- * make the results say nothing about the quota.
- */
-const isPg = (process.env.DB_DIALECT ?? "sqlite") === "pg";
-
 let ctx: TestContext;
 
 /**
@@ -99,17 +90,6 @@ async function spaceWithItemLimit(
     spaceId: space.id,
     key: ((await keyRes.json()) as { key: string }).key,
   };
-}
-
-function createNote(key: string, body: string): Promise<Response> {
-  return request(ctx.app, "POST", "/items", {
-    key,
-    body: { type: "core.note", properties: { body } },
-  });
-}
-
-async function itemCount(spaceId: string): Promise<number> {
-  return ctx.storage.spaceQuotas.count(spaceId, "items");
 }
 
 /**
@@ -238,105 +218,5 @@ describe("a refused blob upload leaves nothing on disk", () => {
       key: a.key,
     });
     expect(stillThere.status).toBe(200);
-  });
-});
-
-describe.skipIf(!isPg)("items quota under concurrency", () => {
-  it("REGRESSION: simultaneous creates at the ceiling do not overshoot it", async () => {
-    const limit = 5;
-    const { spaceId, key } = await spaceWithItemLimit(limit);
-
-    // Fill to one below the ceiling sequentially: this part was never in
-    // doubt, and it sets up the state where the race bites.
-    for (let i = 0; i < limit - 1; i++) {
-      expect((await createNote(key, `seed ${String(i)}`)).status).toBe(201);
-    }
-    expect(await itemCount(spaceId)).toBe(limit - 1);
-
-    // Now eight writers at once, with room for exactly one.
-    const results = await Promise.all(
-      Array.from({ length: 8 }, (_, i) => createNote(key, `race ${String(i)}`)),
-    );
-    const created = results.filter((r) => r.status === 201).length;
-    const refused = results.filter((r) => r.status === 429).length;
-
-    expect(created).toBe(1);
-    expect(refused).toBe(7);
-    // The count is the property, not the status distribution: a route that
-    // returned 429 while still writing would pass the assertions above.
-    expect(await itemCount(spaceId)).toBe(limit);
-  });
-
-  it("refuses every writer when the ceiling is already reached", async () => {
-    const limit = 3;
-    const { spaceId, key } = await spaceWithItemLimit(limit);
-    for (let i = 0; i < limit; i++) {
-      expect((await createNote(key, `seed ${String(i)}`)).status).toBe(201);
-    }
-
-    const results = await Promise.all(
-      Array.from({ length: 6 }, (_, i) => createNote(key, `over ${String(i)}`)),
-    );
-    expect(results.every((r) => r.status === 429)).toBe(true);
-    expect(await itemCount(spaceId)).toBe(limit);
-  });
-
-  it("does not serialise writers in different spaces", async () => {
-    // The lock is per space and per resource. One keyed on the resource
-    // alone would still close the race, and would turn every space's writes
-    // into one global queue to do it — a worse outcome than the overshoot,
-    // and invisible in a response status.
-    const a = await spaceWithItemLimit(50);
-    const b = await spaceWithItemLimit(50);
-    lockKeys = [];
-    const results = await Promise.all([
-      ...Array.from({ length: 4 }, (_, i) =>
-        createNote(a.key, `a${String(i)}`),
-      ),
-      ...Array.from({ length: 4 }, (_, i) =>
-        createNote(b.key, `b${String(i)}`),
-      ),
-    ]);
-    expect(results.every((r) => r.status === 201)).toBe(true);
-    expect(await itemCount(a.spaceId)).toBe(4);
-    expect(await itemCount(b.spaceId)).toBe(4);
-
-    // Eight writes, eight locks, and the two spaces never share a key.
-    expect(lockKeys.length).toBe(8);
-    expect(new Set(lockKeys)).toEqual(
-      new Set([`quota:${a.spaceId}:items`, `quota:${b.spaceId}:items`]),
-    );
-  });
-
-  it("leaves an unlimited space unlocked and unbounded", async () => {
-    // No ceiling means no reservation and no lock: serialising writers
-    // against a limit that does not exist is pure contention.
-    const space = await ctx.storage.spaces!.create(
-      `unl-${Math.random().toString(36).slice(2, 8)}`,
-    );
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const keyRes = await request(
-      ctx.app,
-      "POST",
-      `/admin/spaces/${space.id}/keys`,
-      {
-        key: ctx.operatorKey,
-        body: {
-          label: `unl-${suffix}`,
-          source: `unl-${suffix}`,
-          default_tier: "library",
-          type_permissions: { "*": "write" },
-        },
-      },
-    );
-    const key = ((await keyRes.json()) as { key: string }).key;
-
-    lockKeys = [];
-    const results = await Promise.all(
-      Array.from({ length: 10 }, (_, i) => createNote(key, `u${String(i)}`)),
-    );
-    expect(results.every((r) => r.status === 201)).toBe(true);
-    expect(await itemCount(space.id)).toBe(10);
-    expect(lockKeys).toEqual([]);
   });
 });

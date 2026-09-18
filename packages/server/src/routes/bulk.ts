@@ -1496,9 +1496,7 @@ export function bulkRoutes(storage: Storage) {
 //   - a job in another space is cloaked as absent rather than refused.
 //
 // `bulkActionJobs.getById` applies no space filter, so this function is the
-// whole fence. Postgres row-level security fences space-scoped rows
-// independently but cannot fence the null-space slice, and this is the only
-// fence at all on SQLite.
+// whole fence.
 function assertJobAuth(c: Context<AppEnv>, job: BulkActionJobRow): void {
   const apiKey = c.get("apiKey");
   if (!apiKey) {

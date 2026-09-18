@@ -319,7 +319,7 @@ async function extractEmail(rawReq: Request): Promise<string | null> {
  * Probe `auth_verification` for an existing valid cancel token bound
  * to this `auth_user_id`. Returns the token suffix (without the
  * `account-cancel:` prefix) when found, else null. Uses Drizzle's
- * query builder on both dialects — fully parameterized.
+ * query builder — fully parameterized.
  */
 async function findExistingValidCancelToken(
   storage: Storage,
@@ -328,71 +328,38 @@ async function findExistingValidCancelToken(
 ): Promise<string | null> {
   const db = storage.betterAuthDb;
   if (!db) return null;
-  if (storage.betterAuthDialect === "pg") {
-    const { auth_verification } = await import("../storage/pg/schema.js");
-    const rows = await (
-      db as {
-        select: () => {
-          from: (t: typeof auth_verification) => {
-            where: (c: unknown) => {
-              orderBy: (c: unknown) => {
-                limit: (
-                  n: number,
-                ) => Promise<{ identifier: string; expiresAt: Date }[]>;
+  const { auth_verification } = await import("../storage/sqlite/schema.js");
+  const row = await (
+    db as {
+      select: () => {
+        from: (t: typeof auth_verification) => {
+          where: (c: unknown) => {
+            orderBy: (c: unknown) => {
+              limit: (n: number) => {
+                get: () => Promise<
+                  { identifier: string; expiresAt: Date } | undefined
+                >;
               };
             };
           };
         };
-      }
+      };
+    }
+  )
+    .select()
+    .from(auth_verification)
+    .where(
+      and(
+        eq(auth_verification.value, authUserId),
+        like(auth_verification.identifier, `${CANCEL_IDENTIFIER_PREFIX}%`),
+        gt(auth_verification.expiresAt, new Date(nowMs)),
+      ),
     )
-      .select()
-      .from(auth_verification)
-      .where(
-        and(
-          eq(auth_verification.value, authUserId),
-          like(auth_verification.identifier, `${CANCEL_IDENTIFIER_PREFIX}%`),
-          gt(auth_verification.expiresAt, new Date(nowMs)),
-        ),
-      )
-      .orderBy(desc(auth_verification.createdAt))
-      .limit(1);
-    const r = rows[0];
-    if (!r) return null;
-    return r.identifier.slice(CANCEL_IDENTIFIER_PREFIX.length);
-  } else {
-    const { auth_verification } = await import("../storage/sqlite/schema.js");
-    const row = await (
-      db as {
-        select: () => {
-          from: (t: typeof auth_verification) => {
-            where: (c: unknown) => {
-              orderBy: (c: unknown) => {
-                limit: (n: number) => {
-                  get: () => Promise<
-                    { identifier: string; expiresAt: Date } | undefined
-                  >;
-                };
-              };
-            };
-          };
-        };
-      }
-    )
-      .select()
-      .from(auth_verification)
-      .where(
-        and(
-          eq(auth_verification.value, authUserId),
-          like(auth_verification.identifier, `${CANCEL_IDENTIFIER_PREFIX}%`),
-          gt(auth_verification.expiresAt, new Date(nowMs)),
-        ),
-      )
-      .orderBy(desc(auth_verification.createdAt))
-      .limit(1)
-      .get();
-    if (!row) return null;
-    return row.identifier.slice(CANCEL_IDENTIFIER_PREFIX.length);
-  }
+    .orderBy(desc(auth_verification.createdAt))
+    .limit(1)
+    .get();
+  if (!row) return null;
+  return row.identifier.slice(CANCEL_IDENTIFIER_PREFIX.length);
 }
 
 async function insertCancelToken(
@@ -404,49 +371,28 @@ async function insertCancelToken(
   const db = storage.betterAuthDb;
   if (!db) return;
   // Typed Drizzle insert against the same `auth_verification` table the
-  // delete-request flow writes to. The timestamp-mode columns encode
-  // Date per dialect (INTEGER on SQLite, TIMESTAMP on PG), so no manual
-  // ISO/unix conversion is needed.
+  // delete-request flow writes to. The timestamp-mode columns encode a
+  // Date as INTEGER, so no manual ISO/unix conversion is needed.
   const id = randomBytes(16).toString("hex");
   const now = new Date();
-  if (storage.betterAuthDialect === "pg") {
-    const { auth_verification } = await import("../storage/pg/schema.js");
-    await (
-      db as {
-        insert: (t: typeof auth_verification) => {
-          values: (row: Record<string, unknown>) => Promise<unknown>;
+  const { auth_verification } = await import("../storage/sqlite/schema.js");
+  await (
+    db as {
+      insert: (t: typeof auth_verification) => {
+        values: (row: Record<string, unknown>) => {
+          run: () => Promise<unknown>;
         };
-      }
-    )
-      .insert(auth_verification)
-      .values({
-        id,
-        identifier,
-        value,
-        expiresAt,
-        createdAt: now,
-        updatedAt: now,
-      });
-  } else {
-    const { auth_verification } = await import("../storage/sqlite/schema.js");
-    await (
-      db as {
-        insert: (t: typeof auth_verification) => {
-          values: (row: Record<string, unknown>) => {
-            run: () => Promise<unknown>;
-          };
-        };
-      }
-    )
-      .insert(auth_verification)
-      .values({
-        id,
-        identifier,
-        value,
-        expiresAt,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-  }
+      };
+    }
+  )
+    .insert(auth_verification)
+    .values({
+      id,
+      identifier,
+      value,
+      expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
 }

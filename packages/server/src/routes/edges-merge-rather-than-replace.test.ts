@@ -213,16 +213,14 @@ describe("an edge update merges over what the edge holds", () => {
   it("never loses a patch it accepted, which is what the row lock is for", async () => {
     // The merge is computed from a read, so two patches interleaving
     // between another's read and its write lose one of them silently.
-    // That is the entire reason this write took a transaction and, on
-    // Postgres, a row lock, and nothing else in this file exercises it:
-    // every other case is sequential and passes with both deleted.
+    // That is the entire reason this write took a transaction, and nothing
+    // else in this file exercises it: every other case is sequential and
+    // passes with it deleted.
     //
     // **The assertion is "no accepted write is lost", not "all eight
-    // succeed", and the difference is the dialect.** On Postgres the
-    // waiters block on the lock and all eight are accepted. On SQLite
-    // they do not: the driver opens each transaction with BEGIN
-    // IMMEDIATE and a second one meets `SQLITE_BUSY` rather than
-    // waiting, so seven of eight are refused with a 500. That is not
+    // succeed".** The driver opens each transaction with BEGIN IMMEDIATE
+    // and a second one meets `SQLITE_BUSY` rather than waiting, so seven
+    // of eight are refused with a 500. That is not
     // introduced here — `PATCH /items/{id}` has done the same since it
     // started merging under a transaction, measured on this build — and
     // it is a defect in its own right, tracked separately. What must

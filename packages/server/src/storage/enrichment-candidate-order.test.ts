@@ -23,8 +23,6 @@ import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
 
-const isPg = (): boolean => (process.env.DB_DIALECT ?? "sqlite") === "pg";
-
 const SIGNATURE = JSON.stringify({ max_blob_bytes: 1, ocr: false });
 
 beforeAll(async () => {
@@ -45,16 +43,6 @@ async function forceTimes(
   createdAt: string,
   updatedAt: string,
 ): Promise<void> {
-  if (isPg()) {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(
-      `UPDATE items SET created_at = $1, updated_at = $2 WHERE id = $3`,
-      [createdAt, updatedAt, itemId],
-    );
-    return;
-  }
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };

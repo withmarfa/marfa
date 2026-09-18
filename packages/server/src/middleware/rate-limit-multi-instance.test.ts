@@ -18,8 +18,7 @@ import type { TestContext } from "../test-utils.js";
  *
  * SQLite is single-process by file lock, so on a single shared file
  * two middleware instances serialize upserts via the lock — exactly
- * the behavior we want for the assertion. The PG matrix exercises the
- * same scenarios via the dialect-specific upsert path.
+ * the behavior we want for the assertion.
  */
 
 let ctx: TestContext | undefined;
@@ -31,10 +30,8 @@ afterEach(async () => {
 
 /**
  * Spin up two Hono mini-apps that each carry the rate-limit middleware
- * pointed at the same underlying `Storage`. Production deployments
- * would have two `createApp(storage)` calls in two server processes
- * pointed at the same PG; this is that shape compressed into one
- * process via shared `storage`.
+ * pointed at the same underlying `Storage`: two apps over one
+ * `storage`, compressed into one process.
  *
  * Each app mounts the standard `createErrorHandler` so MarfaError
  * (thrown by the middleware on rate-limit) coerces to a 429 response,

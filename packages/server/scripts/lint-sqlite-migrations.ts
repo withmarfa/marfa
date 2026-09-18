@@ -9,10 +9,9 @@
  *
  * Drizzle's libsql migrator splits on the marker, so a migration file
  * that writes two `;`-terminated statements without a breakpoint between
- * them silently drops all but the first. The PG migrator (postgres-js)
- * handles multi-statement strings natively, so the bug only manifests
- * under SQLite — as "column never created" / "table never dropped",
- * surfacing far downstream from the migration itself.
+ * them silently drops all but the first — as "column never created" /
+ * "table never dropped", surfacing far downstream from the migration
+ * itself.
  *
  * This linter runs over `packages/server/drizzle/sqlite/*.sql`,
  * splits each file on `--> statement-breakpoint`, and asserts that

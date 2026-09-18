@@ -43,9 +43,7 @@ const BLOB_PATH = "/tmp/marfa-openapi-blobs";
 function specGenerationConfig(authMode: AuthMode): AppConfig {
   return {
     port: 8600,
-    storageDialect: "sqlite",
     sqlitePath: ":memory:",
-    databaseUrl: "",
     blobPath: BLOB_PATH,
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,

@@ -270,8 +270,8 @@ export interface UnrecognizedStoredValue {
  * whose reader contract this otherwise copies, has only two — nothing
  * recorded yet, or nothing found — and no failure path at all. This has a
  * third: looked and could not read. The scenario is the one the feature
- * exists for. A newer image meets a database whose migration has not
- * landed, Postgres raises `42703` on the missing column, the catch fires,
+ * exists for. A newer build meets a database whose migration has not
+ * landed, the query fails on the missing column, the catch fires,
  * and without this flag `/health` serves exactly what a healthy instance
  * serves.
  *

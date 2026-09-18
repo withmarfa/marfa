@@ -72,16 +72,6 @@ const PINNED = "2000-01-01T00:00:00.000Z";
  *  write path stamps `now`, so a contrived value is the only way to make
  *  the pre-write and post-write timestamps reliably distinguishable. */
 async function forceUpdatedAt(itemId: string, iso: string): Promise<void> {
-  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
-      iso,
-      itemId,
-    ]);
-    return;
-  }
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };

@@ -1,10 +1,7 @@
 /**
- * The SQLite half of the boot-time stored-value scan: one aggregate per
- * scanned column.
- *
- * Its own file for the same reason as the Postgres sibling — see
- * `pg/stored-value-counts.ts` for the design notes and for why this is an
- * aggregate rather than a `SELECT DISTINCT`.
+ * The boot-time stored-value scan: one aggregate per scanned column,
+ * rather than a `SELECT DISTINCT`, so a column holding one unrecognized
+ * value among millions costs one pass and a handful of rows.
  */
 import type { ColumnValueCounts } from "../stored-value-scan.js";
 

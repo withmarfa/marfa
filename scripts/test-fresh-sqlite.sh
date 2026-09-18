@@ -31,10 +31,9 @@ CLEANED=""
 
 # This script allocates no container, so there is nothing to release — but
 # a killed run still orphans the suite's process tree, a worker per core,
-# against whatever the machine does next. That is the same tree the
-# Postgres script collects, and the same reason: a foreground child defers
-# every trap until it returns, so a `TERM` was recorded and not acted on
-# and the `KILL` that followed ran nothing.
+# against whatever the machine does next. A foreground child defers every
+# trap until it returns, so a `TERM` was recorded and not acted on and the
+# `KILL` that followed ran nothing.
 cleanup() {
   trap "" INT TERM HUP
   [ -n "${CLEANED}" ] && return 0

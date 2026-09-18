@@ -200,7 +200,7 @@ async function processBulkEdge(
      * source item is resolved space-scoped, so a cross-space source returns
      * `null` and the edge-type gate alone applies (matching
      * `PATCH /edges/:id`, where a trashed/cross-space source skips the type
-     * gate but RLS remains the data-plane fence).
+     * gate and the space predicate remains the data-plane fence).
      * Throws on denial; the caller routes that to an `errored` outcome /
      * atomic rollback.
      */

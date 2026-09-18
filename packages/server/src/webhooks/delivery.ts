@@ -273,10 +273,6 @@ export class WebhookConsumer {
       try {
         for await (const event of subscribe()) {
           if (!this.running) break;
-          // Replicated events were already dispatched by the process that
-          // published them; enqueuing again here would deliver every
-          // webhook once per process.
-          if (event.remote) continue;
           // A write whose caller declined fan-out is logged and streamed
           // like any other; what it does not do is call out.
           if (!fansOut(event)) continue;
@@ -295,8 +291,6 @@ export class WebhookConsumer {
       try {
         for await (const event of subscribeEdges()) {
           if (!this.running) break;
-          // Same reasoning as the item loop: the origin process dispatched.
-          if (event.remote) continue;
           if (!fansOut(event)) continue;
           void this.dispatchEdge(event);
         }

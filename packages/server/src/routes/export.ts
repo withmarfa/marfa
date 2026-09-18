@@ -15,65 +15,12 @@ import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import type { PgClient } from "../storage/pg/connection.js";
-import {
-  acquireStreamRls,
-  StreamPoolExhaustedError,
-} from "../storage/pg/streaming-rls.js";
-import type { StreamRlsContext } from "../storage/pg/streaming-rls.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import { ALL_STATES, resolveStateFilter } from "./_schemas.js";
 import {
   refuseUnknownQueryParams,
   UNKNOWN_PARAM_NOTE,
 } from "./_unknown-query-keys.js";
-
-/**
- * Acquire the stream's RLS connection, mapping pool exhaustion to the
- * retryable 503 the route contract promises. Called before any response
- * bytes exist, so the refusal is a real status the client can act on.
- */
-async function acquireRlsOrRefuse(
-  options: {
-    rlsEnforce: boolean;
-    pgClient: PgClient | null;
-    streamReserveTimeoutMs?: number;
-  },
-  spaceId: string,
-): Promise<StreamRlsContext | null> {
-  if (!options.rlsEnforce || options.pgClient === null) {
-    return null;
-  }
-  try {
-    return await acquireStreamRls(options.pgClient, spaceId, {
-      ...(options.streamReserveTimeoutMs !== undefined && {
-        reserveTimeoutMs: options.streamReserveTimeoutMs,
-      }),
-    });
-  } catch (err) {
-    if (err instanceof StreamPoolExhaustedError) {
-      throw new MarfaError(
-        ErrorCode.STREAM_CAPACITY_EXHAUSTED,
-        "No streaming capacity is available right now; retry shortly",
-      );
-    }
-    throw err;
-  }
-}
-
-/**
- * Options for `exportRoutes`. `rlsEnforce` + `pgClient` enable
- * session-level RLS on a dedicated pool connection for the duration
- * of the stream. Without both set, the route runs on the owner
- * connection: SQLite, and an instance with RLS enforcement disabled.
- */
-export interface ExportRoutesOptions {
-  rlsEnforce: boolean;
-  pgClient: PgClient | null;
-  /** Override for the stream-slot reservation window; tests drive the
-   *  exhaustion path with a short one. Default lives in streaming-rls. */
-  streamReserveTimeoutMs?: number;
-}
 
 /**
  * Resolve the target space for an export request.
@@ -199,11 +146,7 @@ const exportRoute = createRoute({
 // Router
 // ---------------------------------------------------------------------------
 
-export function exportRoutes(
-  storage: Storage,
-  blobBackend: BlobBackend,
-  options: ExportRoutesOptions = { rlsEnforce: false, pgClient: null },
-) {
+export function exportRoutes(storage: Storage, blobBackend: BlobBackend) {
   const router = createOpenAPIRouter<AppEnv>();
 
   router.openapi(exportRoute, async (c) => {
@@ -264,7 +207,6 @@ export function exportRoutes(
         c,
         storage,
         blobBackend,
-        options,
         spaceId,
         sourceFilter,
       );
@@ -289,13 +231,8 @@ export function exportRoutes(
     const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
     const encoder = new TextEncoder();
 
-    // Acquired before the response exists, so an exhausted pool answers a
-    // real 503 instead of a broken stream behind a 200 already sent.
-    const acquiredCtx = await acquireRlsOrRefuse(options, spaceId);
-
     const stream = new ReadableStream({
       async start(controller) {
-        const rlsCtx = acquiredCtx;
         try {
           const work = async () => {
             // Ids of every item this export emits. Edges are filtered
@@ -360,16 +297,9 @@ export function exportRoutes(
                 : undefined;
             } while (edgeCursor);
           };
-          if (rlsCtx) {
-            await rlsCtx.withInstalledContext(work);
-          } else {
-            await work();
-          }
+          await work();
         } finally {
           controller.close();
-          if (rlsCtx) {
-            await rlsCtx.release();
-          }
         }
       },
     });
@@ -420,7 +350,6 @@ async function handleArchiveExport(
   c: HonoContext,
   storage: Storage,
   blobBackend: BlobBackend,
-  options: ExportRoutesOptions,
   /** Already resolved by the route handler — passed in rather than
    *  re-resolved so the space decision happens exactly once per request. */
   spaceId: string,
@@ -440,8 +369,6 @@ async function handleArchiveExport(
   const source = c.req.query("source");
   const { allowed: allowedTypes, excluded: excludedTypes } = getTypeFilter(c);
 
-  const rlsCtx = await acquireRlsOrRefuse(options, spaceId);
-
   const lines: string[] = [];
   const edgeLines: string[] = [];
   const typeLines: string[] = [];
@@ -450,122 +377,111 @@ async function handleArchiveExport(
   const blobHashes = new Set<string>();
   const blobMeta: Record<string, { mime_type: string; size: number }> = {};
 
-  try {
-    const collect = async () => {
-      // Same both-endpoints rule as the NDJSON path: the archive carries
-      // the relationships among the items it contains, nothing beyond.
-      const exportedIds = new Set<string>();
-      let cursor: string | undefined;
-      do {
-        const result = await storage.items.list({
-          spaceId,
-          type,
-          state,
-          all_states: allStates,
-          source,
-          timestamp_after: timestampAfter,
-          timestamp_before: timestampBefore,
-          allowed_types: allowedTypes,
-          excluded_types: excludedTypes,
-          source_filter: sourceFilter,
-          limit: 200,
-          cursor,
-        });
-        for (const item of result.data) {
-          const metadata = await storage.metadata.get(item.id);
-          exportedIds.add(item.id);
-          lines.push(
-            JSON.stringify({
-              item,
-              metadata,
-            }),
-          );
-          collectBlobHashes(item.properties, blobHashes);
-          collectBlobHashes(metadata.extensions, blobHashes);
-        }
-        cursor = result.has_more
-          ? (result.cursor as string | undefined)
-          : undefined;
-      } while (cursor);
-
-      let edgeCursor: string | undefined;
-      do {
-        const page = await storage.edges.list({
-          spaceId,
-          limit: 200,
-          cursor: edgeCursor,
-        });
-        for (const edge of page.data) {
-          if (
-            exportedIds.has(edge.source_id) &&
-            exportedIds.has(edge.target_id)
-          ) {
-            edgeLines.push(JSON.stringify({ edge }));
-          }
-        }
-        edgeCursor = page.has_more ? (page.cursor ?? undefined) : undefined;
-      } while (edgeCursor);
-
-      // The space's own registrations, not the filtered item set's: a
-      // restore has to be able to write every item the archive carries,
-      // and an unfiltered archive is the case that matters. Carrying a
-      // type the archive happens not to use costs one line.
-      // Provenance rides beside the schema rather than inside it. The
-      // restore validates and normalizes `custom_type` and compares the
-      // result against the stored row to decide skip-or-conflict, so a
-      // field added into the schema would read as a different registration
-      // and turn every re-restore into a conflict.
-      //
-      // It is carried at all because `origin` stopped being descriptive:
-      // it decides whether the consent screen offers a root read-only or
-      // read-and-write. An archive that drops it makes the restore guess,
-      // and the default it guessed was the permissive one.
-      for (const row of await storage.types.listCustomWithProvenance(spaceId)) {
-        typeLines.push(
+  const collect = async () => {
+    // Same both-endpoints rule as the NDJSON path: the archive carries
+    // the relationships among the items it contains, nothing beyond.
+    const exportedIds = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const result = await storage.items.list({
+        spaceId,
+        type,
+        state,
+        all_states: allStates,
+        source,
+        timestamp_after: timestampAfter,
+        timestamp_before: timestampBefore,
+        allowed_types: allowedTypes,
+        excluded_types: excludedTypes,
+        source_filter: sourceFilter,
+        limit: 200,
+        cursor,
+      });
+      for (const item of result.data) {
+        const metadata = await storage.metadata.get(item.id);
+        exportedIds.add(item.id);
+        lines.push(
           JSON.stringify({
-            custom_type: row.schema,
-            provenance: {
-              origin: row.origin,
-              ...(row.family !== undefined && { family: row.family }),
-              ...(row.owner_integration !== undefined && {
-                owner_integration: row.owner_integration,
-              }),
-            },
+            item,
+            metadata,
           }),
         );
-        customTypeCount += 1;
+        collectBlobHashes(item.properties, blobHashes);
+        collectBlobHashes(metadata.extensions, blobHashes);
       }
-      for (const schema of await storage.edgeTypes.list(spaceId)) {
-        typeLines.push(JSON.stringify({ custom_edge_type: schema }));
-        customEdgeTypeCount += 1;
-      }
+      cursor = result.has_more
+        ? (result.cursor as string | undefined)
+        : undefined;
+    } while (cursor);
 
-      // The space's own bucket and nothing else: `resolveBlobForSpace`
-      // widens only for a reader with no space, and this one always has one.
-      // A hash registered into the instance-wide `""` bucket is therefore
-      // not carried, which is the right answer for a space export and the
-      // opposite of what this used to do — it asked `""` directly, where a
-      // space's hashes do not live, and recorded `blob_count: 0` while
-      // reporting success.
-      for (const hash of blobHashes) {
-        const record = await resolveBlobForSpace(storage, spaceId, hash);
-        if (record) {
-          blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
+    let edgeCursor: string | undefined;
+    do {
+      const page = await storage.edges.list({
+        spaceId,
+        limit: 200,
+        cursor: edgeCursor,
+      });
+      for (const edge of page.data) {
+        if (
+          exportedIds.has(edge.source_id) &&
+          exportedIds.has(edge.target_id)
+        ) {
+          edgeLines.push(JSON.stringify({ edge }));
         }
       }
-    };
-    if (rlsCtx) {
-      await rlsCtx.withInstalledContext(collect);
-    } else {
-      await collect();
-    }
-  } finally {
-    if (rlsCtx) {
-      await rlsCtx.release();
-    }
-  }
+      edgeCursor = page.has_more ? (page.cursor ?? undefined) : undefined;
+    } while (edgeCursor);
 
-  // Blob bytes come from the BlobBackend (not Postgres), so no RLS context needed here.
+    // The space's own registrations, not the filtered item set's: a
+    // restore has to be able to write every item the archive carries,
+    // and an unfiltered archive is the case that matters. Carrying a
+    // type the archive happens not to use costs one line.
+    // Provenance rides beside the schema rather than inside it. The
+    // restore validates and normalizes `custom_type` and compares the
+    // result against the stored row to decide skip-or-conflict, so a
+    // field added into the schema would read as a different registration
+    // and turn every re-restore into a conflict.
+    //
+    // It is carried at all because `origin` stopped being descriptive:
+    // it decides whether the consent screen offers a root read-only or
+    // read-and-write. An archive that drops it makes the restore guess,
+    // and the default it guessed was the permissive one.
+    for (const row of await storage.types.listCustomWithProvenance(spaceId)) {
+      typeLines.push(
+        JSON.stringify({
+          custom_type: row.schema,
+          provenance: {
+            origin: row.origin,
+            ...(row.family !== undefined && { family: row.family }),
+            ...(row.owner_integration !== undefined && {
+              owner_integration: row.owner_integration,
+            }),
+          },
+        }),
+      );
+      customTypeCount += 1;
+    }
+    for (const schema of await storage.edgeTypes.list(spaceId)) {
+      typeLines.push(JSON.stringify({ custom_edge_type: schema }));
+      customEdgeTypeCount += 1;
+    }
+
+    // The space's own bucket and nothing else: `resolveBlobForSpace`
+    // widens only for a reader with no space, and this one always has one.
+    // A hash registered into the instance-wide `""` bucket is therefore
+    // not carried, which is the right answer for a space export and the
+    // opposite of what this used to do — it asked `""` directly, where a
+    // space's hashes do not live, and recorded `blob_count: 0` while
+    // reporting success.
+    for (const hash of blobHashes) {
+      const record = await resolveBlobForSpace(storage, spaceId, hash);
+      if (record) {
+        blobMeta[hash] = { mime_type: record.mime_type, size: record.size };
+      }
+    }
+  };
+  await collect();
+
   const manifest: ArchiveManifest = {
     version: 1,
     format: "marfa-archive-v1",

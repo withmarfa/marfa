@@ -8,9 +8,8 @@
  * can stay per-row.
  *
  * Authorization: the worker passes the job's `space_id` explicitly
- * to every storage method. RLS, if enforced, is belt-and-braces —
- * matched_ids were resolved at job-create-time inside a request
- * context with full type-permission narrowing.
+ * to every storage method; matched_ids were resolved at job-create-time
+ * inside a request context with full type-permission narrowing.
  *
  * Every chunk publishes what it wrote, on every action. The publish is
  * what appends to the event log, and the log is what a client rebuilding

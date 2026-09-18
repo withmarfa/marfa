@@ -49,10 +49,7 @@ async function seedConfidentialClient(
   if (!c.storage.betterAuthDb) {
     throw new Error("seedConfidentialClient: storage.betterAuthDb missing");
   }
-  const schemaModule =
-    c.storage.betterAuthDialect === "pg"
-      ? await import("../storage/pg/schema.js")
-      : await import("../storage/sqlite/schema.js");
+  const schemaModule = await import("../storage/sqlite/schema.js");
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -62,8 +59,7 @@ async function seedConfidentialClient(
     };
   };
   const now = new Date();
-  const asArray = (values: string[]): unknown =>
-    c.storage.betterAuthDialect === "pg" ? values : JSON.stringify(values);
+  const asArray = (values: string[]): unknown => JSON.stringify(values);
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: clientPk,
     clientId,

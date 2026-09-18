@@ -43,16 +43,6 @@ afterAll(async () => {
  * clock happens to oblige.
  */
 async function forceItemUpdatedAt(id: string, iso: string): Promise<void> {
-  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(`UPDATE items SET updated_at = $1 WHERE id = $2`, [
-      iso,
-      id,
-    ]);
-    return;
-  }
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };
@@ -63,16 +53,6 @@ async function forceItemUpdatedAt(id: string, iso: string): Promise<void> {
 }
 
 async function forceEdgeUpdatedAt(id: string, iso: string): Promise<void> {
-  if ((process.env.DB_DIALECT ?? "sqlite") === "pg") {
-    const s = ctx.storage as unknown as {
-      __pgClient: (q: string, params?: unknown[]) => Promise<unknown[]>;
-    };
-    await s.__pgClient(`UPDATE edges SET updated_at = $1 WHERE id = $2`, [
-      iso,
-      id,
-    ]);
-    return;
-  }
   const s = ctx.storage as unknown as {
     __sqliteRun: (sql: string, params: unknown[]) => Promise<unknown>;
   };

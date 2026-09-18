@@ -216,7 +216,7 @@ describe("a stale client ceiling cannot strand the default-on bundle", () => {
     const cookie = await signInUser(ctx, "no-ceiling@example.com");
 
     const requested = defaultOnRequestScopes();
-    // The shape the seed script now writes for a first-party client.
+    // The shape a first-party client is written with.
     const clientId = await seedClientWithCeilingNull(ctx);
 
     const challenge = createHash("sha256")
@@ -432,16 +432,5 @@ describe("call sites that persist a client scope ceiling", () => {
     for (const door of DOORS) {
       expect(door.justification.length).toBeGreaterThan(40);
     }
-  });
-
-  it("the seed script writes no ceiling", () => {
-    const root = fileURLToPath(new URL("../..", import.meta.url));
-    const source = readFileSync(
-      new URL("src/scripts/seed-oauth-clients.ts", `file://${root}`),
-      "utf8",
-    );
-    expect(source).toContain("scopes: null");
-    // The generating shape, named so a revert is loud rather than quiet.
-    expect(source).not.toContain("buildAllowedScopes");
   });
 });

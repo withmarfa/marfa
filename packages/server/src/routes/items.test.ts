@@ -70,8 +70,8 @@ describe("POST /items", () => {
   });
 
   it("rejects a null byte in a string property with a 400, never a 500", async () => {
-    // A U+0000 null byte cannot be stored in a Postgres TEXT column; without
-    // the validation-layer guard it reaches the driver and surfaces as a 500.
+    // A U+0000 null byte is refused at the validation layer; without the
+    // guard it reaches the driver and surfaces as a 500.
     const res = await request(ctx.app, "POST", "/items", {
       key: ctx.spaceKey,
       body: { type: "core.note", properties: { body: "a\u0000b" } },

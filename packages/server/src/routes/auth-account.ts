@@ -356,8 +356,7 @@ export function authAccountRoutes(
 //
 // The auth_* tables are managed by better-auth; we reach in directly
 // rather than through a dedicated store. The Drizzle schema is exposed
-// on `storage.betterAuthDb` (the unwrapped instance) — we use the
-// dialect-specific schema bundle.
+// on `storage.betterAuthDb` (the unwrapped instance).
 
 interface VerificationRow {
   identifier: string;
@@ -371,51 +370,28 @@ async function insertVerification(
 ): Promise<void> {
   const db = storage.betterAuthDb;
   if (!db) throw new Error("betterAuthDb not wired");
-  // Both schemas expose auth_verification with the same column shape.
-  // Only difference is timestamp encoding (Date → INTEGER on SQLite,
-  // Date → TIMESTAMP on PG) and that SQLite queries require `.run()`.
   const now = new Date();
   const id = randomBytes(16).toString("hex");
-  if (storage.betterAuthDialect === "pg") {
-    const { auth_verification } = await import("../storage/pg/schema.js");
-    await (
-      db as {
-        insert: (t: typeof auth_verification) => {
-          values: (row: Record<string, unknown>) => Promise<unknown>;
+  const { auth_verification } = await import("../storage/sqlite/schema.js");
+  await (
+    db as {
+      insert: (t: typeof auth_verification) => {
+        values: (row: Record<string, unknown>) => {
+          run: () => Promise<unknown>;
         };
-      }
-    )
-      .insert(auth_verification)
-      .values({
-        id,
-        identifier: row.identifier,
-        value: row.value,
-        expiresAt: row.expiresAt,
-        createdAt: now,
-        updatedAt: now,
-      });
-  } else {
-    const { auth_verification } = await import("../storage/sqlite/schema.js");
-    await (
-      db as {
-        insert: (t: typeof auth_verification) => {
-          values: (row: Record<string, unknown>) => {
-            run: () => Promise<unknown>;
-          };
-        };
-      }
-    )
-      .insert(auth_verification)
-      .values({
-        id,
-        identifier: row.identifier,
-        value: row.value,
-        expiresAt: row.expiresAt,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-  }
+      };
+    }
+  )
+    .insert(auth_verification)
+    .values({
+      id,
+      identifier: row.identifier,
+      value: row.value,
+      expiresAt: row.expiresAt,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .run();
 }
 
 async function findVerificationByIdentifier(
@@ -424,54 +400,30 @@ async function findVerificationByIdentifier(
 ): Promise<VerificationRow | null> {
   const db = storage.betterAuthDb;
   if (!db) return null;
-  if (storage.betterAuthDialect === "pg") {
-    const { auth_verification } = await import("../storage/pg/schema.js");
-    const rows = await (
-      db as {
-        select: () => {
-          from: (t: typeof auth_verification) => {
-            where: (
-              c: unknown,
-            ) => Promise<
-              { identifier: string; value: string; expiresAt: Date }[]
+  const { auth_verification } = await import("../storage/sqlite/schema.js");
+  const row = await (
+    db as {
+      select: () => {
+        from: (t: typeof auth_verification) => {
+          where: (c: unknown) => {
+            get: () => Promise<
+              { identifier: string; value: string; expiresAt: Date } | undefined
             >;
           };
         };
-      }
-    )
-      .select()
-      .from(auth_verification)
-      .where(eq(auth_verification.identifier, identifier));
-    const r = rows[0];
-    if (!r) return null;
-    return { identifier: r.identifier, value: r.value, expiresAt: r.expiresAt };
-  } else {
-    const { auth_verification } = await import("../storage/sqlite/schema.js");
-    const row = await (
-      db as {
-        select: () => {
-          from: (t: typeof auth_verification) => {
-            where: (c: unknown) => {
-              get: () => Promise<
-                | { identifier: string; value: string; expiresAt: Date }
-                | undefined
-              >;
-            };
-          };
-        };
-      }
-    )
-      .select()
-      .from(auth_verification)
-      .where(eq(auth_verification.identifier, identifier))
-      .get();
-    if (!row) return null;
-    return {
-      identifier: row.identifier,
-      value: row.value,
-      expiresAt: row.expiresAt,
-    };
-  }
+      };
+    }
+  )
+    .select()
+    .from(auth_verification)
+    .where(eq(auth_verification.identifier, identifier))
+    .get();
+  if (!row) return null;
+  return {
+    identifier: row.identifier,
+    value: row.value,
+    expiresAt: row.expiresAt,
+  };
 }
 
 async function findVerificationByValue(
@@ -481,78 +433,42 @@ async function findVerificationByValue(
 ): Promise<VerificationRow | null> {
   const db = storage.betterAuthDb;
   if (!db) return null;
-  if (storage.betterAuthDialect === "pg") {
-    const { auth_verification } = await import("../storage/pg/schema.js");
-    const rows = await (
-      db as {
-        select: () => {
-          from: (t: typeof auth_verification) => {
-            where: (c: unknown) => {
-              orderBy: (c: unknown) => {
-                limit: (n: number) => Promise<
-                  {
-                    identifier: string;
-                    value: string;
-                    expiresAt: Date;
-                  }[]
+  const { auth_verification } = await import("../storage/sqlite/schema.js");
+  const row = await (
+    db as {
+      select: () => {
+        from: (t: typeof auth_verification) => {
+          where: (c: unknown) => {
+            orderBy: (c: unknown) => {
+              limit: (n: number) => {
+                get: () => Promise<
+                  | { identifier: string; value: string; expiresAt: Date }
+                  | undefined
                 >;
               };
             };
           };
         };
-      }
+      };
+    }
+  )
+    .select()
+    .from(auth_verification)
+    .where(
+      and(
+        eq(auth_verification.value, value),
+        like(auth_verification.identifier, `${identifierPrefix}%`),
+      ),
     )
-      .select()
-      .from(auth_verification)
-      .where(
-        and(
-          eq(auth_verification.value, value),
-          like(auth_verification.identifier, `${identifierPrefix}%`),
-        ),
-      )
-      .orderBy(desc(auth_verification.createdAt))
-      .limit(1);
-    const r = rows[0];
-    if (!r) return null;
-    return { identifier: r.identifier, value: r.value, expiresAt: r.expiresAt };
-  } else {
-    const { auth_verification } = await import("../storage/sqlite/schema.js");
-    const row = await (
-      db as {
-        select: () => {
-          from: (t: typeof auth_verification) => {
-            where: (c: unknown) => {
-              orderBy: (c: unknown) => {
-                limit: (n: number) => {
-                  get: () => Promise<
-                    | { identifier: string; value: string; expiresAt: Date }
-                    | undefined
-                  >;
-                };
-              };
-            };
-          };
-        };
-      }
-    )
-      .select()
-      .from(auth_verification)
-      .where(
-        and(
-          eq(auth_verification.value, value),
-          like(auth_verification.identifier, `${identifierPrefix}%`),
-        ),
-      )
-      .orderBy(desc(auth_verification.createdAt))
-      .limit(1)
-      .get();
-    if (!row) return null;
-    return {
-      identifier: row.identifier,
-      value: row.value,
-      expiresAt: row.expiresAt,
-    };
-  }
+    .orderBy(desc(auth_verification.createdAt))
+    .limit(1)
+    .get();
+  if (!row) return null;
+  return {
+    identifier: row.identifier,
+    value: row.value,
+    expiresAt: row.expiresAt,
+  };
 }
 
 async function deleteVerificationByIdentifier(
@@ -561,30 +477,17 @@ async function deleteVerificationByIdentifier(
 ): Promise<void> {
   const db = storage.betterAuthDb;
   if (!db) return;
-  if (storage.betterAuthDialect === "pg") {
-    const { auth_verification } = await import("../storage/pg/schema.js");
-    await (
-      db as {
-        delete: (t: typeof auth_verification) => {
-          where: (c: unknown) => Promise<unknown>;
-        };
-      }
-    )
-      .delete(auth_verification)
-      .where(eq(auth_verification.identifier, identifier));
-  } else {
-    const { auth_verification } = await import("../storage/sqlite/schema.js");
-    await (
-      db as {
-        delete: (t: typeof auth_verification) => {
-          where: (c: unknown) => { run: () => Promise<unknown> };
-        };
-      }
-    )
-      .delete(auth_verification)
-      .where(eq(auth_verification.identifier, identifier))
-      .run();
-  }
+  const { auth_verification } = await import("../storage/sqlite/schema.js");
+  await (
+    db as {
+      delete: (t: typeof auth_verification) => {
+        where: (c: unknown) => { run: () => Promise<unknown> };
+      };
+    }
+  )
+    .delete(auth_verification)
+    .where(eq(auth_verification.identifier, identifier))
+    .run();
 }
 
 async function deleteVerificationsByValueAndPrefix(
@@ -592,25 +495,14 @@ async function deleteVerificationsByValueAndPrefix(
   value: string,
   identifierPrefix: string,
 ): Promise<void> {
-  if (storage.betterAuthDialect === "pg") {
-    const pgStorage = storage as unknown as {
-      __pgClient?: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    if (!pgStorage.__pgClient) return;
-    await pgStorage.__pgClient(
-      `DELETE FROM auth_verification WHERE value = $1 AND identifier LIKE $2`,
-      [value, `${identifierPrefix}%`],
-    );
-  } else {
-    const sqliteStorage = storage as unknown as {
-      __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-    };
-    if (!sqliteStorage.__sqliteRun) return;
-    await sqliteStorage.__sqliteRun(
-      `DELETE FROM auth_verification WHERE value = ? AND identifier LIKE ?`,
-      [value, `${identifierPrefix}%`],
-    );
-  }
+  const sqliteStorage = storage as unknown as {
+    __sqliteRun?: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+  };
+  if (!sqliteStorage.__sqliteRun) return;
+  await sqliteStorage.__sqliteRun(
+    `DELETE FROM auth_verification WHERE value = ? AND identifier LIKE ?`,
+    [value, `${identifierPrefix}%`],
+  );
 }
 
 // ---------------------------------------------------------------------------

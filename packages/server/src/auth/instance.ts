@@ -11,9 +11,6 @@ import {
 } from "@withmarfa/shared";
 import type { UserStore } from "../storage/interface.js";
 import * as sqliteSchema from "../storage/sqlite/schema.js";
-import * as pgSchema from "../storage/pg/schema.js";
-import type { PgDb } from "../storage/pg/connection.js";
-import { withOwnerRole } from "../storage/pg/owner-role.js";
 import { log } from "../middleware/logger.js";
 import type { EmailTransport as MarfaEmailTransport } from "../email/transport.js";
 import type { Storage } from "../storage/interface.js";
@@ -307,37 +304,18 @@ export interface MarfaAuth {
 }
 
 export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
-  const schema =
-    options.dialect === "pg"
-      ? {
-          user: pgSchema.auth_user,
-          session: pgSchema.auth_session,
-          account: pgSchema.auth_account,
-          verification: pgSchema.auth_verification,
-          passkey: pgSchema.auth_passkey,
-          // OAuth Provider plugin tables (mapped via Better Auth model
-          // names → our auth_oauth_* Drizzle tables). The plugin queries
-          // through these names; the snake_case DB columns are resolved
-          // by the adapter automatically.
-          oauthClient: pgSchema.auth_oauth_client,
-          oauthAccessToken: pgSchema.auth_oauth_access_token,
-          oauthRefreshToken: pgSchema.auth_oauth_refresh_token,
-          oauthConsent: pgSchema.auth_oauth_consent,
-          // JWT signing keys for the jwt plugin (id_token issuance).
-          jwks: pgSchema.auth_jwks,
-        }
-      : {
-          user: sqliteSchema.auth_user,
-          session: sqliteSchema.auth_session,
-          account: sqliteSchema.auth_account,
-          verification: sqliteSchema.auth_verification,
-          passkey: sqliteSchema.auth_passkey,
-          oauthClient: sqliteSchema.auth_oauth_client,
-          oauthAccessToken: sqliteSchema.auth_oauth_access_token,
-          oauthRefreshToken: sqliteSchema.auth_oauth_refresh_token,
-          oauthConsent: sqliteSchema.auth_oauth_consent,
-          jwks: sqliteSchema.auth_jwks,
-        };
+  const schema = {
+    user: sqliteSchema.auth_user,
+    session: sqliteSchema.auth_session,
+    account: sqliteSchema.auth_account,
+    verification: sqliteSchema.auth_verification,
+    passkey: sqliteSchema.auth_passkey,
+    oauthClient: sqliteSchema.auth_oauth_client,
+    oauthAccessToken: sqliteSchema.auth_oauth_access_token,
+    oauthRefreshToken: sqliteSchema.auth_oauth_refresh_token,
+    oauthConsent: sqliteSchema.auth_oauth_consent,
+    jwks: sqliteSchema.auth_jwks,
+  };
 
   const transport = options.emailTransport ?? defaultLogTransport;
   const richTransport = options.marfaEmailTransport;
@@ -654,10 +632,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
                 await ensureAccountHolderItem(storage, space.id);
                 return space;
               };
-              const space =
-                storage.betterAuthDialect === "pg" && storage.pgDb
-                  ? await withOwnerRole(storage.pgDb as PgDb, provision)
-                  : await provision();
+              const space = await provision();
 
               // Best-effort starter content so a brand-new space isn't empty
               // on first open. Gated by config and isolated in its own try:
@@ -922,8 +897,7 @@ export function createMarfaAuth(options: MarfaAuthOptions): MarfaAuth {
       // retry then refuses.
       //
       // Which one it is is read rather than matched on driver-specific
-      // constraint text, which differs between Postgres and SQLite and
-      // would silently stop matching on an upgrade. A row that exists
+      // constraint text, which would silently stop matching on an upgrade. A row that exists
       // and carries a `users` row belongs to somebody else and this is a
       // genuine duplicate; a row with none is the half-made one this
       // call just left behind, so the failure is reported as a failure.

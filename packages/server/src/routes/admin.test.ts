@@ -552,45 +552,30 @@ async function seedPendingDeletionUser(
   email: string,
   pendingDeletionAtIso: string,
 ): Promise<string> {
-  const dialect = process.env.DB_DIALECT ?? "sqlite";
   const userId = `test-pd-user-${Math.random().toString(36).slice(2, 12)}`;
-  // PG `auth_user.created_at`/`updated_at` are TIMESTAMP — accept ISO
-  // strings via the driver. SQLite same columns are integer({mode:
-  // "timestamp"}) so Drizzle stores unix-epoch *seconds* as INTEGER —
-  // the raw __sqliteRun bypass needs the numeric form, otherwise SQLite's
-  // loose typing accepts the string but downstream Drizzle reads parse
-  // it as an invalid Date. `pending_deletion_at` stays text/ISO in both
-  // dialects per the schema note in sqlite/schema.ts.
-  const nowIso = new Date().toISOString();
+  // `auth_user.created_at`/`updated_at` are integer({mode: "timestamp"}),
+  // so Drizzle stores unix-epoch *seconds* as INTEGER — the raw __sqliteRun
+  // bypass needs the numeric form, otherwise SQLite's loose typing accepts
+  // the string but downstream Drizzle reads parse it as an invalid Date.
+  // `pending_deletion_at` stays text/ISO per the schema note in
+  // sqlite/schema.ts.
   const nowEpochSeconds = Math.floor(Date.now() / 1000);
-  if (dialect === "pg") {
-    const pg = c.storage as unknown as {
-      __pgClient: (q: string, p?: unknown[]) => Promise<unknown[]>;
-    };
-    await pg.__pgClient(
-      `INSERT INTO auth_user (id, email, name, email_verified, created_at,
-                              updated_at, deletion_state, pending_deletion_at)
-       VALUES ($1, $2, $3, TRUE, $4, $4, 'pending_deletion', $5)`,
-      [userId, email, email.split("@")[0], nowIso, pendingDeletionAtIso],
-    );
-  } else {
-    const sqlite = c.storage as unknown as {
-      __sqliteRun: (q: string, p: unknown[]) => Promise<{ changes: number }>;
-    };
-    await sqlite.__sqliteRun(
-      `INSERT INTO auth_user (id, email, name, email_verified, created_at,
-                              updated_at, deletion_state, pending_deletion_at)
-       VALUES (?, ?, ?, 1, ?, ?, 'pending_deletion', ?)`,
-      [
-        userId,
-        email,
-        email.split("@")[0],
-        nowEpochSeconds,
-        nowEpochSeconds,
-        pendingDeletionAtIso,
-      ],
-    );
-  }
+  const sqlite = c.storage as unknown as {
+    __sqliteRun: (q: string, p: unknown[]) => Promise<{ changes: number }>;
+  };
+  await sqlite.__sqliteRun(
+    `INSERT INTO auth_user (id, email, name, email_verified, created_at,
+                            updated_at, deletion_state, pending_deletion_at)
+     VALUES (?, ?, ?, 1, ?, ?, 'pending_deletion', ?)`,
+    [
+      userId,
+      email,
+      email.split("@")[0],
+      nowEpochSeconds,
+      nowEpochSeconds,
+      pendingDeletionAtIso,
+    ],
+  );
   return userId;
 }
 

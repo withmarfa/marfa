@@ -45,60 +45,57 @@ const remaining = async (db: Awaited<ReturnType<typeof fixture>>) =>
     (r) => r.id as string,
   );
 
-describe.skipIf((process.env.DB_DIALECT ?? "sqlite") === "pg")(
-  "0078 the retired capture identifier leaves the registry",
-  () => {
-    it("removes the row when nothing holds the identifier", async () => {
-      const db = await fixture();
-      try {
-        await db.execute(MIGRATION);
-        expect(await remaining(db)).toEqual(["marfa.captured_email"]);
-      } finally {
-        db.close();
-      }
-    });
+describe("0078 the retired capture identifier leaves the registry", () => {
+  it("removes the row when nothing holds the identifier", async () => {
+    const db = await fixture();
+    try {
+      await db.execute(MIGRATION);
+      expect(await remaining(db)).toEqual(["marfa.captured_email"]);
+    } finally {
+      db.close();
+    }
+  });
 
-    it("leaves the row alone when items still hold the identifier", async () => {
-      const db = await fixture();
-      try {
-        await db.execute(
-          "INSERT INTO items VALUES ('item_1', 'withmarfa.captured_email')",
-        );
-        await db.execute(MIGRATION);
-        // Orphaning readable data to tidy a registry is the wrong trade. The
-        // instance keeps a type its build no longer ships until its rows move.
-        expect(await remaining(db)).toEqual([
-          "marfa.captured_email",
-          "withmarfa.captured_email",
-        ]);
-      } finally {
-        db.close();
-      }
-    });
+  it("leaves the row alone when items still hold the identifier", async () => {
+    const db = await fixture();
+    try {
+      await db.execute(
+        "INSERT INTO items VALUES ('item_1', 'withmarfa.captured_email')",
+      );
+      await db.execute(MIGRATION);
+      // Orphaning readable data to tidy a registry is the wrong trade. The
+      // instance keeps a type its build no longer ships until its rows move.
+      expect(await remaining(db)).toEqual([
+        "marfa.captured_email",
+        "withmarfa.captured_email",
+      ]);
+    } finally {
+      db.close();
+    }
+  });
 
-    it("leaves a row that is not the platform's own", async () => {
-      const db = await fixture();
-      try {
-        await db.execute("DELETE FROM custom_types WHERE origin = 'platform'");
-        await db.execute(
-          "INSERT INTO custom_types VALUES ('space_1', 'withmarfa.captured_email', 'user')",
-        );
-        await db.execute(MIGRATION);
-        expect(await remaining(db)).toEqual(["withmarfa.captured_email"]);
-      } finally {
-        db.close();
-      }
-    });
+  it("leaves a row that is not the platform's own", async () => {
+    const db = await fixture();
+    try {
+      await db.execute("DELETE FROM custom_types WHERE origin = 'platform'");
+      await db.execute(
+        "INSERT INTO custom_types VALUES ('space_1', 'withmarfa.captured_email', 'user')",
+      );
+      await db.execute(MIGRATION);
+      expect(await remaining(db)).toEqual(["withmarfa.captured_email"]);
+    } finally {
+      db.close();
+    }
+  });
 
-    it("is idempotent", async () => {
-      const db = await fixture();
-      try {
-        await db.execute(MIGRATION);
-        await db.execute(MIGRATION);
-        expect(await remaining(db)).toEqual(["marfa.captured_email"]);
-      } finally {
-        db.close();
-      }
-    });
-  },
-);
+  it("is idempotent", async () => {
+    const db = await fixture();
+    try {
+      await db.execute(MIGRATION);
+      await db.execute(MIGRATION);
+      expect(await remaining(db)).toEqual(["marfa.captured_email"]);
+    } finally {
+      db.close();
+    }
+  });
+});

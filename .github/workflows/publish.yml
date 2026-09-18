@@ -15,18 +15,15 @@ concurrency:
 jobs:
   require-green-ci:
     name: Require green CI
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 5
     permissions:
       contents: read
       actions: read
     steps:
       # A tag points at a commit that already went through `ci.yml` on main:
-      # build, typecheck, lint, format, the SQLite and Postgres suites,
-      # fresh-migrate and the smoke tests. Re-running any of that here
-      # recomputes a known answer on the slowest runner in the estate, because
-      # publishing is pinned to the hosted lane for OIDC. On v11.0.0 that cost
-      # over 26 minutes for a suite the self-hosted pool finishes in about one.
+      # build, typecheck, lint, format and the suite. Re-running any of that
+      # here recomputes a known answer.
       #
       # So verify the result instead of recomputing it. That is strictly
       # stronger than what it replaces: nothing previously stopped a tag being
@@ -54,11 +51,11 @@ jobs:
   publish-dependency-chain:
     name: Publish dependency chain
     needs: require-green-ci
-    # Hardcoded hosted — npm OIDC trusted-publisher provenance only works on a
-    # GitHub-hosted runner; honoring CI_RUNNER (self-hosted) breaks the
-    # provenance attestation on publish. This workflow must not pick up the
-    # org/repo CI_RUNNER override the way the test workflows do.
-    runs-on: ubuntu-latest
+    # On the pool like every other workflow. npm's trusted publishing
+    # exchanges the job's OIDC token for a publish token on any runner;
+    # provenance attestation is generated only on a hosted runner, so a
+    # publish from here carries none.
+    runs-on: self-hosted
     timeout-minutes: 15
     permissions:
       contents: read
@@ -75,7 +72,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
           registry-url: "https://registry.npmjs.org"
 
       - run: pnpm install --frozen-lockfile
@@ -86,7 +82,6 @@ jobs:
       # Pack + publish pattern: pnpm pack resolves workspace:* specifiers
       # to actual versions in the resulting tarball; npm publish gives us
       # OIDC trusted-publisher auth. Neither tool alone does both.
-      # Provenance attaches automatically via OIDC.
       #
       # Each package is gated by a pre-check against the npm registry: if
       # the local version is already published, the publish step is

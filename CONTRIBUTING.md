@@ -20,9 +20,7 @@ cd packages/server
 pnpm dev
 ```
 
-This starts the server on `http://localhost:8600` with a local SQLite database. No Postgres required.
-
-For Postgres mode, see the environment variables in `CLAUDE.md`.
+This starts the server on `http://localhost:8600` with a local SQLite database.
 
 ## Code style
 
@@ -61,7 +59,7 @@ pnpm lint           # lint
 pnpm format:check   # check formatting
 ```
 
-The server tests run against SQLite by default. CI also runs against Postgres.
+The server tests run against SQLite, locally and in CI.
 
 ## Conformance suite
 

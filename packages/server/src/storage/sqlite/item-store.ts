@@ -590,7 +590,6 @@ export class SqliteItemStore implements ItemStore {
         ? buildPropertySortExpr(
             items.properties,
             sort.field,
-            "sqlite",
             filters.type,
             filters.spaceId,
           )
@@ -709,12 +708,7 @@ export class SqliteItemStore implements ItemStore {
 
     if (filters.filter) {
       const expr = parseFilter(filters.filter);
-      const filterConds = filterToSqlConditions(
-        expr,
-        "sqlite",
-        items,
-        filters.spaceId,
-      );
+      const filterConds = filterToSqlConditions(expr, items, filters.spaceId);
       if (expr.logical === "OR") {
         const orClause = or(...filterConds);
         if (orClause) conditions.push(orClause);
@@ -947,8 +941,8 @@ export class SqliteItemStore implements ItemStore {
       }
 
       // Resolve the ancestor version inside the same transaction (passing
-      // `tx`) so it's consistent with the item row read above — mirrors the
-      // Postgres path. `input.version` is known-defined here: the omitted and
+      // `tx`) so it's consistent with the item row read above.
+      // `input.version` is known-defined here: the omitted and
       // equal-version cases returned in the branch above.
       const ancestor = await this.versionStore.getByVersion(
         id,

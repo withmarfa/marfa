@@ -974,13 +974,14 @@ export function maxDescendantDepth(
 // Validation — Zod schema generation from field definitions
 // ---------------------------------------------------------------------------
 
-// Postgres TEXT columns cannot store the NUL codepoint (U+0000) — the byte
-// reaches the driver and throws, surfacing as an unhandled 500 on otherwise
-// well-formed client input. Reject it at the validation layer so every string
-// field is covered at once and the caller gets a clean 400 instead. NUL is the
-// only codepoint Postgres TEXT outright refuses; every other control character
-// (tab, newline, carriage return) and all higher Unicode (emoji, RTL marks,
-// accents) round-trip unchanged, so the guard is scoped to U+0000 alone.
+// The NUL codepoint (U+0000) is refused at the validation layer: it is the
+// C string terminator, so a driver, a shell or a file format downstream
+// truncates at it silently, and a database that refuses it surfaces as an
+// unhandled 500 on otherwise well-formed client input. Rejecting it here
+// covers every string field at once and the caller gets a clean 400. Every
+// other control character (tab, newline, carriage return) and all higher
+// Unicode (emoji, RTL marks, accents) round-trip unchanged, so the guard is
+// scoped to U+0000 alone.
 const noNullByte = (schema: z.ZodString): z.ZodType =>
   schema.refine((value) => !value.includes("\u0000"), {
     message: "Must not contain a null byte (U+0000)",

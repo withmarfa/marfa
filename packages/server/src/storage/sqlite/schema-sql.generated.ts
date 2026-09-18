@@ -2,12 +2,11 @@
 //
 // SCHEMA_SQL is the fresh-database bootstrap path. It runs every server
 // boot via createConnection() and must stay in sync with the Drizzle
-// migrations under drizzle/<dialect>/. To refresh, run:
+// migrations under drizzle/sqlite/. To refresh, run:
 //   pnpm --filter @withmarfa/server schema-sql:generate
-// (or implicitly via migrate:<dialect>:generate when a new migration lands).
 //
 // Hand-edits to this file will be overwritten on the next regen and will
-// fail the schema-sql-freshness CI check.
+// fail the schema-sql parity test.
 
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS \`audit_log\` (

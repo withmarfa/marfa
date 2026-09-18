@@ -10,9 +10,8 @@
  * was the exception and, not coincidentally, the one honest counter in the
  * uninstall pipeline. These are the other three brought up to it.
  *
- * Runs against real storage in whichever dialect the suite is running, so
- * the Postgres `RETURNING` and the SQLite `rowsAffected` shapes are held to
- * the same contract rather than only one of them being covered.
+ * Runs against real storage, so the `rowsAffected` shape is held to the
+ * contract rather than assumed.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";

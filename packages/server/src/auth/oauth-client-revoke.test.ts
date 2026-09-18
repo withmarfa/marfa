@@ -53,10 +53,8 @@ afterEach(async () => {
 const ORIGIN = "http://localhost:0";
 const CALLBACK = "http://localhost:0/callback";
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 /** A public PKCE client with no scope ceiling, registered for the code and
@@ -66,7 +64,7 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
   if (!c.storage.betterAuthDb) {
     throw new Error("seedClient: storage.betterAuthDb missing");
   }
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const db = c.storage.betterAuthDb as unknown as {
     insert: (table: unknown) => {
       values: (v: Record<string, unknown>) => {
@@ -75,9 +73,8 @@ async function seedClient(c: TestContext, name: string): Promise<string> {
       };
     };
   };
-  const isPg = c.storage.betterAuthDialect === "pg";
   const asColumn = (values: readonly string[]): unknown =>
-    isPg ? [...values] : JSON.stringify([...values]);
+    JSON.stringify([...values]);
   const now = new Date();
   const op = db.insert(schemaModule.auth_oauth_client).values({
     id: `pk_${randomBytes(5).toString("hex")}`,
@@ -124,7 +121,7 @@ async function signInUser(c: TestContext, email: string): Promise<string> {
 }
 
 async function authUserIdFor(c: TestContext, email: string): Promise<string> {
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -264,7 +261,7 @@ async function grantRows(
   clientId: string,
   authUserId: string,
 ): Promise<GrantRows> {
-  const schemaModule = await betterAuthSchema(c);
+  const schemaModule = await betterAuthSchema();
   const { and, eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {

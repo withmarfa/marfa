@@ -1218,8 +1218,8 @@ export function keyRoutes(
         newKeySpaceId,
       );
 
-      // A key with no space is instance tier: the RLS middleware skips its
-      // wrapper for it and the storage layer drops its space predicate. Only the
+      // A key with no space is instance tier: the storage layer drops its
+      // space predicate for it. Only the
       // operator key is minted that way, and the audit row records the tier so
       // every such credential can be enumerated later. Derived from the stored
       // space alone rather than from how the instance is configured, so the

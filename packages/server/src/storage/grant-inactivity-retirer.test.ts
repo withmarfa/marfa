@@ -31,10 +31,8 @@ const ORIGIN = "http://localhost:0";
 const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 const DAY_MS = 86_400_000;
 
-async function betterAuthSchema(c: TestContext) {
-  return c.storage.betterAuthDialect === "pg"
-    ? await import("../storage/pg/schema.js")
-    : await import("../storage/sqlite/schema.js");
+function betterAuthSchema() {
+  return import("../storage/sqlite/schema.js");
 }
 
 async function seedClient(c: TestContext): Promise<string> {
@@ -132,7 +130,7 @@ async function grantOf(c: TestContext, clientId: string) {
 }
 
 async function consentRows(c: TestContext, clientId: string): Promise<number> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {
@@ -165,7 +163,7 @@ async function backdate(
 }
 
 async function tokenRows(c: TestContext, clientId: string): Promise<number> {
-  const schema = await betterAuthSchema(c);
+  const schema = await betterAuthSchema();
   const { eq } = await import("drizzle-orm");
   const db = c.storage.betterAuthDb as {
     select: () => {

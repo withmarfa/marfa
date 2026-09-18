@@ -34,9 +34,7 @@ async function buildCtx(): Promise<Ctx> {
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: join(tmpDir, "blobs"),
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,
@@ -250,9 +248,7 @@ async function buildAggCtx(): Promise<Ctx> {
   const blobBackend = new FilesystemBlobBackend(join(tmpDir, "blobs"));
   const app = createApp(storage, blobBackend, {
     port: 0,
-    storageDialect: "sqlite",
     sqlitePath: "",
-    databaseUrl: "",
     blobPath: join(tmpDir, "blobs"),
     blobBackend: "fs",
     maxBlobSize: 50 * 1024 * 1024,

@@ -73,10 +73,7 @@ function makeApp(storage: Storage, key: Partial<ApiKey> = {}): Hono<AppEnv> {
     } as unknown as ApiKey);
     await next();
   });
-  app.route(
-    "/events",
-    eventRoutes(storage, { rlsEnforce: false, pgClient: null }),
-  );
+  app.route("/events", eventRoutes(storage));
   return app;
 }
 
