@@ -1,0 +1,8 @@
+target/
+bindings/swift/MarfaCore/
+bindings/node/node_modules/
+bindings/node/*.node
+bindings/node/index.js
+bindings/node/index.d.ts
+bindings/swift/Example/.build/
+bindings/swift/generated/

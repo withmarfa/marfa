@@ -175,6 +175,8 @@ export default [
       "**/_local/**",
       "**/_tmp/**",
       "**/_ignore/**",
+      // The Rust core workspace; its Node binding is linted where it lives.
+      "core/",
     ],
   },
 ];

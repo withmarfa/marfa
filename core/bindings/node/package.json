@@ -1,0 +1,23 @@
+{
+  "name": "@withmarfa/marfa-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "marfa-core as a Node module.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "main": "index.js",
+  "types": "index.d.ts",
+  "napi": {
+    "binaryName": "marfa-core"
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "proof": "node scripts/hydrate-and-list.mjs"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3"
+  }
+}

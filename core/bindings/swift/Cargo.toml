@@ -1,0 +1,23 @@
+[package]
+name = "marfa-core-ffi"
+description = "UniFFI surface of marfa-core for Swift."
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "cdylib", "lib"]
+name = "marfa_core_ffi"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+marfa-core = { path = "../../marfa-core" }
+serde_json = "1"
+uniffi = { version = "0.31", features = ["cli"] }
+
+# Its own workspace: cargo-swift will not name a package inside a multi-crate one.
+[workspace]
