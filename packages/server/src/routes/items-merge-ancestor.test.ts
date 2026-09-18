@@ -50,11 +50,11 @@ async function seed(
 async function patch(
   id: string,
   properties: Record<string, unknown>,
-  version?: number,
+  version: number,
 ): Promise<Response> {
   return request(ctx.app, "PATCH", `/items/${id}`, {
     key: ctx.spaceKey,
-    body: { properties, ...(version !== undefined && { version }) },
+    body: { properties, version },
   });
 }
 
@@ -144,7 +144,10 @@ describe("PATCH /items/:id — a versioned write has an ancestor to merge agains
   it("records a version per property write, so history is not sampled", async () => {
     const { id, version } = await seed({ body: "b", title: "v1" });
     expect((await patch(id, { title: "v2" }, version)).status).toBe(200);
-    expect((await patch(id, { title: "v3" })).status).toBe(200);
+    const settled = await read(id);
+    expect((await patch(id, { title: "v3" }, settled.version)).status).toBe(
+      200,
+    );
 
     const res = await request(ctx.app, "GET", `/items/${id}/versions`, {
       key: ctx.spaceKey,

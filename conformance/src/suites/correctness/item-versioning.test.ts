@@ -3,6 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type {
   AncestorUnavailableResponse,
   ConflictResponse,
+  MarfaItem,
   TestContext,
 } from "../../client/types.js";
 import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
@@ -41,6 +42,7 @@ describe("item versioning", () => {
 
     const updated = await client.updateItem(r.data.item.id, {
       properties: { title: "Version 2", body: "Updated content" },
+      version: r.data.item.version,
     });
     expect(updated.ok).toBe(true);
     await expectMatchesSchema("PATCH", "/items/{id}", 200, updated.data);
@@ -58,6 +60,7 @@ describe("item versioning", () => {
 
     const updated = await client.updateItem(r.data.item.id, {
       properties: { title: "Version 2", body: "Updated content" },
+      version: r.data.item.version,
     });
     expect(updated.ok).toBe(true);
     expect(updated.data.item.properties.title).toBe("Version 2");
@@ -80,12 +83,15 @@ describe("item versioning", () => {
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
 
+    let version = r.data.item.version;
     for (let i = 2; i <= 4; i++) {
       const updated = await client.updateItem(r.data.item.id, {
         properties: { title: `V${i}`, body: `Version ${i}` },
         force_snapshot: true,
+        version,
       });
       expect(updated.ok).toBe(true);
+      version = updated.data.item.version;
     }
 
     const history = await client.getVersions(r.data.item.id);
@@ -108,11 +114,14 @@ describe("item versioning", () => {
     );
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
+    let version = r.data.item.version;
     for (let i = 2; i <= 4; i++) {
       const updated = await client.updateItem(r.data.item.id, {
         properties: { title: `C${i}`, body: `Version ${i}` },
+        version,
       });
       expect(updated.ok).toBe(true);
+      version = updated.data.item.version;
     }
     const history = await client.getVersions(r.data.item.id);
     expect(history.ok).toBe(true);
@@ -132,6 +141,47 @@ describe("item versioning", () => {
     const malformed = await client.getVersions("not-an-id");
     expect(malformed.status).toBe(400);
     expect(malformed.error?.error.code).toBe("invalid_id");
+  });
+
+  it("an update naming no version is refused", async () => {
+    // The body is otherwise valid, so the only thing wrong with it is the
+    // missing version. A server that answered `validation_error` here, or
+    // that applied the write, would be offering the blind overwrite the
+    // contract does not have: the writer names the version it read, or it
+    // silently discards whatever arrived since it read.
+    const note = createNote({
+      source: ctx.source,
+      properties: { title: "Unversioned", body: "Original" },
+    });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const refused = await client.rawRequest<{ item: MarfaItem }>(
+      `/items/${r.data.item.id}`,
+      {
+        method: "PATCH",
+        body: { properties: { title: "Blind overwrite" } },
+      },
+    );
+    expect(
+      refused.status,
+      `an update naming no version was not refused 400: ${JSON.stringify(refused.error ?? refused.data)}`,
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("missing_required_field");
+
+    // The half that matters. A 400 reported after the write landed protects
+    // nothing, and every assertion above passes on a server that refuses
+    // loudly and writes anyway.
+    const after = await client.getItem(r.data.item.id);
+    expect(after.ok).toBe(true);
+    expect(
+      after.data.item.properties.title,
+      "the refused write reached the stored row, so the refusal was reported without being enforced",
+    ).toBe("Unversioned");
+    expect(after.data.item.version, "a refused update moved the version").toBe(
+      r.data.item.version,
+    );
   });
 
   it("a version no client ever read answers ancestor_unavailable", async () => {
@@ -218,6 +268,7 @@ describe("item versioning", () => {
 
     await client.updateItem(r.data.item.id, {
       properties: { title: "Updated", body: "Changed" },
+      version: r.data.item.version,
     });
 
     const history = await client.getVersions(r.data.item.id);

@@ -223,6 +223,14 @@ const createItemRoute = createRoute({
             timestamp: z.string().optional(),
             source: z.string().optional(),
             source_id: z.string().optional(),
+            version: z
+              .number()
+              .int()
+              .min(0)
+              .optional()
+              .describe(
+                "Optional, and only meaningful when this create lands on a row that already exists: `source_id` or `id` naming one makes the write an upsert, and a version here makes that upsert conditional exactly as it is on the update door. On a genuine create the server stamps 1 and this is ignored, because there is no version to have read.",
+              ),
             tier: z.enum(["library", "feed"]).optional(),
             device: z.string().optional(),
             capture_latitude: z.number().optional(),
@@ -306,10 +314,14 @@ const createItemRoute = createRoute({
     409: {
       content: {
         "application/json": {
-          schema: makeErrorResponseSchema([
-            "conflict",
-            "type_mismatch",
-            "provenance_collision",
+          schema: z.union([
+            ConflictResponseSchema,
+            AncestorUnavailableSchema,
+            makeErrorResponseSchema([
+              "conflict",
+              "type_mismatch",
+              "provenance_collision",
+            ]),
           ]),
         },
       },
@@ -320,7 +332,10 @@ const createItemRoute = createRoute({
         "operation, not something a re-sync does in passing. `conflict`: " +
         "the `id` is held by an item in a space this caller cannot see, so " +
         "it is somebody else's row rather than a repeat of this caller's " +
-        "own create.",
+        "own create. `version_conflict` and `ancestor_unavailable` are " +
+        "reachable only when the request carried a `version` and resolved " +
+        "an existing item: the upsert is then conditional and answers " +
+        "exactly what the update door answers.",
     },
   },
 });
@@ -662,7 +677,7 @@ const updateItemRoute = createRoute({
   tags: ["Items"],
   summary: "Update an item",
   description:
-    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; passing `version` opts into optimistic concurrency and a stale value returns 409 with the conflict context to resolve. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
+    "Updates an item's properties, tier, timestamp, edges, or natural key. Properties merge shallowly with existing values by default, or become the item's properties outright when `properties_mode` is `replace`, while tier and timestamp always replace; `version` is required, a stale value returns 409 with the conflict context to resolve, and a write naming none is refused 400 `missing_required_field`. An item's `type` is not updatable here by default: sending one that matches the item is accepted and ignored, and sending a different one is refused with 409 `type_mismatch` rather than silently dropped. Passing `retype: true` alongside a different `type` moves the item to it — that requires write on the type being entered as well as the one being left, and the resulting properties are validated against the destination.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -717,7 +732,13 @@ const updateItemRoute = createRoute({
              *  mapping applies only to what arrives next and everything
              *  already there is stranded under the old type. */
             retype: z.boolean().optional(),
-            version: z.number().int().min(0).optional(),
+            version: z
+              .number()
+              .int()
+              .min(0)
+              .describe(
+                "The version the caller read. Required: an update carries the version it is based on, or it is not an update but a blind overwrite of whatever arrived since.",
+              ),
             force_snapshot: z.boolean().optional(),
             /** Toggle the tier (`library` ↔ `feed`). Independent of the
              *  properties merge path — last-writer-wins. */
@@ -1564,29 +1585,21 @@ export function itemRoutes(storage: Storage) {
           }
         }
 
-        const {
-          item: updatedItem,
-          metadata: updatedMetadata,
-          edgeChanges: updatedEdgeChanges,
-        } = await storage.runInTransaction(async () => {
+        const upsertResult = await storage.runInTransaction(async () => {
           const updated = await storage.items.update(existing.id, {
             ...(body.properties !== undefined && { properties }),
             ...(tierValue !== undefined && { tier: tierValue }),
             ...(body.timestamp !== undefined && {
               timestamp: body.timestamp,
             }),
+            ...(body.version !== undefined && { version: body.version }),
           });
           if ("error" in updated) {
-            // No version was supplied on a POST — `ItemStore.update` only
-            // returns ConflictResponse when a `version` is present in the
-            // input. The natural-key upsert path never sets `version`, so
-            // this branch should be unreachable. Surface defensively if it
-            // ever does.
-            throw new MarfaError(
-              ErrorCode.VERSION_CONFLICT,
-              "Natural-key upsert produced an unexpected version conflict",
-              { id: existing.id },
-            );
+            // Reachable only when the caller sent a `version`, which is what
+            // makes this upsert conditional. The envelope is the update
+            // door's, because a caller that named a version is doing the
+            // same thing here and should read the same answer.
+            return { conflict: updated, item: null } as const;
           }
 
           if (Array.isArray(body.tags)) {
@@ -1604,8 +1617,27 @@ export function itemRoutes(storage: Storage) {
             : undefined;
 
           const meta = await storage.metadata.get(updated.id);
-          return { item: updated, metadata: meta, edgeChanges };
+          return {
+            conflict: null,
+            item: updated,
+            metadata: meta,
+            edgeChanges,
+          } as const;
         });
+
+        if (upsertResult.item === null) {
+          // Stamped here for the same reason the update door stamps it: the
+          // refusal is returned rather than thrown, so the error handler
+          // that normally sets the header never runs.
+          c.header("X-Error-Code", upsertResult.conflict.error.code);
+          return c.json(upsertResult.conflict, 409);
+        }
+
+        const {
+          item: updatedItem,
+          metadata: updatedMetadata,
+          edgeChanges: updatedEdgeChanges,
+        } = upsertResult;
 
         const hydratedExisting = await hydrateEdgesForItem(
           storage,
@@ -2383,19 +2415,6 @@ export function itemRoutes(storage: Storage) {
         "timestamp must be an ISO 8601 string",
       );
     }
-    if (body.version !== undefined) {
-      if (
-        typeof body.version !== "number" ||
-        !Number.isInteger(body.version) ||
-        body.version < 0
-      ) {
-        throw new MarfaError(
-          ErrorCode.VALIDATION_ERROR,
-          "version must be a non-negative integer",
-        );
-      }
-    }
-
     const item = await storage.items.get(id);
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);

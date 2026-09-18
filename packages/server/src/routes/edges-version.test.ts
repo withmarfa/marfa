@@ -88,14 +88,15 @@ describe("an edge carries a version", () => {
 
     const second = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { note: "second" } },
+      body: { version: created.version, properties: { note: "second" } },
     });
     expect(second.status).toBe(200);
-    expect(((await second.json()) as { edge: WireEdge }).edge.version).toBe(2);
+    const edited = ((await second.json()) as { edge: WireEdge }).edge;
+    expect(edited.version).toBe(2);
 
     const third = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { note: "third" } },
+      body: { version: edited.version, properties: { note: "third" } },
     });
     expect(third.status).toBe(200);
     expect(((await third.json()) as { edge: WireEdge }).edge.version).toBe(3);
@@ -154,7 +155,7 @@ describe("an edge carries a version", () => {
     );
     const res = await request(ctx.app, "PATCH", `/edges/${created.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { note: "edited" } },
+      body: { version: created.version, properties: { note: "edited" } },
     });
     expect(res.status).toBe(200);
 

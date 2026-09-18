@@ -48,6 +48,13 @@ export interface CreateItemInput {
   source?: string;
   source_id?: string;
   state?: string;
+  /**
+   * Only meaningful when the create resolves a row that already exists, by
+   * the `(source, source_id)` natural key or by a repeated `id`. It makes
+   * that upsert conditional and answers what the update door answers. On a
+   * genuine create the server stamps 1 and ignores this.
+   */
+  version?: number;
   tier?: "library" | "feed"; // Items are curated library content or transient feed content; system.* items have no tier
   timestamp?: string;
   device?: string;
@@ -65,7 +72,13 @@ export interface UpdateItemInput {
   properties?: Record<string, unknown>;
   source_id?: string; // Mutable — updated value round-trips on subsequent GET
   tier?: "library" | "feed";
-  version?: number; // For optimistic concurrency
+  /**
+   * The version the caller read. Required on this door: an update names the
+   * version it is based on, or it is a blind overwrite of whatever arrived
+   * since. A request without one is refused `400 missing_required_field`, so
+   * a fixture that omits it here is asserting that refusal by accident.
+   */
+  version: number;
   force_snapshot?: boolean; // Force version snapshot creation
   /**
    * Replace-all-for-specified-types. Edges of types listed here are
@@ -534,9 +547,14 @@ export class MarfaClient {
     });
   }
 
+  /**
+   * `version` is required for the same reason it is on the item door: an edge
+   * update names the version it read or it silently loses the other writer's
+   * edit, and a request naming none is refused `400 missing_required_field`.
+   */
   async updateEdge(
     id: string,
-    changes: { properties: Record<string, unknown> },
+    changes: { properties: Record<string, unknown>; version: number },
   ): Promise<ApiResponse<{ edge: MarfaEdge }>> {
     return this.request<{ edge: MarfaEdge }>(`/edges/${id}`, {
       method: "PATCH",

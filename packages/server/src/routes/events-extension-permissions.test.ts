@@ -62,13 +62,18 @@ afterAll(async () => {
 });
 
 /** An item carrying two namespaces, one the scoped key may read. */
-async function itemWithTwoNamespaces(): Promise<string> {
+async function itemWithTwoNamespaces(): Promise<{
+  id: string;
+  version: number;
+}> {
   const created = await request(ctx.app, "POST", "/items", {
     key: ctx.spaceKey,
     body: { type: "core.note", properties: { body: "two-namespaces" } },
   });
   expect(created.status).toBe(201);
-  const id = ((await created.json()) as { item: { id: string } }).item.id;
+  const { id, version } = (
+    (await created.json()) as { item: { id: string; version: number } }
+  ).item;
   for (const [namespace, value] of [
     ["mine", { visible: "yes" }],
     ["theirs", { secret: "not for you" }],
@@ -81,12 +86,14 @@ async function itemWithTwoNamespaces(): Promise<string> {
     );
     expect(res.status).toBe(200);
   }
-  return id;
+  // An extension write leaves the item's own version alone, so the create's
+  // is still the one a write to this row has to name.
+  return { id, version };
 }
 
 describe("metadata.changed on the live stream", () => {
   it("carries only the namespaces the subscriber may read", async () => {
-    const id = await itemWithTwoNamespaces();
+    const { id } = await itemWithTwoNamespaces();
 
     const stream = await request(ctx.app, "GET", "/events", { key: scopedKey });
     expect(stream.status).toBe(200);
@@ -123,7 +130,7 @@ describe("metadata.changed on the live stream", () => {
     // `metadata.changed`. Without a case here a filter keyed on the wire
     // name would pass every other test in this file while leaving those
     // four unnarrowed.
-    const id = await itemWithTwoNamespaces();
+    const { id, version } = await itemWithTwoNamespaces();
     const stream = await request(ctx.app, "GET", "/events", { key: scopedKey });
     expect(stream.status).toBe(200);
     const reading = readSse(stream, {
@@ -132,7 +139,7 @@ describe("metadata.changed on the live stream", () => {
     await settle();
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { body: "touched" } },
+      body: { properties: { body: "touched" }, version },
     });
     expect(patched.status).toBe(200);
 
@@ -147,7 +154,7 @@ describe("metadata.changed on the live stream", () => {
     // The bypass every other permission map gives an admin. Without this
     // the filter could be a blanket strip and the test above would still
     // pass.
-    const id = await itemWithTwoNamespaces();
+    const { id } = await itemWithTwoNamespaces();
     const stream = await request(ctx.app, "GET", "/events", {
       key: ctx.spaceKey,
     });
@@ -262,7 +269,7 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
   it("carries only the namespaces the subscriber may read", async () => {
     // The replay re-sends the stored payload string without parsing it,
     // so it is a second, independent copy of the same disclosure.
-    const id = await itemWithTwoNamespaces();
+    const { id } = await itemWithTwoNamespaces();
     // The cursor is taken from the log rather than guessed: a fixed "1"
     // trips the retention check on a log that has been trimmed, and the
     // stream then closes with `catchup_too_old` having replayed nothing.
@@ -303,14 +310,14 @@ describe("metadata.changed on the Last-Event-ID replay", () => {
     // payload carrying a metadata block, whatever the event type, so a
     // filter keyed on the wire name would leave four types unnarrowed
     // here as well.
-    const id = await itemWithTwoNamespaces();
+    const { id, version } = await itemWithTwoNamespaces();
     const before = await ctx.storage.eventLog.getAfter(0n, 1000);
     const cursor = before.length
       ? before.map((e) => e.id).reduce((a, b) => (a > b ? a : b))
       : 0n;
     const patched = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { body: "touched for replay" } },
+      body: { properties: { body: "touched for replay" }, version },
     });
     expect(patched.status).toBe(200);
     expect(

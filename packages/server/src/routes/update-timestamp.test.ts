@@ -21,12 +21,14 @@ describe("PATCH /items/:id — timestamp field", () => {
         properties: { body: "ts-override" },
       },
     });
-    const { item } = (await createRes.json()) as { item: { id: string } };
+    const { item } = (await createRes.json()) as {
+      item: { id: string; version: number };
+    };
 
     const newTs = "2001-09-11T08:46:00.000Z";
     const patchRes = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
-      body: { timestamp: newTs },
+      body: { timestamp: newTs, version: item.version },
     });
     expect(patchRes.status).toBe(200);
 
@@ -47,11 +49,13 @@ describe("PATCH /items/:id — timestamp field", () => {
         properties: { body: "ts-invalid" },
       },
     });
-    const { item } = (await createRes.json()) as { item: { id: string } };
+    const { item } = (await createRes.json()) as {
+      item: { id: string; version: number };
+    };
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
-      body: { timestamp: "not an ISO date" },
+      body: { timestamp: "not an ISO date", version: item.version },
     });
     expect(res.status).toBe(400);
   });

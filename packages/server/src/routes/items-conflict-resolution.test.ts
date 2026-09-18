@@ -221,12 +221,14 @@ describe("a base version that has been thinned away", () => {
     const { item } = (await created.json()) as CreatedItem;
     const base = item.version;
 
+    let current = base;
     for (const body of ["v2", "v3"]) {
       const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
         key: ctx.spaceKey,
-        body: { properties: { body } },
+        body: { properties: { body }, version: current },
       });
       expect(res.status).toBe(200);
+      current = ((await res.json()) as CreatedItem).item.version;
     }
 
     // What the version thinner does, done directly: the snapshot for `base`
@@ -361,7 +363,10 @@ describe("the resolution report", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { body: "still uncontested" } },
+      body: {
+        properties: { body: "still uncontested" },
+        version: item.version,
+      },
     });
     expect(res.status).toBe(200);
     const answered = (await res.json()) as Record<string, unknown>;
@@ -421,11 +426,14 @@ describe("a refusal and its replay describe one conflict", () => {
       body: { type: "core.note", properties: { body: "h1" } },
     });
     const { item } = (await created.json()) as CreatedItem;
+    let current = item.version;
     for (const body of ["h2", "h3"]) {
-      await request(ctx.app, "PATCH", `/items/${item.id}`, {
+      const moved = await request(ctx.app, "PATCH", `/items/${item.id}`, {
         key: ctx.spaceKey,
-        body: { properties: { body } },
+        body: { properties: { body }, version: current },
       });
+      expect(moved.status).toBe(200);
+      current = ((await moved.json()) as CreatedItem).item.version;
     }
     const snapshots = await ctx.storage.versions.list(item.id);
     await ctx.storage.versions.deleteByIds(

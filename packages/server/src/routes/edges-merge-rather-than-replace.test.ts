@@ -97,7 +97,7 @@ describe("an edge update merges over what the edge holds", () => {
 
     const res = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: edge.version },
     });
     expect(res.status).toBe(200);
 
@@ -116,20 +116,22 @@ describe("an edge update merges over what the edge holds", () => {
       },
     });
     expect(itemRes.status).toBe(201);
-    const itemId = ((await itemRes.json()) as { item: { id: string } }).item.id;
+    const created = (
+      (await itemRes.json()) as { item: { id: string; version: number } }
+    ).item;
 
     const { edge } = await edgeWith(BOTH);
 
-    await request(ctx.app, "PATCH", `/items/${itemId}`, {
+    await request(ctx.app, "PATCH", `/items/${created.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: created.version },
     });
     await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: edge.version },
     });
 
-    const item = await request(ctx.app, "GET", `/items/${itemId}`, {
+    const item = await request(ctx.app, "GET", `/items/${created.id}`, {
       key: ctx.spaceKey,
     }).then(
       async (r) =>
@@ -177,7 +179,7 @@ describe("an edge update merges over what the edge holds", () => {
 
     const res = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { label: null } },
+      body: { properties: { label: null }, version: edge.version },
     });
     expect(res.status).toBe(200);
 
@@ -194,7 +196,7 @@ describe("an edge update merges over what the edge holds", () => {
 
     const moved = await request(ctx.app, "PATCH", `/edges/${edge.id}`, {
       key: ctx.spaceKey,
-      body: { properties: PATCH },
+      body: { properties: PATCH, version: edge.version },
     });
     expect(moved.status).toBe(200);
 
@@ -210,31 +212,24 @@ describe("an edge update merges over what the edge holds", () => {
     // And the losing write changed nothing.
     expect(await storedProperties(edge.id)).toEqual(AFTER);
   });
-  it("never loses a patch it accepted, which is what the row lock is for", async () => {
-    // The merge is computed from a read, so two patches interleaving
-    // between another's read and its write lose one of them silently.
-    // That is the entire reason this write took a transaction, and nothing
-    // else in this file exercises it: every other case is sequential and
-    // passes with it deleted.
+  it("accepts exactly one of eight writers that read the same version, and it lands", async () => {
+    // Eight clients read one version and all write from it. The version
+    // gate decides this now: the first to land moves the row past the
+    // version the other seven named, so seven are refused and exactly one
+    // is accepted. Asserting the count is the point — "at least one" would
+    // pass on a build that had lost the gate entirely and accepted all
+    // eight, which is the failure this case is closest to.
     //
-    // **The assertion is "no accepted write is lost", not "all eight
-    // succeed".** The driver opens each transaction with BEGIN IMMEDIATE
-    // and a second one meets `SQLITE_BUSY` rather than waiting, so seven
-    // of eight are refused with a 500. That is not
-    // introduced here — `PATCH /items/{id}` has done the same since it
-    // started merging under a transaction, measured on this build — and
-    // it is a defect in its own right, tracked separately. What must
-    // hold on both dialects is that a 200 means the write landed.
-    //
-    // Eight rather than two because a single pair may not interleave. A
-    // correct implementation passes every time and a loaded machine
-    // makes that more certain rather than less; an unlocked one drops an
-    // accepted key on almost any run.
-    // Last in the file deliberately. On SQLite the refused arrivals
-    // leave the write lock contended for a moment afterwards, and a
-    // case following this one saw its own first write answer 500. That
-    // is the same pre-existing behavior this case documents, showing up
-    // as flakiness in a neighbor rather than as a failure here.
+    // **This no longer exercises the row lock, and that is a real loss to
+    // record rather than paper over.** It used to: before an update
+    // carried a required version these eight were unconditional, several
+    // could be accepted, and the transaction was the only thing stopping
+    // one merge overwriting another computed from the same read. The gate
+    // refuses them earlier now, so the interleaving never reaches the
+    // lock. What would still reach it is eight writers that each GET the
+    // edge and then PATCH with what they read — a genuine read-then-write
+    // race, where two can read the same version only by interleaving.
+    // Nothing in this file does that today.
     const { edge } = await edgeWith({ base: "kept" });
 
     const keys = ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"];
@@ -242,19 +237,16 @@ describe("an edge update merges over what the edge holds", () => {
       keys.map((k) =>
         request(ctx.app, "PATCH", `/edges/${edge.id}`, {
           key: ctx.spaceKey,
-          body: { properties: { [k]: k } },
+          body: { properties: { [k]: k }, version: edge.version },
         }),
       ),
     );
     const accepted = keys.filter((_, i) => responses[i]?.status === 200);
-    // The control. Without it a build that refused all eight would pass
-    // this case having proved nothing.
-    expect(accepted.length).toBeGreaterThan(0);
+    expect(accepted).toHaveLength(1);
 
     const after = await storedProperties(edge.id);
     expect(after.base).toBe("kept");
-    for (const k of accepted) {
-      expect(after, `a 200 was not durable: ${k}`).toHaveProperty(k);
-    }
+    // The accepted write is durable, which is what a 200 has to mean.
+    expect(after).toHaveProperty(accepted[0]!);
   });
 });

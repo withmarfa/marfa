@@ -74,7 +74,8 @@ describe("a property payload one door refuses, the other refuses too", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: REFUSED_BY_THE_TYPE },
+      // The seed above is the row's only write, so 1 is the version it is on.
+      body: { properties: REFUSED_BY_THE_TYPE, version: 1 },
     });
 
     expect(res.status).toBe(400);

@@ -1778,13 +1778,11 @@ export class MarfaClient {
      * Update properties on an existing edge. edge_type / source / target
      * are immutable; server rejects with 400.
      *
-     * `opts.version` opts into optimistic concurrency: pass the `version`
-     * from the edge the edit was computed against, and a write over a row
-     * that has moved on is refused rather than landing on top of it. The
-     * refusal throws, carrying the current edge — edges have no merge
-     * policy, so resolution is to re-apply the change over that and send
-     * again. Omit it and the write is unconditional, which is what every
-     * caller written before this got.
+     * `opts.version` is required: pass the `version` from the edge the edit
+     * was computed against, and a write over a row that has moved on is
+     * refused rather than landing on top of it. The refusal throws, carrying
+     * the current edge — edges have no merge policy, so resolution is to
+     * re-apply the change over that and send again.
      *
      * `opts.idempotencyKey` is honored by this door like every other write
      * door. It matters most here *because* of `version`: without a key, an
@@ -1797,7 +1795,7 @@ export class MarfaClient {
     update: async (
       id: string,
       properties: Record<string, unknown>,
-      opts?: { version?: number } & IdempotentWriteOptions,
+      opts: { version: number } & IdempotentWriteOptions,
     ): Promise<Edge> => {
       // `requestWithConflict` rather than `request`, so the 409 body
       // survives. The generic path would throw a `MarfaError` built from
@@ -1809,9 +1807,9 @@ export class MarfaClient {
         {
           body: {
             properties,
-            ...(opts?.version !== undefined && { version: opts.version }),
+            version: opts.version,
           },
-          ...(opts?.idempotencyKey !== undefined && {
+          ...(opts.idempotencyKey !== undefined && {
             idempotencyKey: opts.idempotencyKey,
           }),
         },

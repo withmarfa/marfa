@@ -73,7 +73,7 @@ async function credentialFor(name: string): Promise<Credential> {
 async function bookmarkRow(
   owner: Credential,
   sourceId: string,
-): Promise<{ id: string; source_id: string }> {
+): Promise<{ id: string; source_id: string; version: number }> {
   const res = await request(ctx.app, "POST", "/items", {
     key: owner.key,
     body: {
@@ -83,10 +83,10 @@ async function bookmarkRow(
     },
   });
   expect(res.status).toBe(201);
-  return {
-    id: ((await res.json()) as { item: { id: string } }).item.id,
-    source_id: sourceId,
+  const { item } = (await res.json()) as {
+    item: { id: string; version: number };
   };
+  return { id: item.id, source_id: sourceId, version: item.version };
 }
 
 /**
@@ -94,7 +94,9 @@ async function bookmarkRow(
  * nothing this server mints can be the owning integration, so the store is
  * the only writer a mirror has.
  */
-async function mirrorRow(integration: string): Promise<string> {
+async function mirrorRow(
+  integration: string,
+): Promise<{ id: string; version: number }> {
   const row = await ctx.storage.items.create({
     type: "core.bookmark",
     source: `integration:${integration}`,
@@ -104,7 +106,7 @@ async function mirrorRow(integration: string): Promise<string> {
       title: "the owning integration's copy",
     },
   });
-  return row.id;
+  return { id: row.id, version: row.version };
 }
 
 // ---------------------------------------------------------------------------
@@ -113,7 +115,7 @@ async function mirrorRow(integration: string): Promise<string> {
 
 interface DoorWrite {
   key: string;
-  target: { id: string; source_id: string };
+  target: { id: string; source_id: string; version: number };
   properties: Record<string, unknown>;
 }
 
@@ -263,7 +265,13 @@ const patchWrite =
   ({ key, target, properties }: DoorWrite): Promise<Response> =>
     request(ctx.app, "PATCH", `/items/${target.id}`, {
       key,
-      body: type === undefined ? { properties } : { type, properties },
+      body: {
+        ...(type === undefined ? {} : { type }),
+        properties,
+        // Named because the door requires it: a version-less write is
+        // refused ahead of every gate this file measures.
+        version: target.version,
+      },
     });
 
 const bulkByIdWrite =
@@ -368,19 +376,19 @@ describe("mirror protection on the doors that resolve a row by id", () => {
   });
 
   it("refuses PATCH /items/{id} on an integration's mirror", async () => {
-    const id = await mirrorRow("acme/mirror-sibling");
-    const res = await request(ctx.app, "PATCH", `/items/${id}`, {
+    const mirror = await mirrorRow("acme/mirror-sibling");
+    const res = await request(ctx.app, "PATCH", `/items/${mirror.id}`, {
       key: mine.key,
-      body: { properties: { title: "overwritten" } },
+      body: { properties: { title: "overwritten" }, version: mirror.version },
     });
     // The rule that refused, not merely that something did.
     expect(await refusalCode(res)).toBe("integration_owned");
-    const after = await ctx.storage.items.get(id);
+    const after = await ctx.storage.items.get(mirror.id);
     expect(after?.properties.title).toBe("the owning integration's copy");
   });
 
   it("refuses POST /items/bulk (by id) on an integration's mirror", async () => {
-    const id = await mirrorRow("acme/mirror-sibling");
+    const { id } = await mirrorRow("acme/mirror-sibling");
     const res = await request(ctx.app, "POST", "/items/bulk", {
       key: mine.key,
       body: {
@@ -404,7 +412,7 @@ describe("mirror protection on the doors that resolve a row by id", () => {
       properties: { title: "patched by bulk action" },
     });
     expect(res.status).toBe(202);
-    const mirrorAfter = await ctx.storage.items.get(mirror);
+    const mirrorAfter = await ctx.storage.items.get(mirror.id);
     expect(mirrorAfter?.properties.title).toBe("the owning integration's copy");
     const ownAfter = await ctx.storage.items.get(own.id);
     expect(ownAfter?.properties.title).toBe("patched by bulk action");
@@ -416,7 +424,7 @@ describe("mirror protection on the doors that resolve a row by id", () => {
     const own = await bookmarkRow(mine, `own-${String(Math.random())}`);
     const res = await request(ctx.app, "PATCH", `/items/${own.id}`, {
       key: mine.key,
-      body: { properties: { title: "its own update" } },
+      body: { properties: { title: "its own update" }, version: own.version },
     });
     expect(res.status).toBe(200);
     const after = await ctx.storage.items.get(own.id);

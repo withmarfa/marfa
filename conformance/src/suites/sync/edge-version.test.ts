@@ -140,4 +140,38 @@ describe("edges carry a version", () => {
       "the refused write landed anyway, so the 409 was reported without being enforced",
     ).toBe("first writer");
   });
+
+  it("refuses an update naming no version", async () => {
+    requireRule(caps, "edgeVersion");
+
+    // The other half of the rule above. A door that refuses a stale version
+    // but accepts a request naming none has not closed the hole: a client
+    // that simply omits the field gets the blind overwrite back, and the
+    // refusal above protects only the callers that were already careful.
+    const { edge } = await makeEdge();
+
+    const refused = await client.rawRequest<EdgeEnvelope>(`/edges/${edge.id}`, {
+      method: "PATCH",
+      body: { properties: { note: "no version named" } },
+    });
+    expect(
+      refused.status,
+      `an edge update naming no version was not refused 400: ${JSON.stringify(refused.error ?? refused.data)}`,
+    ).toBe(400);
+    expect(refused.error?.error.code).toBe("missing_required_field");
+
+    // Read back, because a 400 announced after the write landed protects
+    // nothing and every assertion above passes on a server that refuses
+    // loudly and writes anyway.
+    const after = await client.getEdge(edge.id);
+    expect(after.ok).toBe(true);
+    expect(
+      after.data.edge.properties.note,
+      "the refused write reached the stored edge, so the refusal was reported without being enforced",
+    ).toBe("original");
+    expect(
+      after.data.edge.version,
+      "a refused edge update moved the version",
+    ).toBe(edge.version);
+  });
 });

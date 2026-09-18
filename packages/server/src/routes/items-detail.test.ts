@@ -250,10 +250,11 @@ describe("GET /items/:id?include=neighbors — not an access-control bypass", ()
 describe("GET /items/:id?include=versions", () => {
   it("returns version snapshots only when requested", async () => {
     const item = await create(adminA, "core.note", { body: "v1" });
-    await request(ctx.app, "PATCH", `/items/${item}`, {
+    const updated = await request(ctx.app, "PATCH", `/items/${item}`, {
       key: adminA,
-      body: { properties: { body: "v2" } },
+      body: { properties: { body: "v2" }, version: 1 },
     });
+    expect(updated.status).toBe(200);
 
     const without = await detail(adminA, item);
     expect(without.versions).toBeUndefined();

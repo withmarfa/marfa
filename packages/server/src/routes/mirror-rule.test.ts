@@ -42,7 +42,9 @@ afterAll(async () => {
  * nothing this server mints can be the owning integration, so the store is
  * the only writer a mirror has.
  */
-async function createMirror(sourceId: string): Promise<string> {
+async function createMirror(
+  sourceId: string,
+): Promise<{ id: string; version: number }> {
   const row = await ctx.storage.items.create({
     type: "core.bookmark",
     source: MIRROR_SOURCE,
@@ -53,15 +55,17 @@ async function createMirror(sourceId: string): Promise<string> {
       body: "as synced",
     },
   });
-  return row.id;
+  return { id: row.id, version: row.version };
 }
 
 describe("the mirror rule", () => {
   it("refuses a member write to an integration-owned item", async () => {
-    const id = await createMirror(`m-${String(Math.random()).slice(2)}`);
+    const { id, version } = await createMirror(
+      `m-${String(Math.random()).slice(2)}`,
+    );
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: memberKey,
-      body: { properties: { title: "edited by hand" } },
+      body: { properties: { title: "edited by hand" }, version },
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { code: string } };
@@ -69,10 +73,12 @@ describe("the mirror rule", () => {
   });
 
   it("refuses the operator key too — one rule, not two", async () => {
-    const id = await createMirror(`m-${String(Math.random()).slice(2)}`);
+    const { id, version } = await createMirror(
+      `m-${String(Math.random()).slice(2)}`,
+    );
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: "admin edit" } },
+      body: { properties: { title: "admin edit" }, version },
     });
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { code: string } };
@@ -81,14 +87,19 @@ describe("the mirror rule", () => {
 
   it("promotes to a user-owned copy joined by derived-from, untouched by re-sync", async () => {
     const sourceId = `m-${String(Math.random()).slice(2)}`;
-    const id = await createMirror(sourceId);
+    const { id } = await createMirror(sourceId);
 
     const promoted = await request(ctx.app, "POST", `/items/${id}/promote`, {
       key: memberKey,
     });
     expect(promoted.status).toBe(201);
     const promotedBody = (await promoted.json()) as {
-      item: { id: string; source: string; properties: Record<string, unknown> };
+      item: {
+        id: string;
+        source: string;
+        version: number;
+        properties: Record<string, unknown>;
+      };
     };
     expect(promotedBody.item.id).not.toBe(id);
     expect(promotedBody.item.source.startsWith("integration:")).toBe(false);
@@ -116,7 +127,13 @@ describe("the mirror rule", () => {
       ctx.app,
       "PATCH",
       `/items/${promotedBody.item.id}`,
-      { key: memberKey, body: { properties: { title: "My title" } } },
+      {
+        key: memberKey,
+        body: {
+          properties: { title: "My title" },
+          version: promotedBody.item.version,
+        },
+      },
     );
     expect(edit.status).toBe(200);
 
@@ -159,16 +176,21 @@ describe("the mirror rule", () => {
       key: memberKey,
       body: { type: "core.note", properties: { body: "client-owned" } },
     });
-    const ownBody = (await own.json()) as { item: { id: string } };
+    const ownBody = (await own.json()) as {
+      item: { id: string; version: number };
+    };
     const edit = await request(ctx.app, "PATCH", `/items/${ownBody.item.id}`, {
       key: memberKey,
-      body: { properties: { body: "edited freely" } },
+      body: {
+        properties: { body: "edited freely" },
+        version: ownBody.item.version,
+      },
     });
     expect(edit.status).toBe(200);
   });
 
   it("still allows lifecycle transitions on a mirror — trashing is not editing the copy", async () => {
-    const id = await createMirror(`m-${String(Math.random()).slice(2)}`);
+    const { id } = await createMirror(`m-${String(Math.random()).slice(2)}`);
     const del = await request(ctx.app, "DELETE", `/items/${id}`, {
       key: memberKey,
     });

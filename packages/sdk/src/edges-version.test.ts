@@ -8,13 +8,13 @@ import { EdgeConflictError } from "./errors.js";
  * whether the refusal survives the transport.
  *
  * Both halves have a silent failure mode. A version dropped on the way out
- * is invisible from the caller's side — the write succeeds, which is what a
- * caller not passing one would also see — and it is precisely the case that
- * makes the server's refusal unreachable. A 409 that surfaces as the
- * transport's generic error is worse than useless here: it says the write
- * failed and discards the current edge, which is the only thing in the body
- * and the cheapest route back to a version worth retrying with — `GET
- * /edges/{id}` is the other, and paying for it is the cost of losing this.
+ * is invisible from the caller's side — the write simply succeeds — and it
+ * is precisely the case that makes the server's refusal unreachable. A 409
+ * that surfaces as the transport's generic error is worse than useless
+ * here: it says the write failed and discards the current edge, which is
+ * the only thing in the body and the cheapest route back to a version worth
+ * retrying with — `GET /edges/{id}` is the other, and paying for it is the
+ * cost of losing this.
  */
 
 let fx: KeysModeFixture;
@@ -63,7 +63,11 @@ describe("edges.update", () => {
 
   it("carries the current edge on the refusal, so the caller can re-apply", async () => {
     const created = await edge({ note: "base" });
-    await fx.client.edges.update(created.id, { note: "winner" });
+    await fx.client.edges.update(
+      created.id,
+      { note: "winner" },
+      { version: created.version },
+    );
 
     const refusal = await fx.client.edges
       .update(created.id, { note: "loser" }, { version: 1 })
@@ -86,16 +90,5 @@ describe("edges.update", () => {
     );
     expect(resolved.version).toBe(3);
     expect(resolved.properties).toEqual({ note: "re-applied" });
-  });
-
-  it("omits the version when the caller passes none", async () => {
-    // The opt-in half. A caller written before the precondition existed
-    // still lands its write over whatever changed underneath.
-    const created = await edge({ note: "base" });
-    await fx.client.edges.update(created.id, { note: "somebody else" });
-
-    const blind = await fx.client.edges.update(created.id, { note: "blind" });
-    expect(blind.version).toBe(3);
-    expect(blind.properties).toEqual({ note: "blind" });
   });
 });

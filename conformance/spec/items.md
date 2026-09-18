@@ -34,7 +34,7 @@ An item is a typed row: an `id`, a `type`, `properties` validated against the ty
 
 ## Updating
 
-22. `PATCH /items/{id}` merges `properties`, may change `source_id` and `tier`, advances the version, and takes an optional `version` for concurrency (`versions.md`). `correctness/items-source-id-mutation.test.ts › mutates source_id, returns 200, and round-trips on subsequent GET`, `correctness/item-versioning.test.ts › version increments on update`.
+22. `PATCH /items/{id}` merges `properties`, may change `source_id` and `tier`, advances the version, and requires the `version` the caller read (`versions.md`). `correctness/items-source-id-mutation.test.ts › mutates source_id, returns 200, and round-trips on subsequent GET`, `correctness/item-versioning.test.ts › version increments on update`.
 23. `PATCH` with `edges` replaces the edges of the named types only. `correctness/edges/edges-crud.test.ts › PATCH /items with edges replaces edges of specified types only`.
 24. A write sent with an `Idempotency-Key` is answered once: a repeat returns the first result with an `Idempotency-Replayed: true` header that the first answer lacked, and one version step; a different request under the same key is refused `422 idempotency_key_reused`; a replayed edge create and a replayed delete answer as the first did. `sync/idempotency.test.ts › answers a repeated create with the first result rather than a second row`, `› refuses a key that names a different request rather than serving it`, `› makes a repeated update one version step, not two`, `› announces a replayed edge create`, `› announces a replayed delete, which would otherwise be a 404`.
 

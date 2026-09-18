@@ -504,11 +504,13 @@ describe("null on an optional property is treated as unset", () => {
         properties: { url: "https://example.com", title: "Original" },
       },
     });
-    const { item } = (await created.json()) as { item: { id: string } };
+    const { item } = (await created.json()) as {
+      item: { id: string; version: number };
+    };
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: null } },
+      body: { properties: { title: null }, version: item.version },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -795,6 +797,7 @@ describe("PATCH /items/:id — retype", () => {
         type: "core.bookmark",
         properties_mode: "replace",
         properties: { url: "https://example.com", title: "Ada" },
+        version: 1,
       },
     });
     expect(res.status).toBe(200);
@@ -819,7 +822,11 @@ describe("PATCH /items/:id — retype", () => {
     const id = await entity(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { type: "core.bookmark", properties: { title: "Ada" } },
+      body: {
+        type: "core.bookmark",
+        properties: { title: "Ada" },
+        version: 1,
+      },
     });
     expect(res.status).toBe(409);
     const after = await request(ctx.app, "GET", `/items/${id}`, {
@@ -833,7 +840,7 @@ describe("PATCH /items/:id — retype", () => {
     const id = await entity(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { retype: true, properties: { name: "Ada" } },
+      body: { retype: true, properties: { name: "Ada" }, version: 1 },
     });
     // The code as well as the status. Five sites in this handler answer
     // 400, so a bare status assertion passes whichever one fired — and a
@@ -873,6 +880,7 @@ describe("PATCH /items/:id — retype", () => {
         type: "core.bookmark",
         properties_mode: "replace",
         properties: { url: "https://example.com", title: "Ada" },
+        version: 1,
       },
     });
     // The type gate refusing, rather than the key failing to authenticate
@@ -915,6 +923,7 @@ describe("PATCH /items/:id — retype", () => {
         type: "core.bookmark",
         properties_mode: "replace",
         properties: { url: "https://example.com", title: "Ada" },
+        version: 1,
       },
     });
     expect(res.status).toBe(200);
@@ -934,6 +943,7 @@ describe("PATCH /items/:id — retype", () => {
         type: "core.file",
         properties_mode: "replace",
         properties: { name: "Ada" },
+        version: 1,
       },
     });
     // `invalid_properties` specifically: this has to be the destination
@@ -985,6 +995,7 @@ describe("PATCH /items/:id — properties_mode", () => {
       body: {
         properties_mode: "replace",
         properties: { url: "https://example.com", title: "Mapped" },
+        version: 1,
       },
     });
     expect(res.status).toBe(200);
@@ -1001,7 +1012,7 @@ describe("PATCH /items/:id — properties_mode", () => {
     const id = await bookmark(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties: { title: "Merged" } },
+      body: { properties: { title: "Merged" }, version: 1 },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1015,7 +1026,11 @@ describe("PATCH /items/:id — properties_mode", () => {
     const id = await bookmark(ctx);
     const res = await request(ctx.app, "PATCH", `/items/${id}`, {
       key: ctx.spaceKey,
-      body: { properties_mode: "merge", properties: { title: "Merged" } },
+      body: {
+        properties_mode: "merge",
+        properties: { title: "Merged" },
+        version: 1,
+      },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1036,11 +1051,17 @@ describe("PATCH /items/:id — properties_mode", () => {
         properties: { name: "Ada", kind: "person" },
       },
     });
-    const { item } = (await created.json()) as { item: { id: string } };
+    const { item } = (await created.json()) as {
+      item: { id: string; version: number };
+    };
 
     const res = await request(ctx.app, "PATCH", `/items/${item.id}`, {
       key: ctx.spaceKey,
-      body: { properties_mode: "replace", properties: { kind: "person" } },
+      body: {
+        properties_mode: "replace",
+        properties: { kind: "person" },
+        version: item.version,
+      },
     });
     // The type refusing the resulting shape, rather than any of the other
     // four guards in this handler that also answer 400.
@@ -1189,7 +1210,7 @@ describe("PATCH /items/:id", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: { tier: "library" },
+      body: { tier: "library", version: 1 },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { item: { tier: "library" | "feed" } };
@@ -1208,7 +1229,7 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as { item: { id: string } };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: { tier: "feed" },
+      body: { tier: "feed", version: 1 },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { item: { tier: "library" | "feed" } };
@@ -1225,7 +1246,7 @@ describe("PATCH /items/:id", () => {
     };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: { tier: "library" },
+      body: { tier: "library", version: created.item.version },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1247,7 +1268,7 @@ describe("PATCH /items/:id", () => {
     const created = (await createRes.json()) as { item: { id: string } };
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: { properties: { body: "after" }, tier: "library" },
+      body: { properties: { body: "after" }, tier: "library", version: 1 },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1263,9 +1284,11 @@ describe("PATCH /items/:id", () => {
       body: { type: "core.note", properties: { body: "x" } },
     });
     const created = (await createRes.json()) as { item: { id: string } };
+    // The version is named so the write reaches the guard this case is
+    // about: a body without one is refused before any field is counted.
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: {},
+      body: { version: 1 },
     });
     expect(res.status).toBe(400);
   });
@@ -1285,7 +1308,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: { source_id: "path/to/new-name.md" },
+      body: { source_id: "path/to/new-name.md", version: 1 },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { item: { source_id?: string } };
@@ -1326,7 +1349,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
       key: ctx.spaceKey,
-      body: { source_id: "occupied-key" },
+      body: { source_id: "occupied-key", version: 1 },
     });
     expect(res.status).toBe(409);
     const body = (await res.json()) as {
@@ -1351,7 +1374,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
 
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: { source_id: "stable-key" },
+      body: { source_id: "stable-key", version: created.item.version },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
@@ -1381,7 +1404,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     const when = "2021-03-04T05:06:07.000Z";
     const res = await request(ctx.app, "PATCH", `/items/${created.item.id}`, {
       key: ctx.spaceKey,
-      body: { timestamp: when },
+      body: { timestamp: when, version: 1 },
     });
     expect(res.status).toBe(200);
     expect(
@@ -1490,7 +1513,7 @@ describe("PATCH /items/:id — source_id mutation", () => {
     // uniqueness scope is `(source, source_id)`, so this must succeed.
     const res = await request(ctx.app, "PATCH", `/items/${moverData.item.id}`, {
       key: altKey.key,
-      body: { source_id: "cross-source-key" },
+      body: { source_id: "cross-source-key", version: 1 },
     });
     expect(res.status).toBe(200);
     const data = (await res.json()) as { item: { source_id?: string } };
@@ -2003,7 +2026,7 @@ describe("schema_version stamping", () => {
       `/items/${created.item.id}`,
       {
         key: ctx.spaceKey,
-        body: { properties: { body: "Updated" } },
+        body: { properties: { body: "Updated" }, version: 1 },
       },
     );
     expect(updateRes.status).toBe(200);

@@ -168,7 +168,7 @@ describe("FTS dialect parity", () => {
           properties: { title: "Initial", body: "first" },
         },
       })
-    ).json()) as { item: { id: string } };
+    ).json()) as { item: { id: string; version: number } };
 
     // Initial title hits
     expect((await search("initial")).map((h) => h.item.id)).toContain(item.id);
@@ -178,6 +178,7 @@ describe("FTS dialect parity", () => {
       key: ctx.spaceKey,
       body: {
         properties: { title: "Updated", body: "second" },
+        version: item.version,
       },
     });
     expect(upd.status).toBe(200);

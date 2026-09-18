@@ -129,7 +129,12 @@ export interface UpdateItemInput {
    * calls invalid is refused rather than written.
    */
   type?: string;
-  version?: number;
+  /**
+   * The version the caller read. Required: an update carries the version it
+   * is based on, or it is not an update but a blind overwrite of whatever
+   * arrived since.
+   */
+  version: number;
   /** Force a version snapshot for this update, bypassing the
    *  snapshot-interval throttle in version gating. */
   force_snapshot?: boolean;
@@ -223,6 +228,9 @@ export interface CreateEdgeInput {
 /** Input for updating an existing edge (properties only — direction/type immutable). */
 export interface UpdateEdgeInput {
   properties: Record<string, unknown>;
+  /** The version the caller read. Required, for the same reason it is on an
+   *  item: an update names what it is based on or it is not an update. */
+  version: number;
 }
 
 /**

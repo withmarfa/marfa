@@ -70,13 +70,13 @@ async function errorCode(res: Response): Promise<string> {
   return body.error?.code ?? "(no code)";
 }
 
-async function makeNote(): Promise<string> {
+async function makeNote(): Promise<{ id: string; version: number }> {
   const res = await request(ctx.app, "POST", "/items", {
     key: ctx.spaceKey,
     body: { type: "core.note", properties: GOOD },
   });
   expect(res.status).toBe(201);
-  return ((await res.json()) as { item: { id: string } }).item.id;
+  return ((await res.json()) as { item: { id: string; version: number } }).item;
 }
 
 interface BulkEntryResult {
@@ -126,13 +126,15 @@ const doors: { name: string; refuse: () => Promise<string> }[] = [
   },
   {
     name: "PATCH /items/{id} updates",
-    refuse: async () =>
-      errorCode(
-        await request(ctx.app, "PATCH", `/items/${await makeNote()}`, {
+    refuse: async () => {
+      const note = await makeNote();
+      return errorCode(
+        await request(ctx.app, "PATCH", `/items/${note.id}`, {
           key: ctx.spaceKey,
-          body: { properties: BAD },
+          body: { properties: BAD, version: note.version },
         }),
-      ),
+      );
+    },
   },
   {
     name: "POST /items upserts onto a new natural key",
