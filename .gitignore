@@ -46,6 +46,13 @@ seed/
 data/
 .claude/worktrees/
 
+# The local server the conformance suite boots: its SQLite file, blob
+# folder, log, pid and env file. Written per run, never part of the tree.
+.marfa-state/
+
+# Load and performance reports the conformance suite writes.
+reports/
+
 # Written at deploy time, read by the server at boot.
 version.json
 .claude/settings.local.json

@@ -122,6 +122,23 @@ export default [
       "**/_ignore/**",
       // The Rust core workspace; its Node binding is linted where it lives.
       "core/",
+      // The conformance suite, which is held by `tsc --noEmit` and Prettier
+      // rather than by this config.
+      //
+      // Two reasons, and the first is the load-bearing one. A black-box
+      // suite asserts over what a server sent, not over what a type says it
+      // must have sent; its client types are hand-written declarations of
+      // what the contract claims, so the checks that `no-unnecessary-
+      // condition` and `no-unnecessary-type-assertion` call redundant are
+      // exactly the ones a referee should keep. Linting it under
+      // `strictTypeChecked` would delete assertions in the name of tidiness.
+      //
+      // The second is that the suite arrived written against a different
+      // config, and the difference is style: 148 of its 341 reports were
+      // `${count}` where this config wants `String(count)`. Rewriting a
+      // fixture corpus whose readability is the specification, to satisfy a
+      // preference, is a poor trade.
+      "conformance/",
     ],
   },
 ];

@@ -1,0 +1,228 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import type {
+  AncestorUnavailableResponse,
+  ConflictResponse,
+  TestContext,
+} from "../../client/types.js";
+import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import { createNote } from "../../generators/items.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
+
+let client: MarfaClient;
+let ctx: TestContext;
+
+beforeAll(async () => {
+  ({ ctx, client } = await createTestContext("correctness", "item-versioning"));
+});
+
+afterAll(async () => {
+  await cleanup(ctx);
+});
+
+describe("item versioning", () => {
+  it("version starts at 1 on creation", async () => {
+    const note = createNote({ source: ctx.source });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    expect(r.data.item.version).toBe(1);
+    trackItem(ctx, r.data.item.id);
+  });
+
+  it("version increments on update", async () => {
+    const note = createNote({
+      source: ctx.source,
+      properties: { title: "Version 1", body: "Original content" },
+    });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    expect(r.data.item.version).toBe(1);
+    trackItem(ctx, r.data.item.id);
+
+    const updated = await client.updateItem(r.data.item.id, {
+      properties: { title: "Version 2", body: "Updated content" },
+    });
+    expect(updated.ok).toBe(true);
+    await expectMatchesSchema("PATCH", "/items/{id}", 200, updated.data);
+    expect(updated.data.item.version).toBe(2);
+  });
+
+  it("updating an item creates a version snapshot", async () => {
+    const note = createNote({
+      source: ctx.source,
+      properties: { title: "Version 1", body: "Original content" },
+    });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const updated = await client.updateItem(r.data.item.id, {
+      properties: { title: "Version 2", body: "Updated content" },
+    });
+    expect(updated.ok).toBe(true);
+    expect(updated.data.item.properties.title).toBe("Version 2");
+
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.ok).toBe(true);
+    await expectMatchesSchema("GET", "/items/{id}/versions", 200, history.data);
+    expect(history.data.versions.length).toBe(1);
+
+    const firstVersion = history.data.versions[0];
+    expect(firstVersion.properties.title).toBe("Version 1");
+  });
+
+  it("multiple updates create multiple versions", async () => {
+    const note = createNote({
+      source: ctx.source,
+      properties: { title: "V1", body: "First" },
+    });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    for (let i = 2; i <= 4; i++) {
+      const updated = await client.updateItem(r.data.item.id, {
+        properties: { title: `V${i}`, body: `Version ${i}` },
+        force_snapshot: true,
+      });
+      expect(updated.ok).toBe(true);
+    }
+
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.ok).toBe(true);
+    expect(history.data.versions.map((v) => v.properties.title)).toEqual([
+      "V1",
+      "V2",
+      "V3",
+    ]);
+  });
+
+  it("every update writes a snapshot, with or without force_snapshot", async () => {
+    // The control for the case above: the flag changes nothing observable
+    // on this server, so the count is the same without it.
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "C1", body: "First" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    for (let i = 2; i <= 4; i++) {
+      const updated = await client.updateItem(r.data.item.id, {
+        properties: { title: `C${i}`, body: `Version ${i}` },
+      });
+      expect(updated.ok).toBe(true);
+    }
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.ok).toBe(true);
+    expect(history.data.versions.map((v) => v.properties.title)).toEqual([
+      "C1",
+      "C2",
+      "C3",
+    ]);
+  });
+
+  it("answers 404 for an unknown item's history and 400 for a malformed id", async () => {
+    const unknown = await client.getVersions(
+      "00000000-0000-7000-8000-000000000000",
+    );
+    expect(unknown.status).toBe(404);
+    expect(unknown.error?.error.code).toBe("item_not_found");
+    const malformed = await client.getVersions("not-an-id");
+    expect(malformed.status).toBe(400);
+    expect(malformed.error?.error.code).toBe("invalid_id");
+  });
+
+  it("a version no client ever read answers ancestor_unavailable", async () => {
+    const note = createNote({
+      source: ctx.source,
+      properties: { title: "Conflict test", body: "Original" },
+    });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    expect(r.data.item.version).toBe(1);
+    trackItem(ctx, r.data.item.id);
+
+    const conflict = await client.updateItem(r.data.item.id, {
+      properties: { title: "Stale update" },
+      version: 0,
+    });
+    expect(conflict.status).toBe(409);
+    expect(conflict.error?.error.code).toBe("ancestor_unavailable");
+    const body = conflict.error as unknown as AncestorUnavailableResponse;
+    expect(body.error.status).toBe(409);
+    expect(body.requested_version).toBe(0);
+    expect(body.current.version).toBe(1);
+    expect(body.current.properties.title).toBe("Conflict test");
+    expect(body).not.toHaveProperty("ancestor");
+    expect(body).not.toHaveProperty("merge_policy");
+  });
+
+  it("a stale write answers version_conflict with a three-way envelope", async () => {
+    const note = createNote({
+      source: ctx.source,
+      properties: { title: "Conflict test", body: "Original" },
+    });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const advanced = await client.updateItem(r.data.item.id, {
+      properties: { title: "Server title" },
+      version: 1,
+    });
+    expect(advanced.ok).toBe(true);
+    expect(advanced.data.item.version).toBe(2);
+
+    const conflict = await client.updateItem(r.data.item.id, {
+      properties: { title: "Stale update" },
+      version: 1,
+    });
+    expect(conflict.status).toBe(409);
+    expect(conflict.error?.error.code).toBe("version_conflict");
+
+    const body = conflict.error as unknown as ConflictResponse;
+    expect(body.error.status).toBe(409);
+    expect(body.current.version).toBe(2);
+    expect(body.current.properties.title).toBe("Server title");
+    expect(body.current.properties.body).toBe("Original");
+    expect(body.ancestor.version).toBe(1);
+    expect(body.ancestor.properties.title).toBe("Conflict test");
+    expect(body.conflicting_fields).toEqual(["title"]);
+
+    // The resolved policy for core.note: body and notes keep both copies,
+    // everything else, title included, is last-writer-wins by default.
+    expect(body.merge_policy.default).toBe("last_writer_wins");
+    expect(body.merge_policy.fields?.body).toBe("keep_both_copies");
+    expect(body.merge_policy.fields?.notes).toBe("keep_both_copies");
+    expect(body.merge_policy.fields?.title).toBeUndefined();
+  });
+
+  it("version history for item with no updates is empty", async () => {
+    const note = createNote({ source: ctx.source });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.ok).toBe(true);
+    expect(history.data.versions.length).toBe(0);
+  });
+
+  it("versions have correct item_id reference", async () => {
+    const note = createNote({ source: ctx.source });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    await client.updateItem(r.data.item.id, {
+      properties: { title: "Updated", body: "Changed" },
+    });
+
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.ok).toBe(true);
+    expect(history.data.versions.length).toBe(1);
+    expect(history.data.versions[0].item_id).toBe(r.data.item.id);
+  });
+});
