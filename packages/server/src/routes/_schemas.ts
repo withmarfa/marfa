@@ -124,32 +124,13 @@ export const ItemSchema = z.object({
   /**
    * Space scope. Storage queries are space-scoped at the SQL layer, so
    * for ordinary callers this always matches the caller's own space. The
-   * field is informational; cross-space infrastructure (the reactive-run
-   * bridge) reads this off the row to gate fanout. Mirrors the
-   * `Edge.space_id` shape.
+   * field is informational. Mirrors the `Edge.space_id` shape.
    */
   space_id: z.string().nullable().optional(),
   version: z.number(),
   schema_version: z.number().int(),
   source: z.string(),
   source_id: z.string().optional(),
-  /**
-   * Derived per read, never stored: whether the integration named in
-   * `source` still has a live connection in this space. Present only on an
-   * item an integration wrote — for anything else the question does not
-   * arise, so absence means "not applicable" rather than "no". See
-   * `_orphaned.ts` for why this is a second axis rather than a fourth
-   * `state`.
-   *
-   * **Scope of that reading: REST responses carrying an item.** The `GET
-   * /events` stream does not carry this field, because it cannot carry the
-   * change it describes — removing a connection publishes no item events, so
-   * an item never becomes orphaned *on the stream*. A client merging stream
-   * frames over a read must therefore keep the value it read rather than
-   * treating its absence in a frame as `false` or as "no integration wrote
-   * this", and must re-read to refresh it.
-   */
-  orphaned: z.boolean().optional(),
   device: z.string().optional(),
   capture_latitude: z.number().optional(),
   capture_longitude: z.number().optional(),

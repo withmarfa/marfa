@@ -59,8 +59,7 @@
  * erases the evidence.
  *
  * The package matters here rather than being an example: `@withmarfa/sdk`
- * re-exports from `shared`, and `@withmarfa/runtime-sdk` imports from it
- * without re-exporting. Surface text stops at the package boundary, so a
+ * re-exports from `shared`. Surface text stops at the package boundary, so a
  * referenced-but-not-re-exported type never reaches the hash. Naming the
  * wrong one would describe a mechanism this repository does not have.
  *

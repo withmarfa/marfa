@@ -31,74 +31,13 @@
  * type a credential can actually write, because nothing writes a reserved one.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import type { IntegrationManifest } from "@withmarfa/shared";
-import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 
 let ctx: TestContext;
-let runtimeKey: string;
-let runtimeConnectionId: string;
 
 beforeAll(async () => {
   ctx = await createTestContext({ authMode: "hosted" });
-  const space = await ctx.storage.spaces!.create("state-doors");
-  const manifest: IntegrationManifest = {
-    name: "acme-state-doors",
-    version: "1.0.0",
-    publisher: "acme",
-    description: "State-door agreement fixture",
-    direction: "read",
-    runs_on: "server" as const,
-    triggers: [{ type: "manual" }],
-    target_types: ["core.note"],
-    bidirectional_handling: {
-      echo_ttl_seconds: 60,
-      lag_window_seconds: 60,
-      tombstone_mapping: "state-trashed",
-      partial_write_mode: "all-or-nothing",
-    },
-    oauth_requirements: {},
-    webhook_verification: { method: "hmac-sha256" },
-    manifest_schema_version: "2.0.0",
-    permissions: {},
-  };
-  const integration = await ctx.storage.items.create(
-    {
-      type: "system.integration",
-      properties: {
-        manifest_name: manifest.name,
-        manifest_version: manifest.version,
-        publisher: manifest.publisher,
-        manifest,
-        registered_at: new Date().toISOString(),
-      },
-    },
-    undefined,
-  );
-  const connection = await ctx.storage.items.create(
-    {
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-        integration_ref: integration.id,
-      },
-    },
-    space.id,
-  );
-  const cred = await mintLocalRuntimeCredential(
-    ctx.storage,
-    TEST_API_KEY_SALT,
-    connection.id,
-  );
-  runtimeKey = cred.api_key;
-  runtimeConnectionId = connection.id;
 });
 
 afterAll(async () => {
@@ -181,56 +120,6 @@ describe.each(DOORS)("$name", (door) => {
         properties: { body: "state-door fixture" },
       }),
     ).toBeLessThan(300);
-  });
-});
-
-describe("the second credential shape reaches the same doors", () => {
-  /**
-   * An integration runtime credential may write `system.activity` and nothing
-   * else in the system family, through the carve-out in `checkTypeAccess`. So
-   * it reaches these doors on one type, and a suite written entirely with the
-   * space credential would never exercise that path.
-   */
-  async function createActivity(
-    route: "/items" | "/items/bulk",
-    state: string,
-  ): Promise<number> {
-    const body = {
-      type: "system.activity",
-      state,
-      properties: {
-        severity: "info",
-        summary: "state-door fixture",
-        // `requireActivityAttribution` refuses a runtime credential writing
-        // activity for a connection other than its own, and reads the claim
-        // off `connection_id`. Omitting it answers 403 before the lifecycle
-        // check is ever reached — which is how the two refusals below passed
-        // for the wrong reason until the precondition above was added.
-        connection_id: runtimeConnectionId,
-      },
-    };
-    const res = await request(ctx.app, "POST", route, {
-      key: runtimeKey,
-      body: route === "/items" ? body : { items: [body] },
-    });
-    return res.status;
-  }
-
-  it("is built on a write this credential is actually allowed to make", async () => {
-    // The precondition, and it is the one that makes the two refusals below
-    // mean anything. If the runtime credential cannot write `system.activity`
-    // at all, both cases answer 400 for the wrong reason and would keep
-    // passing with the lifecycle check deleted.
-    expect(await createActivity("/items", "active")).toBeLessThan(300);
-    expect(await createActivity("/items/bulk", "active")).toBeLessThan(300);
-  });
-
-  it("refuses a lifecycle-invalid state on the single door", async () => {
-    expect(await createActivity("/items", "trashed")).toBe(400);
-  });
-
-  it("refuses it on the bulk door too, which is the door that was open", async () => {
-    expect(await createActivity("/items/bulk", "trashed")).toBe(400);
   });
 });
 

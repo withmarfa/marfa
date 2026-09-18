@@ -20,7 +20,6 @@ import { createMarfaAuth } from "./auth/instance.js";
 import type { OidcSigner } from "./auth/oidc-signing.js";
 import { itemRoutes } from "./routes/items.js";
 import { oauthProtectedResourceRoutes } from "./routes/oauth-protected-resource.js";
-import { mcpRoutes } from "./routes/mcp.js";
 import { bulkRoutes } from "./routes/bulk.js";
 import { bulkGetRoutes } from "./routes/bulk-get.js";
 import { edgeRoutes, itemEdgeListingRoutes } from "./routes/edges.js";
@@ -33,12 +32,9 @@ import { metadataRoutes } from "./routes/metadata.js";
 import { blobRoutes } from "./routes/blobs.js";
 import { profileRoutes } from "./routes/profile.js";
 import { keyRoutes } from "./routes/keys.js";
-import { credentialRoutes } from "./routes/credentials.js";
-import { integrationRoutes } from "./routes/integrations.js";
 import { exportRoutes } from "./routes/export.js";
 import { adminArchiveRoutes } from "./routes/admin-archive.js";
 import { adminPlatformTypeRoutes } from "./routes/admin-platform-types.js";
-import { adminRuntimeJobsRoutes } from "./routes/admin-runtime-jobs.js";
 import { authRoutes, DEVICE_CODE_GRANT_TYPE } from "./routes/auth-pages.js";
 import { oauthRegisterRoutes } from "./routes/oauth-register.js";
 import { oauthPluginFenceRoutes } from "./routes/oauth-plugin-fence.js";
@@ -52,22 +48,6 @@ import type { EmailTransport as MarfaEmailTransport } from "./email/transport.js
 import { extensionRoutes } from "./routes/extensions.js";
 import { eventRoutes } from "./routes/events.js";
 import { webhookRoutes } from "./routes/webhooks.js";
-import {
-  inboundWebhookSubscriptionRoutes,
-  inboundWebhookReceiptRoutes,
-} from "./routes/inbound-webhooks.js";
-import { connectionProxyRoutes } from "./routes/connection-proxy.js";
-import {
-  oauthStartRoutes,
-  oauthCallbackRoutes,
-} from "./routes/oauth-callback.js";
-import {
-  connectionLeasedTokenRoutes,
-  leaseTokenValidationRoutes,
-} from "./routes/connection-leased-tokens.js";
-import { connectionRoutes } from "./routes/connections.js";
-import { connectionMappingRoutes } from "./routes/connection-mapping.js";
-import { connectionConfigureRoutes } from "./routes/connection-configure.js";
 import { auditRoutes } from "./routes/audit.js";
 import { metricsRoutes } from "./routes/metrics.js";
 import { adminRoutes } from "./routes/admin.js";
@@ -75,7 +55,6 @@ import { userAuthRoutes } from "./routes/users.js";
 import { spaceRoutes } from "./routes/spaces.js";
 import { rateLimitMiddleware } from "./middleware/rate-limit.js";
 import { clientIpMiddleware } from "./middleware/client-ip.js";
-import { cycleMiddleware } from "./middleware/cycle.js";
 import { spaceSuspensionMiddleware } from "./middleware/space-suspension.js";
 import { createAccountDeletionGate } from "./middleware/account-deletion-guard.js";
 import { authAccountRoutes } from "./routes/auth-account.js";
@@ -96,33 +75,6 @@ export function createApp(
   config: AppConfig,
   emailTransport?: MarfaEmailTransport,
   oidcSigner?: OidcSigner,
-  /**
-   * Optional Hono sub-app mounted at the root path before any auth
-   * middleware. The local-runtime substrate uses this to expose
-   * `POST /runtime/webhook/:connection_id` without going through the
-   * bearer-token gate (verification happens at the route via the
-   * subscription's HMAC secret).
-   */
-  localRuntimeApp?: import("hono").Hono,
-  /**
-   * Dead-letter operator surface from the local integration substrate.
-   * The admin routes mount unconditionally (so the OpenAPI reflection
-   * sees them in every configuration) and answer 503
-   * `local_runtime_not_available` when this is absent.
-   */
-  deadLetterOps?:
-    import("./integrations/local-runtime/dead-letters.js").DeadLetterOps | null,
-  /**
-   * The running local integration substrate, when there is one.
-   *
-   * `POST /connections/{id}/run` needs it for two things a route cannot
-   * answer on its own: whether this deployment can dispatch the named
-   * integration at all, and the queue to put the run on. It belongs here
-   * rather than on `localRuntimeApp` because that sub-app mounts before
-   * the auth middleware, and asking for a run needs `space.connections`.
-   */
-  localRuntime?:
-    import("./integrations/local-runtime/types.js").LocalRuntime | null,
 ) {
   const app = new OpenAPIHono<AppEnv>();
 
@@ -291,10 +243,6 @@ export function createApp(
     "metrics",
     "edges",
     "admin_archive",
-    "connections",
-    "integrations",
-    "lease-tokens",
-    "oauth-callback",
   ];
   if (config.authMode === "hosted") {
     features.push("users");
@@ -317,22 +265,8 @@ export function createApp(
   // closure rather than a value — the handle is resolved per request.
   app.route(
     "/health",
-    healthRoutes(
-      storage,
-      blobBackend,
-      config,
-      () => auth,
-      deadLetterOps ? () => deadLetterOps.count() : null,
-    ),
+    healthRoutes(storage, blobBackend, config, () => auth),
   );
-
-  // Local-runtime substrate routes (POST /runtime/webhook/:id). Mounted
-  // before any auth middleware so the public webhook receipt endpoint
-  // stays unauthenticated — verification happens inside the route via
-  // the subscription's HMAC secret.
-  if (localRuntimeApp) {
-    app.route("/", localRuntimeApp);
-  }
 
   // Shared auth-page stylesheet. Public — anyone landing on `/auth/sign-in`
   // must be able to fetch the CSS without a session cookie. Mounted BEFORE
@@ -381,16 +315,6 @@ export function createApp(
     config.accountDeletionGraceDays ?? 30,
   );
   app.use("*", deletionGate.middleware);
-
-  // Cycle metadata resolution. Reads X-Marfa-Cycle-Origin /
-  // X-Marfa-Cycle-Hop headers (an integration continuing a chain) or falls
-  // back to the api key's connection binding (an integration kicking off a
-  // chain). Mounted AFTER auth because the fallback path reads
-  // `c.var.apiKey`. The resolved cycle is written to BOTH `c.var.cycle`
-  // (diagnostic) AND `cycleRequestContext` (AsyncLocalStorage) so
-  // `publish()` in `pubsub.ts` reads it automatically — routes do not
-  // thread `...c.var.cycle` into every publish call.
-  app.use("*", cycleMiddleware());
 
   // Rate limiting (defaults: 1000 req/min, configurable via RATE_LIMIT_REQUESTS
   // and RATE_LIMIT_WINDOW_MS). Protects all endpoints. Configuration flows
@@ -705,14 +629,11 @@ export function createApp(
     profileRoutes(storage, blobBackend, config.maxBlobSize),
   );
   app.route("/keys", keyRoutes(storage, config.apiKeySalt, config.authMode));
-  app.route("/credentials", credentialRoutes(storage));
-  app.route("/integrations", integrationRoutes(storage, auth));
   app.route("/spaces", spaceRoutes(storage));
   app.route(
     "/admin",
     adminArchiveRoutes(storage, blobBackend, config.authMode),
   );
-  app.route("/admin", adminRuntimeJobsRoutes(deadLetterOps ?? null));
   app.route("/admin", adminPlatformTypeRoutes(storage));
   // Streaming routes receive `rlsEnforce` + `pgClient` so they can apply
   // session-level RLS on a reserved pool connection — for /export's whole
@@ -829,52 +750,6 @@ export function createApp(
       maxViewers: config.sseMaxViewers ?? 0,
     }),
   );
-  // Inbound subscription management (admin/integration auth) lives under
-  // /connections/:id/inbound-webhooks. Mounted before /webhooks so the
-  // public receipt path /webhooks/inbound/:id resolves correctly.
-  app.route("/connections", inboundWebhookSubscriptionRoutes(storage));
-  // Connection OAuth proxy — POST/GET/etc.
-  // /connections/:id/proxy/* forwards to the connection's configured
-  // upstream URL with Authorization: Bearer <decrypted access_token>.
-  // Exempt from the request-wide RLS transaction and fenced per phase
-  // instead, so `pgDb` + `rlsEnforce` have to reach the route. See the
-  // header of `routes/connection-proxy.ts`.
-  app.route(
-    "/connections",
-    connectionProxyRoutes(storage, {
-      rlsEnforce: config.rlsEnforce ?? false,
-      pgDb: (storage.pgDb as PgDb | undefined) ?? null,
-    }),
-  );
-  // OAuth bootstrap — POST /connections/:id/oauth/start (`space.credentials`)
-  // returns the upstream authorize URL with signed state; the public
-  // GET /oauth/callback exchanges the code and persists tokens under the
-  // same connectionOauthTokens row the proxy reads.
-  app.route(
-    "/connections",
-    oauthStartRoutes(storage, { authBaseUrl: config.authBaseUrl, auth }),
-  );
-  app.route("/oauth/callback", oauthCallbackRoutes(storage));
-  // Leased bearer tokens — issuance + revoke + list under
-  // /connections/:id/lease-tokens; introspection at
-  // /lease-tokens/validate (separate router so it can be reached by
-  // upstream services that don't otherwise touch /connections).
-  app.route("/connections", connectionLeasedTokenRoutes(storage));
-  // Connection management — POST /connections/:id/uninstall (`space.connections`)
-  // orchestrates a full teardown across credentials, OAuth tokens, leased
-  // tokens, inbound webhooks, and the connection's lifecycle state.
-  app.route("/connections", connectionMappingRoutes(storage));
-  app.route("/connections", connectionRoutes(storage, localRuntime ?? null));
-  app.route(
-    "/connections",
-    connectionConfigureRoutes(storage, {
-      auth,
-      corsOrigins: config.corsOrigins,
-      authBaseUrl: config.authBaseUrl,
-    }),
-  );
-  app.route("/lease-tokens", leaseTokenValidationRoutes(storage));
-  app.route("/webhooks/inbound", inboundWebhookReceiptRoutes(storage));
   app.route("/webhooks", webhookRoutes(storage));
   app.route("/audit", auditRoutes(storage));
   app.route("/metrics", metricsRoutes(storage));
@@ -914,22 +789,6 @@ export function createApp(
     }),
   );
   app.get("/openapi.json", (c) => c.json(openapiDocument));
-
-  // The remote agent surface. Mounted last and wired as a closure over the
-  // composed app so tool calls dispatch back through the full middleware
-  // stack in process; a plain Hono route (streaming, protocol-owned wire
-  // shapes) that stays out of the OpenAPI document like SSE and export.
-  if (config.mcpEnabled) {
-    app.route(
-      "/mcp",
-      mcpRoutes({
-        authBaseUrl: config.authBaseUrl,
-        hasAuthServer: Boolean(auth),
-        toolsets: config.mcpToolsets,
-        appFetch: (req) => app.fetch(req),
-      }),
-    );
-  }
 
   return app;
 }

@@ -53,7 +53,6 @@ async function main(): Promise<void> {
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
   });
   const raw = "marfa_k1_bench";
   await storage.keys.create(

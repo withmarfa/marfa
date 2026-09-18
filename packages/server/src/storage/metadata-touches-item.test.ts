@@ -19,7 +19,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { RUNTIME_NAMESPACE } from "../metadata-namespaces.js";
 
 let ctx: TestContext;
 
@@ -142,61 +141,6 @@ describe("a metadata write moves items.updated_at", () => {
   }
 });
 
-describe("a write no client can learn about leaves it alone", () => {
-  /**
-   * The reserved `connection.` root is per-Connection runtime state and
-   * is deliberately silent on the event stream. Moving the item's
-   * modification time for it would make the same write silent to a
-   * subscriber and loud to a client catching up, which is a worse
-   * disagreement than either half on its own.
-   */
-  it("a reserved-namespace extension write does not move it", async () => {
-    const itemId = await pinnedItem();
-    await ctx.storage.metadata.setExtension(itemId, RUNTIME_NAMESPACE, {
-      cursor: "abc",
-    });
-    expect(await readUpdatedAt(itemId)).toBe(PAST);
-  });
-
-  /**
-   * Both arms of one method, so the property under test is the
-   * namespace predicate rather than which door was used. Without this
-   * pair the suite passes whether the predicate is consulted or ignored.
-   */
-  it("setExtension disagrees with itself across the predicate", async () => {
-    const announcing = await pinnedItem();
-    const silent = await pinnedItem();
-
-    await ctx.storage.metadata.setExtension(announcing, "testapp.state", {
-      n: 1,
-    });
-    await ctx.storage.metadata.setExtension(silent, RUNTIME_NAMESPACE, {
-      n: 1,
-    });
-
-    expect(await readUpdatedAt(announcing)).not.toBe(PAST);
-    expect(await readUpdatedAt(silent)).toBe(PAST);
-  });
-
-  it("a reserved-namespace mutate and delete leave it alone too", async () => {
-    const itemId = await pinnedItem();
-    await ctx.storage.metadata.setExtension(itemId, RUNTIME_NAMESPACE, {
-      n: 0,
-    });
-    await forceUpdatedAt(itemId, PAST);
-
-    await ctx.storage.metadata.mutateExtension(
-      itemId,
-      RUNTIME_NAMESPACE,
-      (cur) => ({ ...cur, n: 1 }),
-    );
-    expect(await readUpdatedAt(itemId)).toBe(PAST);
-
-    await ctx.storage.metadata.deleteExtension(itemId, RUNTIME_NAMESPACE);
-    expect(await readUpdatedAt(itemId)).toBe(PAST);
-  });
-});
-
 /**
  * `setExtensions` is `setExtension` applied to a set, and the only caller
  * it has writes to a freshly created item — so the existing extensions map
@@ -256,33 +200,6 @@ describe("setExtensions writes a whole set at once", () => {
     // The answer is what the caller announces the item with, so it has to
     // be the row's value rather than merely a plausible timestamp.
     expect(updated_at).toBe(stored);
-  });
-
-  it("a set of only reserved namespaces leaves it alone", async () => {
-    const itemId = await pinnedItem();
-    const { updated_at } = await ctx.storage.metadata.setExtensions(itemId, {
-      [RUNTIME_NAMESPACE]: { cursor: "abc" },
-      "connection.sibling": { seen: 1 },
-    });
-    expect(await readUpdatedAt(itemId)).toBe(PAST);
-    // Null rather than the row's current value: "nothing moved" is a
-    // different answer from "it is still at PAST", and the caller
-    // announcing the item has to tell them apart.
-    expect(updated_at).toBeNull();
-    // Silent, but still written.
-    expect(await ctx.storage.metadata.getExtensions(itemId)).toMatchObject({
-      [RUNTIME_NAMESPACE]: { cursor: "abc" },
-    });
-  });
-
-  it("a mixed set announces, because one member does", async () => {
-    const itemId = await pinnedItem();
-    const { updated_at } = await ctx.storage.metadata.setExtensions(itemId, {
-      [RUNTIME_NAMESPACE]: { cursor: "abc" },
-      "testapp.loud": { n: 1 },
-    });
-    expect(await readUpdatedAt(itemId)).not.toBe(PAST);
-    expect(updated_at).toBe(await readUpdatedAt(itemId));
   });
 
   it("an empty set writes nothing at all", async () => {

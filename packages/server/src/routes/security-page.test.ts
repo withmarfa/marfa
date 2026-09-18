@@ -397,8 +397,8 @@ describe("the summary does not depend on scope order", () => {
     // No one sentence is honest across this set, so the line lists what was
     // granted. These three are the cases a collective phrase got wrong in
     // both directions.
-    expect(summaryOf(["space.upstream_access"])).toContain(
-      "use your accounts at connected services directly",
+    expect(summaryOf(["space.settings"])).toContain(
+      "change your space settings",
     );
     expect(summaryOf(["space.item_purge"])).toContain(
       "permanently delete things past the trash",

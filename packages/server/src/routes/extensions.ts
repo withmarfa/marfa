@@ -15,10 +15,6 @@
  * as a gate that could not answer. What writes these namespaces is the
  * platform's own machinery, through the storage layer, which is also what
  * writes a `system.*` row.
- *
- * `connection.runtime` is a different thing and is not in that set: it is
- * written by the connection's own runtime credential, under its own rule
- * below.
  */
 
 import { createRoute, z } from "@hono/zod-openapi";
@@ -33,12 +29,8 @@ import {
 
 const RESERVED_NAMESPACES = new Set(["core", "marfa", "system"]);
 
-import {
-  RUNTIME_NAMESPACE,
-  announcesMetadataChange,
-} from "../metadata-namespaces.js";
 import type { AppEnv } from "../middleware/auth.js";
-import { requireAuth, requireRowWritable } from "../middleware/auth.js";
+import { requireAuth } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
 import { publish } from "../pubsub.js";
@@ -375,53 +367,24 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
-    // The extension layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-    requireRowWritable(apiKey, item);
 
-    // connection.runtime is the runtime credential's hot-state subtree.
-    // Only the connection's own runtime credential may write it, and only to
-    // the matching connection's item.
-    //
-    // **The reason this used to give was that operators could still read it,
-    // and no code path grants that read.** `filterExtensionsByPermission` has
-    // no privileged reader at all, and the read handler carries no carve-out
-    // for this namespace. The write refusal stands on its own: hot state a
-    // runtime writes about itself is not something another credential should
-    // be able to forge.
-
-    if (namespace === RUNTIME_NAMESPACE) {
-      if (!apiKey?.is_runtime_credential) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `Namespace "${RUNTIME_NAMESPACE}" is writable only by runtime credentials`,
-        );
-      }
-      if (apiKey.connection_id !== id) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot write the runtime namespace of connection ${id}`,
-        );
-      }
-    } else if (RESERVED_NAMESPACES.has(namespace)) {
+    if (RESERVED_NAMESPACES.has(namespace)) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
       );
     }
 
-    if (namespace !== RUNTIME_NAMESPACE) {
-      const perm = resolveExtensionPermission(
-        namespace,
-        apiKey?.extension_permissions,
-        extensionLabelOf(apiKey),
+    const perm = resolveExtensionPermission(
+      namespace,
+      apiKey?.extension_permissions,
+      extensionLabelOf(apiKey),
+    );
+    if (perm !== "write") {
+      throw new MarfaError(
+        ErrorCode.FORBIDDEN,
+        `No write access to extension namespace "${namespace}"`,
       );
-      if (perm !== "write") {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `No write access to extension namespace "${namespace}"`,
-        );
-      }
     }
 
     const body = c.req.valid("json");
@@ -446,14 +409,12 @@ export function extensionRoutes(storage: Storage) {
     // Read the row back rather than composing the event from the extensions
     // this call returned: the payload carries the whole metadata, and half
     // of it is the half this door did not touch.
-    if (announcesMetadataChange(namespace)) {
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
-        metadata: await storage.metadata.get(id),
-        spaceId: apiKey?.space_id,
-      });
-    }
+    await publish({
+      type: "metadata_changed",
+      item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
+      metadata: await storage.metadata.get(id),
+      spaceId: apiKey?.space_id,
+    });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,
@@ -480,24 +441,8 @@ export function extensionRoutes(storage: Storage) {
     if (!item) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, "Item not found");
     }
-    // The extension layer reaches the same row the properties doors
-    // guard, so it answers to the same row-level rule.
-    requireRowWritable(apiKey, item);
 
-    if (namespace === RUNTIME_NAMESPACE) {
-      if (!apiKey?.is_runtime_credential) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `Namespace "${RUNTIME_NAMESPACE}" is writable only by runtime credentials`,
-        );
-      }
-      if (apiKey.connection_id !== id) {
-        throw new MarfaError(
-          ErrorCode.FORBIDDEN,
-          `Runtime credential for connection ${apiKey.connection_id ?? "unset"} cannot delete the runtime namespace of connection ${id}`,
-        );
-      }
-    } else if (RESERVED_NAMESPACES.has(namespace)) {
+    if (RESERVED_NAMESPACES.has(namespace)) {
       throw new MarfaError(
         ErrorCode.FORBIDDEN,
         `Namespace "${namespace}" is reserved`,
@@ -524,14 +469,12 @@ export function extensionRoutes(storage: Storage) {
     // A removal is as observable as a write, and for the same reason as
     // the replace door above: the namespace's absence from the payload is
     // how a subscriber learns to drop its own copy.
-    if (announcesMetadataChange(namespace)) {
-      await publish({
-        type: "metadata_changed",
-        item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
-        metadata: await storage.metadata.get(id),
-        spaceId: apiKey?.space_id,
-      });
-    }
+    await publish({
+      type: "metadata_changed",
+      item: await itemAfterMetadataWrite(storage, item, apiKey?.space_id),
+      metadata: await storage.metadata.get(id),
+      spaceId: apiKey?.space_id,
+    });
 
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

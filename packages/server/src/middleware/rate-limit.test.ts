@@ -77,7 +77,6 @@ async function buildCtx(): Promise<Ctx> {
     // window, which the aggregate cap would otherwise trip. The
     // aggregate window has its own dedicated test context.
     rateLimitAggregateMultiplier: 0,
-    mcpEnabled: false,
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);
@@ -292,7 +291,6 @@ async function buildAggCtx(): Promise<Ctx> {
     rateLimitDefaultLimit: 2,
     rateLimitWindowMs: 60_000,
     rateLimitAggregateMultiplier: 2,
-    mcpEnabled: false,
   });
 
   const suffix = Math.random().toString(36).slice(2, 14);

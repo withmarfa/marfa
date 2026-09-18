@@ -242,8 +242,6 @@ describe.skipIf(!isPg)("GET /events — live viewers hold no pool slot", () => {
           properties: {},
         } as unknown as ItemEventWithId["item"],
         spaceId: SPACE_ID,
-        originatingConnectionId: null,
-        hopCount: 0,
       });
       while (!received.includes("evt-cap-live")) {
         const chunk = await Promise.race([

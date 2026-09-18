@@ -75,34 +75,6 @@ export interface AppEnv extends Record<string, unknown> {
      * the storage layer directly with `client_ip: null`).
      */
     clientIp: string | null;
-    /**
-     * Cycle metadata for events published from this request. Resolved
-     * by `cycleMiddleware` after auth from either the inbound
-     * `X-Marfa-Cycle-Origin` / `X-Marfa-Cycle-Hop` headers (an integration
-     * reacting to a parent event — the SDK threads them via
-     * `ConnectionClient.request()`) or from the caller's api key when
-     * the headers are absent (the chain head).
-     *
-     * `publish()` and `publishEdge()` in `pubsub.ts` read the resolved
-     * cycle from `cycleRequestContext` (AsyncLocalStorage) automatically;
-     * routes do NOT thread this through. The `c.var.cycle` binding
-     * remains available for diagnostic reads (preview surfaces, audit
-     * enrichment) and stays in lockstep with the ALS — `cycleMiddleware`
-     * writes both from the same resolved value.
-     *
-     * **Never `null`.** A human-issued chain head is `{
-     * originatingConnectionId: null, hopCount: 0 }` (the explicit
-     * sentinel); an integration chain head is `{ originatingConnectionId:
-     * <connection_id>, hopCount: 0 }`; an integration continuing a chain
-     * is `{ originatingConnectionId: <head>, hopCount: parent + 1 }`.
-     * The `null` originator on the human sentinel is the contract
-     * `passesHopBudget` keys on to bypass the budget — see
-     * `pubsub.ts:passesHopBudget`.
-     */
-    cycle: {
-      originatingConnectionId: string | null;
-      hopCount: number;
-    };
   };
 }
 
@@ -505,37 +477,23 @@ export function authMiddleware(storage: Storage, salt: string) {
 /**
  * Credential `source` prefixes a caller may not name for itself.
  *
- * A caller-supplied `source` is free text, and two separate readers give
- * one meaning, so the reservation covers both.
+ * A caller-supplied `source` is free text, and two readers give it a
+ * meaning, so the reservation covers both.
  *
- * `oauth:` is read as authority. `actsAsConnection` compares against it
- * on the three routes a Connection operates on itself, and the cycle
- * resolver derives an event's origin from it. Without the reservation
- * any caller that may mint a key could source one `oauth:<something>`
- * and be read later as a Connection it has no binding to. The comparison
- * is currently unsatisfiable for the reason given on `actsAsConnection`,
- * which makes this a fence around an identity that is meant to work rather
- * than one that does, and it has to hold before that is corrected rather
- * than after.
+ * `oauth:` is read as authority: the synthetic key an OAuth access token
+ * produces is sourced `oauth:<clientId>:<userId>`, and it is synthesized
+ * per request in this file, never persisted. A minted key carrying that
+ * shape would read later as a grant it has no binding to.
  *
- * `integration:` is read as provenance. No route reads it as identity:
- * `itemProvenanceSource` stamps it onto rows an integration writes, and
- * `permitsMirrorWrite` then admits only a credential whose `item_source`
- * matches. A forged one would let any credential claim to be the owning
- * integration of a mirrored row and write over a corpus it does not own.
- *
- * Either way the shape is the same: a field the request controls, read
- * later as something it earned.
- *
- * The legitimate holders never pass through the mint routes. Runtime
- * credentials are created at the storage layer by the per-dispatch
- * mint; the OAuth shape is synthesized per-request in this file and
- * never persisted at all.
+ * `integration:` is read as provenance. `itemProvenanceSource` stamps a
+ * credential's source onto the rows it writes, and `permitsMirrorWrite`
+ * treats a row carrying this prefix as an integration's mirror of an
+ * external record, which nothing writes over. A minted key carrying the
+ * prefix would let any caller plant rows that read as mirrors.
  */
 export const RESERVED_CREDENTIAL_SOURCE_PREFIXES = [
   "oauth:",
   "integration:",
-  "runtime-",
 ] as const;
 
 /** Whether `source` claims one of the reserved integration shapes. */
@@ -606,29 +564,13 @@ export function hasOperatorAuthority(key: ApiKey): boolean {
  * exception. Restating it there would have been a second copy of the one
  * rule that decides who reaches the platform's own rows.
  *
- * Three ways through, and the third is narrower than it looks. The operator
- * key passes outright. A runtime credential writing `system.activity`
- * passes, because that is the channel an integration reports its own
- * progress through and without it a legitimate one cannot emit anything —
- * whose rows it may touch is then decided per row by the attribution rule
- * rather than here. And a runtime credential writing a `marfa.*` type its
- * manifest declared passes, because that literal is the platform's own
- * declaration for that credential.
- *
- * **The map is read directly rather than resolved, and that is the whole
- * safety of the third arm.** `resolveTypePermission` honours wildcards, so
- * any credential holding `"*": "write"` would otherwise cross the reserved
- * boundary. Only an exact literal qualifies. `system.*` keeps the blanket
- * refusal beyond the activity carve-out: nothing projects a system-type
- * write.
+ * The operator key passes outright; nothing else writes `system.*` or
+ * `marfa.*`.
  */
 export function mayWriteReserved(key: ApiKey, type: string): boolean {
   if (key.is_operator) return true;
   const tier = classifyNamespace(type);
-  if (tier !== "system" && tier !== "marfa") return true;
-  if (key.is_runtime_credential !== true) return false;
-  if (type === "system.activity") return true;
-  return tier === "marfa" && key.type_permissions[type] === "write";
+  return tier !== "system" && tier !== "marfa";
 }
 
 export function checkTypeAccess(
@@ -653,13 +595,6 @@ export function checkTypeAccess(
   //
   // Reads to `system.*` / `marfa.*` are unrestricted (filtered by space
   // scoping at the storage layer); only writes need `is_operator`.
-  //
-  // Carve-out: runtime credentials (`is_runtime_credential: true`) may
-  // write `system.activity`. That's the integration's status-reporting
-  // channel — the activity sink in `runtime-sdk` calls `POST /items`
-  // with `type: "system.activity"` to surface progress / errors for the
-  // connection the credential is bound to. Without the carve-out a
-  // legitimate integration can't emit activity rows.
   if (level === "write") {
     const tier = classifyNamespace(type);
     if (
@@ -793,203 +728,36 @@ export function requireTypeAccess(
 }
 
 /**
- * True when the caller IS the Connection, for the three routes a
- * Connection operates on itself: the OAuth proxy, its inbound-webhook
- * subscriptions, and its leased tokens.
- *
- * The live arm is the runtime credential. One minted for a Connection
- * carries `is_runtime_credential: true` and a `connection_id` stamped
- * at mint time, and nothing outside `createRuntimeCredential` sets
- * either field, so a caller cannot name its way into the pair. It is
- * matched as a pair rather than by `source` because a runtime
- * credential has no fixed source to match: the per-dispatch mint
- * appends a random suffix, keeping the column unique among live
- * credentials. Matching a fixed string is what this function exists to
- * stop three routes doing separately. Two of them had already widened
- * to the pair and the third had not, so it refused every credential a
- * running integration can hold while reading as though it admitted one.
- *
- * The `oauth:` arm matches nothing today. It is kept rather than
- * deleted because the intent is live and only the comparison is wrong:
- * the synthetic key an OAuth access token produces is sourced
- * `oauth:<clientId>:<userId>`, a stable grant handle rather than a
- * Connection id, and a Connection id is a UUIDv7 carrying no colon, so
- * the two can never be equal. Such a caller reaches these routes only by
- * holding the space permission each one asks for, so a grant that was not
- * given it is refused before this arm is consulted at all.
- * Correcting it means resolving a grant to its Connection, which
- * changes who can reach three live routes and needs its own
- * verification rather than riding along here.
- *
- * It answers identity only. Whether that identity may reach the
- * Connection at all is the caller's space fence, which each route
- * applies alongside this.
- */
-export function actsAsConnection(
-  key: ApiKey | undefined,
-  connectionId: string,
-): boolean {
-  if (!key) return false;
-  return (
-    key.source === `oauth:${connectionId}` ||
-    (key.is_runtime_credential === true && key.connection_id === connectionId)
-  );
-}
-
-/**
- * True when the caller is a runtime credential reading the one Connection
- * it is bound to.
- *
- * A handler resolves its own `properties.configuration` with a plain
- * `GET /items/:connection_id`, so it needs read access to a
- * `system.connection` row. Granting `system.connection: read` in
- * `type_permissions` would be space-wide — `type_permissions` keys on
- * type, with no per-item axis — handing every integration read access to
- * every other Connection's configuration in the space. This carve-out is
- * the per-item form: the credential's `connection_id` stamp must equal
- * the item being read, so an integration sees its own Connection and no
- * other. Mirrors the identity check the connection-proxy and extension
- * routes already apply.
- */
-export function isOwnConnectionRead(
-  key: ApiKey | undefined,
-  item: { id: string; type: string },
-): boolean {
-  return (
-    key?.is_runtime_credential === true &&
-    item.type === "system.connection" &&
-    key.connection_id === item.id
-  );
-}
-
-/**
- * The `source` an item written by this credential is stamped with.
- *
- * For a human-minted key this is the credential's own `source`, which is
- * immutable for the credential's life and therefore a stable identity.
- * Runtime credentials break that assumption: they are minted per
- * dispatch, and their `source` carries a per-mint suffix because the
- * column is unique per space among live credentials. Stamping it would
- * make provenance a function of which bearer generation happened to be
- * live at the time.
- *
- * That is not cosmetic. Upsert identity is `(source, source_id)`:
- * `findBySourceId` scopes its lookup by the item's `source`, so a
- * integration re-syncing an upstream record after a credential refresh
- * looks for it under a source no row carries, finds nothing, and creates
- * a second item. Every rotation forks the integration's whole corpus, and
- * because both writes succeed the failure is silent.
- *
- * `item_source` is derived from the bound Connection and is fixed for
- * the Connection's lifetime, so it is the value a runtime credential
- * stamps. Falling back to `source` keeps every non-runtime credential on
- * exactly the behavior it had, and keeps runtime credentials minted
- * before the column existed working until they are reaped.
+ * The `source` an item written by this credential is stamped with: the
+ * credential's own `source`, which is immutable for the credential's life
+ * and therefore a stable provenance identity.
  */
 export function itemProvenanceSource(
   key: ApiKey | undefined,
 ): string | undefined {
-  return key?.item_source ?? key?.source;
+  return key?.source;
 }
 
-/**
- * The connection to record as having written a row (D63), or null.
- *
- * **Gated on `is_runtime_credential`, not on the shape of `source`.** Only
- * `createRuntimeCredential` sets that flag; `keys.create` cannot. The string
- * is not safe to reason from — the console's self-serve mint writes the
- * caller's `label` straight into `source`, so a space owner could mint one
- * labelled `integration:acme/calendar` and `itemProvenanceSource` would hand
- * back the forged value. Reading the flag makes that unreachable rather than
- * merely unlikely, which is the same reasoning
- * `resolveOrphanScopeForOwnWrite` already gives for the same choice.
- *
- * Null for every human-minted credential, which is why the column stays
- * nullable: a row a person wrote has no owning connection, and that is a
- * fact rather than a gap.
- */
-export function writerConnectionOf(key: ApiKey | undefined): string | null {
-  if (key?.is_runtime_credential !== true) return null;
-  return key.connection_id ?? null;
-}
-
-/**
- * Refuse a `system.activity` write that claims to be a Connection other
- * than the writing runtime credential's own.
- *
- * The `system.activity` carve-out in `checkTypeAccess` lets a runtime
- * credential write into the reserved `system.*` namespace without being
- * the operator key, because status reporting is how an integration says
- * anything at all. That carve-out is about the type; it says
- * nothing about whose activity the row claims to be.
- * `properties.connection_id` is the field every operator surface groups,
- * filters and alerts on, and it arrives in the request body.
- *
- * Left unchecked, one integration can write `severity: action_required`
- * rows against a sibling Connection in the same space: a Repairs inbox
- * entry telling a user to re-authorize an integration that is working
- * fine, attributed to an integration that never ran. Nothing distinguishes
- * the row from a real one, because on the wire it is a real one.
- *
- * A runtime credential is bound to exactly one Connection, so the rule
- * is equality with that binding. Every other credential is unaffected:
- * writing `system.*` at all already requires the operator key, which is an
- * operator acting deliberately rather than an integration acting on its
- * own.
- *
- * Called from each door that can write an item rather than folded into
- * `checkTypeAccess`, which sees a type but never a body. A door that
- * skips it is the whole gap, so every call site is pinned by tests that
- * go through the routes — see `routes/item-write-doors.test.ts`, which
- * asserts the doors agree rather than testing each of them separately.
- */
-export function requireActivityAttribution(
-  key: ApiKey | undefined,
-  type: string,
-  properties: unknown,
-): void {
-  if (permitsActivityAttribution(key, type, properties)) return;
-  const claimed = claimedConnectionId(properties);
-  throw new MarfaError(
-    ErrorCode.FORBIDDEN,
-    "A runtime credential may only write activity for its own connection",
-    { connection_id: typeof claimed === "string" ? claimed : null },
-  );
-}
-
-/**
- * The predicate behind `requireActivityAttribution`, for the one door
- * that narrows rather than refuses.
- *
- * `POST /items/bulk-actions` takes a filter, not a list of rows, and its
- * established answer to "the caller may not touch that" is to drop the
- * row from the match set (`getTypeFilter` already narrows the same set by
- * type). Throwing there would make one unreachable row fail an otherwise
- * legitimate action over thousands, which is a worse answer than the one
- * the route already gives for the type axis.
- */
 /** The provenance prefix every integration-written row carries. */
 export const INTEGRATION_SOURCE_PREFIX = "integration:";
 
 /**
  * One rule: nothing writes to an item an integration owns. Ownership is
- * provenance — a row whose source carries the integration prefix is an
- * integration's mirror of an external record, and the owning integration
- * re-syncing (a credential whose item_source matches the row's source)
- * is the only legitimate writer of its properties. Everyone else,
- * operator keys included, is refused toward promotion: two write
- * paths onto one mirror is how user edits and re-syncs silently clobber
- * each other. Lifecycle transitions, tags, and extensions stay user
- * gestures — they do not edit the copy, so they do not answer to this.
+ * provenance: a row whose source carries the integration prefix is an
+ * integration's mirror of an external record, and nothing this server
+ * mints can be that integration, so the copy is refused toward promotion.
+ * Two write paths onto one mirror is how user edits and re-syncs silently
+ * clobber each other. Lifecycle transitions, tags, and extensions stay
+ * user gestures: they do not edit the copy, so they do not answer to this.
  *
- * Called from each property-writing door, like the attribution check
- * beside it; the same door-coverage tests pin the set.
+ * Called from each property-writing door; the door-coverage tests pin the
+ * set.
  */
-export function requireMirrorProtection(
-  key: ApiKey | undefined,
-  row: { id: string; source: string },
-): void {
-  if (permitsMirrorWrite(key, row)) return;
+export function requireMirrorProtection(row: {
+  id: string;
+  source: string;
+}): void {
+  if (permitsMirrorWrite(row)) return;
   throw new MarfaError(
     ErrorCode.INTEGRATION_OWNED,
     "This item is an integration's copy of an external record; only the owning integration writes it. Promote it to edit your own copy",
@@ -999,12 +767,11 @@ export function requireMirrorProtection(
 
 /** The predicate behind `requireMirrorProtection`, for the door that
  *  narrows rather than refuses (`POST /items/bulk-actions`). */
-export function permitsMirrorWrite(
-  key: ApiKey | undefined,
-  row: { id: string; source: string },
-): boolean {
-  if (!row.source.startsWith(INTEGRATION_SOURCE_PREFIX)) return true;
-  return key?.item_source === row.source;
+export function permitsMirrorWrite(row: {
+  id: string;
+  source: string;
+}): boolean {
+  return !row.source.startsWith(INTEGRATION_SOURCE_PREFIX);
 }
 
 /**
@@ -1066,61 +833,6 @@ export function requireDeclaredTypeMatches(
     ErrorCode.TYPE_MISMATCH,
     `Request declares type "${declared}" but resolves an item of type "${row.type}"; a write does not re-type the row it lands on`,
     { item_id: row.id, declared_type: declared, actual_type: row.type },
-  );
-}
-
-export function permitsActivityAttribution(
-  key: ApiKey | undefined,
-  type: string,
-  properties: unknown,
-): boolean {
-  if (key?.is_runtime_credential !== true) return true;
-  if (type !== "system.activity") return true;
-  // An absent `connection_id` is not a pass. The type requires the field,
-  // so omitting it is either a malformed row or an attempt to write one
-  // no attribution check can bind — and an unattributed activity row
-  // still lands in the operator surface.
-  return claimedConnectionId(properties) === key.connection_id;
-}
-
-function claimedConnectionId(properties: unknown): unknown {
-  return properties && typeof properties === "object"
-    ? (properties as Record<string, unknown>).connection_id
-    : undefined;
-}
-
-/**
- * May this credential write to a row that already exists?
- *
- * The attribution helpers above answer a question about a *claim*: the
- * body says it is writing `system.activity` for connection X, and the
- * check is whether X is the caller's own. Every surface that reaches an
- * existing row by id asks a simpler question, because there is no claim
- * to weigh — the row states whose it is, and the caller either owns it or
- * does not.
- *
- * This is that check, and it is one function rather than a call at each
- * door on purpose. Five doors have now been found reaching state their
- * caller had no permission for, and four were found by a person asking
- * what else had the shape. Enumerating doors was never the reliable part,
- * so the lifecycle, metadata and extension surfaces share this rather
- * than each remembering a rule.
- *
- * Type permission is a separate axis and is still checked by the caller.
- * This narrows within a type the caller may already write, which is the
- * gap: `system.activity` sits in every runtime credential's type filter,
- * because that grant is what lets an integration report its own progress.
- */
-export function requireRowWritable(
-  key: ApiKey | undefined,
-  row: { type: string; properties?: unknown } | undefined,
-): void {
-  if (!row) return;
-  if (permitsActivityAttribution(key, row.type, row.properties)) return;
-  throw new MarfaError(
-    ErrorCode.FORBIDDEN,
-    "A runtime credential may only write rows belonging to its own connection",
-    { type: row.type },
   );
 }
 

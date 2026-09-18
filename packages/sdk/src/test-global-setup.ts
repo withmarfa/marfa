@@ -36,13 +36,7 @@ import { join } from "node:path";
  * `server` is the one this package has that the server's own list cannot: the
  * fixtures import `createApp` from it and stand a real server up in-process.
  */
-const BUILT_DEPS = [
-  "types",
-  "shared",
-  "webhooks",
-  "runtime-sdk",
-  "server",
-] as const;
+const BUILT_DEPS = ["types", "shared", "server"] as const;
 
 /** Newest mtime beneath `dir`, or 0 if it does not exist. */
 function newestMtime(dir: string): number {

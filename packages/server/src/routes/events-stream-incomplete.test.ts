@@ -120,8 +120,6 @@ function emitNotes(count: number, tag: string): void {
         type: "core.note",
         properties: {},
       } as unknown as ItemEventWithId["item"],
-      originatingConnectionId: null,
-      hopCount: 0,
     });
   }
 }
@@ -136,8 +134,6 @@ function emitEdges(count: number, tag: string): void {
         source_id: "src",
         target_id: "tgt",
       } as unknown as EdgeEventWithId["edge"],
-      originatingConnectionId: null,
-      hopCount: 0,
     });
   }
 }
@@ -372,8 +368,6 @@ describe("frames the subscriber would never receive", () => {
         type: "core.task",
         properties: {},
       } as unknown as ItemEventWithId["item"],
-      originatingConnectionId: null,
-      hopCount: 0,
     });
 
     const { text } = await readSse(res, {

@@ -116,17 +116,7 @@ export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "device",
   "capture_latitude",
   "capture_longitude",
-  "orphaned",
 ]);
-
-/**
- * Of the reserved names, the ones the server derives per read rather than
- * storing. Shadowing them is refused for the same reason as the rest, but
- * the ordinary remedy does not apply: there is no column to set instead,
- * so telling an author to set the field directly would be advice they
- * cannot take.
- */
-const DERIVED_ITEM_FIELDS: ReadonlySet<string> = new Set(["orphaned"]);
 
 /**
  * A single validation failure, self-describing by construction.
@@ -698,9 +688,7 @@ export function validateTypeSchema(
             code: "property_shadows_field",
             expected: `a property name that is not a first-class Item field`,
             actual: `"${fieldName}", which is a first-class Item field`,
-            hint: DERIVED_ITEM_FIELDS.has(fieldName)
-              ? `The Item field "${fieldName}" is derived by the server and cannot be set, so rename this property to something type-specific.`
-              : `Set the Item field "${fieldName}" directly instead, or rename this property to something type-specific.`,
+            hint: `Set the Item field "${fieldName}" directly instead, or rename this property to something type-specific.`,
           }),
         );
       }

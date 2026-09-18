@@ -66,8 +66,6 @@ function itemEvent(id: string, spaceId: string | undefined): void {
       properties: {},
     } as unknown as ItemEventWithId["item"],
     ...(spaceId !== undefined && { spaceId }),
-    originatingConnectionId: null,
-    hopCount: 0,
   });
 }
 
@@ -81,8 +79,6 @@ function edgeEvent(id: string, spaceId: string | undefined): void {
       target_id: "tgt",
     } as unknown as import("../pubsub.js").EdgeEventWithId["edge"],
     ...(spaceId !== undefined && { spaceId }),
-    originatingConnectionId: null,
-    hopCount: 0,
   });
 }
 

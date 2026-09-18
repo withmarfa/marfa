@@ -113,8 +113,6 @@ describe("audit.logOrThrow — propagating", () => {
 
 describe("the propagating call sites", () => {
   const PROPAGATING = [
-    "connections/install-pipeline.ts",
-    "connections/uninstall-pipeline.ts",
     "storage/pg/account-cascade.ts",
     "storage/sqlite/account-cascade.ts",
   ];

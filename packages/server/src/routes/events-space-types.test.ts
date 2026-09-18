@@ -104,8 +104,6 @@ function emitItem(id: string, type: string): void {
     type: "created",
     item: { id, type, properties: {} } as unknown as ItemEventWithId["item"],
     spaceId: SPACE,
-    originatingConnectionId: null,
-    hopCount: 0,
   });
 }
 

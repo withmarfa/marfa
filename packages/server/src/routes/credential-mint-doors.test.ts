@@ -133,8 +133,6 @@ interface MintDoor {
 
 /** Doors that never take a caller-supplied `source`, with the reason. */
 const NO_CALLER_SOURCE: Record<string, string> = {
-  "POST /connections/{id}/lease-tokens — claims are bounded in shape":
-    "mints a lease token against a connection it resolves, taking no source",
   "POST /auth/oauth2/register — an omitted scope is not the allowlist":
     "registers a client, mints no credential row and takes no source",
   "POST /auth/device/token — nothing mints without an approved grant":
@@ -270,7 +268,7 @@ const DOORS: MintDoor[] = [
         body: {
           label: "beyond",
           source: "oauth-beyond",
-          space_permissions: ["space.credentials"],
+          space_permissions: ["space.settings"],
         },
       });
       expect(beyond.status).toBe(403);
@@ -339,30 +337,6 @@ const DOORS: MintDoor[] = [
       // says: a credential confined to one space is deliberately less than
       // the instance tier, and the schema does not even accept the field.
       expect(body.is_operator ?? false).toBe(false);
-    },
-  },
-  {
-    name: "POST /connections/{id}/lease-tokens — claims are bounded in shape",
-    specRoute: "post /connections/{id}/lease-tokens",
-    ceiling: async () => {
-      // Shape bound only: a lease grants no Marfa data-plane authority
-      // (its scopes are claims relayed to the introspecting upstream),
-      // so the ceiling here is that introspection cannot become an
-      // unbounded storage channel. Semantic depth lives in
-      // oauth-mint-ceilings.test.ts and the lease suite.
-      const res = await request(
-        ctx.app,
-        "POST",
-        "/connections/nonexistent/lease-tokens",
-        {
-          key: ctx.spaceKey,
-          body: {
-            capability_id: "cap",
-            scopes: Array.from({ length: 33 }, (_, i) => `c-${String(i)}`),
-          },
-        },
-      );
-      expect(res.status).toBe(400);
     },
   },
   {

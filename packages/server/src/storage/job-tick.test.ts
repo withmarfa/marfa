@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isConnectionLostError, logJobTickFailure } from "./job-tick.js";
-import { RuntimeCredentialReaper } from "./retention.js";
+import { RevokedKeyReaper } from "./retention.js";
 import type { Storage } from "./interface.js";
 
 /** Shaped the way postgres.js raises them: a plain Error carrying a code. */
@@ -73,7 +73,7 @@ describe("logJobTickFailure", () => {
   it("stands a cancelled tick down at info", () => {
     const captured = captureLog();
     logJobTickFailure(
-      "Runtime credential reap",
+      "Revoked key reap",
       pgError("CONNECTION_DESTROYED"),
       true,
     );
@@ -81,29 +81,27 @@ describe("logJobTickFailure", () => {
 
     expect(captured.lines).toHaveLength(1);
     expect(captured.lines[0]?.level).toBe("info");
-    expect(captured.lines[0]?.message).toBe(
-      "Runtime credential reap stood down",
-    );
+    expect(captured.lines[0]?.message).toBe("Revoked key reap stood down");
   });
 
   it("keeps error for a connection failure while the job is still running", () => {
     const captured = captureLog();
     logJobTickFailure(
-      "Runtime credential reap",
+      "Revoked key reap",
       pgError("CONNECTION_DESTROYED"),
       false,
     );
     captured.restore();
 
     expect(captured.lines[0]?.level).toBe("error");
-    expect(captured.lines[0]?.message).toBe("Runtime credential reap error");
+    expect(captured.lines[0]?.message).toBe("Revoked key reap error");
   });
 
   it("keeps error for a genuine query failure during shutdown", () => {
     // Being stopped is not on its own a reason to discount a failure: a
     // broken statement is broken whenever it runs.
     const captured = captureLog();
-    logJobTickFailure("Runtime credential reap", pgError("42703"), true);
+    logJobTickFailure("Revoked key reap", pgError("42703"), true);
     captured.restore();
 
     expect(captured.lines[0]?.level).toBe("error");
@@ -114,23 +112,19 @@ describe("a retention job interrupted by shutdown", () => {
   function rejectingStorage(err: Error): Storage {
     return {
       keys: {
-        revokeExpiredRuntimeCredentials: () => Promise.reject(err),
-        revokeRuntimeCredentialsWithoutExpiryOlderThan: () =>
-          Promise.resolve(0),
-        deleteRevokedRuntimeCredentialsOlderThan: () => Promise.resolve(0),
+        deleteRevokedKeysOlderThan: () => Promise.reject(err),
       },
     } as unknown as Storage;
   }
 
   it("reports at error while running and at info once stopped", async () => {
-    const reaper = new RuntimeCredentialReaper(
+    const reaper = new RevokedKeyReaper(
       rejectingStorage(pgError("CONNECTION_DESTROYED")),
-      3_600_000,
       3_600_000,
     );
 
     const running = captureLog();
-    await reaper.pollForTest();
+    await reaper.runScheduled();
     running.restore();
 
     // Shutdown stops every job before it closes the pool, so this ordering
@@ -138,26 +132,23 @@ describe("a retention job interrupted by shutdown", () => {
     reaper.stop();
 
     const stopped = captureLog();
-    await reaper.pollForTest();
+    await reaper.runScheduled();
     stopped.restore();
 
     expect(running.lines[0]?.level).toBe("error");
     expect(stopped.lines[0]?.level).toBe("info");
-    expect(stopped.lines[0]?.message).toBe(
-      "Runtime credential reap stood down",
-    );
+    expect(stopped.lines[0]?.message).toBe("Revoked key reap stood down");
   });
 
   it("still reports a real fault at error after shutdown began", async () => {
-    const reaper = new RuntimeCredentialReaper(
+    const reaper = new RevokedKeyReaper(
       rejectingStorage(new Error("relation api_keys does not exist")),
-      3_600_000,
       3_600_000,
     );
     reaper.stop();
 
     const captured = captureLog();
-    await reaper.pollForTest();
+    await reaper.runScheduled();
     captured.restore();
 
     expect(captured.lines[0]?.level).toBe("error");

@@ -92,14 +92,6 @@ export interface AppConfig {
    */
   processRole?: ProcessRole;
   /**
-   * Public-to-this-deployment URL the local integration substrate's
-   * handlers write back through, from `MARFA_API_URL`. Defaults to
-   * `http://localhost:<port>`, which is correct whenever the web tier
-   * shares the process (`both`) — a split worker container points this
-   * at the web service instead.
-   */
-  apiUrl?: string;
-  /**
    * Main Postgres pool cap, from `MARFA_DB_POOL_SIZE` (default 10). The
    * session/streaming pool follows as `min(this, 5)`. Exists so a split
    * deployment can budget web + worker under a managed tier's connection
@@ -257,18 +249,6 @@ export interface AppConfig {
    *  `MARFA_RATE_LIMIT_CLEANUP_INTERVAL_MS`. Optional — `index.ts`
    *  applies the 1h fallback when unset. */
   rateLimitCleanupIntervalMs?: number;
-  /** Cadence (ms) for the runtime-credential reaper: revokes runtime
-   *  credentials past `expires_at`, drains legacy rows minted before
-   *  expiry stamping, and hard-deletes revoked rows older than seven
-   *  days. `0` disables the job. Default 3_600_000 (1h); env override
-   *  `MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS`. */
-  runtimeCredentialReaperIntervalMs?: number;
-  /** Cadence (ms) of the pass that moves connections onto the newest
-   *  registered manifest version where doing so widens no grant. `0`
-   *  disables it, which leaves drift to be cleared by hand and so leaves
-   *  the drift number permanently non-zero. Default 3_600_000 (1h); env
-   *  override `MARFA_CONNECTION_UPGRADE_INTERVAL_MS`. */
-  connectionUpgradeIntervalMs?: number;
   /** Deterministic text extraction from file blobs. On unless
    *  `MARFA_ENRICHMENT_ENABLED=false`: extraction is what makes an
    *  uploaded document findable, so an operator opts out rather than in. */
@@ -348,13 +328,6 @@ export interface AppConfig {
    *  Default `false` — single-user self-hosted instances enable this
    *  only for the initial admin account. */
   authAllowSignup: boolean;
-  /** Whether the remote MCP surface is mounted at `/mcp`. Default on:
-   *  every instance gets the agent surface unless the operator opts out. */
-  mcpEnabled: boolean;
-  /** Toolsets the remote MCP surface exposes (comma-list: standard,
-   *  admin, all). Defaults to `standard`; credentials still gate every
-   *  call, so widening this widens offering, not access. */
-  mcpToolsets?: string;
   /** When `true`, a fresh sign-up's space is seeded with a few starter
    *  items (a welcome note, a docs bookmark, a first task, one connecting
    *  edge) so the space isn't empty on first open. Default `false`: self-host
@@ -435,30 +408,6 @@ export interface AppConfig {
   smtpUser?: string;
   smtpPass?: string;
   smtpSecure?: boolean;
-  /**
-   * Worker threads per integration on the local substrate
-   * (`MARFA_INTEGRATION_WORKER_THREADS`). Sets the executor's
-   * per-integration pool size. Every thread holds its own resource-limit
-   * budget in memory, so raising this is a deployment sizing decision,
-   * not a free throughput dial. Optional: unset keeps the executor's
-   * default of 2.
-   */
-  integrationWorkerThreads?: number;
-  /**
-   * How many integration dispatches this process runs at once on the local
-   * substrate (`MARFA_INTEGRATION_DISPATCH_CONCURRENCY`). Optional: unset
-   * keeps the supervisor's default of 2.
-   *
-   * Sized against the session connection pool, not against throughput. A
-   * dispatch holds a reserved session connection for its whole run, and
-   * **that pool holds at most five connections whatever anything is set
-   * to**: it is `Math.min(maxPoolSize ?? 10, 5)`, so `MARFA_DB_POOL_SIZE`
-   * can only lower it. Those five are shared with streaming reads, the
-   * consent lock and every other job lock, so raising this is a decision
-   * about who else goes without rather than a dial with a matching pool
-   * setting. It should also not exceed `MARFA_INTEGRATION_WORKER_THREADS`.
-   */
-  integrationDispatchConcurrency?: number;
   /**
    * OpenTelemetry configuration. The instrumentation bootstrap
    * (`src/instrumentation.ts`) reads its toggle + exporter config from the
@@ -795,25 +744,6 @@ function parseProcessRole(raw: string | undefined): ProcessRole {
   );
 }
 
-function parseApiUrl(raw: string | undefined): string | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  // The worker's handlers spend this on every write-back; a malformed
-  // value surfaces there as an opaque fetch failure at dispatch time, so
-  // it refuses at boot instead, matching the sibling knobs.
-  let parsed: URL;
-  try {
-    parsed = new URL(raw);
-  } catch {
-    throw new Error(`MARFA_API_URL is not a valid URL: ${raw}`);
-  }
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    throw new Error(
-      `MARFA_API_URL must be http or https, got ${parsed.protocol}//`,
-    );
-  }
-  return raw;
-}
-
 function parseDbPoolSize(raw: string | undefined): number | undefined {
   if (raw === undefined || raw === "") return undefined;
   const parsed = Number(raw);
@@ -836,7 +766,6 @@ export function loadConfig(): AppConfig {
   const dbPoolMode = parseDbPoolMode(process.env.MARFA_DB_POOL_MODE);
   const processRole = parseProcessRole(process.env.MARFA_PROCESS_ROLE);
   const dbPoolSize = parseDbPoolSize(process.env.MARFA_DB_POOL_SIZE);
-  const apiUrl = parseApiUrl(process.env.MARFA_API_URL);
 
   // The split's coordination is all Postgres: pg-boss pins scheduled and
   // dispatch work to whichever process registered the workers, pg_notify
@@ -931,7 +860,6 @@ export function loadConfig(): AppConfig {
     databaseUrlDirect,
     dbPoolMode,
     processRole,
-    ...(apiUrl !== undefined && { apiUrl }),
     ...(dbPoolSize !== undefined && { dbPoolSize }),
     blobPath: process.env.BLOB_PATH ?? "./data/blobs",
     blobBackend: process.env.BLOB_BACKEND === "s3" ? "s3" : "fs",
@@ -1066,14 +994,6 @@ export function loadConfig(): AppConfig {
     enrichmentOcrEnabled: process.env.MARFA_ENRICHMENT_OCR_ENABLED !== "false",
     enrichmentTessdataDir:
       process.env.MARFA_ENRICHMENT_TESSDATA_DIR ?? "./data/tessdata",
-    runtimeCredentialReaperIntervalMs: envNumber(
-      process.env.MARFA_RUNTIME_CREDENTIAL_REAPER_INTERVAL_MS,
-      3_600_000,
-    ),
-    connectionUpgradeIntervalMs: envNumber(
-      process.env.MARFA_CONNECTION_UPGRADE_INTERVAL_MS,
-      3_600_000,
-    ),
     bulkActionJobRetentionMs: envNumber(
       process.env.MARFA_BULK_ACTION_JOB_RETENTION_MS,
       7 * 24 * 3_600_000,
@@ -1108,8 +1028,6 @@ export function loadConfig(): AppConfig {
     authBaseUrl:
       process.env.MARFA_AUTH_BASE_URL ?? `http://localhost:${String(port)}`,
     authAllowSignup: process.env.MARFA_AUTH_ALLOW_SIGNUP === "true",
-    mcpEnabled: process.env.MARFA_MCP_ENABLED !== "false",
-    mcpToolsets: process.env.MARFA_MCP_TOOLSETS,
     seedStarterContent: process.env.MARFA_SEED_STARTER_CONTENT === "true",
     authSecret,
     oidcProviders: parseOidcProviders(process.env.MARFA_OIDC_PROVIDERS),
@@ -1140,13 +1058,6 @@ export function loadConfig(): AppConfig {
     smtpUser: process.env.MARFA_SMTP_USER ?? "",
     smtpPass: process.env.MARFA_SMTP_PASS ?? "",
     smtpSecure: process.env.MARFA_SMTP_SECURE === "true",
-    integrationWorkerThreads: parseIntegrationWorkerThreads(
-      process.env.MARFA_INTEGRATION_WORKER_THREADS,
-    ),
-    integrationDispatchConcurrency: parsePositiveIntegerEnv(
-      process.env.MARFA_INTEGRATION_DISPATCH_CONCURRENCY,
-      "MARFA_INTEGRATION_DISPATCH_CONCURRENCY",
-    ),
     otelEnabled: process.env.MARFA_OTEL_ENABLED === "true",
     otelServiceName: process.env.OTEL_SERVICE_NAME ?? "marfa-server",
     otelEnvironment: process.env.MARFA_OTEL_ENVIRONMENT,
@@ -1208,20 +1119,6 @@ export function parsePositiveIntegerEnv(
     throw new Error(`${name} must be a positive integer, got "${raw}".`);
   }
   return Number(trimmed);
-}
-
-/**
- * Parse `MARFA_INTEGRATION_WORKER_THREADS`. Unset → undefined, which
- * keeps the executor's own default. Anything that is not a positive
- * integer throws at boot rather than warning: a NaN or zero pool size
- * would pre-warm no worker threads and leave every dispatch waiting on
- * a slot that never comes, a hang far harder to read than a refusal
- * naming the variable.
- */
-export function parseIntegrationWorkerThreads(
-  raw: string | undefined,
-): number | undefined {
-  return parsePositiveIntegerEnv(raw, "MARFA_INTEGRATION_WORKER_THREADS");
 }
 
 /**

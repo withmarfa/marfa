@@ -211,18 +211,6 @@ describe("the three layers", () => {
       properties: { body: "edited elsewhere" },
     });
   });
-
-  it("does not persist a field the server works out per read", async () => {
-    const item = serverItem({ orphaned: true });
-    await store.server.items.put(item);
-
-    // `orphaned` is computed from the space's connections as the item goes
-    // out, and the stream never carries it at all. Stored, one read's answer
-    // would outlive the fact it described with nothing able to correct it.
-    const held = await store.server.items.get(item.id);
-    expect(held).toBeDefined();
-    expect(held && "orphaned" in held).toBe(false);
-  });
 });
 
 describe("visible state", () => {

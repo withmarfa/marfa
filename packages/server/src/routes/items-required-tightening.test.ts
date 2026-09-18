@@ -13,13 +13,8 @@
  * land in an earlier deploy than the tightening.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
@@ -116,53 +111,5 @@ describe("tightening required on a type with existing items", () => {
       body: { properties: { title: "editable again" } },
     });
     expect(afterwards.status).toBe(200);
-  });
-});
-
-describe("marfa.captured_email keeps bodyless captures editable", () => {
-  it("accepts a capture with no body and lets it be patched afterwards", async () => {
-    // `marfa.*` is a reserved namespace: the only credential that reaches it
-    // is a runtime credential whose manifest declared that exact type, which
-    // is what the capture handler holds. Both writes go through it — the row
-    // carries the credential's integration provenance, so its own re-sync is
-    // the only thing allowed to edit it afterwards.
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const captureKey = `marfa_k1_capture_${suffix}`;
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: `capture-${suffix}`,
-        source: `capture-${suffix}`,
-        type_permissions: { "marfa.captured_email": "write" },
-        connection_id: `conn_capture_${suffix}`,
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: `integration:acme.capture.${suffix}`,
-      },
-      hashApiKey(captureKey, TEST_API_KEY_SALT),
-      ctx.spaceId,
-    );
-
-    // The type is shaped for `core.note` and mirrors `text_body` into `body`,
-    // but does not require `body` and does not claim the compatibility, both
-    // of which would strand captures written before the handler populated it
-    // unconditionally.
-    const created = await request(ctx.app, "POST", "/items", {
-      key: captureKey,
-      body: {
-        type: "marfa.captured_email",
-        properties: {
-          from_address: "sender@example.com",
-          to_address: "capture@example.com",
-          subject: "No text part",
-        },
-      },
-    });
-    expect(created.status).toBe(201);
-    const { item } = (await created.json()) as { item: { id: string } };
-
-    const patched = await request(ctx.app, "PATCH", `/items/${item.id}`, {
-      key: captureKey,
-      body: { properties: { subject: "Retitled" } },
-    });
-    expect(patched.status).toBe(200);
   });
 });

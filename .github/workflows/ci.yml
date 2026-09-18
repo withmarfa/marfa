@@ -589,8 +589,6 @@ jobs:
       # bearing.
       - if: needs.changes.outputs.code == 'true'
         run: MARFA_TEST_OCR=1 MARFA_ENRICHMENT_TESSDATA_DIR="$HOME/.cache/marfa-tessdata" pnpm test
-      - if: needs.changes.outputs.code == 'true'
-        run: pnpm --filter @withmarfa/server run smoke:worker-entry
 
   ci-pg:
     name: CI (Postgres)

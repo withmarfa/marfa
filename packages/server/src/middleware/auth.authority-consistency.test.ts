@@ -72,10 +72,9 @@ describe("hasOperatorAuthority", () => {
 });
 
 describe("isReservedCredentialSource", () => {
-  it("claims the three integration prefixes", () => {
+  it("claims the two reserved prefixes", () => {
     expect(isReservedCredentialSource("oauth:conn-1")).toBe(true);
     expect(isReservedCredentialSource("integration:conn-1")).toBe(true);
-    expect(isReservedCredentialSource("runtime-abc-123")).toBe(true);
   });
 
   it("is case- and whitespace-insensitive, so the prefix cannot be smuggled", () => {
@@ -155,93 +154,6 @@ async function seedConnection(spaceId: string): Promise<string> {
   );
   return conn.id;
 }
-
-// ---------------------------------------------------------------------------
-// POST /connections/:id/oauth/start
-// ---------------------------------------------------------------------------
-
-describe("POST /connections/:id/oauth/start — space fence on the connection lookup", () => {
-  it("refuses a space-bound credential reaching a connection in another space", async () => {
-    const spaceA = await spaceStore().create("authority-oauth-start-A");
-    const spaceB = await spaceStore().create("authority-oauth-start-B");
-    const victimConnection = await seedConnection(spaceB.id);
-
-    // Holds the permission this door names, in a different space. The
-    // permission is what gets it through the gate; the fence is what has to
-    // stop it reaching past its own space, and the old gate tested rank and
-    // passed no space, so this reached space B's connection.
-    const boundCaller = await mintKey({
-      spacePermissions: ["space.credentials"],
-      spaceId: spaceA.id,
-    });
-
-    // Guard the fixture: a mistyped id would make the 404 below pass for
-    // the wrong reason, hiding a live cross-space read.
-    expect(victimConnection).toMatch(/\w/);
-    expect(await ctx.storage.items.get(victimConnection, spaceB.id)).not.toBe(
-      null,
-    );
-
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/connections/${victimConnection}/oauth/start`,
-      {
-        key: boundCaller,
-        body: { redirect_uri: "http://localhost:0/callback" },
-      },
-    );
-
-    // 404, not 403 — a cross-space probe must not confirm the id exists.
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("item_not_found");
-  });
-
-  it("admits the same credential on its own space's connection", async () => {
-    const space = await spaceStore().create("authority-oauth-start-own");
-    const connectionId = await seedConnection(space.id);
-    const caller = await mintKey({
-      spacePermissions: ["space.credentials"],
-      spaceId: space.id,
-    });
-
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/connections/${connectionId}/oauth/start`,
-      {
-        key: caller,
-        body: { redirect_uri: "http://localhost:0/callback" },
-      },
-    );
-
-    // Reaches the credential resolution and fails there (this connection
-    // has no credential_ref) rather than being refused at the gate. The
-    // point is that it is no longer a 403: the permission is held, and it is
-    // held in this space.
-    expect(res.status).not.toBe(403);
-    expect(res.status).not.toBe(404);
-  });
-
-  it("refuses a credential that does not hold space.credentials", async () => {
-    const space = await spaceStore().create("authority-oauth-start-none");
-    const connectionId = await seedConnection(space.id);
-    const caller = await mintKey({ spaceId: space.id });
-
-    const res = await request(
-      ctx.app,
-      "POST",
-      `/connections/${connectionId}/oauth/start`,
-      {
-        key: caller,
-        body: { redirect_uri: "http://localhost:0/callback" },
-      },
-    );
-
-    expect(res.status).toBe(403);
-  });
-});
 
 // ---------------------------------------------------------------------------
 // /keys — list / revoke / update

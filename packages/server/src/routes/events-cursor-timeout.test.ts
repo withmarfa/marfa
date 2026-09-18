@@ -137,8 +137,6 @@ function wake(itemId: string): void {
       properties: {},
     } as unknown as ItemEventWithId["item"],
     spaceId: SPACE_ID,
-    originatingConnectionId: null,
-    hopCount: 0,
   });
 }
 

@@ -49,7 +49,6 @@ describe("GET /metrics with a failing scheduled-job reporter", () => {
     // The counters that were trustworthy before this section existed are
     // all still there; only the section that could not be read is gone.
     expect(body).toHaveProperty("items");
-    expect(body).toHaveProperty("connections");
     expect(body).toHaveProperty("keys");
     expect(body).toHaveProperty("uptime_seconds");
     expect(body).not.toHaveProperty("scheduled_jobs");

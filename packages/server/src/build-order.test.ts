@@ -38,9 +38,6 @@ function readPackage(dir: string): PackageJson {
 const WORKSPACE_DIRS: Record<string, string> = {
   "@withmarfa/shared": "packages/shared",
   "@withmarfa/types": "packages/types",
-  "@withmarfa/webhooks": "packages/webhooks",
-  "@withmarfa/runtime-sdk": "packages/runtime-sdk",
-  "@withmarfa/runtime-test": "packages/runtime-test",
   "@withmarfa/sdk": "packages/sdk",
 };
 

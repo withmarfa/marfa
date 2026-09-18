@@ -392,7 +392,9 @@ function makeTokenHasher(salt: string) {
  * configuration. Used as one entry in the better-auth `plugins: [...]`
  * array in `instance.ts`.
  */
-export function buildOauthProviderPlugin(opts: OauthProviderOptions) {
+export function buildOauthProviderPlugin(
+  opts: OauthProviderOptions,
+): ReturnType<typeof oauthProvider> {
   const tokenHasher = makeTokenHasher(opts.apiKeySalt);
   const allowedScopes = buildAllowedScopes();
 
@@ -672,12 +674,7 @@ export function buildOauthProjectionPlugin(opts: {
   // differently-filtered sets is two ceilings.
   const bundleScopes = bundlePublishedScopes(getPermissionBundles());
   const acceptedResources = baseURL
-    ? new Set(
-        [
-          stripTrailingSlash(baseURL),
-          `${stripTrailingSlash(baseURL)}/mcp`,
-        ].filter((v) => v.length > 0),
-      )
+    ? new Set([stripTrailingSlash(baseURL)].filter((v) => v.length > 0))
     : undefined;
   return {
     id: "marfa-oauth-projection" as const,

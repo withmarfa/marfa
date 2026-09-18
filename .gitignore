@@ -56,10 +56,6 @@ deploy.env
 .claude/plans/
 .claude/scheduled_tasks.lock
 
-# The withmarfa/integrations checkout the server image build stages from.
-# A clone, not source: see packages/server/integrations-ref.txt.
-integrations-src/
-
 # Wrangler local cache and mid-deploy scratch bundles (generated tool output).
 .wrangler/
 

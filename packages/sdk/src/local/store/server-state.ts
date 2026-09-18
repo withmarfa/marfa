@@ -4,23 +4,6 @@ import type { Executor } from "./executor.js";
 import { serverEdges, serverItems, serverMetadata } from "./schema.js";
 
 /**
- * Drop the fields the server works out as an item goes out rather than
- * storing.
- *
- * `orphaned` answers whether the integration that wrote the item still has
- * a live connection, computed from the space's connections at the moment of
- * the read. Persisting it would let one read's answer outlive the fact it
- * described, and the stream never carries the field at all, so nothing
- * would ever correct it.
- */
-export function stripDerived(item: Item): Item {
-  if (item.orphaned === undefined) return item;
-  const stored = { ...item };
-  delete stored.orphaned;
-  return stored;
-}
-
-/**
  * The newest `updated_at` held, or undefined when nothing is.
  *
  * This is the high-water mark a catch-up read hands back as
@@ -119,27 +102,26 @@ export function createServerStateLayer(exec: Executor): ServerStateLayer {
         return rows[0]?.newest ?? undefined;
       },
       put: async (item) => {
-        const stored = stripDerived(item);
         await exec
           .insert(serverItems)
           .values({
-            id: stored.id,
-            type: stored.type,
-            version: stored.version,
-            state: stored.state,
-            spaceId: stored.space_id ?? null,
-            updatedAt: stored.updated_at,
-            payload: JSON.stringify(stored),
+            id: item.id,
+            type: item.type,
+            version: item.version,
+            state: item.state,
+            spaceId: item.space_id ?? null,
+            updatedAt: item.updated_at,
+            payload: JSON.stringify(item),
           })
           .onConflictDoUpdate({
             target: serverItems.id,
             set: {
-              type: stored.type,
-              version: stored.version,
-              state: stored.state,
-              spaceId: stored.space_id ?? null,
-              updatedAt: stored.updated_at,
-              payload: JSON.stringify(stored),
+              type: item.type,
+              version: item.version,
+              state: item.state,
+              spaceId: item.space_id ?? null,
+              updatedAt: item.updated_at,
+              payload: JSON.stringify(item),
             },
           });
       },

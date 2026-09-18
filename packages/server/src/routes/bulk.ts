@@ -50,20 +50,15 @@ import {
   requireAuth,
   requireTypeAccess,
   requireEdgePermission,
-  requireActivityAttribution,
   requireMirrorProtection,
   mayWriteReserved,
   requireDeclaredTypeMatches,
-  permitsActivityAttribution,
   permitsMirrorWrite,
   itemProvenanceSource,
-  writerConnectionOf,
   getTypeFilter,
   hasOperatorAuthority,
-  INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
 import { MAX_TAGS_PER_ITEM } from "../tag-limits.js";
-import { createOwnershipGuard, liveConnectionIds } from "./_orphaned.js";
 import { namesSystemNamespace } from "./_system-type-visibility.js";
 import type { BulkActionJobRow, Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
@@ -231,8 +226,7 @@ const bulkRoute = createRoute({
         "per-entry reason travels in `details.code` — `type_mismatch` " +
         "among them, when an entry declares a `type` that is not the " +
         "type of the row its natural key or id resolved. Send " +
-        "`atomic: false` to have each entry reported on its own instead; " +
-        "the runtime SDK's bulk helper does exactly that.",
+        "`atomic: false` to have each entry reported on its own instead.",
     },
     401: {
       content: {
@@ -507,11 +501,8 @@ async function processBulkItem(
      * `TYPE_NOT_PERMITTED` (403) which surfaces as a per-item `errored`
      * outcome in best-effort mode and aborts the batch in atomic mode.
      *
-     * Takes the whole item rather than its type because authorization
-     * here is not a function of the type alone: a `system.activity` row
-     * written by a runtime credential is also checked against whose
-     * activity it claims to be. Passing the item is what keeps both
-     * call sites covered by construction rather than by remembering.
+     * Takes the whole item rather than its type so both call sites stay
+     * covered by construction rather than by remembering.
      *
      * Authorizes the *claim*, which is the whole story only on the
      * create path, where the row that lands is the one the entry
@@ -542,20 +533,7 @@ async function processBulkItem(
     checkUpdate: (
       existing: Item,
       raw: { properties?: Record<string, unknown> },
-    ) => Promise<"own" | "adopt">;
-    /**
-     * The provenance half of the row-side gate on its own (D63), for the
-     * `create_only` arm — which authorizes nothing else and must keep it
-     * that way.
-     */
-    checkProvenance: (existing: Item) => Promise<"own" | "adopt">;
-    /**
-     * The connection to record as this write's author (D63), or null when
-     * the caller is not a runtime credential. Computed once per request in
-     * the route rather than per entry, because it is a property of the
-     * credential and cannot change inside a batch.
-     */
-    writerConnectionId: string | null;
+    ) => void;
     /**
      * The edge half of the dual gate, mirroring `requireEdgePermission` on
      * `POST /edges` and on `POST /items` with an inline `edges` payload.
@@ -596,10 +574,8 @@ async function processBulkItem(
     retype,
     checkWrite,
     checkUpdate,
-    checkProvenance,
     checkEdgeWrite,
     recordEdgeChanges,
-    writerConnectionId,
   } = options;
 
   // Reconcile inline edges. `applyInlineEdges` deletes-then-validates-then-
@@ -697,32 +673,6 @@ async function processBulkItem(
 
   // create_only: existing match → skipped. No writes.
   if (existing && mode === "create_only") {
-    // Guarded before the skip (D63). A row a live sibling connection owns
-    // is not this caller's duplicate, and answering `skipped /
-    // duplicate_source` says it is — which reads as "already stored" and
-    // sends the handler on believing its record is present.
-    //
-    // **The provenance guard alone, not `checkUpdate`.** This arm has never
-    // run the update authorization and must not start: `create_only` with
-    // locally-assigned ids is the offline-first path, and putting
-    // `requireMirrorProtection` and `requireTypeAccess` in front of a skip
-    // would turn "that id is already taken" into a refusal — and, since
-    // `atomic` defaults to true, into a whole-batch rollback.
-    try {
-      await checkProvenance(existing);
-    } catch (err) {
-      if (err instanceof MarfaError) {
-        return {
-          result: {
-            index,
-            outcome: "errored",
-            id: existing.id,
-            error: { code: err.code, message: err.message },
-          },
-        };
-      }
-      throw err;
-    }
     return {
       result: {
         index,
@@ -736,15 +686,12 @@ async function processBulkItem(
   // upsert + existing: update properties/tier/timestamp in place,
   // optionally reconciling edges.
   if (existing) {
-    // No initialiser: `checkUpdate` below either assigns it or throws, so
-    // a default here would be a value nothing can read.
-    let ownership: "own" | "adopt";
     // Authorize against the row about to be overwritten. The entry's own
     // `type` is not what is being written — it describes a create that is
     // no longer happening — so it is checked for agreement rather than
     // used.
     try {
-      ownership = await checkUpdate(existing, { properties: raw.properties });
+      checkUpdate(existing, { properties: raw.properties });
       // Both resolutions above land here, and neither used the entry's
       // `type` to get here: the natural key ignores it, and the id
       // fallback ignores it too. Declaring one type and resolving another
@@ -757,9 +704,6 @@ async function processBulkItem(
       // 400 carrying this refusal in `details.code` rather than the 409
       // the other doors answer with. That is this route's established
       // answer to any per-entry refusal rather than something new here.
-      // The runtime SDK's bulk helper sends `atomic: false` deliberately,
-      // so the integrations that batch get a per-entry outcome and one
-      // bad record does not hold a page of thousands hostage.
       if (!(retype && raw.type !== existing.type)) {
         requireDeclaredTypeMatches(raw.type, existing);
       }
@@ -875,10 +819,6 @@ async function processBulkItem(
         ...(resultingType === existing.type ? {} : { type: resultingType }),
         tier: raw.tier,
         timestamp: raw.timestamp,
-        // Adoption only (D63), matching the single-item doors.
-        ...(ownership === "adopt" && {
-          written_by_connection_id: writerConnectionId,
-        }),
       },
       spaceId,
     );
@@ -966,7 +906,6 @@ async function processBulkItem(
       ...(sourceId !== undefined && { source_id: sourceId }),
       ...(raw.device !== undefined && { device: raw.device }),
       ...(raw.tags !== undefined && { tags: raw.tags }),
-      written_by_connection_id: writerConnectionId,
     };
     const created = await storage.items.create(createInput, spaceId);
     if (raw.edges) {
@@ -1006,44 +945,14 @@ export function bulkRoutes(storage: Storage) {
     requireAuth(c);
     const checkWrite = (raw: { type: string; properties?: unknown }): void => {
       requireTypeAccess(c, raw.type, "write");
-      requireActivityAttribution(c.get("apiKey"), raw.type, raw.properties);
     };
     // The update half of an upsert, judged on the target row. Mirrors
     // `PATCH /items/{id}` gate for gate, because the two are the same
     // operation reached through different doors: the row's real type
-    // decides the type gate, and the attribution check runs on the row
-    // both as it stands and as it will stand. Before, so an integration
-    // cannot edit a sibling's activity without naming a connection at
-    // all; after, so it cannot re-point its own. The merge mirrors the
-    // shallow property merge the storage layer performs.
-    // One guard for the whole request, so the connection walk behind it is
-    // paid once per space rather than once per entry (D63).
-    const ownershipGuard = createOwnershipGuard(storage);
-    const checkProvenance = (existing: Item): Promise<"own" | "adopt"> =>
-      ownershipGuard(c.get("apiKey"), existing);
-
-    const checkUpdate = async (
-      existing: Item,
-      raw: { properties?: Record<string, unknown> },
-    ): Promise<"own" | "adopt"> => {
-      const key = c.get("apiKey");
+    // decides the type gate, and the mirror rule answers to the row.
+    const checkUpdate = (existing: Item): void => {
       requireTypeAccess(c, existing.type, "write");
-      requireActivityAttribution(key, existing.type, existing.properties);
-      requireActivityAttribution(
-        key,
-        existing.type,
-        raw.properties !== undefined
-          ? { ...existing.properties, ...raw.properties }
-          : existing.properties,
-      );
-      requireMirrorProtection(key, existing);
-      // Last of the row-side gates rather than first, deliberately.
-      // `requireActivityAttribution` above is the only thing that can
-      // refuse a sibling's `system.activity` row, and a test names it as
-      // such; answering ahead of it would leave that test measuring this
-      // guard instead, and the gate it names could then be deleted with
-      // the file still green.
-      return ownershipGuard(key, existing);
+      requireMirrorProtection(existing);
     };
     // The edge half of the dual gate. Same call the direct routes make,
     // so the three doors that accept an inline `edges` payload agree.
@@ -1147,10 +1056,8 @@ export function bulkRoutes(storage: Storage) {
           retype,
           checkWrite,
           checkUpdate,
-          checkProvenance,
           checkEdgeWrite,
           recordEdgeChanges: (changes) => inlineEdgeChanges.push(changes),
-          writerConnectionId: writerConnectionOf(c.get("apiKey")),
         });
         if (atomic && processed.result.outcome === "errored") {
           // In atomic mode a single failure aborts the whole batch. Throw
@@ -1393,34 +1300,18 @@ export function bulkRoutes(storage: Storage) {
       callerKey,
     );
 
-    // The type axis is not the only one a caller can be narrower than.
-    // `system.activity` sits in every runtime credential's type filter —
-    // that grant is what lets an integration report its own progress — so a
-    // filter naming the type matches every integration's rows in the
-    // space, and the worker applies the action to the frozen id list
-    // without re-deriving who may write what. One credential could
-    // rewrite, retier or revoke every sibling's activity in a single
-    // call. Narrowing rather than refusing, because that is the answer
-    // this route already gives on the type axis: a row the caller cannot
-    // write leaves the match set, instead of failing an action over
-    // thousands of rows it legitimately can.
-    //
-    // Judged on the row as it stands and, for `update_properties`, on the
-    // row the patch produces — the same two halves every other door
-    // checks. Before, or an integration edits a sibling's activity without
-    // naming a connection at all; after, or it re-points its own.
+    // The type axis is not the only one a caller can be narrower than: a
+    // row an integration owns is not this caller's to patch. Narrowing
+    // rather than refusing, because that is the answer this route already
+    // gives on the type axis: a row the caller cannot write leaves the match
+    // set, instead of failing an action over thousands of rows it
+    // legitimately can.
 
     const patch = body.action === "update_properties" ? body.patch : undefined;
+    // Property patches answer to the mirror rule; transitions and retiers
+    // stay user gestures on rows an integration owns.
     const mayAct = (item: Item): boolean =>
-      permitsActivityAttribution(callerKey, item.type, item.properties) &&
-      (patch === undefined ||
-        (permitsActivityAttribution(callerKey, item.type, {
-          ...item.properties,
-          ...patch,
-        }) &&
-          // Property patches answer to the mirror rule; transitions and
-          // retiers stay user gestures on rows an integration owns.
-          permitsMirrorWrite(callerKey, item)));
+      patch === undefined || permitsMirrorWrite(item);
 
     // Paginate through matches up to cap+1. The +1 lets us distinguish
     // "exactly at cap" from "over the cap" without a second COUNT query.
@@ -1501,69 +1392,6 @@ export function bulkRoutes(storage: Storage) {
         `Bulk action matched more than ${String(cap)} items`,
         { matched: matched.length, cap },
       );
-    }
-
-    // The connection axis (D63), batched rather than folded into `mayAct`:
-    // it needs one column read over the match set and one connection walk
-    // per space, and `mayAct` runs per row inside the page loop.
-    //
-    // **Narrowing, not refusing**, which is this route's established answer
-    // on every other axis: one unreachable row must not fail an action over
-    // thousands.
-    //
-    // **D64 widened which actions this covers, and the rule now follows the
-    // actor rather than the gesture.** It used to run only where a patch was
-    // being applied, on the reasoning that a transition or a retier is a
-    // person's gesture on a row an integration owns. That was coherent while
-    // two connections of one integration were indistinguishable. Once the
-    // platform refuses B's write to A's row it cannot also permit B to trash
-    // it: there is no coherent position in which the stronger harm is the
-    // less protected one, and `filter.source` plus `action: "transition"`
-    // was one call that reached every row a sibling had written.
-    //
-    // `update_tags`, `update_tier` and `update_timestamp` stay outside this,
-    // deliberately. They are neither the write D63 ruled on nor the destroy
-    // D64 ruled on, and widening to them here would be this change deciding
-    // a question nobody has put.
-    // `purge` is absent deliberately: it asks for `space.item_purge` above,
-    // which no runtime credential holds, so narrowing it would be unreachable.
-    const narrowsOnProvenance = patch !== undefined || action === "transition";
-    if (narrowsOnProvenance && matched.length > 0) {
-      const mine =
-        callerKey?.is_runtime_credential === true
-          ? callerKey.connection_id
-          : null;
-      if (mine !== null && mine !== undefined) {
-        const candidates = matched.filter((item) =>
-          item.source.startsWith(INTEGRATION_SOURCE_PREFIX),
-        );
-        if (candidates.length > 0) {
-          const writers = await storage.items.writersOf(
-            candidates.map((item) => item.id),
-          );
-          const spaces = new Set(
-            candidates.map((item) => item.space_id ?? null),
-          );
-          const liveBySpace = new Map<string | null, ReadonlySet<string>>();
-          for (const space of spaces) {
-            liveBySpace.set(space, await liveConnectionIds(storage, space));
-          }
-          const refused = new Set<string>();
-          for (const item of candidates) {
-            const writer = writers.get(item.id) ?? null;
-            // Null and a dead writer both stay in: this door does not
-            // adopt, and a row nobody live owns is not somebody else's.
-            if (writer === null || writer === mine) continue;
-            const live = liveBySpace.get(item.space_id ?? null);
-            if (live?.has(writer) === true) refused.add(item.id);
-          }
-          if (refused.size > 0) {
-            const kept = matched.filter((item) => !refused.has(item.id));
-            matched.length = 0;
-            matched.push(...kept);
-          }
-        }
-      }
     }
 
     // Dry run: report matched ids without mutating anything. No audit.

@@ -12,7 +12,6 @@ import { items, metadata } from "./schema.js";
 import type { DrizzleDb } from "./connection.js";
 import type { SqliteTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
-import { announcesMetadataChange } from "../../metadata-namespaces.js";
 import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class SqliteMetadataStore implements MetadataStore {
@@ -132,19 +131,15 @@ export class SqliteMetadataStore implements MetadataStore {
     // files are read as a pair, and an ordering that mattered in only one
     // of them would leave the next reader working out which — the answer
     // being easy to get wrong and nothing failing when it is.
-    // One bump for the whole write, however many namespaces it carries.
-    // Any announcing namespace in the set makes the item's change visible,
-    // and a caller writing several together means one change rather than
-    // one per namespace.
-    let bumpedAt: string | null = null;
-    if ("tags" in write || write.namespaces.some(announcesMetadataChange)) {
-      bumpedAt = new Date().toISOString();
-      await tx
-        .update(items)
-        .set({ updated_at: bumpedAt })
-        .where(eq(items.id, itemId))
-        .run();
-    }
+    // One bump for the whole write, however many namespaces it carries: a
+    // caller writing several together means one change rather than one per
+    // namespace.
+    const bumpedAt = new Date().toISOString();
+    await tx
+      .update(items)
+      .set({ updated_at: bumpedAt })
+      .where(eq(items.id, itemId))
+      .run();
     await tx
       .update(metadata)
       .set(

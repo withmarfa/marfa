@@ -15,7 +15,6 @@ import {
   MetadataSchema as BaseMetadataSchema,
 } from "./_schemas.js";
 import { filterMetadataForCaller } from "./util.js";
-import { resolveOrphanScope, withOrphanState } from "./_orphaned.js";
 import { excludesSystemTypes } from "./_system-type-visibility.js";
 import { refuseRenamedTimeQueryParams } from "./_renamed-time-filters.js";
 import {
@@ -246,14 +245,8 @@ export function searchRoutes(storage: Storage) {
     });
 
     const apiKey = c.get("apiKey");
-    // One resolution for the whole result set — see `_orphaned.ts`.
-    const orphanScope = await resolveOrphanScope(
-      storage,
-      results.map((r) => r.item),
-    );
     const filtered = results.map((r) => ({
       ...r,
-      item: withOrphanState(r.item, orphanScope),
       metadata: filterMetadataForCaller(r.metadata, apiKey),
     }));
     return c.json({ results: filtered }, 200);

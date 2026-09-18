@@ -33,13 +33,8 @@ import { createGzip } from "node:zlib";
 import { describe, expect, it, afterEach } from "vitest";
 import * as tar from "tar-stream";
 import { generateId } from "@withmarfa/shared";
-import {
-  createTestContext,
-  request,
-  TEST_API_KEY_SALT,
-} from "../test-utils.js";
+import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext | undefined;
 
@@ -49,19 +44,12 @@ afterEach(async () => {
 });
 
 /** The bounded lifecycle belongs to the `system.*` classification rather
- *  than to any one type, so any system type states the same graph. This one
- *  is used because it is the only one a credential can still write: the
- *  reserved-namespace fence refuses every other `system.*` write at every
- *  door, and a lifecycle door that cannot be reached says nothing about the
- *  lifecycle. Its carve-out costs a Connection and the runtime credential
- *  bound to it, which `systemWriter` below builds. */
+ *  than to any one type, so any system type states the same graph. */
 const SYSTEM_TYPE = "system.activity";
 
-/** The Connection a system row belongs to, and the credential that speaks
- *  for it. A runtime credential may write activity for its own connection
- *  and no other, so both halves travel together. */
+/** The Connection a system row belongs to, built through the store because
+ *  no credential writes a reserved namespace over the wire. */
 async function systemWriter(c: TestContext): Promise<{
-  key: string;
   properties: () => Record<string, unknown>;
 }> {
   const connection = await c.storage.items.create(
@@ -76,22 +64,7 @@ async function systemWriter(c: TestContext): Promise<{
     },
     c.spaceId,
   );
-  const suffix = Math.random().toString(36).slice(2, 10);
-  const key = `marfa_k1_lifecycle_${suffix}`;
-  await c.storage.keys.createRuntimeCredential(
-    {
-      label: `lifecycle-${suffix}`,
-      source: `lifecycle-${suffix}`,
-      type_permissions: { [SYSTEM_TYPE]: "write" },
-      connection_id: connection.id,
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      item_source: `integration:acme.lifecycle.${suffix}`,
-    },
-    hashApiKey(key, TEST_API_KEY_SALT),
-    c.spaceId,
-  );
   return {
-    key,
     properties: () => ({
       connection_id: connection.id,
       severity: "info",
@@ -132,19 +105,21 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
     );
     expect(trashed.state).toBe("trashed");
 
-    const res = await request(c.app, "POST", `/items/${trashed.id}/restore`, {
-      key: writer.key,
-    });
-    expect(res.status).toBe(400);
-
+    // Through the store: no credential writes a reserved namespace over the
+    // wire, so the restore door refuses at the type gate before the
+    // lifecycle question is asked. The lifecycle rule lives in the store.
+    //
     // The message, not just the code. `restore()` already answered
     // `invalid_transition` for a row that is not trashed, so a code-only
     // assertion stays green with the graph check deleted — this row IS
     // trashed, and only the transition check can refuse it.
-    const error = await errorOf(res);
-    expect(error.code).toBe("invalid_transition");
-    expect(error.message).toContain('Transition from "trashed" to "active"');
-    expect(error.message).not.toBe("Item is not trashed");
+    const error = await c.storage.items.restore(trashed.id, c.spaceId).then(
+      () => null,
+      (err: unknown) => err as { code: string; message: string },
+    );
+    expect(error?.code).toBe("invalid_transition");
+    expect(error?.message).toContain('Transition from "trashed" to "active"');
+    expect(error?.message).not.toBe("Item is not trashed");
 
     // Refused means unmoved, not merely un-returned.
     const after = await c.storage.items.getIncludingTrashed(trashed.id);
@@ -179,56 +154,6 @@ describe("POST /items/:id/restore — the restore obeys the type's graph", () =>
 });
 
 describe("POST /items — a create names a state the type's lifecycle contains", () => {
-  it("refuses to create a system item in a state its lifecycle does not contain", async () => {
-    ctx = await createTestContext();
-    const c = ctx;
-
-    const writer = await systemWriter(c);
-    const res = await request(c.app, "POST", "/items", {
-      key: writer.key,
-      body: {
-        type: SYSTEM_TYPE,
-        state: "trashed",
-        properties: writer.properties(),
-      },
-    });
-    expect(res.status).toBe(400);
-
-    const error = await errorOf(res);
-    expect(error.code).toBe("validation_error");
-    // Names the transition rather than repeating the state back, so the
-    // refusal survives a weakening back to a membership test — `trashed` is
-    // a member of the universal list, so `Invalid state: trashed` is exactly
-    // what the old check could never have said.
-    expect(error.message).toContain('"active" to "trashed"');
-  });
-
-  it("admits the states a system lifecycle does contain", async () => {
-    ctx = await createTestContext();
-    const c = ctx;
-
-    const writer = await systemWriter(c);
-
-    // `revoked` is where a `system.*` type's lifecycle actually ends, and
-    // `active` is where it starts. Both have to keep working, or the gate is
-    // refusing the graph rather than enforcing it.
-    for (const state of ["active", "revoked"]) {
-      const res = await request(c.app, "POST", "/items", {
-        key: writer.key,
-        body: {
-          type: SYSTEM_TYPE,
-          state,
-          properties: { ...writer.properties(), summary: `Activity ${state}` },
-        },
-      });
-      expect(res.status).toBe(201);
-      const { item } = (await res.json()) as {
-        item: { id: string; state: string };
-      };
-      expect(item.state).toBe(state);
-    }
-  });
-
   it("still admits archived and trashed for an ordinary type", async () => {
     ctx = await createTestContext();
     const c = ctx;
@@ -343,17 +268,10 @@ describe("POST /admin/restore-archive — an archive replays a state the create 
 
     // And the same chain is still closed at the other end: the row exists,
     // and the graph still refuses to walk it out to active.
-    const restore = await request(
-      c.app,
-      "POST",
-      `/items/${archiveId}/restore`,
-      {
-        key: writer.key,
-      },
+    const restore = await c.storage.items.restore(archiveId, c.spaceId).then(
+      () => null,
+      (err: unknown) => err as { message: string },
     );
-    expect(restore.status).toBe(400);
-    expect((await errorOf(restore)).message).toContain(
-      'Transition from "trashed" to "active"',
-    );
+    expect(restore?.message).toContain('Transition from "trashed" to "active"');
   });
 });

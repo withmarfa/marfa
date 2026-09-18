@@ -12,7 +12,6 @@ import { items, metadata } from "./schema.js";
 import type { PgDb } from "./connection.js";
 import type { PgTxContext } from "./request-context.js";
 import { rowToMetadata } from "./helpers.js";
-import { announcesMetadataChange } from "../../metadata-namespaces.js";
 import { MAX_TAGS_PER_ITEM } from "../../tag-limits.js";
 
 export class PgMetadataStore implements MetadataStore {
@@ -136,18 +135,14 @@ export class PgMetadataStore implements MetadataStore {
     // resolve it by aborting one after `deadlock_timeout` — an
     // intermittent 500 on a write that is otherwise fine. Writing the
     // item first means every path takes the two rows in one order.
-    // One bump for the whole write, however many namespaces it carries.
-    // Any announcing namespace in the set makes the item's change visible,
-    // and a caller writing several together means one change rather than
-    // one per namespace.
-    let bumpedAt: string | null = null;
-    if ("tags" in write || write.namespaces.some(announcesMetadataChange)) {
-      bumpedAt = new Date().toISOString();
-      await tx
-        .update(items)
-        .set({ updated_at: bumpedAt })
-        .where(eq(items.id, itemId));
-    }
+    // One bump for the whole write, however many namespaces it carries: a
+    // caller writing several together means one change rather than one per
+    // namespace.
+    const bumpedAt = new Date().toISOString();
+    await tx
+      .update(items)
+      .set({ updated_at: bumpedAt })
+      .where(eq(items.id, itemId));
     await tx
       .update(metadata)
       .set(
@@ -432,17 +427,12 @@ export class PgMetadataStore implements MetadataStore {
     return this.db.transaction(async (tx) => {
       // The lock below is taken on `metadata`, so on the one path that
       // also writes `items` it would invert the order `writeSidecar`
-      // exists to hold. Claim the item row first there. Only reached for
-      // an announcing namespace: where nothing writes `items`, there are
-      // not two rows to order, and the reserved runtime namespaces stay
-      // on the single-lock path they have always had.
-      if (announcesMetadataChange(namespace)) {
-        await tx
-          .select({ id: items.id })
-          .from(items)
-          .where(eq(items.id, itemId))
-          .for("update");
-      }
+      // exists to hold. Claim the item row first.
+      await tx
+        .select({ id: items.id })
+        .from(items)
+        .where(eq(items.id, itemId))
+        .for("update");
       const [row] = await tx
         .select()
         .from(metadata)

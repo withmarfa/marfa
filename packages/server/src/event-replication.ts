@@ -119,15 +119,11 @@ export function eventFromRow(row: {
   event_type: string;
   space_id: string | null;
   payload: string;
-  originating_connection_id: string | null;
-  hop_count: number | null;
   enable_fanout?: boolean;
 }): ItemEventWithId | EdgeEventWithId | null {
   const parsed = JSON.parse(row.payload) as ItemPayload | EdgePayload;
   const common = {
     spaceId: row.space_id ?? undefined,
-    originatingConnectionId: row.originating_connection_id,
-    hopCount: row.hop_count ?? 0,
     // Carried off the row rather than defaulted, so a writer's decision to
     // decline outbound work reaches the process that would have done it.
     // The bridge's drainer is elected across the cluster and is routinely

@@ -25,11 +25,6 @@ import { isSpacePermission } from "@withmarfa/shared";
  */
 export const SPACE_PERMISSION_LABELS: Record<SpacePermission, string> = {
   "space.webhooks": "Set up webhooks that send your data elsewhere",
-  "space.connections": "Connect services, and decide what each one can reach",
-  "space.upstream_access":
-    "Use your connected accounts directly, with everything they can do",
-  "space.credentials":
-    "Register and remove the sign-in details your connections use",
   "space.schema": "Change and remove your type definitions",
   "space.usage": "See how much of your space is used",
   "space.settings": "Change your space settings",
@@ -50,9 +45,6 @@ export const SPACE_PERMISSION_LABELS: Record<SpacePermission, string> = {
  */
 export const SPACE_PERMISSION_SHORT: Record<SpacePermission, string> = {
   "space.webhooks": "set up webhooks that send your data elsewhere",
-  "space.connections": "connect and disconnect services",
-  "space.upstream_access": "use your accounts at connected services directly",
-  "space.credentials": "hold the sign-in details behind your connections",
   "space.schema": "change your type definitions",
   "space.usage": "see how much of your space is used",
   "space.settings": "change your space settings",

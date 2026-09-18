@@ -26,10 +26,6 @@ import {
  * Server state for items. `payload` is the item as the server returned it;
  * the columns beside it are the ones the engine filters and guards on, so a
  * version comparison never has to parse JSON.
- *
- * Fields the server derives per read are stripped before the row is stored
- * (see `stripDerived` in `server-state.ts`) — persisting one would let a
- * stale answer outlive the read it came from.
  */
 export const serverItems = sqliteTable(
   "server_items",

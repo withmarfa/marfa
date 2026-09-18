@@ -85,7 +85,6 @@ describe("bootstrap mode", () => {
       oidcProviders: [],
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
-      mcpEnabled: false,
     });
 
     // The one unauthenticated write in the product is bound to the host: the

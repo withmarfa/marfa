@@ -9,7 +9,7 @@ import {
   createSqliteStorage,
   FilesystemBlobBackend,
   initEventLog,
-  __resetCycleDetectionForTests,
+  __resetEventLogForTests,
   type AppConfig,
   type Storage,
 } from "@withmarfa/server";
@@ -110,7 +110,6 @@ function baseConfig(overrides?: Partial<AppConfig>): AppConfig {
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
     ...overrides,
   };
 }
@@ -250,7 +249,7 @@ export async function createKeysModeFixture(
       // the binding is module-global and outlives the storage handle it
       // points at, so a suite that ran after this one would be appending
       // to a database that has been closed.
-      if (options?.eventLog) __resetCycleDetectionForTests();
+      if (options?.eventLog) __resetEventLogForTests();
       void storage.close();
     },
   };

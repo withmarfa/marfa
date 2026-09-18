@@ -15,7 +15,6 @@ import type { SourceFilterSettings } from "../storage/filter-sql.js";
 import type { BlobBackend } from "../storage/blob-backend.js";
 import { collectBlobHashes } from "../storage/blob-utils.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { createOrphanResolver, withOrphanState } from "./_orphaned.js";
 import type { PgClient } from "../storage/pg/connection.js";
 import {
   acquireStreamRls,
@@ -294,8 +293,6 @@ export function exportRoutes(
     // real 503 instead of a broken stream behind a 200 already sent.
     const acquiredCtx = await acquireRlsOrRefuse(options, spaceId);
 
-    const orphans = createOrphanResolver(storage);
-
     const stream = new ReadableStream({
       async start(controller) {
         const rlsCtx = acquiredCtx;
@@ -323,21 +320,13 @@ export function exportRoutes(
                 cursor,
               });
 
-              // The resolver is the stream's, so a space is walked once for
-              // the whole export rather than once per page — a million rows
-              // at 200 a page is five thousand walks otherwise, all on the
-              // one reserved RLS connection this stream pins. Per page is
-              // still where it is *called*, because the space is a
-              // property of the rows rather than of the request. See
-              // `_orphaned.ts`.
-              const orphanScope = await orphans.resolve(result.data);
               for (const item of result.data) {
                 const metadata = await storage.metadata.get(item.id);
                 exportedIds.add(item.id);
                 controller.enqueue(
                   encoder.encode(
                     JSON.stringify({
-                      item: withOrphanState(item, orphanScope),
+                      item,
                       metadata,
                     }) + "\n",
                   ),
@@ -453,7 +442,6 @@ async function handleArchiveExport(
 
   const rlsCtx = await acquireRlsOrRefuse(options, spaceId);
 
-  const orphans = createOrphanResolver(storage);
   const lines: string[] = [];
   const edgeLines: string[] = [];
   const typeLines: string[] = [];
@@ -483,16 +471,12 @@ async function handleArchiveExport(
           limit: 200,
           cursor,
         });
-        // Same stream-scoped resolver as the NDJSON path. A restore reads
-        // the fields it writes by name, so the derived one rides along in
-        // the archive without becoming something a restore could store.
-        const orphanScope = await orphans.resolve(result.data);
         for (const item of result.data) {
           const metadata = await storage.metadata.get(item.id);
           exportedIds.add(item.id);
           lines.push(
             JSON.stringify({
-              item: withOrphanState(item, orphanScope),
+              item,
               metadata,
             }),
           );

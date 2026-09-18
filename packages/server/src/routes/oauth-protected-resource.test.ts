@@ -52,23 +52,6 @@ describe("protected resource metadata (RFC 9728)", () => {
       expandBundlesToScopes(getPermissionBundles()),
     );
   });
-
-  it("serves the path-aware document for the MCP endpoint", async () => {
-    const base = "https://example.test";
-    ctx = await createTestContext({
-      authAllowSignup: false,
-      authBaseUrl: base,
-    });
-    const res = await request(
-      ctx.app,
-      "GET",
-      "/.well-known/oauth-protected-resource/mcp",
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as PrmDoc;
-    expect(body.resource).toBe(`${base}/mcp`);
-    expect(body.authorization_servers).toEqual([`${base}/auth`]);
-  });
 });
 
 describe("authorization-server discovery at spec-formed URLs", () => {

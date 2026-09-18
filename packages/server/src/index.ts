@@ -45,12 +45,10 @@ import {
   DcrClientCleaner,
   DeviceCodeCleaner,
   BlobOrphanCleaner,
-  RuntimeCredentialReaper,
   runSpaceCleanup,
 } from "./storage/retention.js";
-import { ConnectionUpgrader } from "./connections/auto-upgrade.js";
 import type { SpaceFanout } from "./storage/retention.js";
-import { initEventLog, defaultCycleDetectionWiring } from "./pubsub.js";
+import { initEventLog } from "./pubsub.js";
 import {
   createPgEventNotifier,
   startEventReplication,
@@ -64,16 +62,6 @@ import {
   type PgClient,
   type PgDb,
 } from "./storage/pg/connection.js";
-import {
-  tryStartLocalIntegrationRuntime,
-  loadInTreeRegistrations,
-  type LocalRuntimeBundle,
-} from "./integrations/local-runtime/index.js";
-import { DEFAULT_RUNTIME_CREDENTIAL_TTL_MS } from "./integrations/local-runtime/credentials.js";
-import {
-  describeReconcile,
-  reconcileShippedCatalog,
-} from "./integrations/catalog-reconcile.js";
 import { TextEnrichmentSweeper } from "./enrichment/sweeper.js";
 import { TesseractOcr } from "./enrichment/ocr.js";
 import {
@@ -220,7 +208,6 @@ async function main() {
     ((storage.pgStreamClient ?? storage.pgClient) as PgClient | undefined) ??
     null;
   initEventLog(storage.eventLog, {
-    ...defaultCycleDetectionWiring(storage),
     ...(storage.pgDb !== undefined && {
       notifyRemote: createPgEventNotifier(storage.pgDb as PgDb),
     }),
@@ -794,70 +781,6 @@ async function main() {
     );
   }
 
-  // Runtime credentials are minted per dispatch, so the table grows with
-  // traffic unless something retires them. The mint path supersedes its own
-  // siblings and the bearer gate refuses expired rows, but neither reaches
-  // credentials for connections that stopped dispatching, nor rows minted
-  // before expiry stamping existed. Interval `0` disables the job.
-  const runtimeCredentialReaperIntervalMs =
-    config.runtimeCredentialReaperIntervalMs ?? 3_600_000;
-  const runtimeCredentialReaper =
-    runtimeCredentialReaperIntervalMs > 0
-      ? new RuntimeCredentialReaper(
-          storage,
-          DEFAULT_RUNTIME_CREDENTIAL_TTL_MS,
-          runtimeCredentialReaperIntervalMs,
-          undefined,
-          storage.coordination,
-        )
-      : undefined;
-  if (runtimeCredentialReaper) {
-    scheduleJob(
-      {
-        name: "runtime-credential-reap",
-        logName: "Runtime credential reap",
-        intervalMs: runtimeCredentialReaperIntervalMs,
-        firstRunDelaySeconds: 30,
-        runOnce: () => runtimeCredentialReaper.runScheduled(),
-      },
-      () => {
-        runtimeCredentialReaper.start();
-      },
-    );
-  }
-
-  // Connections follow the manifest their own deployment ships. The boot
-  // reconcile registers new versions and re-binds nothing, so without this
-  // every manifest bump leaves drift standing until somebody clears it by
-  // hand, and a number that is never green is one nobody reads. A widening
-  // move still waits for a person.
-  const connectionUpgradeIntervalMs =
-    config.connectionUpgradeIntervalMs ?? 3_600_000;
-  const connectionUpgrader =
-    connectionUpgradeIntervalMs > 0
-      ? new ConnectionUpgrader(
-          storage,
-          connectionUpgradeIntervalMs,
-          storage.coordination,
-        )
-      : undefined;
-  if (connectionUpgrader) {
-    scheduleJob(
-      {
-        name: "connection-auto-upgrade",
-        logName: "Connection auto-upgrade",
-        intervalMs: connectionUpgradeIntervalMs,
-        // Behind the boot reconcile, which registers the versions this
-        // pass then moves connections onto.
-        firstRunDelaySeconds: 45,
-        runOnce: () => connectionUpgrader.runScheduled(),
-      },
-      () => {
-        connectionUpgrader.start();
-      },
-    );
-  }
-
   // Text extraction from uploaded files, on by default: a document nobody
   // can find is barely stored. The OCR engine is constructed eagerly but
   // loads nothing until an image actually reaches it.
@@ -1031,105 +954,6 @@ async function main() {
 
   const oidcSigner = await OidcSigner.init(storage);
 
-  // Bring the integration catalog up to what this build ships, before the
-  // runtime starts dispatching against it. Registers absent (name, version)
-  // pairs only: an existing row is the manifest some connection is already
-  // resolving, and moving a connection forward is a deliberate, consented
-  // act rather than a side effect of a deploy.
-  //
-  // Not gated on the dialect. Integrations only RUN on Postgres, but the
-  // catalog describes what is installable rather than what is dispatching,
-  // and a SQLite instance whose catalog silently disagreed with its build
-  // would be the same defect in a quieter place.
-  try {
-    const shipped = await reconcileShippedCatalog(storage, {
-      integrationsRoot: resolveIntegrationsRoot(),
-    });
-    for (const skip of shipped.skipped) {
-      log("warn", "Integration manifest not loaded for the catalog", {
-        integration: skip.dirName,
-        reason: skip.reason,
-      });
-    }
-    if (shipped.rootUnresolved) {
-      log(
-        "warn",
-        "No installed integrations reached the catalog: the integrations root could not be resolved. Set MARFA_INTEGRATIONS_ROOT.",
-      );
-    }
-    log("info", describeReconcile(shipped.result), {
-      registered: shipped.result.registered.map(
-        (r) => `${r.name}@${r.version}`,
-      ),
-      failed: shipped.result.failed,
-    });
-  } catch (err) {
-    // A catalog that could not reconcile is a stale catalog, which is the
-    // state this instance was already in. Say so and boot; refusing to
-    // start would turn a drift problem into an outage.
-    log("error", "Integration catalog reconcile failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-  }
-
-  // Integrations run in-process (Node + pg-boss), which needs Postgres —
-  // on SQLite we skip them rather than crash the zero-config quickstart.
-  let localRuntime: LocalRuntimeBundle | null = null;
-  if (config.storageDialect !== "pg") {
-    // Don't construct pg-boss against a SQLite (empty) connection string —
-    // that crashes boot. Skip with a log instead.
-    log(
-      "info",
-      "Integrations are off: the integration runtime needs Postgres and this instance is on SQLite. " +
-        "Set DB_DIALECT=pg to enable in-process integrations.",
-    );
-  } else {
-    try {
-      const integrationsRoot = resolveIntegrationsRoot();
-      const registrations = integrationsRoot
-        ? await loadInTreeRegistrations({ integrationsRoot })
-        : [];
-      if (registrations.length === 0) {
-        log(
-          "warn",
-          "Integration runtime enabled but no integrations ship a dist/local.js handler entry.",
-        );
-      }
-      // The shared pg-boss instance always exists on this branch: it is
-      // constructed for every Postgres deployment above (direct-endpoint
-      // and bounded-pool handling included), and this block is unreachable
-      // on SQLite.
-      if (!boss) {
-        throw new Error(
-          "pg-boss instance missing on a Postgres deployment; the shared instance should have been constructed at boot",
-        );
-      }
-      localRuntime = await tryStartLocalIntegrationRuntime({
-        storage,
-        config,
-        registrations,
-        boss,
-        // Handlers write back over HTTP. Localhost is right whenever the
-        // web tier shares the process; a split worker container points
-        // MARFA_API_URL at the web service instead.
-        apiUrl: config.apiUrl ?? `http://localhost:${String(config.port)}`,
-        // The web role keeps the enqueue side (webhook receipt, the
-        // dead-letter admin surface, the bridge election) but registers
-        // no queue workers, so dispatch runs only where the role says.
-        dispatch: runsWorker,
-      });
-      log("info", "Local integration runtime started", {
-        registrations: registrations.length,
-        dispatch: runsWorker,
-      });
-    } catch (err) {
-      log("error", "Local integration runtime failed to start", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-  }
-
   // Boot guard: warn loud if hosted mode runs with an empty CORS allowlist —
   // browser clients would fail their cross-origin API calls with no obvious
   // cause. A warning, not a hard stop (API-only hosted deployments are fine).
@@ -1217,9 +1041,6 @@ async function main() {
       config,
       emailTransport,
       oidcSigner,
-      localRuntime?.app,
-      localRuntime?.deadLetterOps,
-      localRuntime?.runtime,
     );
     server = serve({ fetch: app.fetch, port: config.port }, (info) => {
       log("info", `Marfa server listening on port ${String(info.port)}`);
@@ -1289,7 +1110,6 @@ async function main() {
     grantInactivityRetirer?.stop();
     deviceCodeCleaner.stop();
     blobOrphanCleaner?.stop();
-    runtimeCredentialReaper?.stop();
     enrichmentSweeper?.stop();
     bulkActionWorker.stop();
     bulkActionGc.stop();
@@ -1299,16 +1119,11 @@ async function main() {
     // boot. Fire-and-forget here loses that race to process.exit below,
     // and every deploy then stalls each mid-tick job until its
     // expireInSeconds elapses.
-    // The supervisor's stop() drains the shared pg-boss. `boss` without
-    // `localRuntime` cannot happen: both exist on every Postgres boot
-    // (a runtime start failure aborts boot before this handler is
-    // registered) and neither exists on SQLite.
-    if (localRuntime) {
+    if (boss) {
       await withTimeout(
-        localRuntime.bridge.stop(),
+        boss.stop({ graceful: true, timeout: SHUTDOWN_STEP_TIMEOUT_MS }),
         SHUTDOWN_STEP_TIMEOUT_MS,
       ).catch(() => undefined);
-      await localRuntime.runtime.stop().catch(() => undefined);
     }
 
     // Each step bounded and reported separately: a shared catch produced a
@@ -1406,20 +1221,6 @@ function closeServer(server: {
     // close open for the whole grace period.
     server.closeIdleConnections?.();
   });
-}
-
-/**
- * Where this deployment's installed integrations are, or null.
- *
- * There is no default. Integrations are not part of this repository, so
- * nothing relative to the running bundle names a directory that would hold
- * them: the packaged image sets `MARFA_INTEGRATIONS_ROOT` to the tree it
- * staged, and anything else that has integrations sets it to wherever it
- * put them. Null is reported rather than swallowed, so a deployment that
- * expected integrations and reconciled none is told why.
- */
-function resolveIntegrationsRoot(): string | null {
-  return process.env.MARFA_INTEGRATIONS_ROOT ?? null;
 }
 
 main().catch((err: unknown) => {

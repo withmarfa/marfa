@@ -18,24 +18,19 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
-const CONNECTION_ID = "conn_upsert_validation";
-const ITEM_SOURCE = runtimeCredentialItemSource({ name: CONNECTION_ID });
+const ITEM_SOURCE = "upsert-validation";
 const RUNTIME_KEY = "marfa_k1_test_upsert_validation";
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  await ctx.storage.keys.createRuntimeCredential(
+  await ctx.storage.keys.create(
     {
       label: "upsert-validation",
-      source: "upsert-validation",
+      source: ITEM_SOURCE,
       type_permissions: { "*": "write" },
-      connection_id: CONNECTION_ID,
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      item_source: ITEM_SOURCE,
     },
     hashApiKey(RUNTIME_KEY, TEST_API_KEY_SALT),
     ctx.spaceId,
@@ -131,27 +126,6 @@ describe("a re-sync carrying a value of the wrong shape", () => {
 });
 
 describe("an ordinary re-sync", () => {
-  it("still clears an optional field the upstream dropped", async () => {
-    // The null-clearing contract is why this path exists: an upstream that
-    // removed a value has to be able to say so. Only a required field is
-    // out of bounds.
-    const id = await seed("upstream-optional", {
-      title: "Lunch",
-      place: "Canteen",
-    });
-    const res = await resync("upstream-optional", { place: null });
-    expect(res.status, await res.clone().text()).toBe(200);
-
-    const read = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.spaceKey,
-    });
-    const item = (await read.json()) as {
-      item: { properties: Record<string, unknown> };
-    };
-    expect(item.item.properties.place).toBeUndefined();
-    expect(item.item.properties.title).toBe("Lunch");
-  });
-
   it("still updates values the way it always did", async () => {
     const id = await seed("upstream-plain", { title: "Before" });
     const res = await resync("upstream-plain", { title: "After" });

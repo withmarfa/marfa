@@ -4,7 +4,6 @@ export default defineConfig({
   entry: {
     index: "src/index.ts",
     lib: "src/lib.ts",
-    "worker-entry": "src/integrations/local-runtime/worker-entry.ts",
     // OpenTelemetry bootstrap, loaded via `node --import
     // ./dist/instrumentation.js` before the main entry so HTTP
     // instrumentation patches modules before they load.
@@ -22,24 +21,6 @@ export default defineConfig({
     // process, because Railway execs the pre-deploy command rather than running
     // it through a shell and `a && b` silently runs only `a`.
     predeploy: "src/scripts/predeploy.ts",
-    // The client manifests, as their own entry so the in-image verification
-    // can read the set this build actually ships without importing the
-    // server. Importing `lib.js` would pull the whole route tree and the
-    // storage layer in to read one array, and hardcoding the names in the
-    // verification would be a fourth hand-maintained enumeration of a set
-    // the code already states once.
-    //
-    // It costs a bundle pass and no dts pass: `dts` names its entries
-    // explicitly, which is what keeps the heap ceiling above this.
-    "client-manifests": "src/integrations/client-manifests.ts",
-    // The catalog's manifest loader, as its own entry for the same reason
-    // and on the same terms. The in-image verification runs it against the
-    // integrations the image staged, so that what the build accepts is the
-    // loader that runs at boot rather than a second opinion about validity
-    // written beside it. Its graph is the loader, the directory walk and
-    // the validator; `@withmarfa/shared` is external, so nothing of the
-    // route tree or the storage layer comes with it.
-    "load-manifests": "src/integrations/load-manifests.ts",
   },
   format: ["esm"],
   // Declarations for the one entry anything imports. `exports` exposes
@@ -59,5 +40,5 @@ export default defineConfig({
   // pg-boss opens its own pg pool and creates the pgboss schema; resolve it
   // from node_modules at runtime rather than bundling it. Only the local (pg)
   // integration substrate imports it, dynamically.
-  external: ["@withmarfa/runtime-sdk", "@withmarfa/shared", "pg-boss"],
+  external: ["@withmarfa/shared", "pg-boss"],
 });

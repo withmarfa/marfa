@@ -22,12 +22,6 @@ export default [
             "vitest.shared.ts",
             "packages/*/tsup.config.ts",
             "packages/*/vitest.config.ts",
-            // The server's dispatch fixture is a nested workspace
-            // package, so its tsup config falls through as well. No
-            // vitest config: the fixture is driven by the image
-            // verification and the worker-entry smoke, both of which
-            // need it built, and neither is vitest.
-            "packages/server/fixtures/*/tsup.config.ts",
           ],
           // Default is 8. Every workspace package contributes a
           // tsup.config and a vitest.config that fall through to the
@@ -162,7 +156,6 @@ export default [
       "**/.wrangler/",
       // Another repository's checkout, staged into the server image. It is
       // linted where it lives, and it is in no tsconfig project here.
-      "integrations-src/",
       "packages/*/scripts/*.mjs",
       // Nested worktrees are separate checkouts that run their own lint;
       // descending into them surfaces work in progress from other branches.

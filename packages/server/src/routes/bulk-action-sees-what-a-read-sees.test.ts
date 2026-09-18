@@ -7,7 +7,6 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import type { Item, ItemState } from "@withmarfa/shared";
-import { hashApiKey } from "../middleware/auth.js";
 
 /**
  * The bulk-action door matches what the read doors match.
@@ -41,29 +40,11 @@ import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
 
-/**
- * A runtime credential and the connection it speaks for. The reserved rows
- * below are attributed to that connection, because the attribution rule
- * narrows a runtime credential to its own.
- */
+/** The connection the reserved rows below are attributed to. */
 const connectionId = "conn-bulk-action-probe";
-let runtimeKey: string;
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  runtimeKey = `marfa_k1_runtime_${Math.random().toString(36).slice(2)}`;
-  await ctx.storage.keys.createRuntimeCredential(
-    {
-      label: "bulk-action-runtime",
-      source: `bulk-action-runtime-${Math.random().toString(36).slice(2)}`,
-      type_permissions: { "core.note": "write", "system.activity": "write" },
-      connection_id: connectionId,
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      item_source: "integration.acme.probe",
-    },
-    hashApiKey(runtimeKey, "test-salt"),
-    ctx.spaceId,
-  );
 });
 
 afterAll(async () => {
@@ -155,17 +136,6 @@ describe("the bulk-action door and the read doors agree about system rows", () =
       filter: `properties.summary eq "ba-${marker}"`,
     });
     expect(ids).not.toContain(activityId);
-
-    // Not vacuous: the same grammar, with the namespace named and on the one
-    // credential the fence admits, finds it.
-    const named = await matchedIds(
-      {
-        type: "system.activity",
-        filter: `properties.summary eq "ba-${marker}"`,
-      },
-      runtimeKey,
-    );
-    expect(named).toContain(activityId);
   });
 
   it("does not match a revoked reserved row through the state predicate", async () => {
@@ -189,33 +159,6 @@ describe("the bulk-action door and the read doors agree about system rows", () =
       filter: 'state eq "revoked"',
     });
     expect(ids).not.toContain(revoked.id);
-
-    const named = await matchedIds(
-      {
-        tags: [tag],
-        type: "system.activity",
-        filter: 'state eq "revoked"',
-      },
-      runtimeKey,
-    );
-    expect(named).toContain(revoked.id);
-  });
-
-  it("matches one when the filter names the namespace", async () => {
-    const marker = Math.random().toString(36).slice(2, 8);
-    const { activityId } = await seedPair(marker);
-
-    // The opt-in, and the reason the exclusion is not simply unconditional:
-    // a caller the fence admits, naming `system.activity`, has said what it
-    // wants and refusing it would answer a different question. This is also
-    // the control that says the two cases above fail for the right reason —
-    // if the door excluded the namespace unconditionally they would pass
-    // anyway.
-    const ids = await matchedIds(
-      { type: "system.activity", tags: [marker] },
-      runtimeKey,
-    );
-    expect(ids).toContain(activityId);
   });
 
   it("refuses the opt-in to a credential the fence does not admit", async () => {
@@ -274,17 +217,6 @@ describe("the bulk-action door and the read doors agree about system rows", () =
       raw,
     );
     expect(ownReach?.ids ?? []).toContain(noteId);
-
-    // And the runtime credential naming the same reserved type finds it, so
-    // the refusal is about the credential rather than about the filter.
-    const admitted = await matchedIds(
-      {
-        type: "system.activity",
-        tags: [marker],
-      },
-      runtimeKey,
-    );
-    expect(admitted).toContain(activityId);
   });
 });
 

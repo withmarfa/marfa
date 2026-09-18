@@ -60,9 +60,9 @@ async function createKey(overrides: Record<string, unknown> = {}): Promise<{
 
 describe("the key a create route returns", () => {
   // Two tests, because the defect has two halves and one assertion cannot
-  // reach both. This one pins the HANDLER: an expiry is settable only through
-  // `createRuntimeCredential`, which no route reaches, so a key minted through
-  // a door has none by construction and the response must not carry the field.
+  // reach both. This one pins the HANDLER: no route can mint an expiry, so a
+  // key minted through a door has none by construction and the response must
+  // not carry the field.
   //
   // It says nothing about the declaration. Re-adding `expires_at` to the
   // shared schema leaves this green, because a declaration does not put a
@@ -203,48 +203,6 @@ describe("PATCH /keys/{id}", () => {
     expect(res.status).toBe(400);
     const err = (await res.json()) as { error: { message: string } };
     expect(err.error.message).toMatch(/source.*immutable/i);
-  });
-
-  // The one response here that can carry an expiry, and it declared the field
-  // without ever sending it. Any key is patchable, a runtime credential
-  // included, and those always carry a hard lifetime bound — so a caller
-  // updating a credential's permissions got the credential back with the one
-  // field saying when it stops working missing from it.
-  //
-  // Minted through the store, because `createRuntimeCredential` is the only
-  // mint that can stamp an expiry and no route reaches it. A key made through
-  // a create door has none by construction, so patching one of those would
-  // leave this green whatever the handler did.
-  it("returns the expiry the stored row carries", async () => {
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
-    const minted = await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: `runtime-${suffix}`,
-        source: `runtime-${suffix}`,
-        type_permissions: {},
-        connection_id: `conn-${suffix}`,
-        expires_at: expiresAt,
-        item_source: null,
-      },
-      hashApiKey(`marfa_k1_runtime_${suffix}`, TEST_API_KEY_SALT),
-      ctx.spaceId,
-    );
-    expect(minted.expires_at).toBe(expiresAt);
-
-    const res = await request(ctx.app, "PATCH", `/keys/${minted.id}`, {
-      key: ctx.spaceKey,
-      body: { label: "renamed runtime" },
-    });
-    expect(res.status).toBe(200);
-    const updated = (await res.json()) as Record<string, unknown>;
-
-    expect(updated.label).toBe("renamed runtime");
-    // Against the stored row rather than against the literal alone, so the
-    // assertion is that the response says what the key says.
-    const stored = await ctx.storage.keys.get(minted.id);
-    expect(stored?.expires_at).toBe(expiresAt);
-    expect(updated.expires_at).toBe(stored?.expires_at);
   });
 
   it("returns 404 for an unknown key id", async () => {
@@ -496,7 +454,6 @@ describe("bootstrap sentinel", () => {
       oidcProviders: [],
       rateLimitDefaultLimit: 1000,
       rateLimitWindowMs: 60_000,
-      mcpEnabled: false,
       ...overrides,
     });
     const bootstrapSecret = await ensureBootstrapSecret(storage);
@@ -1424,14 +1381,14 @@ describe("POST /keys — a session mints, clamped to its own grant", () => {
       body: {
         label: "step two",
         source: "step-two",
-        space_permissions: ["space.credentials"],
+        space_permissions: ["space.webhooks"],
       },
     });
     expect(stepTwo.status).toBe(403);
     const err = (await stepTwo.json()) as {
       error: { details?: { required_scope?: string } };
     };
-    expect(err.error.details?.required_scope).toBe("space.credentials");
+    expect(err.error.details?.required_scope).toBe("space.webhooks");
   });
 
   it("clamps the update door, which reaches keys the session never minted", async () => {

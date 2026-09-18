@@ -12,7 +12,6 @@ import type {
   WebhookDelivery,
   CreateWebhookInput,
   UpdateWebhookInput,
-  InboundWebhookEvent,
   PaginatedResult,
   SearchResult,
   AncestorUnavailableResponse,
@@ -528,21 +527,6 @@ export interface ItemGetOptions {
 }
 
 /**
- * The connection that wrote a row (D63), carried on the write inputs.
- *
- * **Server-internal, deliberately not on `CreateItemInput` /
- * `UpdateItemInput`.** Those are `@withmarfa/shared`'s published types and
- * the SDK's own parameter types, so a field declared there is one a client
- * can set — and this one is server-set from the calling runtime
- * credential, gated on `is_runtime_credential` rather than on the shape of
- * `source`. Declaring it publicly would invite callers to pass a value that
- * every route strips, which is a worse surface than not offering it.
- */
-export interface ItemWriterInput {
-  written_by_connection_id?: string | null;
-}
-
-/**
  * How this write wants a collision handled, carried down to the store because
  * the resolution happens inside the update's transaction.
  *
@@ -608,14 +592,10 @@ export interface RestoredRowInput {
   version?: number;
 }
 
-export type StoredCreateItemInput = CreateItemInput &
-  ItemWriterInput &
-  RestoredRowInput;
+export type StoredCreateItemInput = CreateItemInput & RestoredRowInput;
 
 export type StoredCreateEdgeInput = CreateEdgeInput & RestoredRowInput;
-export type StoredUpdateItemInput = UpdateItemInput &
-  ItemWriterInput &
-  ConflictResolutionInput;
+export type StoredUpdateItemInput = UpdateItemInput & ConflictResolutionInput;
 
 export interface ItemStore {
   create(input: StoredCreateItemInput, spaceId?: string): Promise<Item>;
@@ -645,28 +625,6 @@ export interface ItemStore {
     spaceId?: string,
     opts?: { includeTrashed?: boolean },
   ): Promise<Map<string, Item>>;
-  /**
-   * The connection recorded as having written each of `ids` (D63).
-   *
-   * One indexed `id IN (...)` returning a single column, because the value
-   * is deliberately not on `Item` — putting it there would disclose which
-   * install wrote each row to every reader, including narrowly-scoped app
-   * principals holding no read on `system.connection`, for a fact only the
-   * server's own orphan derivation and one error body consume.
-   *
-   * **An id absent from the map is one no row was found for**, which is not
-   * the same event as a row whose column is null — but both mean the same
-   * thing to every caller here, and deliberately so: no connection is
-   * recorded as owning that row, so it falls back to the coarser
-   * `(space, manifest name)` answer. Stating it rather than leaving it to be
-   * inferred, because the two arriving as one value is the kind of thing a
-   * later reader assumes was an oversight.
-   *
-   * Callers pass ids from rows they have already read and are already
-   * authorised to see, so this adds no disclosure of its own and takes no
-   * space fence.
-   */
-  writersOf(ids: readonly string[]): Promise<Map<string, string | null>>;
   /**
    * Like `get`, but returns trashed items too. Intended for callers that
    * need to read an item's metadata (e.g. its `type` for a permission
@@ -1180,27 +1138,6 @@ export interface KeyStore {
     keyHash: string,
     spaceId?: string,
   ): Promise<ApiKey>;
-  /**
-   * Mint a runtime credential. Distinct from `create` because runtime
-   * credentials carry the load-bearing `is_runtime_credential` and
-   * `connection_id` stamps that the extension gate keys off of —
-   * neither field is settable through `CreateKeyInput`. `expires_at` is
-   * required: every runtime credential carries a hard lifetime bound so
-   * the bearer gate refuses it after expiry and the reaper can retire
-   * the row. The one caller is the integration runtime's in-process
-   * mint.
-   */
-  createRuntimeCredential(
-    input: CreateKeyInput & {
-      connection_id: string;
-      expires_at: string;
-      /** Null when the manifest cannot be resolved: such a credential holds
-       *  no type grants and gets no provenance identity. */
-      item_source: string | null;
-    },
-    keyHash: string,
-    spaceId?: string,
-  ): Promise<ApiKey>;
   list(): Promise<ApiKey[]>;
   get(id: string): Promise<ApiKey | null>;
   /**
@@ -1209,15 +1146,6 @@ export interface KeyStore {
    * empty array when the space has no keys.
    */
   listForSpace(spaceId: string): Promise<ApiKey[]>;
-  /**
-   * Active (non-revoked) keys whose `connection_id` matches. The uninstall
-   * and upgrade pipelines use this to locate the runtime credentials bound
-   * to a connection before revoking them. Narrows to `spaceId` when one is
-   * supplied and to nothing at all when it is not, the same reading of an
-   * absent space every other fence here takes — see
-   * `storage/space-condition.ts`. Indexed on the `connection_id` column.
-   */
-  listByConnectionId(connectionId: string, spaceId?: string): Promise<ApiKey[]>;
   validate(
     keyHash: string,
   ): Promise<(ApiKey & { key_hash: string; revoked_at: string | null }) | null>;
@@ -1238,55 +1166,11 @@ export interface KeyStore {
   updateLastUsed(id: string): Promise<void>;
   count(): Promise<number>;
   /**
-   * Revoke every runtime credential whose `expires_at` is strictly before
-   * `nowIso`. Belt-and-braces alongside the bearer gate's own expiry
-   * check: the gate refuses expired rows immediately, this sweep marks
-   * them revoked so the 7-day hard-delete window can start counting.
-   * Returns the number of rows revoked.
-   */
-  revokeExpiredRuntimeCredentials(nowIso: string): Promise<number>;
-  /**
-   * Revoke runtime credentials that carry no `expires_at` (rows minted
-   * before expiry stamping existed) whose `created_at` is strictly before
-   * `cutoffIso`. This is the drain for legacy accumulation: pre-expiry
-   * rows never age out on their own, so the reaper retires any of them
-   * older than the default TTL + grace. Returns the number revoked.
-   */
-  revokeRuntimeCredentialsWithoutExpiryOlderThan(
-    cutoffIso: string,
-    nowIso: string,
-  ): Promise<number>;
-  /**
-   * Hard-delete revoked runtime-credential rows whose `revoked_at` is
-   * strictly before `cutoffIso`. Runtime credentials are per-dispatch
-   * machine artifacts — unlike human keys, keeping revoked rows around
-   * indefinitely is pure table growth with no audit value beyond the
-   * short window operators might inspect. Returns the number deleted.
-   */
-  deleteRevokedRuntimeCredentialsOlderThan(cutoffIso: string): Promise<number>;
-  /**
-   * Hard-delete revoked keys that are NOT runtime credentials and whose
-   * `revoked_at` is older than `cutoffIso`. Returns the number deleted.
-   *
-   * The sibling of the call above, deliberately separate rather than a
-   * widening of it. That one reasons its seven-day window as "per-dispatch
-   * machine artifacts, not human credentials", and the reasoning does not
-   * carry: an ordinary key is minted by a person or a suite, and how long
-   * its revocation stays visible is a different judgment. Nothing swept
-   * these at all before, which is how a staging instance reached 3,044
-   * revoked keys older than a week.
+   * Hard-delete revoked keys whose `revoked_at` is older than `cutoffIso`.
+   * Returns the number deleted. Nothing swept these at all before, which is
+   * how a staging instance reached 3,044 revoked keys older than a week.
    */
   deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number>;
-  /**
-   * Instance-wide runtime-credential counters for operator surfaces.
-   * `total` counts every runtime-credential row still in the table
-   * (revoked included — visibility into accumulation is the point);
-   * `active` counts rows that are neither revoked nor past `expires_at`
-   * as of `nowIso`.
-   */
-  countRuntimeCredentials(
-    nowIso: string,
-  ): Promise<{ total: number; active: number }>;
 }
 
 /**
@@ -1425,205 +1309,6 @@ export interface WebhookDeliveryStore {
     nextAttemptAt: string | null,
   ): Promise<void>;
   markDeadLetter(id: string): Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// Inbound webhook subsystem
-// ---------------------------------------------------------------------------
-
-/**
- * Row shape returned by the SQL stores. The route layer translates this
- * to the wire `InboundWebhook` (redacting the secret) at response time.
- * `secret_encrypted` is the raw column value — pass it through
- * `decryptSecret` to recover the plaintext.
- */
-export interface InboundWebhookRow {
-  id: string;
-  space_id: string | null;
-  connection_id: string;
-  external_service_id: string | null;
-  secret_encrypted: string;
-  verification_method: string;
-  verification_adapter_id: string | null;
-  events: string[];
-  disabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-/**
- * Storage for inbound webhook subscriptions. The store is intentionally
- * narrow — manifest validation and verification dispatch happen at the
- * route layer; this interface just persists rows.
- */
-export interface InboundWebhookStore {
-  create(input: {
-    id: string;
-    space_id?: string;
-    connection_id: string;
-    external_service_id?: string;
-    secret_encrypted: string;
-    verification_method: string;
-    verification_adapter_id?: string;
-    events: string[];
-  }): Promise<InboundWebhookRow>;
-  get(id: string, spaceId?: string): Promise<InboundWebhookRow | null>;
-  /**
-   * `getAny` — looks up a row regardless of space scope. Used by the
-   * public unauth POST /webhooks/inbound/:id receipt path, which has no
-   * caller credential to scope by; space isolation is enforced at the
-   * subscription / read paths instead.
-   */
-  getAny(id: string): Promise<InboundWebhookRow | null>;
-  listByConnection(
-    connectionId: string,
-    spaceId?: string,
-  ): Promise<InboundWebhookRow[]>;
-  /**
-   * Flip the subscription's `disabled` flag. Returns whether the flag
-   * actually moved, so a caller counting what it disabled counts rows it
-   * changed rather than rows it looked at.
-   */
-  setDisabled(id: string, disabled: boolean): Promise<boolean>;
-}
-
-export interface InboundWebhookEventStore {
-  /**
-   * Insert a receipt row. On a duplicate (inbound_webhook_id,
-   * external_delivery_id) pair, the implementation MUST NOT throw —
-   * the existing row id is returned with `inserted: false` so the
-   * route can distinguish a fresh receipt from a duplicate retry.
-   */
-  insert(input: {
-    id: string;
-    inbound_webhook_id: string;
-    external_delivery_id: string;
-    received_at: string;
-    payload: string;
-    verified: boolean;
-    processing_error?: string;
-  }): Promise<{ id: string; inserted: boolean }>;
-  list(
-    inboundWebhookId: string,
-    limit?: number,
-  ): Promise<InboundWebhookEvent[]>;
-  get(id: string): Promise<InboundWebhookEvent | null>;
-  /**
-   * Reset a row for manual replay from DLQ. Sets retry_count back to 0,
-   * processing_error to null, next_attempt_at to the supplied
-   * timestamp — bringing the row back into the pending partial-index
-   * window for the reactive runner to pick up.
-   */
-  resetForRetry(id: string, nextAttemptAt: string): Promise<void>;
-}
-
-// ---------------------------------------------------------------------------
-// Connection OAuth token store
-// ---------------------------------------------------------------------------
-
-/**
- * Row shape persisted in `connection_oauth_tokens`. Tokens are stored
- * encrypted under HKDF(MARFA_AUTH_SECRET, "connection-oauth-tokens"); the
- * proxy route decrypts at request time. `previous_refresh_hash` is the
- * SHA-256 (hex) of the most recent rotated-out refresh token, kept for
- * forensic logging — active replay enforcement is the upstream's
- * `invalid_grant` response.
- */
-export interface ConnectionOAuthTokenRow {
-  id: string;
-  connection_id: string;
-  space_id: string | null;
-  access_token_encrypted: string;
-  refresh_token_encrypted: string | null;
-  expires_at: string;
-  scopes: string[];
-  previous_refresh_hash: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ConnectionOAuthTokenStore {
-  /**
-   * Upsert the token for a connection. Existing rows for the same
-   * connection_id are overwritten in place — the table is unique on
-   * connection_id so re-authorization collapses to a single row.
-   */
-  upsert(input: {
-    connection_id: string;
-    space_id?: string;
-    access_token_encrypted: string;
-    refresh_token_encrypted: string | null;
-    expires_at: string;
-    scopes: string[];
-    /** SHA-256 hex of the rotated-out refresh token; null on initial save. */
-    previous_refresh_hash?: string | null;
-  }): Promise<ConnectionOAuthTokenRow>;
-
-  /** Lookup by connection_id. Space-scoped when supplied. */
-  get(
-    connectionId: string,
-    spaceId?: string,
-  ): Promise<ConnectionOAuthTokenRow | null>;
-
-  /**
-   * Hard-delete the row for a connection (used on revocation). Space-scoped
-   * when supplied. Returns whether a row was actually deleted, so the
-   * uninstall pipeline reports what it removed rather than what it meant to.
-   */
-  delete(connectionId: string, spaceId?: string): Promise<boolean>;
-}
-
-// ---------------------------------------------------------------------------
-// Connection leased token store
-// ---------------------------------------------------------------------------
-
-/**
- * Row shape persisted in `connection_leased_tokens`. The lease IS a
- * bearer token; storage is hashed (SHA-256) like API keys, plaintext
- * is returned ONCE on issue. Capability gating ties each lease to a
- * manifest-declared `oauth_requirements: { <capability_id>: "leased" }`
- * entry.
- */
-export interface ConnectionLeasedTokenRow {
-  id: string;
-  connection_id: string;
-  space_id: string | null;
-  capability_id: string;
-  lease_token_hash: string;
-  scopes: string[];
-  expires_at: string;
-  revoked_at: string | null;
-  issued_by_key_id: string | null;
-  created_at: string;
-}
-
-export interface ConnectionLeasedTokenStore {
-  create(input: {
-    id: string;
-    connection_id: string;
-    space_id?: string;
-    capability_id: string;
-    lease_token_hash: string;
-    scopes: string[];
-    expires_at: string;
-    issued_by_key_id?: string;
-  }): Promise<ConnectionLeasedTokenRow>;
-
-  /** Hash-keyed lookup — used by the validate endpoint. */
-  findByHash(hash: string): Promise<ConnectionLeasedTokenRow | null>;
-
-  /** Id-keyed lookup — used by the revoke endpoint. */
-  get(id: string, spaceId?: string): Promise<ConnectionLeasedTokenRow | null>;
-
-  /** List active (non-revoked, non-expired) leases for a connection. */
-  listActiveByConnection(
-    connectionId: string,
-    nowIso: string,
-    spaceId?: string,
-  ): Promise<ConnectionLeasedTokenRow[]>;
-
-  /** Stamp `revoked_at`. Returns false when the lease was already revoked. */
-  revoke(id: string, nowIso: string): Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -2603,13 +2288,6 @@ export interface PersistedEvent {
   space_id: string | null;
   payload: string;
   /**
-   * The connection whose action set off this chain of events. Null for
-   * events originating from a human caller.
-   */
-  originating_connection_id: string | null;
-  /** Hop number from the originating event. 0 = first event in a chain. */
-  hop_count: number;
-  /**
    * Whether this event drives outbound side effects — webhook delivery and
    * the integration reactions the bridge enqueues. Persisted so the
    * instruction survives replication: the bridge's drainer is elected across
@@ -2632,9 +2310,6 @@ export interface EventLogStore {
     edge_id?: string | null;
     space_id?: string;
     payload: string;
-    /** Cycle-detection metadata. */
-    originating_connection_id?: string | null;
-    hop_count?: number;
     /** Whether the event drives outbound side effects. Absent means yes,
      *  which is what every ordinary write door wants. */
     enable_fanout?: boolean;
@@ -3546,10 +3221,6 @@ export interface Storage extends Partial<BetterAuthStorageAdapter> {
   oauthProvider?: OauthProviderStore;
   outboundWebhooks: WebhookStore;
   outboundWebhookDeliveries: WebhookDeliveryStore;
-  inboundWebhooks: InboundWebhookStore;
-  inboundWebhookEvents: InboundWebhookEventStore;
-  connectionOauthTokens: ConnectionOAuthTokenStore;
-  connectionLeasedTokens: ConnectionLeasedTokenStore;
   audit: AuditStore;
   eventLog: EventLogStore;
   /** Optional sweep store for expired better-auth session rows. Absent on

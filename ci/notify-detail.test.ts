@@ -55,10 +55,7 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  * quietly reverting to `needs.*.result`, and it would also pass over one
  * being added to a workflow that should not have gained it.
  */
-const GUARDS = [
-  { file: "integrations-pin-drift.yml", checkJob: "drift" },
-  { file: "openapi-drift.yml", checkJob: "drift" },
-] as const;
+const GUARDS = [{ file: "openapi-drift.yml", checkJob: "drift" }] as const;
 
 interface Step {
   id?: string;

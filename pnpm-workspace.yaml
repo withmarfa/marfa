@@ -9,7 +9,6 @@ packages:
   # by tsup with the runtime kit externalized, the way a real integration
   # is, or it proves nothing about how a real integration bundles. It sits
   # under the server because it tests the server's image.
-  - "packages/server/fixtures/dispatch-integration"
 
 # Catch the worktree-staleness gotcha: when a long-lived worktree
 # rebases `main` and picks up new workspace packages (e.g. a fresh

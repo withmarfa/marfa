@@ -157,31 +157,6 @@ describe("the client-credentials grant is not one this server has", () => {
   });
 });
 
-describe("lease-token scope claims are bounded", () => {
-  // A lease grants no Marfa data-plane authority — its scopes are claims
-  // relayed to the introspecting upstream in that service's vocabulary.
-  // Nothing semantic exists to validate them against (the manifest
-  // declares no per-capability scope vocabulary), so the fence is shape:
-  // introspection must not be usable as an unbounded storage channel.
-  it("refuses an empty-string scope and an oversized claim set", async () => {
-    ctx = await createTestContext({ authAllowSignup: false });
-    const attempt = (scopes: string[]) =>
-      request(ctx!.app, "POST", "/connections/some-id/lease-tokens", {
-        key: ctx!.spaceKey,
-        body: { capability_id: "cap", scopes },
-      });
-
-    // Shape validation runs before connection resolution, so a
-    // nonexistent connection id still exercises the bound.
-    const empty = await attempt([""]);
-    expect(empty.status).toBe(400);
-    const oversized = await attempt(
-      Array.from({ length: 33 }, (_, i) => `claim-${String(i)}`),
-    );
-    expect(oversized.status).toBe(400);
-  });
-});
-
 describe("dynamic client registration default-scope ceiling", () => {
   it("registers the bundle expansion, not the full allowlist, on omitted scope", async () => {
     ctx = await createTestContext({ authAllowSignup: false });

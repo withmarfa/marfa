@@ -110,114 +110,19 @@ export enum ErrorCode {
    * schema directly and never walks the chain.
    */
   TYPE_CHAIN_UNRESOLVABLE = "type_chain_unresolvable",
-  /**
-   * A credential cannot be removed while a connection that is not
-   * revoked still references it. Details carry `connection_ids`.
-   */
-  CREDENTIAL_IN_USE = "credential_in_use",
   CORE_TYPE_IMMUTABLE = "core_type_immutable",
   WEBHOOK_NOT_FOUND = "webhook_not_found",
-  /**
-   * A signed-webhook receiver rejected a request that omitted the
-   * verification headers required to compute the signature. Distinct from
-   * `INBOUND_WEBHOOK_VERIFICATION_FAILED` (which means headers were present
-   * but the signature didn't validate).
-   */
-  WEBHOOK_SIGNATURE_MISSING = "webhook_signature_missing",
-  /**
-   * A signed-webhook receiver rejected a request whose signature headers
-   * were present but failed verification against the configured shared secret.
-   */
-  WEBHOOK_SIGNATURE_INVALID = "webhook_signature_invalid",
-  /**
-   * A signed-webhook receiver has no shared secret configured. Returned as
-   * HTTP 503 so the upstream retries after the operator wires the secret.
-   */
-  WEBHOOK_SECRET_NOT_CONFIGURED = "webhook_secret_not_configured",
-  /**
-   * A signed-webhook receiver verified the signature but the payload itself
-   * could not be parsed as the expected JSON shape.
-   */
-  WEBHOOK_PAYLOAD_INVALID = "webhook_payload_invalid",
-  INBOUND_WEBHOOK_NOT_FOUND = "inbound_webhook_not_found",
-  /**
-   * The inbound webhook subscription is `disabled = true`. Receipts to a
-   * disabled subscription return HTTP 410 to tell the sender to stop —
-   * standard signal in webhook-receiver protocols.
-   */
-  INBOUND_WEBHOOK_DISABLED = "inbound_webhook_disabled",
-  INBOUND_WEBHOOK_EVENT_NOT_FOUND = "inbound_webhook_event_not_found",
-  /** Verification adapter could not validate the request body / headers. */
-  INBOUND_WEBHOOK_VERIFICATION_FAILED = "inbound_webhook_verification_failed",
-  /**
-   * The connection's stored OAuth refresh has failed terminally (the
-   * upstream returned `invalid_grant` or equivalent, or no refresh token
-   * is available). The connection's `runtime_status` has been flipped to
-   * `reauth_required`; the user must re-authorize the integration before
-   * any further proxy calls will succeed.
-   */
-  OAUTH_PROXY_REAUTH_REQUIRED = "oauth_proxy_reauth_required",
-  /**
-   * No OAuth token row was found for the connection — the proxy was
-   * called before initial authorization, or after the token row was
-   * deleted on revocation. Distinct from `reauth_required` (which means
-   * we had a token but refresh failed).
-   */
-  OAUTH_PROXY_TOKEN_MISSING = "oauth_proxy_token_missing",
-  /**
-   * The proxy could not derive an upstream URL — typically because the
-   * connection's `configuration.upstream_base_url` is unset or invalid.
-   */
-  OAUTH_PROXY_UPSTREAM_INVALID = "oauth_proxy_upstream_invalid",
-  /**
-   * `system.connection` item lookup by id returned no row. Allows clients
-   * to branch on the specific resource type rather than a generic `NOT_FOUND`.
-   */
-  CONNECTION_NOT_FOUND = "connection_not_found",
-  /**
-   * The `system.connection` exists but has left `active` — the bounded
-   * `system.*` lifecycle's terminal `revoked` state. Distinct from the
-   * generic `FORBIDDEN` it shares a status with: a caller has to be able
-   * to tell "this one connection is finished" from "your credential is
-   * not allowed to do this at all". The runtime's dispatch path
-   * branches on exactly that difference, and reads the wrong branch as
-   * permission to tear a connection's schedule down for good.
-   */
-  CONNECTION_NOT_ACTIVE = "connection_not_active",
   /**
    * API key lookup by id returned no row. Replaces generic `NOT_FOUND`
    * on `/keys/:id` routes.
    */
   API_KEY_NOT_FOUND = "api_key_not_found",
   /**
-   * Integration manifest lookup by id (or `name@version`) returned no row
-   * in the registry. Replaces generic `NOT_FOUND` on the integrations
-   * registry surface.
-   */
-  INTEGRATION_NOT_FOUND = "integration_not_found",
-  /**
    * OAuth grant (`oauth_codes` / token row) lookup returned no row.
    * Replaces generic `NOT_FOUND` on grant-revocation and
    * grant-introspection paths.
    */
   OAUTH_GRANT_NOT_FOUND = "oauth_grant_not_found",
-  /**
-   * Lease issuance was requested for a `capability_id` the supplied
-   * Integration manifest doesn't declare with `oauth_requirements:
-   * <capability>: "leased"`.
-   */
-  LEASE_CAPABILITY_NOT_DECLARED = "lease_capability_not_declared",
-  /**
-   * Requested TTL is outside the allowed range — below the per-capability
-   * floor or above the route-level ceiling (default 3600s).
-   */
-  LEASE_TTL_OUT_OF_RANGE = "lease_ttl_out_of_range",
-  /** Lease lookup by id (revoke / introspect) found no matching row. */
-  LEASE_TOKEN_NOT_FOUND = "lease_token_not_found",
-  /** Validation found a row but its `expires_at` has passed. */
-  LEASE_TOKEN_EXPIRED = "lease_token_expired",
-  /** Validation found a row whose `revoked_at` is set. */
-  LEASE_TOKEN_REVOKED = "lease_token_revoked",
   BLOB_TOO_LARGE = "blob_too_large",
   /**
    * The request body exceeded the global JSON-write size cap
@@ -317,12 +222,6 @@ export enum ErrorCode {
    * consent flows are short, so a caller seeing this asks again.
    */
   CONSENT_CAPACITY_EXHAUSTED = "consent_capacity_exhausted",
-  /**
-   * The deployment runs no integration runtime (SQLite dialect), so the
-   * dead-letter operator surface has no queue to read. Not retryable
-   * without a config change.
-   */
-  LOCAL_RUNTIME_NOT_AVAILABLE = "local_runtime_not_available",
   /**
    * The transport returned a non-retryable failure (4xx from
    * Cloudflare Email, permanent SMTP rejection). Distinct from a
@@ -473,30 +372,10 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.TYPE_IN_USE]: 409,
   [ErrorCode.TYPE_HAS_SUBTYPES]: 409,
   [ErrorCode.TYPE_CHAIN_UNRESOLVABLE]: 409,
-  [ErrorCode.CREDENTIAL_IN_USE]: 409,
   [ErrorCode.CORE_TYPE_IMMUTABLE]: 403,
   [ErrorCode.WEBHOOK_NOT_FOUND]: 404,
-  [ErrorCode.WEBHOOK_SIGNATURE_MISSING]: 400,
-  [ErrorCode.WEBHOOK_SIGNATURE_INVALID]: 401,
-  [ErrorCode.WEBHOOK_SECRET_NOT_CONFIGURED]: 503,
-  [ErrorCode.WEBHOOK_PAYLOAD_INVALID]: 400,
-  [ErrorCode.INBOUND_WEBHOOK_NOT_FOUND]: 404,
-  [ErrorCode.INBOUND_WEBHOOK_DISABLED]: 410,
-  [ErrorCode.INBOUND_WEBHOOK_EVENT_NOT_FOUND]: 404,
-  [ErrorCode.INBOUND_WEBHOOK_VERIFICATION_FAILED]: 401,
-  [ErrorCode.OAUTH_PROXY_REAUTH_REQUIRED]: 401,
-  [ErrorCode.OAUTH_PROXY_TOKEN_MISSING]: 404,
-  [ErrorCode.OAUTH_PROXY_UPSTREAM_INVALID]: 422,
-  [ErrorCode.CONNECTION_NOT_FOUND]: 404,
-  [ErrorCode.CONNECTION_NOT_ACTIVE]: 403,
   [ErrorCode.API_KEY_NOT_FOUND]: 404,
-  [ErrorCode.INTEGRATION_NOT_FOUND]: 404,
   [ErrorCode.OAUTH_GRANT_NOT_FOUND]: 404,
-  [ErrorCode.LEASE_CAPABILITY_NOT_DECLARED]: 422,
-  [ErrorCode.LEASE_TTL_OUT_OF_RANGE]: 400,
-  [ErrorCode.LEASE_TOKEN_NOT_FOUND]: 404,
-  [ErrorCode.LEASE_TOKEN_EXPIRED]: 401,
-  [ErrorCode.LEASE_TOKEN_REVOKED]: 401,
   [ErrorCode.VERSION_BUMP_MISMATCH]: 422,
   [ErrorCode.COMPATIBLE_WITH_VIOLATION]: 422,
   [ErrorCode.BLOB_TOO_LARGE]: 413,
@@ -517,7 +396,6 @@ const STATUS_MAP: Record<ErrorCode, number> = {
   [ErrorCode.EMAIL_TRANSPORT_NOT_CONFIGURED]: 503,
   [ErrorCode.STREAM_CAPACITY_EXHAUSTED]: 503,
   [ErrorCode.CONSENT_CAPACITY_EXHAUSTED]: 503,
-  [ErrorCode.LOCAL_RUNTIME_NOT_AVAILABLE]: 503,
   [ErrorCode.EMAIL_SEND_FAILED]: 502,
   [ErrorCode.HANDLE_RESERVED]: 400,
   [ErrorCode.SOURCE_ID_CONFLICT]: 409,

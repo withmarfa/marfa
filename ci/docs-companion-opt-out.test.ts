@@ -189,7 +189,7 @@ describe("a test file is not a documented surface", () => {
     "packages/server/src/routes/latest.ts",
     "packages/server/src/routes/test-utils.ts",
     "packages/server/src/routes/items.testing.ts",
-    "packages/sync-manifest/src/manifest.ts",
+    "packages/shared/src/manifest.ts",
   ])("still gates %s", (f) => {
     expect(isTest(f)).toBe(false);
   });

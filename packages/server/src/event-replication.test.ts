@@ -28,7 +28,7 @@ import {
   publish,
   subscribe,
   emitWake,
-  __resetCycleDetectionForTests,
+  __resetEventLogForTests,
   type ItemEventWithId,
 } from "./pubsub.js";
 import type { Item } from "@withmarfa/shared";
@@ -93,7 +93,7 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
       expect(announcement.i).toBe(String(eventId));
       expect(announcement.o).toBe(PROCESS_ORIGIN);
     } finally {
-      __resetCycleDetectionForTests();
+      __resetEventLogForTests();
       await listenerClient.end();
       await storage?.close();
       await clone.drop();
@@ -111,8 +111,6 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
         item_id: item.id,
         space_id: undefined,
         payload: JSON.stringify({ type: "item.created", item }),
-        originating_connection_id: null,
-        hop_count: 0,
       });
 
       const collected: ItemEventWithId[] = [];
@@ -175,8 +173,6 @@ describe.skipIf(!isPg)("event replication over pg_notify", () => {
       emitWake({
         type: "updated",
         item: makeItem("test-wake"),
-        originatingConnectionId: null,
-        hopCount: 0,
       });
       await collector;
       expect(emitted).toBe(0);
@@ -191,8 +187,6 @@ describe("eventFromRow", () => {
   const base = {
     id: 7n,
     space_id: null,
-    originating_connection_id: null,
-    hop_count: 0,
   };
 
   it("rebuilds an item event", () => {

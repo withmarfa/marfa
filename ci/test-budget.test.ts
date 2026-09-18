@@ -87,7 +87,7 @@ describe("every package runs its tests on a chosen budget", () => {
     // Without this the whole file passes by matching nothing, which is the
     // failure mode it exists to prevent in the packages themselves.
     const packages = testedPackages();
-    expect(packages.length).toBeGreaterThanOrEqual(8);
+    expect(packages.length).toBeGreaterThanOrEqual(4);
     // `sdk` is where the missing budget surfaced and `server` is the only
     // package that ever declared one, so a rename that hides either from this
     // list should redden here rather than quietly shrink the check.

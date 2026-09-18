@@ -23,7 +23,7 @@ export {
 // that needs any of those turns the log on itself, and resets it
 // afterwards: the wiring is module-global, so it outlives the app it was
 // turned on for.
-export { initEventLog, __resetCycleDetectionForTests } from "./pubsub.js";
+export { initEventLog, __resetEventLogForTests } from "./pubsub.js";
 // Exposed for the same reason as the two above. `createApp` does not print
 // the bootstrap secret — the server's own boot does — so an app built from
 // `createApp` alone has an unbootstrapped instance with no secret on it and

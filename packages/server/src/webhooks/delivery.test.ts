@@ -672,8 +672,6 @@ describe("WebhookConsumer remote-event skip", () => {
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       } as unknown as Item,
-      originatingConnectionId: null,
-      hopCount: 0,
       eventId: 42n,
     });
     for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -738,8 +736,6 @@ describe("WebhookConsumer remote-event skip", () => {
     emitReplicated({
       type: "edge_created",
       edge,
-      originatingConnectionId: null,
-      hopCount: 0,
       eventId: 43n,
     });
     for (let i = 0; i < 10; i++) await Promise.resolve();

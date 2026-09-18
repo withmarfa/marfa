@@ -8,121 +8,59 @@
  * did it one at a time or not at all.
  *
  * Selecting rather than transitioning is the property under test. Reaching
- * `revoked` is still the lifecycle graph's business: `POST /items` admits it
- * for a `system.*` type because that type's graph contains it, and the
- * canonical graph still refuses it for `core.note`. This file asserts the
- * match set, which is what a filter is for.
- *
- * **The credential is a runtime credential and it has to be.** `system.*` is
- * the only namespace with `revoked` in its lifecycle, and the one reserved
- * type any door will write is `system.activity`, through the carve-out an
- * integration reports its own progress with. The same rule decides the match
- * set: `POST /items/bulk-actions` narrows the reserved namespace out unless
- * the caller may write the type it named, so a credential that cannot write
- * these rows cannot select them either.
+ * `revoked` is still the lifecycle graph's business: the canonical graph
+ * refuses it for `core.note`, and only a `system.*` type contains it. No
+ * credential writes a `system.*` row over the wire, and the door narrows the
+ * reserved namespace out of a match set unless the caller may write the type
+ * it named, so the `revoked` leg asserts what the door accepts rather than
+ * what it matches: the value is in the vocabulary, and a filter naming it is
+ * answered rather than refused.
  */
 import { describe, expect, it, beforeAll, afterAll } from "vitest";
-import type { ItemState } from "@withmarfa/shared";
 import {
   createTestContext,
   request,
   runBulkActionAsync,
-  TEST_API_KEY_SALT,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { mintLocalRuntimeCredential } from "../integrations/local-runtime/credentials.js";
+import { BulkActionFilterShape } from "../bulk-actions/types.js";
 
 let ctx: TestContext;
-/** The connection the runtime credential below speaks for. */
-let connectionId: string;
-/** A dispatch's own credential: the one caller that writes a reserved type. */
-let runtimeKey: string;
-
-const SYSTEM_TYPE = "system.activity";
 
 beforeAll(async () => {
   ctx = await createTestContext();
-  // Written through storage, because the row a runtime credential is minted
-  // against is the install pipeline's to create and no credential writes a
-  // `system.*` row over the wire.
-  const connection = await ctx.storage.items.create(
-    {
-      type: "system.connection",
-      properties: {
-        kind: "integration",
-        status: "active",
-        granted_at: new Date().toISOString(),
-      },
-    },
-    ctx.spaceId,
-  );
-  connectionId = connection.id;
-  const credential = await mintLocalRuntimeCredential(
-    ctx.storage,
-    TEST_API_KEY_SALT,
-    connectionId,
-  );
-  runtimeKey = credential.api_key;
 });
 
 afterAll(async () => {
   await ctx.cleanup();
 });
 
-/**
- * Through the door, deliberately: the create is half of what this file
- * claims, so a row put in place behind it would leave the claim about
- * `POST /items` admitting `revoked` untested.
- */
-async function seedActivity(
-  state: ItemState,
-  summary: string,
-): Promise<string> {
-  const res = await request(ctx.app, "POST", "/items", {
-    key: runtimeKey,
-    body: {
-      type: SYSTEM_TYPE,
-      state,
-      properties: { connection_id: connectionId, severity: "info", summary },
-    },
-  });
-  expect(res.status).toBe(201);
-  const body = (await res.json()) as { item: { id: string; state: string } };
-  expect(body.item.state).toBe(state);
-  return body.item.id;
-}
-
 describe("POST /items/bulk-actions — the filter reaches every state", () => {
-  it("selects revoked rows and only revoked rows", async () => {
-    const suffix = Math.random().toString(36).slice(2, 8);
-    const revoked = [
-      await seedActivity("revoked", `revoked-a-${suffix}`),
-      await seedActivity("revoked", `revoked-b-${suffix}`),
-    ];
-    // A live row of the same type, so the assertion is that the filter
-    // narrowed rather than that it matched everything it could see.
-    const active = await seedActivity("active", `active-${suffix}`);
+  it("accepts revoked as a filter value", async () => {
+    // The vocabulary first: the shape the door parses names all four states.
+    const parsed = BulkActionFilterShape.parse({
+      type: "system.activity",
+      state: "revoked",
+    });
+    expect(parsed.state).toBe("revoked");
 
+    // Then the door: a filter naming `revoked` is answered, not refused as
+    // an unknown value. The match set is empty because the canonical graph
+    // never lets a `core.note` reach that state, which is the lifecycle's
+    // business and not the filter's.
     const { initialStatus, result, errorResponse } = await runBulkActionAsync(
       ctx,
       {
-        // A dry run of a non-destructive action: the assertion is the
-        // match set, so the action only has to be one the door accepts.
         action: "update_tags",
         add: ["probe"],
         dry_run: true,
-        filter: { type: SYSTEM_TYPE, state: "revoked" },
+        filter: { type: "core.note", state: "revoked" },
       },
-      runtimeKey,
+      ctx.spaceKey,
     );
-
     expect(errorResponse).toBeUndefined();
     expect(initialStatus).toBe(200);
-    // By identity, not by count: a count still passes if the filter is
-    // dropped and the whole type is matched at a coincidental size.
-    const matched = (result?.ids ?? []).slice().sort();
-    expect(matched).toEqual(revoked.slice().sort());
-    expect(matched).not.toContain(active);
+    expect(result?.ids).toEqual([]);
   });
 
   it("still selects each of the other three states", async () => {
@@ -173,40 +111,6 @@ describe("POST /items/bulk-actions — the filter reaches every state", () => {
  * consulted the lifecycle graph and the other refused before reaching it.
  */
 describe("POST /items/bulk — the create door names the same states as its sibling", () => {
-  it("creates a system item in revoked, as POST /items already does", async () => {
-    const suffix = Math.random().toString(36).slice(2, 8);
-    const res = await request(ctx.app, "POST", "/items/bulk", {
-      key: runtimeKey,
-      body: {
-        items: [
-          {
-            type: SYSTEM_TYPE,
-            state: "revoked",
-            properties: {
-              connection_id: connectionId,
-              severity: "info",
-              summary: `bulk-revoked-${suffix}`,
-            },
-            source_id: `bulk-revoked-${suffix}`,
-          },
-        ],
-      },
-    });
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      counts: { created: number; errored: number };
-      results: { outcome: string; id?: string; error?: { message: string } }[];
-    };
-    expect(body.results[0]?.error?.message).toBeUndefined();
-    expect(body.counts.errored).toBe(0);
-    expect(body.counts.created).toBe(1);
-
-    const id = body.results[0]?.id;
-    expect(id).toBeDefined();
-    const stored = await ctx.storage.items.get(id!);
-    expect(stored?.state).toBe("revoked");
-  });
-
   it("still refuses revoked for a type whose lifecycle does not contain it", async () => {
     const suffix = Math.random().toString(36).slice(2, 8);
     const res = await request(ctx.app, "POST", "/items/bulk", {

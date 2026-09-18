@@ -12,10 +12,6 @@ import { SqliteOAuthStore } from "./oauth-store.js";
 import { SqliteOauthProviderStore } from "./oauth-provider-store.js";
 import { SqliteWebhookStore } from "./webhook-store.js";
 import { SqliteWebhookDeliveryStore } from "./webhook-delivery-store.js";
-import { SqliteInboundWebhookStore } from "./inbound-webhook-store.js";
-import { SqliteInboundWebhookEventStore } from "./inbound-webhook-event-store.js";
-import { SqliteConnectionOAuthTokenStore } from "./connection-oauth-token-store.js";
-import { SqliteConnectionLeasedTokenStore } from "./connection-leased-token-store.js";
 import { SqliteAuditStore } from "./audit-store.js";
 import { SqliteAuthSessionStore } from "./auth-session-store.js";
 import { SqliteEventLogStore } from "./event-log-store.js";
@@ -79,10 +75,6 @@ export async function createSqliteStorage(
   const oauthStore = new SqliteOAuthStore(db);
   const webhookStore = new SqliteWebhookStore(db);
   const deliveryStore = new SqliteWebhookDeliveryStore(db);
-  const inboundWebhookStore = new SqliteInboundWebhookStore(db);
-  const inboundWebhookEventStore = new SqliteInboundWebhookEventStore(db);
-  const connectionOauthTokenStore = new SqliteConnectionOAuthTokenStore(db);
-  const connectionLeasedTokenStore = new SqliteConnectionLeasedTokenStore(db);
   const auditStore = new SqliteAuditStore(db);
   const eventLogStore = new SqliteEventLogStore(db);
   const authSessionStore = new SqliteAuthSessionStore(db);
@@ -171,10 +163,6 @@ export async function createSqliteStorage(
     oauthProvider: new SqliteOauthProviderStore(db),
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
-    inboundWebhooks: inboundWebhookStore,
-    inboundWebhookEvents: inboundWebhookEventStore,
-    connectionOauthTokens: connectionOauthTokenStore,
-    connectionLeasedTokens: connectionLeasedTokenStore,
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,

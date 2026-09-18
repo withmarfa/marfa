@@ -27,7 +27,6 @@ import {
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
 import { hashApiKey } from "../middleware/auth.js";
-import { runtimeCredentialItemSource } from "../connections/lifecycle-lock.js";
 
 let ctx: TestContext;
 
@@ -231,65 +230,6 @@ describe("the space a metadata.changed frame is delivered in", () => {
     // reach neither viewer, so the emptiness here is only meaningful
     // beside the count above.
     expect(metadataEventsFor(viewerB.events, item.id)).toHaveLength(0);
-  });
-});
-
-describe("the reserved connection namespaces", () => {
-  /**
-   * Per-Connection runtime state is written by the machine, at dispatch
-   * frequency, and the local integrations runtime writes the identical
-   * blob straight through storage without publishing. Emitting here
-   * would make the event depend on which substrate did the write, and
-   * would put sync cursors and error tails on every `metadata.changed`
-   * subscription that carries no type filter.
-   */
-  it("are written without announcing anything", async () => {
-    // The gate admits only the connection's own runtime credential, so
-    // the row has to be a real connection and the credential has to be
-    // bound to it.
-    const connection = await ctx.storage.items.create(
-      {
-        type: "system.connection",
-        properties: {
-          kind: "integration",
-          status: "active",
-          granted_at: new Date().toISOString(),
-        },
-      },
-      ctx.spaceId,
-    );
-    const suffix = Math.random().toString(36).slice(2, 10);
-    const runtimeKey = `marfa_k1_extruntime_${suffix}`;
-    await ctx.storage.keys.createRuntimeCredential(
-      {
-        label: `extruntime-${suffix}`,
-        source: `extruntime-${suffix}`,
-        type_permissions: {},
-        connection_id: connection.id,
-        expires_at: new Date(Date.now() + 600_000).toISOString(),
-        item_source: runtimeCredentialItemSource({ name: "acme.fixture" }),
-      },
-      hashApiKey(runtimeKey, TEST_API_KEY_SALT),
-      ctx.spaceId,
-    );
-
-    const controller = new AbortController();
-    const { events, done } = collectItemEvents(controller.signal);
-    await settle();
-
-    const res = await request(
-      ctx.app,
-      "PUT",
-      `/items/${connection.id}/extensions/connection.runtime`,
-      { key: runtimeKey, body: { cursor: "abc123" } },
-    );
-    // The write lands — this is silence, not refusal.
-    expect(res.status).toBe(200);
-    await settle();
-    controller.abort();
-    await done;
-
-    expect(metadataEventsFor(events, connection.id)).toHaveLength(0);
   });
 });
 

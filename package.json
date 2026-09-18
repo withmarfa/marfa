@@ -17,7 +17,7 @@
     "test:related": "vitest related --run",
     "test:fresh-sqlite": "bash scripts/test-fresh-sqlite.sh",
     "test:pg": "bash scripts/test-pg.sh",
-    "test:full": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:fresh-sqlite && pnpm test:pg && pnpm --filter @withmarfa/server run smoke:worker-entry && pnpm --filter @withmarfa/server run smoke:boot",
+    "test:full": "pnpm build && pnpm typecheck && pnpm lint && pnpm format:check && pnpm test:fresh-sqlite && pnpm test:pg && pnpm --filter @withmarfa/server run smoke:boot",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",

@@ -162,9 +162,6 @@ export { SPACE_ROOT } from "./scope-roots.js";
  */
 export type SpacePermission =
   | "space.webhooks"
-  | "space.connections"
-  | "space.upstream_access"
-  | "space.credentials"
   | "space.keys"
   | "space.app_grants"
   | "space.settings"
@@ -194,14 +191,11 @@ export type SpacePermission =
  */
 export const SPACE_PERMISSIONS: readonly SpacePermission[] = [
   "space.webhooks",
-  "space.connections",
   "space.schema",
   "space.usage",
   "space.settings",
   "space.audit_read",
   "space.item_purge",
-  "space.upstream_access",
-  "space.credentials",
   "space.keys",
   "space.app_grants",
 ];

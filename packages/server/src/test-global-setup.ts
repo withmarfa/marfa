@@ -81,7 +81,7 @@ function sweepStaleTempDirs(): void {
  * Workspace dependencies this package imports through a built `dist` rather
  * than from source. Each entry is a directory under `packages/`.
  */
-const BUILT_DEPS = ["types", "shared", "webhooks", "runtime-sdk"] as const;
+const BUILT_DEPS = ["types", "shared"] as const;
 
 /** Newest mtime beneath `dir`, or 0 if it does not exist. */
 function newestMtime(dir: string): number {

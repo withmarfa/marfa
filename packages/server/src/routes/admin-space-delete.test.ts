@@ -19,7 +19,7 @@ import {
   request,
 } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { initEventLog, __resetCycleDetectionForTests } from "../pubsub.js";
+import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 
 const ORIGIN = "http://localhost:0";
 
@@ -195,7 +195,7 @@ describe("POST /admin/spaces/:id/delete", () => {
 
       expect(await ctx.storage.eventLog.getAfter(0n, 100, spaceId)).toEqual([]);
     } finally {
-      __resetCycleDetectionForTests();
+      __resetEventLogForTests();
     }
   });
 

@@ -91,46 +91,6 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
-  packages/runtime-sdk:
-    dependencies:
-      cron-parser:
-        specifier: ^5.10.0
-        version: 5.10.0
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^5.20260821.1
-        version: 5.20260821.1
-      '@withmarfa/shared':
-        specifier: workspace:*
-        version: link:../shared
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@6.0.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.5.0)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
-
-  packages/runtime-test:
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^5.20260821.1
-        version: 5.20260821.1
-      '@withmarfa/runtime-sdk':
-        specifier: workspace:*
-        version: link:../runtime-sdk
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@6.0.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.5.0)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
-
   packages/sdk:
     dependencies:
       '@withmarfa/shared':
@@ -194,9 +154,6 @@ importers:
       '@libsql/client':
         specifier: ^0.17.4
         version: 0.17.4
-      '@modelcontextprotocol/server':
-        specifier: ^2.0.0
-        version: 2.0.0
       '@opentelemetry/api':
         specifier: 1.9.1
         version: 1.9.1
@@ -230,21 +187,9 @@ importers:
       '@opentelemetry/semantic-conventions':
         specifier: ^1.43.0
         version: 1.43.0
-      '@withmarfa/mcp':
-        specifier: ^2.2.0
-        version: 2.2.0
-      '@withmarfa/runtime-sdk':
-        specifier: workspace:*
-        version: link:../runtime-sdk
       '@withmarfa/shared':
         specifier: workspace:*
         version: link:../shared
-      '@withmarfa/sync-manifest':
-        specifier: workspace:*
-        version: link:../sync-manifest
-      '@withmarfa/webhooks':
-        specifier: workspace:*
-        version: link:../webhooks
       better-auth:
         specifier: 1.7.1
         version: 1.7.1(@cloudflare/workers-types@5.20260821.1)(@opentelemetry/api@1.9.1)(better-sqlite3@12.9.0)(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@cloudflare/workers-types@5.20260821.1)(@libsql/client@0.17.4)(@opentelemetry/api@1.9.1)(@types/better-sqlite3@7.6.13)(better-sqlite3@12.9.0)(kysely@0.29.5)(pg@8.23.0)(postgres@3.4.9))(pg@8.23.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0)))
@@ -318,31 +263,12 @@ importers:
       '@types/tar-stream':
         specifier: ^3.1.4
         version: 3.1.4
-      '@withmarfa/runtime-test':
-        specifier: workspace:*
-        version: link:../runtime-test
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.28)(tsx@4.23.12)(typescript@6.0.3)(yaml@2.9.0)
       tsx:
         specifier: ^4.23.12
         version: 4.23.12
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-
-  packages/server/fixtures/dispatch-integration:
-    dependencies:
-      '@withmarfa/runtime-sdk':
-        specifier: workspace:*
-        version: link:../../../runtime-sdk
-      '@withmarfa/shared':
-        specifier: workspace:*
-        version: link:../../../shared
-    devDependencies:
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@6.0.3)(yaml@2.9.0)
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -372,22 +298,6 @@ importers:
         specifier: ^6.0.3
         version: 6.0.3
 
-  packages/sync-manifest:
-    dependencies:
-      '@withmarfa/shared':
-        specifier: workspace:*
-        version: link:../shared
-    devDependencies:
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@6.0.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.5.0)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
-
   packages/types:
     devDependencies:
       '@types/node':
@@ -402,18 +312,6 @@ importers:
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
-
-  packages/webhooks:
-    devDependencies:
-      tsup:
-        specifier: ^8.5.1
-        version: 8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@6.0.3)(yaml@2.9.0)
-      typescript:
-        specifier: ^6.0.3
-        version: 6.0.3
-      vitest:
-        specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.5.0)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
 
 packages:
 
@@ -1383,14 +1281,6 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@modelcontextprotocol/core@2.0.0':
-    resolution: {integrity: sha512-pJCEwGG7Lfr/+PQp9ZTwKXNeO5wzbfKL7H3MYpCorM4oFBoQrdjnBgEoqG+RjhsvS1FKrDbKux+M1HhlnGWqcA==}
-    engines: {node: '>=20'}
-
-  '@modelcontextprotocol/server@2.0.0':
-    resolution: {integrity: sha512-YhHWdHfpFMQfd0prsEnxKeS3Qz3ytIGmsS0sth4KDjnacIT7hxk6hXHkJ9KysxlkvTM+WZAtQbbcUhdoP4Hvtw==}
-    engines: {node: '>=20'}
-
   '@napi-rs/canvas-android-arm64@1.0.7':
     resolution: {integrity: sha512-d5p4hHTykc/9PjiBXkvCH/IC5hT5jH7BjQ1u8ITq+G8x4VmvveOHdy/4BWYcC3ebWRmrG9zEc/oCTy+Yf3iZ4A==}
     engines: {node: '>= 10'}
@@ -2135,16 +2025,6 @@ packages:
 
   '@vitest/utils@4.1.11':
     resolution: {integrity: sha512-zTCVGpyFsGWBhllOyKlTw/vnr6D9qxsfSDyfbyZmTyjHw5N/VuvzHpHoQjm2ZJzn4RJgx5w4r7V0er69CmLgPQ==}
-
-  '@withmarfa/mcp@2.2.0':
-    resolution: {integrity: sha512-PCD4vO2KgqM6fUz26a71bLqDYLkMQcjtHYtIHccL3KB32TAL6G4BLj1kkyCp7/nEo5YhmB7UH2uLC0QRc1c4Ew==}
-    hasBin: true
-
-  '@withmarfa/sdk@2.1.0':
-    resolution: {integrity: sha512-flFFxn3IITl29jhYjAj1o4gzYLPm9QEoPzx9nbj3hWAZYTGRCAUVVUD1yiXArjLZuTdtoQ1vp9JerHKUb+Wxgg==}
-
-  '@withmarfa/shared@2.0.0':
-    resolution: {integrity: sha512-orT+hkl9SQNWT7/8YrKf1pfGu6FylXWateQO2XJjRYNAXRT0dSNAgP+rNn4K4WNMJZik/XZicQGBdqcyms+oPg==}
 
   '@xmldom/xmldom@0.9.12':
     resolution: {integrity: sha512-5AXjrcMClTryPe9LgZrygpB1lj7s0S9E0+W+AHaVKAVyHanafK86iPSvG5xHVSp/jC+VH1UXu0TAEmY279xH7A==}
@@ -3918,7 +3798,8 @@ snapshots:
 
   '@borewit/text-codec@0.2.2': {}
 
-  '@cloudflare/workers-types@5.20260821.1': {}
+  '@cloudflare/workers-types@5.20260821.1':
+    optional: true
 
   '@drizzle-team/brocli@0.10.2':
     optional: true
@@ -4392,15 +4273,6 @@ snapshots:
 
   '@libsql/win32-x64-msvc@0.5.29': {}
 
-  '@modelcontextprotocol/core@2.0.0':
-    dependencies:
-      zod: 4.4.3
-
-  '@modelcontextprotocol/server@2.0.0':
-    dependencies:
-      '@modelcontextprotocol/core': 2.0.0
-      zod: 4.4.3
-
   '@napi-rs/canvas-android-arm64@1.0.7':
     optional: true
 
@@ -4565,7 +4437,8 @@ snapshots:
 
   '@oxc-project/types@0.144.0': {}
 
-  '@oxc-project/types@0.148.0': {}
+  '@oxc-project/types@0.148.0':
+    optional: true
 
   '@peculiar/asn1-android@2.9.3':
     dependencies:
@@ -5073,14 +4946,6 @@ snapshots:
       vite: 8.2.2(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.12)(yaml@2.9.0)
     optional: true
 
-  '@vitest/mocker@4.1.11(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))':
-    dependencies:
-      '@vitest/spy': 4.1.11
-      estree-walker: 3.0.3
-      magic-string: 0.30.21
-    optionalDependencies:
-      vite: 8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)
-
   '@vitest/pretty-format@4.1.11':
     dependencies:
       tinyrainbow: 3.1.1
@@ -5104,22 +4969,6 @@ snapshots:
       '@vitest/pretty-format': 4.1.11
       convert-source-map: 2.0.0
       tinyrainbow: 3.1.1
-
-  '@withmarfa/mcp@2.2.0':
-    dependencies:
-      '@modelcontextprotocol/server': 2.0.0
-      '@withmarfa/sdk': 2.1.0
-      '@withmarfa/shared': 2.0.0
-      zod: 4.4.3
-
-  '@withmarfa/sdk@2.1.0':
-    dependencies:
-      '@withmarfa/shared': 2.0.0
-
-  '@withmarfa/shared@2.0.0':
-    dependencies:
-      uuidv7: 1.2.1
-      zod: 4.4.3
 
   '@xmldom/xmldom@0.9.12': {}
 
@@ -5955,7 +5804,8 @@ snapshots:
 
   picomatch@4.0.5: {}
 
-  picomatch@4.0.7: {}
+  picomatch@4.0.7:
+    optional: true
 
   pirates@4.0.7: {}
 
@@ -5973,14 +5823,6 @@ snapshots:
       tsx: 4.23.12
       yaml: 2.9.0
 
-  postcss-load-config@6.0.1(postcss@8.5.28)(tsx@4.23.13)(yaml@2.9.0):
-    dependencies:
-      lilconfig: 3.1.3
-    optionalDependencies:
-      postcss: 8.5.28
-      tsx: 4.23.13
-      yaml: 2.9.0
-
   postcss@8.5.26:
     dependencies:
       nanoid: 3.3.18
@@ -5992,6 +5834,7 @@ snapshots:
       nanoid: 3.3.18
       picocolors: 1.1.1
       source-map-js: 1.2.1
+    optional: true
 
   postgres-array@2.0.0: {}
 
@@ -6129,6 +5972,7 @@ snapshots:
       '@rolldown/binding-openharmony-arm64': 1.2.7
       '@rolldown/binding-win32-arm64-msvc': 1.2.7
       '@rolldown/binding-win32-x64-msvc': 1.2.7
+    optional: true
 
   rollup@4.60.1:
     dependencies:
@@ -6381,34 +6225,6 @@ snapshots:
       - tsx
       - yaml
 
-  tsup@8.5.1(postcss@8.5.28)(tsx@4.23.13)(typescript@6.0.3)(yaml@2.9.0):
-    dependencies:
-      bundle-require: 5.1.0(esbuild@0.27.7)
-      cac: 6.7.14
-      chokidar: 4.0.3
-      consola: 3.4.2
-      debug: 4.4.3
-      esbuild: 0.27.7
-      fix-dts-default-cjs-exports: 1.0.1
-      joycon: 3.1.1
-      picocolors: 1.1.1
-      postcss-load-config: 6.0.1(postcss@8.5.28)(tsx@4.23.13)(yaml@2.9.0)
-      resolve-from: 5.0.0
-      rollup: 4.60.1
-      source-map: 0.7.6
-      sucrase: 3.35.1
-      tinyexec: 0.3.2
-      tinyglobby: 0.2.17
-      tree-kill: 1.2.2
-    optionalDependencies:
-      postcss: 8.5.28
-      typescript: 6.0.3
-    transitivePeerDependencies:
-      - jiti
-      - supports-color
-      - tsx
-      - yaml
-
   tsx@4.23.12:
     dependencies:
       esbuild: 0.28.2
@@ -6505,20 +6321,6 @@ snapshots:
       yaml: 2.9.0
     optional: true
 
-  vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0):
-    dependencies:
-      lightningcss: 1.33.0
-      picomatch: 4.0.7
-      postcss: 8.5.28
-      rolldown: 1.2.7
-      tinyglobby: 0.2.17
-    optionalDependencies:
-      '@types/node': 26.5.0
-      esbuild: 0.28.2
-      fsevents: 2.3.3
-      tsx: 4.23.13
-      yaml: 2.9.0
-
   vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)):
     dependencies:
       '@vitest/expect': 4.1.11
@@ -6575,34 +6377,6 @@ snapshots:
     transitivePeerDependencies:
       - msw
     optional: true
-
-  vitest@4.1.11(@opentelemetry/api@1.9.1)(@types/node@26.5.0)(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)):
-    dependencies:
-      '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0))
-      '@vitest/pretty-format': 4.1.11
-      '@vitest/runner': 4.1.11
-      '@vitest/snapshot': 4.1.11
-      '@vitest/spy': 4.1.11
-      '@vitest/utils': 4.1.11
-      es-module-lexer: 2.3.2
-      expect-type: 1.4.0
-      magic-string: 0.30.21
-      obug: 2.1.4
-      pathe: 2.0.3
-      picomatch: 4.0.5
-      std-env: 4.2.0
-      tinybench: 2.9.0
-      tinyexec: 1.3.0
-      tinyglobby: 0.2.17
-      tinyrainbow: 3.1.1
-      vite: 8.2.2(@types/node@26.5.0)(esbuild@0.28.2)(tsx@4.23.13)(yaml@2.9.0)
-      why-is-node-running: 2.3.0
-    optionalDependencies:
-      '@opentelemetry/api': 1.9.1
-      '@types/node': 26.5.0
-    transitivePeerDependencies:
-      - msw
 
   wasm-feature-detect@1.8.0: {}
 

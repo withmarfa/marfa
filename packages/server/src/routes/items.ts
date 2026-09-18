@@ -41,15 +41,11 @@ import {
   requireAuth,
   requireSpacePermission,
   requireTypeAccess,
-  isOwnConnectionRead,
   itemProvenanceSource,
-  writerConnectionOf,
-  requireActivityAttribution,
   requireMirrorProtection,
   requireDeclaredTypeMatches,
   checkTypeAccess,
   requireEdgePermission,
-  requireRowWritable,
   getTypeFilter,
   INTEGRATION_SOURCE_PREFIX,
 } from "../middleware/auth.js";
@@ -77,13 +73,6 @@ import { itemAfterMetadataWrite } from "./_metadata-publish.js";
 import type { InlineEdgeChanges } from "./_edges-inline.js";
 import { assertTierApplicable } from "./_tier-rules.js";
 import { hydrateExtensionsForItems } from "./_extensions-hydrate.js";
-import {
-  createOwnershipGuard,
-  requireOwningConnection,
-  resolveOrphanScope,
-  resolveOrphanScopeForOwnWrite,
-  withOrphanState,
-} from "./_orphaned.js";
 import {
   createOpenAPIRouter,
   OkResponseSchema,
@@ -824,7 +813,7 @@ const deleteItemRoute = createRoute({
   tags: ["Items"],
   summary: "Soft delete an item",
   description:
-    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Moves the item to the trashed state, reversible via restore until the retention window expires, after which it is purged permanently. For immediate, irreversible removal use the purge endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -843,7 +832,7 @@ const deleteItemRoute = createRoute({
         },
       },
       description:
-        "The item is a live `system.connection`. Uninstall an integration first, or revoke an app grant through `DELETE /auth/grants/{id}`: removing the row here would leave its runtime credentials, or the app's tokens and stored consent, behind with nothing naming their owner.",
+        "The item is a live `system.connection`. Revoke the app grant through `DELETE /auth/grants/{id}` first: removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -1140,7 +1129,7 @@ const purgeItemRoute = createRoute({
   tags: ["Items"],
   summary: "Permanently delete an item",
   description:
-    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `space.item_purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused. An integration is uninstalled first, so its runtime credentials are revoked with it; an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
+    "Hard-deletes the item and its edges, metadata, extensions, and attachment references — irreversible, and requires `space.item_purge`. Content-addressed blob bytes are retained if other items still reference them; most clients want the soft-delete endpoint instead. A live `system.connection` is refused: an app grant is revoked through the grants routes first, so its tokens and stored consent go with it.",
   security: [{ bearerAuth: [] }],
   request: {
     params: IdParam,
@@ -1159,7 +1148,7 @@ const purgeItemRoute = createRoute({
         },
       },
       description:
-        "The item is a live `system.connection`. Uninstall an integration first, or revoke an app grant through `DELETE /auth/grants/{id}`: removing the row here would leave its runtime credentials, or the app's tokens and stored consent, behind with nothing naming their owner.",
+        "The item is a live `system.connection`. Revoke the app grant through `DELETE /auth/grants/{id}` first: removing the row here would leave the app's tokens and stored consent behind with nothing naming their owner.",
     },
     401: {
       content: {
@@ -1204,10 +1193,7 @@ async function acknowledgedItemBody(
 ): Promise<{ item: Item; metadata: Metadata; acknowledged: true }> {
   const metadata = await storage.metadata.get(existing.id);
   return {
-    item: withOrphanState(
-      existing,
-      await resolveOrphanScopeForOwnWrite(storage, [existing], apiKey),
-    ),
+    item: existing,
     metadata: filterMetadataForCaller(metadata, apiKey),
     acknowledged: true,
   };
@@ -1384,38 +1370,9 @@ export function itemRoutes(storage: Storage) {
     // that matters depends on whether anything reads a system row's tier as a
     // surfacing decision, which is a schema question rather than this door's.
     const isSystemTypeWrite = hasBoundedLifecycle(type);
-    let tierValue: "library" | "feed" | undefined = isSystemTypeWrite
+    const tierValue: "library" | "feed" | undefined = isSystemTypeWrite
       ? undefined
       : (body.tier ?? credential?.default_tier ?? "library");
-
-    // `system.*` items normally have no tier, but `system.activity` is an
-    // exception: when the referenced `system.connection` has
-    // `feed_activity === true`, the server stamps `tier: "feed"` so the
-    // activity flows into the user's feed surface. Client tier writes
-    // remain rejected by the block above; only the server makes this
-    // decision, keyed off the per-Connection toggle. Connections without
-    // `feed_activity` (default) leave tier undefined as for every other
-    // system.* write.
-    if (type === "system.activity") {
-      const connectionId =
-        typeof properties.connection_id === "string"
-          ? properties.connection_id
-          : undefined;
-      // An integration may only speak for itself. Checked before the
-      // feed-eligibility lookup below, which would otherwise read a
-      // sibling Connection's `feed_activity` toggle and let one
-      // integration decide where another's activity surfaces.
-      requireActivityAttribution(credential, type, properties);
-      if (connectionId) {
-        const connection = await storage.items.get(connectionId, spaceId);
-        if (
-          connection?.type === "system.connection" &&
-          connection.properties.feed_activity === true
-        ) {
-          tierValue = "feed";
-        }
-      }
-    }
 
     // Validate edges payload up-front (shape only) so the write path doesn't
     // have to double-check. Per-constraint validation runs inside the
@@ -1502,38 +1459,24 @@ export function itemRoutes(storage: Storage) {
         //  - The extension namespaces are NOT, because that axis is not
         //    bounded by the natural key. `extension_permissions` are per
         //    credential, so a row can carry namespaces this caller holds
-        //    nothing on — written by a person, by another tool, or by a
-        //    sibling Connection sharing the `item_source` that resolved it.
-        //    Hence the same filter the other eleven sites in this file use.
+        //    nothing on — written by a person or by another tool. Hence the
+        //    same filter the other eleven sites in this file use.
         //  - The type is NOT either, and that is a gate rather than a
-        //    filter. `item_source` is keyed on the manifest name and stable
-        //    across mints, so a manifest that narrows leaves rows reachable
-        //    whose type the credential has since lost. The update branch
-        //    below refuses those on the resolved row's type; refusing here
-        //    too is what makes the two branches agree about who may address
-        //    one row, instead of the answer depending on whether the user
-        //    happened to have trashed it.
+        //    filter. A credential's `source` is stable for its life, so a
+        //    credential whose type map has since narrowed still resolves
+        //    rows whose type it has lost. The update branch below refuses
+        //    those on the resolved row's type; refusing here too is what
+        //    makes the two branches agree about who may address one row,
+        //    instead of the answer depending on whether the user happened
+        //    to have trashed it.
         //
         // Gate before disclosing, so a refusal cannot be read off the body.
         requireTypeAccess(c, existing.type, "write");
-        // **No attribution gate here, unlike the id acknowledgement, and
-        // the asymmetry is forced rather than chosen.**
-        // `permitsActivityAttribution` constrains exactly one type,
-        // `system.activity`, and `system.*` lifecycles are bounded to
-        // `active | revoked` — so no row this arm can resolve is one that
-        // gate would ever look at. Adding it for symmetry would read as a
-        // protection somebody is relying on while being unreachable.
-        //
         // A write never re-types the row it lands on, and an
         // acknowledgement is a write's answer. Without this the arm
         // accepted a body naming any type at all, which is what made the
         // route's own 409 description untrue of it.
         requireDeclaredTypeMatches(type, existing);
-        // Then D63: a twin's trashed row is not this connection's to be
-        // acknowledged. Without this the branch answers 200 carrying the
-        // row and its metadata, which reads as "your record is already
-        // stored, and deleted" when it is somebody else's.
-        await requireOwningConnection(storage, credential, existing);
         return c.json(
           await acknowledgedItemBody(storage, c.get("apiKey"), existing),
           200,
@@ -1546,46 +1489,22 @@ export function itemRoutes(storage: Storage) {
         // takes the resolved row's type as it stands. Naming a type the
         // credential holds write on therefore admitted an edit to a row
         // of any other type, and skipped every gate keyed on the real
-        // one, the attribution check included. These are the gates
-        // `PATCH /items/{id}` runs; running them here is what makes the
-        // two doors agree. The create path below keeps authorizing the
-        // claim, because there the claim is the row.
-        //
-        // Reachable at all because `item_source` fixed provenance to the
-        // Connection: a source that rotated with each mint could only
-        // ever resolve rows from the credential's own generation.
-        const credentialForUpdate = c.get("apiKey");
+        // one. These are the gates `PATCH /items/{id}` runs; running them
+        // here is what makes the two doors agree. The create path below
+        // keeps authorizing the claim, because there the claim is the row.
         requireTypeAccess(c, existing.type, "write");
-        requireActivityAttribution(
-          credentialForUpdate,
-          existing.type,
-          existing.properties,
-        );
-        // Judged on the value the row ends up with. The merge mirrors the
-        // shallow property merge the storage layer performs, so a body
-        // that leaves `connection_id` alone is not read as claiming an
-        // absent one.
-        requireActivityAttribution(
-          credentialForUpdate,
-          existing.type,
-          body.properties !== undefined
-            ? { ...existing.properties, ...properties }
-            : existing.properties,
-        );
         // **No mirror check here, and its absence is the honest shape.**
         // Every other door that resolves a row calls
-        // `requireMirrorProtection`; this one cannot be reached by another
+        // `requireMirrorProtection`; this one cannot be reached by an
         // integration's mirror at all, so a call would be a guard that can
         // never refuse — which reads as protection while making no claim.
         //
-        // The lookup is what provides the property. `stampedSource` is
-        // `item_source ?? source` and `findBySourceIdIncludingTrashed` keys
-        // on it, so a row resolved here carries this credential's own
-        // source by construction. A runtime credential then satisfies
-        // `permitsMirrorWrite`'s owner arm by comparing that value with
-        // itself, and any other credential satisfies its first arm, because
-        // `isReservedCredentialSource` refuses an `integration:` source at
-        // every mint. Both arms are decided before the row is read.
+        // The lookup is what provides the property. `stampedSource` is the
+        // credential's own `source` and `findBySourceIdIncludingTrashed`
+        // keys on it, so a row resolved here carries this credential's own
+        // source by construction, and `isReservedCredentialSource` refuses
+        // an `integration:` source at every mint. The answer is decided
+        // before the row is read.
         //
         // **A lookup that ever resolves a row by something other than the
         // caller's own stamp owes a mirror check here.** That is the change
@@ -1619,23 +1538,6 @@ export function itemRoutes(storage: Storage) {
         // six were found disagreeing.
         requireDeclaredTypeMatches(type, existing);
 
-        // D63, last among this arm's row-side gates for the same reason
-        // the bulk door orders it last: the gates above have narrower
-        // refusals that disclose less, and `requireActivityAttribution`
-        // must keep the one refusal a test names as its own.
-        const ownership = await requireOwningConnection(
-          storage,
-          credential,
-          existing,
-        );
-
-        // An owning integration's re-sync gets faithful-mirror null
-        // semantics: the upstream cleared the field, so an explicit null
-        // clears the key here too.
-        const nullClears =
-          existing.source.startsWith("integration:") &&
-          credentialForUpdate?.item_source === existing.source;
-
         // This branch used to be the one write path that skipped property
         // validation, and it is also the one where a null removes a value
         // rather than setting it. A re-sync sending a null title therefore
@@ -1653,10 +1555,10 @@ export function itemRoutes(storage: Storage) {
             resolveIncomingProperties(
               existing.type,
               properties,
-              nullClears,
+              false,
               spaceId,
             ),
-            nullClears,
+            false,
             // "merge", because this branch is the natural-key upsert on
             // `POST /items` and that route offers no mode. Stated rather
             // than defaulted silently, so the prediction is visibly tied to
@@ -1687,15 +1589,6 @@ export function itemRoutes(storage: Storage) {
               ...(tierValue !== undefined && { tier: tierValue }),
               ...(body.timestamp !== undefined && {
                 timestamp: body.timestamp,
-              }),
-              ...(nullClears ? { null_clears: true } : {}),
-              // Only on adoption (D63). An owner re-syncing its own row
-              // must not churn the column, and a row whose recorded
-              // writer is gone — or was never recorded — becomes this
-              // connection's on the write that adopts it, which is what
-              // makes the pre-column corpus converge without a backfill.
-              ...(ownership === "adopt" && {
-                written_by_connection_id: writerConnectionOf(credential),
               }),
             },
             spaceId,
@@ -1768,14 +1661,7 @@ export function itemRoutes(storage: Storage) {
         });
         return c.json(
           {
-            item: withOrphanState(
-              itemWithEdges,
-              await resolveOrphanScopeForOwnWrite(
-                storage,
-                [itemWithEdges],
-                c.get("apiKey"),
-              ),
-            ),
+            item: itemWithEdges,
             metadata: filterMetadataForCaller(updatedMetadata, c.get("apiKey")),
           },
           200,
@@ -1837,23 +1723,10 @@ export function itemRoutes(storage: Storage) {
       // the row's type, so the row can be a type the caller may not
       // write.
       //
-      // Attribution on the row as it stands, in the order the update arm
-      // runs it. An acknowledgement writes nothing, so there is no
-      // incoming value to judge — but it does hand the row back, and a
-      // sibling Connection's activity row is not this credential's to be
-      // shown.
-      requireActivityAttribution(
-        c.get("apiKey"),
-        existing.type,
-        existing.properties,
-      );
       // A write never re-types the row it lands on, on any door. Shared
       // with the natural-key branch and the bulk door rather than
       // restated.
       requireDeclaredTypeMatches(type, existing);
-      // D63 last, as the sibling branches order it: the gates above have
-      // narrower refusals that disclose less.
-      await requireOwningConnection(storage, credential, existing);
       return existing;
     };
 
@@ -1893,7 +1766,6 @@ export function itemRoutes(storage: Storage) {
             timestamp: body.timestamp,
             source: stampedSource,
             source_id: body.source_id,
-            written_by_connection_id: writerConnectionOf(credential),
             device: body.device,
             capture_latitude: body.capture_latitude,
             capture_longitude: body.capture_longitude,
@@ -2003,14 +1875,7 @@ export function itemRoutes(storage: Storage) {
     });
     return c.json(
       {
-        item: withOrphanState(
-          itemWithEdges,
-          await resolveOrphanScopeForOwnWrite(
-            storage,
-            [itemWithEdges],
-            c.get("apiKey"),
-          ),
-        ),
+        item: itemWithEdges,
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
       },
       201,
@@ -2057,12 +1922,6 @@ export function itemRoutes(storage: Storage) {
             ...(itemProvenanceSource(credential) !== undefined
               ? { source: itemProvenanceSource(credential) }
               : {}),
-            // Null for a person, which is the ordinary case here and is why
-            // the column is nullable. A runtime credential promoting a
-            // mirror does become the copy's writer, so the copy answers the
-            // orphan question by the same rule as every other row that
-            // credential wrote.
-            written_by_connection_id: writerConnectionOf(credential),
           },
           spaceId,
         );
@@ -2135,10 +1994,7 @@ export function itemRoutes(storage: Storage) {
     });
     return c.json(
       {
-        item: withOrphanState(
-          promoted,
-          await resolveOrphanScopeForOwnWrite(storage, [promoted], credential),
-        ),
+        item: promoted,
       },
       201,
     );
@@ -2356,14 +2212,10 @@ export function itemRoutes(storage: Storage) {
     const extensionsMap = includeExtensions
       ? await hydrateExtensionsForItems(storage, ids, apiKey)
       : null;
-    // One resolution for the whole page, not one per row, and keyed on each
-    // row's own space rather than the caller's — see `_orphaned.ts`.
-    const orphanScope = await resolveOrphanScope(storage, result.data);
     const decorate = (item: (typeof result.data)[number]) => {
-      const withOrphan = withOrphanState(item, orphanScope);
       const withEdges = edgesMap
-        ? { ...withOrphan, edges: edgesMap.get(item.id) ?? {} }
-        : withOrphan;
+        ? { ...item, edges: edgesMap.get(item.id) ?? {} }
+        : item;
       return extensionsMap
         ? { ...withEdges, extensions: extensionsMap.get(item.id) ?? {} }
         : withEdges;
@@ -2416,12 +2268,7 @@ export function itemRoutes(storage: Storage) {
       throw new MarfaError(ErrorCode.ITEM_NOT_FOUND, `Item ${id} not found`);
     }
 
-    // A runtime credential reads its own Connection to resolve its
-    // configuration; that one row is admitted without a space-wide
-    // `system.connection` grant. See `isOwnConnectionRead`.
-    if (!isOwnConnectionRead(apiKey, item)) {
-      requireTypeAccess(c, item.type, "read");
-    }
+    requireTypeAccess(c, item.type, "read");
 
     const includeSet = new Set(
       (c.req.query("include") ?? "")
@@ -2533,26 +2380,14 @@ export function itemRoutes(storage: Storage) {
       }
     }
 
-    // The item and its neighbors are one batch, so they take one resolution
-    // between them. Each is still judged against its own space: neighbors
-    // are fetched under the caller's fence, which for the operator key is no
-    // fence at all.
-    const orphanScope = await resolveOrphanScope(storage, [
-      item,
-      ...(neighbors ?? []).map((n) => n.item),
-    ]);
-
     return c.json(
       {
-        item: { ...withOrphanState(item, orphanScope), edges },
+        item: { ...item, edges },
         metadata: filterMetadataForCaller(metadata, apiKey),
         ...(includeBackrefs && backrefs ? { backrefs } : {}),
         ...(neighbors !== undefined
           ? {
-              neighbors: neighbors.map((n) => ({
-                ...n,
-                item: withOrphanState(n.item, orphanScope),
-              })),
+              neighbors,
               neighbors_truncated: neighborsTruncated,
               neighbors_omitted: neighborsOmitted,
             }
@@ -2657,34 +2492,7 @@ export function itemRoutes(storage: Storage) {
     // it: nothing below reads a caller-supplied type.
     assertTierApplicable(item.type, body.tier);
 
-    // The row has to be this integration's both before and after the
-    // update. Before, or an integration could edit a sibling's activity —
-    // rewrite its summary, downgrade its severity — without ever naming
-    // a connection in the body. After, or it could re-attribute its own
-    // row to a sibling once the row exists. The merge below mirrors the
-    // shallow property merge the write performs, so a PATCH that leaves
-    // `connection_id` alone is judged on the value it will actually end
-    // up with rather than on the absence of the field.
-    requireActivityAttribution(c.get("apiKey"), item.type, item.properties);
-    requireActivityAttribution(
-      c.get("apiKey"),
-      item.type,
-      hasProperties
-        ? { ...item.properties, ...(body.properties as object) }
-        : item.properties,
-    );
-    requireMirrorProtection(c.get("apiKey"), item);
-    // D63, and last among the row-side gates so this door answers in the
-    // same order `POST /items/bulk` does — the two are the same operation
-    // reached through different doors, and `checkUpdate` says so. Ordering
-    // it ahead of `requireActivityAttribution` would also take that gate's
-    // only refusal away from it, leaving the test that names it measuring
-    // this guard instead.
-    const patchOwnership = await requireOwningConnection(
-      storage,
-      c.get("apiKey"),
-      item,
-    );
+    requireMirrorProtection(item);
 
     // Natural-key uniqueness check. The `(source, source_id)` tuple is
     // unique per space — the same constraint enforced at create time.
@@ -2854,16 +2662,6 @@ export function itemRoutes(storage: Storage) {
                 tier: hasTier ? body.tier : undefined,
                 timestamp: hasTimestamp ? body.timestamp : undefined,
                 source_id: hasSourceId ? body.source_id : undefined,
-                // Owning integration re-syncing its mirror: an explicit
-                // null clears the key, keeping the copy faithful.
-                ...(item.source.startsWith("integration:") &&
-                c.get("apiKey")?.item_source === item.source
-                  ? { null_clears: true }
-                  : {}),
-                // Adoption, same rule as the natural-key door (D63).
-                ...(patchOwnership === "adopt" && {
-                  written_by_connection_id: writerConnectionOf(c.get("apiKey")),
-                }),
               },
               tid,
             )
@@ -2957,17 +2755,7 @@ export function itemRoutes(storage: Storage) {
     const hydrated = await hydrateEdgesForItem(storage, id);
     return c.json(
       {
-        item: {
-          ...withOrphanState(
-            resolvedItem,
-            await resolveOrphanScopeForOwnWrite(
-              storage,
-              [resolvedItem],
-              c.get("apiKey"),
-            ),
-          ),
-          edges: hydrated,
-        },
+        item: { ...resolvedItem, edges: hydrated },
         metadata: filterMetadataForCaller(metadata, c.get("apiKey")),
         // Present only where the server actually resolved a collision. It is
         // the only thing that names the sibling: no route reports what a
@@ -3007,17 +2795,6 @@ export function itemRoutes(storage: Storage) {
     // property write was refused and the delete was not, which is the
     // stronger harm being the less protected one.
     //
-    // The same predicate the write path uses, in its destroy wording, because
-    // a second implementation would be a second opinion about which
-    // connections are live and the two would drift. **Built per request**:
-    // it memoizes the space's connection walk, and that answer is only good
-    // for the request that took it.
-    //
-    // A person acting through their own credential is untouched — the guard
-    // returns "own" for anything that is not a runtime credential.
-    const guardDestroy = createOwnershipGuard(storage, "destroy");
-    await guardDestroy(c.get("apiKey"), targetItem);
-
     const snapshots = await storage.runInTransaction(async () => {
       const toDelete = await planCascadeDelete(storage.edges, id, tid);
       const snaps = await Promise.all(
@@ -3034,13 +2811,11 @@ export function itemRoutes(storage: Storage) {
       // Inside the transaction so a refusal rolls the whole plan back rather
       // than leaving a partial cascade, and against the snapshots already
       // read rather than a second round of reads.
+      // A `parent-of` edge from any row to a live grant would otherwise
+      // carry the grant out through the cascade with no refusal, from a
+      // credential that could not write it directly.
       for (const snap of snaps) {
         if (!snap) continue;
-        await guardDestroy(c.get("apiKey"), snap);
-        // The same is true of the connection refusal: a `parent-of` edge
-        // from any row to a live grant would otherwise carry the grant out
-        // through the cascade with no refusal, from a credential that could
-        // not write it directly.
         refuseUnlessUninstalled(snap);
       }
       for (const delId of toDelete) {
@@ -3115,7 +2890,6 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
-    requireRowWritable(c.get("apiKey"), item);
 
     const body = c.req.valid("json");
     const tags = body.tags;
@@ -3158,7 +2932,6 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
-    requireRowWritable(c.get("apiKey"), item);
 
     const body = c.req.valid("json");
     const tags = body.tags;
@@ -3221,7 +2994,6 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
-    requireRowWritable(c.get("apiKey"), item);
 
     const body = c.req.valid("json");
     const tags = body.tags;
@@ -3390,7 +3162,6 @@ export function itemRoutes(storage: Storage) {
     requireTypeAccess(c, item.type, "write");
     // The metadata layer reaches the same row the properties doors
     // guard, so it answers to the same row-level rule.
-    requireRowWritable(c.get("apiKey"), item);
     const metadata = await storage.metadata.removeTag(id, tag);
     void storage.audit.log({
       client_ip: c.get("clientIp") ?? null,

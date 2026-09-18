@@ -14,7 +14,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
-import { initEventLog, __resetCycleDetectionForTests } from "../pubsub.js";
+import { initEventLog, __resetEventLogForTests } from "../pubsub.js";
 import type { TestContext } from "../test-utils.js";
 import { Hono } from "hono";
 import { idempotencyMiddleware } from "./idempotency.js";
@@ -37,7 +37,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  __resetCycleDetectionForTests();
+  __resetEventLogForTests();
   await ctx.cleanup();
 });
 

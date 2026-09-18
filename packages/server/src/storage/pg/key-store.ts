@@ -1,17 +1,6 @@
 import { safeJsonParse } from "../json-utils.js";
 import { spaceBucketCondition, spaceCondition } from "../space-condition.js";
-import {
-  and,
-  count,
-  eq,
-  gt,
-  isNotNull,
-  isNull,
-  lt,
-  or,
-  sql,
-  sum,
-} from "drizzle-orm";
+import { and, count, eq, gt, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { generateId, MarfaError, ErrorCode } from "@withmarfa/shared";
 import type {
   ApiKey,
@@ -44,9 +33,6 @@ function mapRow(row: typeof apiKeys.$inferSelect): ApiKey {
     source: row.source,
     default_tier: row.default_tier as Tier,
     is_operator: row.is_operator,
-    is_runtime_credential: row.is_runtime_credential,
-    connection_id: row.connection_id ?? undefined,
-    item_source: row.item_source ?? undefined,
     space_permissions: safeJsonParse<SpacePermission[]>(
       row.space_permissions,
       [],
@@ -159,78 +145,6 @@ export class PgKeyStore implements KeyStore {
     };
   }
 
-  async createRuntimeCredential(
-    input: CreateKeyInput & {
-      oauth_client_id?: string;
-      connection_id: string;
-      expires_at: string;
-      item_source: string | null;
-    },
-    keyHash: string,
-    spaceId?: string,
-  ): Promise<ApiKey> {
-    const [collision] = await this.db
-      .select({ id: apiKeys.id })
-      .from(apiKeys)
-      .where(
-        and(
-          spaceBucketCondition(apiKeys.space_id, spaceId),
-          eq(apiKeys.source, input.source),
-          isNull(apiKeys.revoked_at),
-        ),
-      );
-    if (collision) {
-      throw new MarfaError(
-        ErrorCode.CONFLICT,
-        `Source display name "${input.source}" is already in use for this space`,
-        { source: input.source },
-      );
-    }
-
-    const now = new Date().toISOString();
-    const row = {
-      id: generateId(),
-      space_id: spaceId,
-      key_hash: keyHash,
-      label: input.label,
-      source: input.source,
-      default_tier: input.default_tier ?? "library",
-      is_operator: false,
-      is_runtime_credential: true,
-      connection_id: input.connection_id,
-      item_source: input.item_source ?? undefined,
-      space_permissions: JSON.stringify(input.space_permissions ?? []),
-      oauth_client_id: input.oauth_client_id ?? null,
-      type_permissions: JSON.stringify(input.type_permissions ?? {}),
-      extension_permissions: JSON.stringify(input.extension_permissions ?? {}),
-      edge_permissions: JSON.stringify(input.edge_permissions ?? {}),
-      metadata_permissions: JSON.stringify(input.metadata_permissions ?? {}),
-      profile_permissions: JSON.stringify(input.profile_permissions ?? {}),
-      created_at: now,
-      expires_at: input.expires_at,
-    };
-    await this.db.insert(apiKeys).values(row);
-    return {
-      id: row.id,
-      space_id: spaceId,
-      label: row.label,
-      source: row.source,
-      default_tier: row.default_tier,
-      is_operator: false,
-      is_runtime_credential: true,
-      connection_id: input.connection_id,
-      item_source: input.item_source ?? undefined,
-      type_permissions: input.type_permissions ?? {},
-      extension_permissions: input.extension_permissions ?? {},
-      edge_permissions: input.edge_permissions ?? {},
-      metadata_permissions: input.metadata_permissions ?? {},
-      profile_permissions: input.profile_permissions ?? {},
-      created_at: now,
-      expires_at: input.expires_at,
-      last_used_at: null,
-    };
-  }
-
   async list(): Promise<ApiKey[]> {
     const rows = await this.db
       .select()
@@ -258,23 +172,6 @@ export class PgKeyStore implements KeyStore {
       .from(apiKeys)
       .where(and(eq(apiKeys.id, id), isNull(apiKeys.revoked_at)));
     return row ? mapRow(row) : null;
-  }
-
-  async listByConnectionId(
-    connectionId: string,
-    spaceId?: string,
-  ): Promise<ApiKey[]> {
-    const rows = await this.db
-      .select()
-      .from(apiKeys)
-      .where(
-        and(
-          eq(apiKeys.connection_id, connectionId),
-          spaceCondition(apiKeys.space_id, spaceId),
-          isNull(apiKeys.revoked_at),
-        ),
-      );
-    return rows.map(mapRow);
   }
 
   async update(id: string, input: UpdateKeyInput): Promise<ApiKey> {
@@ -401,90 +298,13 @@ export class PgKeyStore implements KeyStore {
     return row?.total ?? 0;
   }
 
-  async revokeExpiredRuntimeCredentials(nowIso: string): Promise<number> {
-    const rows = await this.db
-      .update(apiKeys)
-      .set({ revoked_at: nowIso })
-      .where(
-        and(
-          eq(apiKeys.is_runtime_credential, true),
-          isNull(apiKeys.revoked_at),
-          isNotNull(apiKeys.expires_at),
-          lt(apiKeys.expires_at, nowIso),
-        ),
-      )
-      .returning({ id: apiKeys.id });
-    return rows.length;
-  }
-
-  async revokeRuntimeCredentialsWithoutExpiryOlderThan(
-    cutoffIso: string,
-    nowIso: string,
-  ): Promise<number> {
-    const rows = await this.db
-      .update(apiKeys)
-      .set({ revoked_at: nowIso })
-      .where(
-        and(
-          eq(apiKeys.is_runtime_credential, true),
-          isNull(apiKeys.revoked_at),
-          isNull(apiKeys.expires_at),
-          lt(apiKeys.created_at, cutoffIso),
-        ),
-      )
-      .returning({ id: apiKeys.id });
-    return rows.length;
-  }
-
-  async deleteRevokedRuntimeCredentialsOlderThan(
-    cutoffIso: string,
-  ): Promise<number> {
-    const rows = await this.db
-      .delete(apiKeys)
-      .where(
-        and(
-          eq(apiKeys.is_runtime_credential, true),
-          isNotNull(apiKeys.revoked_at),
-          lt(apiKeys.revoked_at, cutoffIso),
-        ),
-      )
-      .returning({ id: apiKeys.id });
-    return rows.length;
-  }
-
   async deleteRevokedKeysOlderThan(cutoffIso: string): Promise<number> {
-    // `eq(..., false)` rather than `not(...)`: the column is NOT NULL with
-    // a false default, so there is no third state to fall through.
     const rows = await this.db
       .delete(apiKeys)
       .where(
-        and(
-          eq(apiKeys.is_runtime_credential, false),
-          isNotNull(apiKeys.revoked_at),
-          lt(apiKeys.revoked_at, cutoffIso),
-        ),
+        and(isNotNull(apiKeys.revoked_at), lt(apiKeys.revoked_at, cutoffIso)),
       )
       .returning({ id: apiKeys.id });
     return rows.length;
-  }
-
-  async countRuntimeCredentials(
-    nowIso: string,
-  ): Promise<{ total: number; active: number }> {
-    // Aggregate in SQL. The table is bounded by the reaper's seven-day
-    // window but that is still every dispatch in a week, far too many rows
-    // to drag into JS for a counter on an operator dashboard.
-    const [row] = await this.db
-      .select({
-        total: count(),
-        active: sum(
-          sql`CASE WHEN ${apiKeys.revoked_at} IS NULL AND (${apiKeys.expires_at} IS NULL OR ${apiKeys.expires_at} > ${nowIso}) THEN 1 ELSE 0 END`,
-        ),
-      })
-      .from(apiKeys)
-      .where(eq(apiKeys.is_runtime_credential, true));
-    // `count()` maps to a number in drizzle; `sum()` comes back as a
-    // string on Postgres, so only the latter needs converting.
-    return { total: row?.total ?? 0, active: Number(row?.active ?? 0) };
   }
 }

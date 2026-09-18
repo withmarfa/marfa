@@ -82,7 +82,6 @@ function specGenerationConfig(authMode: AuthMode): AppConfig {
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
   };
 }
 

@@ -19,10 +19,6 @@ import { PgOAuthStore } from "./oauth-store.js";
 import { PgOauthProviderStore } from "./oauth-provider-store.js";
 import { PgWebhookStore } from "./webhook-store.js";
 import { PgWebhookDeliveryStore } from "./webhook-delivery-store.js";
-import { PgInboundWebhookStore } from "./inbound-webhook-store.js";
-import { PgInboundWebhookEventStore } from "./inbound-webhook-event-store.js";
-import { PgConnectionOAuthTokenStore } from "./connection-oauth-token-store.js";
-import { PgConnectionLeasedTokenStore } from "./connection-leased-token-store.js";
 import { PgAuditStore } from "./audit-store.js";
 import { PgAuthSessionStore } from "./auth-session-store.js";
 import { PgEventLogStore } from "./event-log-store.js";
@@ -145,10 +141,6 @@ export async function createPgStorage(
   const oauthStore = new PgOAuthStore(db);
   const webhookStore = new PgWebhookStore(db);
   const deliveryStore = new PgWebhookDeliveryStore(db);
-  const inboundWebhookStore = new PgInboundWebhookStore(db);
-  const inboundWebhookEventStore = new PgInboundWebhookEventStore(db);
-  const connectionOauthTokenStore = new PgConnectionOAuthTokenStore(db);
-  const connectionLeasedTokenStore = new PgConnectionLeasedTokenStore(db);
   const auditStore = new PgAuditStore(db);
   const eventLogStore = new PgEventLogStore(db);
   const authSessionStore = new PgAuthSessionStore(baseDb);
@@ -181,10 +173,6 @@ export async function createPgStorage(
     oauthProvider: new PgOauthProviderStore(db),
     outboundWebhooks: webhookStore,
     outboundWebhookDeliveries: deliveryStore,
-    inboundWebhooks: inboundWebhookStore,
-    inboundWebhookEvents: inboundWebhookEventStore,
-    connectionOauthTokens: connectionOauthTokenStore,
-    connectionLeasedTokens: connectionLeasedTokenStore,
     audit: auditStore,
     eventLog: eventLogStore,
     authSessions: authSessionStore,

@@ -37,7 +37,6 @@ import {
 import type { TestContext } from "../test-utils.js";
 import { initEventLog } from "../pubsub.js";
 import type { ItemEventWithId } from "../pubsub.js";
-import { purgeCredential } from "../connections/upstream-credential.js";
 
 let ctx: TestContext;
 
@@ -148,26 +147,6 @@ describe("a purge reaches the stream", () => {
     expect(
       heard.filter((e) => e.item.id === doomed).map((e) => e.type),
     ).toEqual(["purged"]);
-  });
-
-  it("the credential teardown announces the row it removed", async () => {
-    const credential = await ctx.storage.items.create(
-      {
-        type: "system.credential",
-        properties: { label: "upstream", kind: "oauth_token" },
-      },
-      undefined,
-    );
-
-    const heard = await itemEventsDuring(async () => {
-      await purgeCredential(ctx.storage, credential, undefined);
-    });
-
-    // The teardown revokes before it purges, so both frames belong to it
-    // and the purge has to be the last word. A subscriber that saw only
-    // the revocation would hold the row for ever.
-    const mine = heard.filter((e) => e.item.id === credential.id);
-    expect(mine.at(-1)?.type).toBe("purged");
   });
 
   it("reaches a client that was away, under the name it publishes", async () => {

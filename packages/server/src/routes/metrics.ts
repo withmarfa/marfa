@@ -4,7 +4,6 @@ import type { AppEnv } from "../middleware/auth.js";
 import { requireOperatorKey } from "../middleware/auth.js";
 import type { Storage } from "../storage/interface.js";
 import { createOpenAPIRouter, makeErrorResponseSchema } from "../openapi.js";
-import { surveyConnectionDrift } from "../connections/auto-upgrade.js";
 import { scheduledJobsReporter } from "../scheduled/job-metrics.js";
 import { log } from "../middleware/logger.js";
 
@@ -36,22 +35,6 @@ const MetricsResponseSchema = z.object({
   }),
   keys: z.object({
     total: z.number(),
-    runtime_credentials: z.object({
-      total: z.number(),
-      active: z.number(),
-    }),
-  }),
-  // Drift is the number the auto-upgrade pass exists to keep at zero, and
-  // it had no aggregate surface at all: `previewUpgrade` answers for one
-  // connection, so "how much drift is there" was only answerable by
-  // iterating by hand. `behind` above zero on a settled deployment means
-  // something is waiting on a person, and the two counts below say which.
-  connections: z.object({
-    live: z.number(),
-    behind: z.number(),
-    upgradable: z.number(),
-    awaiting_consent: z.number(),
-    blocked: z.number(),
   }),
   webhooks: z.object({
     total: z.number(),
@@ -90,7 +73,7 @@ const getMetricsRoute = createRoute({
   tags: ["Admin"],
   summary: "Get server metrics",
   description:
-    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys of every kind; `keys.runtime_credentials` breaks out the machine-minted per-dispatch credentials, whose `total` includes revoked rows still awaiting hard delete and whose `active` excludes anything revoked or past its expiry. `scheduled_jobs` reports one entry per registered background job — its last completed tick, its last queue-level failure, how many ticks finished inside `window_hours`, and the slowest completed one — so a job that ran and found nothing is distinguishable from one that has not run since boot. A registered job with no ticks on record appears with nulls and a zero count rather than being omitted. `last_queue_failure_at` covers the three ways the queue itself gives up on a tick: the tick outran its expiry budget, its process died mid-tick, or its successor send failed and left the chain dead until the repair schedule restored it. It is deliberately not the last time this job's own work failed: every job catches its own error and returns normally, so a tick whose work threw is recorded as a completion and appears in the log rather than here. `slowest_tick_ms` covers completed ticks only, because an abandoned tick stamps its completion at the expiry budget and would read as a long-running one. A job silent for longer than the queue keeps its rows (`deletion_seconds`, seven days by default) has had them deleted and reads the same as one that never ticked; the payload carries no retention horizon, so the two cannot be told apart here. The whole section is absent on a deployment with no queue substrate (SQLite), where the same jobs run on in-process timers and leave no equivalent record. Operator key only: most counters are instance-wide rather than space-scoped, so a credential bound to a space is refused.",
+    "Instance-wide counters for items, blobs, types, keys, and webhooks, plus process uptime. `keys.total` counts unrevoked keys. `scheduled_jobs` reports one entry per registered background job — its last completed tick, its last queue-level failure, how many ticks finished inside `window_hours`, and the slowest completed one — so a job that ran and found nothing is distinguishable from one that has not run since boot. A registered job with no ticks on record appears with nulls and a zero count rather than being omitted. `last_queue_failure_at` covers the three ways the queue itself gives up on a tick: the tick outran its expiry budget, its process died mid-tick, or its successor send failed and left the chain dead until the repair schedule restored it. It is deliberately not the last time this job's own work failed: every job catches its own error and returns normally, so a tick whose work threw is recorded as a completion and appears in the log rather than here. `slowest_tick_ms` covers completed ticks only, because an abandoned tick stamps its completion at the expiry budget and would read as a long-running one. A job silent for longer than the queue keeps its rows (`deletion_seconds`, seven days by default) has had them deleted and reads the same as one that never ticked; the payload carries no retention horizon, so the two cannot be told apart here. The whole section is absent on a deployment with no queue substrate (SQLite), where the same jobs run on in-process timers and leave no equivalent record. Operator key only: most counters are instance-wide rather than space-scoped, so a credential bound to a space is refused.",
   security: [{ bearerAuth: [] }],
   responses: {
     200: {
@@ -140,24 +123,19 @@ export function metricsRoutes(storage: Storage) {
       itemStats,
       blobStats,
       keyCount,
-      runtimeCredentialCounts,
       webhookCount,
       customTypeCount,
-      drift,
       scheduledJobs,
     ] = await Promise.all([
       storage.items.stats(undefined),
       storage.blobs.count(),
       storage.keys.count(),
-      storage.keys.countRuntimeCredentials(new Date().toISOString()),
       storage.outboundWebhooks.count(),
       storage.types.countCustom(),
-      surveyConnectionDrift(storage),
       // Installed at boot only where there is a queue to read, which is
       // what makes the section's absence meaningful rather than empty.
       //
-      // Caught for the same reason the drift survey beside it catches: one
-      // unreadable part must not blind the whole signal. This part reads
+      // Caught so one unreadable part does not blind the whole signal. It reads
       // pg-boss's private schema against a caret-ranged dependency, and it
       // outlives the pool by however long a request takes to arrive during
       // a graceful drain, so it has two ways to fail that the counters
@@ -192,9 +170,7 @@ export function metricsRoutes(storage: Storage) {
       },
       keys: {
         total: keyCount,
-        runtime_credentials: runtimeCredentialCounts,
       },
-      connections: drift.summary,
       webhooks: {
         total: webhookCount,
       },

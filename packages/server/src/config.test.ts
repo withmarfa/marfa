@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   envNumber,
   parseDbPoolMode,
-  parseIntegrationWorkerThreads,
   parsePositiveIntegerEnv,
   parseOtelSampleRatio,
   parseOtelHeaders,
@@ -215,43 +214,6 @@ describe("parsePositiveIntegerEnv", () => {
   });
 });
 
-describe("parseIntegrationWorkerThreads", () => {
-  it("returns undefined when unset or empty, keeping the executor default", () => {
-    expect(parseIntegrationWorkerThreads(undefined)).toBeUndefined();
-    expect(parseIntegrationWorkerThreads("")).toBeUndefined();
-  });
-
-  it("honors a positive integer", () => {
-    expect(parseIntegrationWorkerThreads("1")).toBe(1);
-    expect(parseIntegrationWorkerThreads("4")).toBe(4);
-  });
-
-  it("throws on zero, negatives, and non-numbers rather than starving the pool", () => {
-    // A NaN or zero pool size would pre-warm no worker threads and leave
-    // every dispatch waiting forever; the boot refusal names the variable.
-    for (const raw of ["0", "-2", "two", "2.5"]) {
-      expect(() => parseIntegrationWorkerThreads(raw)).toThrow(
-        /MARFA_INTEGRATION_WORKER_THREADS/,
-      );
-    }
-  });
-
-  it("refuses Number()'s wider grammar, not just non-numbers", () => {
-    // "1e2" is a valid Number (100) and a plausible typo; accepting it
-    // silently pre-warms a hundred threads per integration. Hex and
-    // signed forms are refused for the same reason: an env value that is
-    // not plain digits is a mistake, not an encoding choice.
-    for (const raw of ["1e2", "0x4", "+4"]) {
-      expect(() => parseIntegrationWorkerThreads(raw)).toThrow(
-        /MARFA_INTEGRATION_WORKER_THREADS/,
-      );
-    }
-    // Surrounding whitespace is the one tolerated deviation, matching how
-    // env files commonly render.
-    expect(parseIntegrationWorkerThreads(" 4 ")).toBe(4);
-  });
-});
-
 describe("loadConfig streaming-RLS endpoint guard", () => {
   const saved = {
     DB_DIALECT: process.env.DB_DIALECT,
@@ -345,7 +307,7 @@ describe("loadConfig streaming-RLS endpoint guard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// MARFA_PROCESS_ROLE / MARFA_DB_POOL_SIZE / MARFA_API_URL — the split's knobs
+// MARFA_PROCESS_ROLE / MARFA_DB_POOL_SIZE — the split's knobs
 // ---------------------------------------------------------------------------
 
 describe("loadConfig process-role and pool knobs", () => {
@@ -353,7 +315,6 @@ describe("loadConfig process-role and pool knobs", () => {
     DB_DIALECT: process.env.DB_DIALECT,
     DATABASE_URL: process.env.DATABASE_URL,
     MARFA_PROCESS_ROLE: process.env.MARFA_PROCESS_ROLE,
-    MARFA_API_URL: process.env.MARFA_API_URL,
     MARFA_DB_POOL_SIZE: process.env.MARFA_DB_POOL_SIZE,
   };
 
@@ -366,24 +327,20 @@ describe("loadConfig process-role and pool knobs", () => {
 
   it("defaults the role to both and the knobs to unset", () => {
     delete process.env.MARFA_PROCESS_ROLE;
-    delete process.env.MARFA_API_URL;
     delete process.env.MARFA_DB_POOL_SIZE;
     const config = loadConfig();
     expect(config.processRole).toBe("both");
-    expect(config.apiUrl).toBeUndefined();
     expect(config.dbPoolSize).toBeUndefined();
   });
 
   it("accepts each legal role on Postgres and threads the knobs through", () => {
     process.env.DB_DIALECT = "pg";
     process.env.DATABASE_URL = "postgres://user:pw@db.example/marfa";
-    process.env.MARFA_API_URL = "http://server:8600";
     process.env.MARFA_DB_POOL_SIZE = "4";
     for (const role of ["web", "worker", "both"] as const) {
       process.env.MARFA_PROCESS_ROLE = role;
       const config = loadConfig();
       expect(config.processRole).toBe(role);
-      expect(config.apiUrl).toBe("http://server:8600");
       expect(config.dbPoolSize).toBe(4);
     }
   });
@@ -408,27 +365,5 @@ describe("loadConfig process-role and pool knobs", () => {
       process.env.MARFA_DB_POOL_SIZE = bad;
       expect(() => loadConfig()).toThrow(/MARFA_DB_POOL_SIZE/);
     }
-  });
-});
-
-describe("loadConfig MARFA_API_URL validation", () => {
-  const saved = { MARFA_API_URL: process.env.MARFA_API_URL };
-
-  afterEach(() => {
-    if (saved.MARFA_API_URL === undefined)
-      Reflect.deleteProperty(process.env, "MARFA_API_URL");
-    else process.env.MARFA_API_URL = saved.MARFA_API_URL;
-  });
-
-  it("refuses a value that does not parse as an http(s) URL", () => {
-    for (const bad of ["http//server:8600", "server:8600", "ftp://x"]) {
-      process.env.MARFA_API_URL = bad;
-      expect(() => loadConfig()).toThrow(/MARFA_API_URL/);
-    }
-  });
-
-  it("accepts a well-formed URL and case-folds the role", () => {
-    process.env.MARFA_API_URL = "http://server:8600";
-    expect(loadConfig().apiUrl).toBe("http://server:8600");
   });
 });

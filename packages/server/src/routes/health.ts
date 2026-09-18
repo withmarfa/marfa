@@ -24,8 +24,6 @@ interface ComponentStatus {
   error?: string;
   /** Per-provider detail, present only on `identity_providers`. */
   providers?: OidcProviderHealth[];
-  /** How many dispatches have given up, present only on `dead_letters`. */
-  count?: number;
 }
 
 /** Where the platform says this instance is running. */
@@ -429,13 +427,6 @@ export function healthRoutes(
   blobBackend: BlobBackend,
   config: AppConfig,
   getAuth?: () => MarfaAuth | undefined,
-  /**
-   * How many dispatches have given up, when this deployment runs the local
-   * substrate. Absent otherwise, and the component is then absent too
-   * rather than reporting a reassuring zero for a queue that does not
-   * exist.
-   */
-  countDeadLetters?: (() => Promise<number>) | null,
 ): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
 
@@ -454,7 +445,6 @@ export function healthRoutes(
   const appPoolSize = config.dbPoolSize ?? DEFAULT_POOL_MAX_CONNECTIONS;
   let connectionsCache: { at: number; value: DatabaseConnections } | null =
     null;
-  let deadLettersCache: { at: number; value: number } | null = null;
 
   // Read once rather than per request. The file cannot change under a
   // running process — a new build is a new container — and a liveness
@@ -572,9 +562,9 @@ export function healthRoutes(
       // Latency on every branch, for the reason the database probe gives
       // above: this is the other bounded probe, and a blob store that
       // refused after most of its budget is a different fault from one that
-      // refused at once. `identity_providers` and `dead_letters` carry none,
-      // and should not — neither is a timed round trip whose duration means
-      // anything on its own.
+      // refused at once. `identity_providers` carries none, and should not:
+      // it is not a timed round trip whose duration means anything on its
+      // own.
       const blobLatencyMs = Math.round(performance.now() - blobStart);
       components.blob_storage =
         outcome === TIMED_OUT
@@ -615,61 +605,12 @@ export function healthRoutes(
       if (unavailable.length > 0) overall = "degraded";
     }
 
-    // A dispatch that exhausted its retries is the system saying it gave
-    // up, and until this it announced that nowhere. One sat in the live
-    // staging space for thirty-three hours with a captured email dropped,
-    // found by an audit that went looking, while the connection itself
-    // reported `runtime_status: healthy` throughout.
-    //
-    // A count and nothing else. The admin listing carrying the same rows
-    // returns connection identifiers spanning every space, and this
-    // endpoint is unauthenticated; a count is the shape it already
-    // publishes for the connection ceiling below.
-    //
-    // It degrades the response deliberately, because the external poller
-    // keys on `status` being `ok` and that is the whole mechanism: no new
-    // credential, no new schedule, no second notifier. `/health` stays 200
-    // when degraded, so the container's own liveness probe is unaffected.
-    //
-    // The evidence expires: pg-boss deletes a failed row seven days after
-    // it fails, so an untouched alert eventually resolves itself. That is
-    // not a reason to stay silent — the row goes at seven days whether or
-    // not anyone was told — but it is why the alert wants acting on rather
-    // than filing.
-    if (countDeadLetters) {
-      const cached = deadLettersCache;
-      let count: number | undefined;
-      if (cached && performance.now() - cached.at < CONNECTIONS_CACHE_MS) {
-        count = cached.value;
-      } else {
-        try {
-          const outcome = await withBudget(countDeadLetters());
-          if (outcome !== TIMED_OUT) {
-            count = outcome;
-            deadLettersCache = { at: performance.now(), value: outcome };
-          }
-        } catch {
-          // Omitted rather than guessed, matching the connection figures
-          // below: the database component above has already reported
-          // whatever stopped this from answering, and a zero here would
-          // read as "nothing has failed".
-        }
-      }
-      if (count !== undefined) {
-        components.dead_letters = {
-          status: count === 0 ? "ok" : "degraded",
-          count,
-        };
-        if (count > 0) overall = "degraded";
-      }
-    }
-
     // Shipped types this instance still carries that the build no longer
     // names. Derived at boot from the build and the rows, so reading it
     // costs nothing and cannot go stale against a running process.
     //
-    // A count and nothing else, for the reason the dead-letter component
-    // gives: this endpoint is unauthenticated, and the identifiers say
+    // A count and nothing else: this endpoint is unauthenticated, and the
+    // identifiers say
     // which types an instance is serving that its build does not. Those
     // sit behind the admin read.
     //
@@ -704,7 +645,7 @@ export function healthRoutes(
     //
     // Not a component, and this is the shape decision rather than the
     // field. It carries no status and never moves `overall`, which is
-    // `platform_types`'s shape and deliberately not `dead_letters`'s. The
+    // `platform_types`'s shape. The
     // rule is already written into this file: a check earns the right to
     // degrade only if something is wrong now. This one can sit non-zero
     // indefinitely — clearing it needs a migration or a hand `UPDATE` on

@@ -89,7 +89,6 @@ async function createHostedContext(): Promise<HostedContext> {
     oidcProviders: [],
     rateLimitDefaultLimit: 1000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
   });
 
   return {

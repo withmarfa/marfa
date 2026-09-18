@@ -150,7 +150,7 @@ describe("the mint never exceeds the caller", () => {
         label: "escalated",
         source: `escalated-${Math.random().toString(36).slice(2, 10)}`,
         default_tier: "library",
-        space_permissions: ["space.credentials"],
+        space_permissions: ["space.settings"],
       },
     });
 
@@ -161,7 +161,7 @@ describe("the mint never exceeds the caller", () => {
     expect(body.error.code).toBe("forbidden");
     // The refusal names the literal, so a client can narrow toward something
     // it could actually be granted.
-    expect(body.error.details?.required_scope).toBe("space.credentials");
+    expect(body.error.details?.required_scope).toBe("space.settings");
   });
 
   it("permits a peer mint of what the caller already holds", async () => {

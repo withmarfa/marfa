@@ -71,7 +71,6 @@ async function main(): Promise<void> {
     oidcProviders: [],
     rateLimitDefaultLimit: 100_000,
     rateLimitWindowMs: 60_000,
-    mcpEnabled: false,
   });
 
   if (!storage.spaces) throw new Error("PG storage always carries spaces");

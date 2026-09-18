@@ -9,30 +9,14 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createTestContext, request } from "../test-utils.js";
 import type { TestContext } from "../test-utils.js";
-import { hashApiKey } from "../middleware/auth.js";
 
 let ctx: TestContext;
-let ownerKey: string;
 let memberKey: string;
 
 const MIRROR_SOURCE = "integration:acme.mirror";
 
 beforeAll(async () => {
   ctx = await createTestContext();
-
-  ownerKey = `marfa_k1_mirror_owner_${String(Math.random()).slice(2)}`;
-  await ctx.storage.keys.createRuntimeCredential(
-    {
-      label: "mirror-owner",
-      source: `mirror-owner-${String(Math.random()).slice(2)}`,
-      type_permissions: { "core.bookmark": "write" },
-      connection_id: "conn_mirror_rule",
-      expires_at: new Date(Date.now() + 600_000).toISOString(),
-      item_source: MIRROR_SOURCE,
-    },
-    hashApiKey(ownerKey, "test-salt"),
-    ctx.spaceId,
-  );
 
   // Minted from the space key, not the operator key: a mint from an operator
   // caller produces another operator key, which is space-less and is not the
@@ -53,11 +37,16 @@ afterAll(async () => {
   await ctx.cleanup();
 });
 
+/**
+ * An integration's mirror of an external record, written through the store:
+ * nothing this server mints can be the owning integration, so the store is
+ * the only writer a mirror has.
+ */
 async function createMirror(sourceId: string): Promise<string> {
-  const res = await request(ctx.app, "POST", "/items", {
-    key: ownerKey,
-    body: {
+  const row = await ctx.storage.items.create(
+    {
       type: "core.bookmark",
+      source: MIRROR_SOURCE,
       source_id: sourceId,
       properties: {
         title: "Mirrored",
@@ -65,9 +54,9 @@ async function createMirror(sourceId: string): Promise<string> {
         body: "as synced",
       },
     },
-  });
-  expect(res.status).toBe(201);
-  return ((await res.json()) as { item: { id: string } }).item.id;
+    ctx.spaceId,
+  );
+  return row.id;
 }
 
 describe("the mirror rule", () => {
@@ -91,32 +80,6 @@ describe("the mirror rule", () => {
     expect(res.status).toBe(403);
     const body = (await res.json()) as { error: { code: string } };
     expect(body.error.code).toBe("integration_owned");
-  });
-
-  it("lets the owning integration re-sync, with nulls clearing keys", async () => {
-    const sourceId = `m-${String(Math.random()).slice(2)}`;
-    const id = await createMirror(sourceId);
-
-    const resync = await request(ctx.app, "POST", "/items", {
-      key: ownerKey,
-      body: {
-        type: "core.bookmark",
-        source_id: sourceId,
-        properties: { title: "Renamed upstream", body: null },
-      },
-    });
-    expect(resync.status).toBe(200);
-
-    const after = await request(ctx.app, "GET", `/items/${id}`, {
-      key: ctx.spaceKey,
-    });
-    const afterBody = (await after.json()) as {
-      item: { properties: Record<string, unknown> };
-    };
-    expect(afterBody.item.properties.title).toBe("Renamed upstream");
-    // The upstream cleared the field; the faithful mirror clears it too.
-    expect("body" in afterBody.item.properties).toBe(false);
-    expect(afterBody.item.properties.url).toBe("https://upstream.example/a");
   });
 
   it("promotes to a user-owned copy joined by derived-from, untouched by re-sync", async () => {
@@ -160,15 +123,12 @@ describe("the mirror rule", () => {
     );
     expect(edit.status).toBe(200);
 
-    const resync = await request(ctx.app, "POST", "/items", {
-      key: ownerKey,
-      body: {
-        type: "core.bookmark",
-        source_id: sourceId,
-        properties: { title: "Upstream renamed again" },
-      },
-    });
-    expect(resync.status).toBe(200);
+    // The upstream moves: the owning integration re-syncs its mirror.
+    await ctx.storage.items.update(
+      id,
+      { properties: { title: "Upstream renamed again" } },
+      ctx.spaceId,
+    );
 
     const promotedAfter = await request(
       ctx.app,

@@ -14,7 +14,6 @@ import {
   isValidVersionBump,
   TYPE_ROLES,
 } from "@withmarfa/shared";
-import { revalidateAndReport } from "../connections/mapping-health.js";
 import type { AppEnv } from "../middleware/auth.js";
 import {
   requireAuth,
@@ -267,26 +266,6 @@ const registerTypeRoute = createRoute({
   },
 });
 
-/**
- * What a type change broke, reported alongside the change rather than
- * instead of it. A mapping is one person's configuration on a connection
- * and a type is the space's own registry, so this is a warning a caller
- * reads now rather than a refusal that sends them hunting through
- * connection settings before they can proceed.
- */
-const BrokenMappingsResponse = z
-  .array(
-    z.object({
-      connection_id: z.string(),
-      integration_ref: z.string().nullable(),
-      issues: z.array(z.object({ field: z.string(), message: z.string() })),
-    }),
-  )
-  .nullable()
-  .describe(
-    "Stored connection mappings this change left invalid. Each is also reported as an `action_required` system.activity row on its connection. An empty array means the check ran and found none; `null` means the check could not run, which is not the same answer.",
-  );
-
 const updateTypeRoute = createRoute({
   operationId: "updateType",
   method: "put",
@@ -312,10 +291,7 @@ const updateTypeRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: z.object({
-            type: TypeSchemaResponse,
-            broken_mappings: BrokenMappingsResponse,
-          }),
+          schema: z.object({ type: TypeSchemaResponse }),
         },
       },
       description: "Custom type updated",
@@ -365,9 +341,7 @@ const deleteTypeRoute = createRoute({
     200: {
       content: {
         "application/json": {
-          schema: OkResponseSchema.extend({
-            broken_mappings: BrokenMappingsResponse,
-          }),
+          schema: OkResponseSchema,
         },
       },
       description: "Type deleted",
@@ -667,15 +641,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
       resource_type: "type",
       resource_id: id,
     });
-    // After the write, never before: the validator reads the same registry
-    // the type store has just moved, so running it first would answer for
-    // the world this request is leaving.
-    const broken = await revalidateAndReport(storage, spaceId, {
-      typeId: id,
-      change: "updated",
-      clientIp: c.get("clientIp") ?? null,
-    });
-    return c.json({ type: updated, broken_mappings: broken }, 200);
+    return c.json({ type: updated }, 200);
   });
 
   router.openapi(deleteTypeRoute, async (c) => {
@@ -746,16 +712,7 @@ export function typeRoutes(storage: Storage, authMode: "keys" | "hosted") {
       resource_type: "type",
       resource_id: id,
     });
-    // The delete succeeds and says what it broke. A mapping that names a
-    // type which no longer resolves keeps failing per item at sync time,
-    // which is honest but invisible; this is where the person who caused
-    // it is still present to read about it.
-    const broken = await revalidateAndReport(storage, spaceId, {
-      typeId: id,
-      change: "deleted",
-      clientIp: c.get("clientIp") ?? null,
-    });
-    return c.json({ ok: true as const, broken_mappings: broken }, 200);
+    return c.json({ ok: true as const }, 200);
   });
 
   return router;

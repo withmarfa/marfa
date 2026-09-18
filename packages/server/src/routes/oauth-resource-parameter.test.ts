@@ -177,15 +177,15 @@ async function signedInClient(
 }
 
 describe("resource parameter on the token endpoint", () => {
-  it("accepts the MCP endpoint's canonical URI and mints a resolvable token", async () => {
+  it("accepts the API origin as the resource and mints a resolvable token", async () => {
     const base = "http://localhost:0";
     const { context, clientId, cookie } = await signedInClient(
       base,
-      "resource-mcp@marfa.so",
+      "resource-origin@marfa.so",
     );
 
     const token = await authorizationCodeGrant(context, clientId, cookie, {
-      resource: `${base}/mcp`,
+      resource: base,
     });
     expect(token.status).toBe(200);
 
