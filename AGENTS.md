@@ -17,9 +17,11 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 ## Conformance
 
-`conformance/` holds the contract: black-box fixtures driven over HTTP and the written specification under `conformance/spec/` that states what they assert. Nothing under `conformance/src/suites/` may import a workspace package; the suite reaches the server over HTTP alone.
+`conformance/` holds the contract: black-box fixtures and the written specification under `conformance/spec/` that states what they assert. Nothing under `conformance/src/suites/` may import a workspace package.
 
-It targets a server it booted itself on SQLite, never a remote one. `pnpm marfa:up` boots the server in this checkout and writes the `MARFA_API_URL`, `MARFA_API_KEY` and `MARFA_OPERATOR_KEY` the run sources; `conformance/README.md` has the rest.
+The server's half is driven over HTTP against a server the suite booted itself on SQLite, never a remote one. `pnpm marfa:up` boots the server in this checkout and writes the `MARFA_API_URL`, `MARFA_API_KEY` and `MARFA_OPERATOR_KEY` the run sources.
+
+The device's half, `conformance/src/suites/device/`, gates the `marfa` binary against a server the fixture scripts, because the verdicts a device reaches include failures the real server cannot be asked for. `MARFA_DEVICE_BIN` names the binary and `device/fidelity.test.ts` holds the scripting to what the real server does. `conformance/README.md` has the rest.
 
 A change to the contract and the change to the server that satisfies it belong in the same pull request. The `conformance` job in `ci.yml` is the gate, and it is not lint-clean by the root ESLint config on purpose — `eslint.config.js` says why.
 
