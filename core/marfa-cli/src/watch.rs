@@ -1,24 +1,26 @@
+use std::io::{self, Write};
 use std::path::Path;
 use std::sync::mpsc;
 
-use marfa_core::CoreError;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
 
-/// Prints every change under `dir` until the process is interrupted.
-pub fn watch(dir: &Path) -> Result<(), CoreError> {
+use crate::error::CliError;
+
+pub fn watch(dir: &Path) -> Result<(), CliError> {
     if !dir.is_dir() {
-        return Err(CoreError::Invalid(format!(
+        return Err(CliError::Watch(format!(
             "{} is not a directory",
             dir.display()
         )));
     }
     let (sender, events) = mpsc::channel::<notify::Result<Event>>();
     let mut watcher = notify::recommended_watcher(sender)
-        .map_err(|error| CoreError::Invalid(format!("cannot watch: {error}")))?;
+        .map_err(|error| CliError::Watch(format!("cannot watch: {error}")))?;
     watcher
         .watch(dir, RecursiveMode::Recursive)
-        .map_err(|error| CoreError::Invalid(format!("cannot watch {}: {error}", dir.display())))?;
+        .map_err(|error| CliError::Watch(format!("cannot watch {}: {error}", dir.display())))?;
     eprintln!("watching {} (interrupt to stop)", dir.display());
+    let mut out = io::stdout().lock();
     for event in events {
         match event {
             Ok(event) => {
@@ -30,8 +32,9 @@ pub fn watch(dir: &Path) -> Result<(), CoreError> {
                     EventKind::Any | EventKind::Other => "other",
                 };
                 for path in &event.paths {
-                    println!("{kind}  {}", path.display());
+                    writeln!(out, "{kind}  {}", path.display())?;
                 }
+                out.flush()?;
             }
             Err(error) => eprintln!("watch error: {error}"),
         }

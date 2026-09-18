@@ -21,7 +21,7 @@ use rusqlite::Connection;
 
 pub use error::CoreError;
 pub use model::{
-    CatchUpReport, Edge, HydrateReport, Item, ItemState, ListFilters, SearchHit, Sort,
+    CatchUpReport, Edge, HydrateReport, Hydration, Item, ItemState, ListFilters, SearchHit, Sort,
     SortDirection, SortField, Status, Tier,
 };
 
@@ -129,12 +129,20 @@ impl Core {
             Some(text) => Some(text.parse()?),
             None => None,
         };
+        let event_cursor = store::meta_get(&conn, store::META_EVENT_CURSOR)?;
+        let hydration = if !store::hydration_complete(&conn)? {
+            Hydration::InProgress
+        } else if event_cursor.is_some() && !slice_types.is_empty() {
+            Hydration::Complete
+        } else {
+            Hydration::Never
+        };
         Ok(Status {
             server_origin: store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
             slice_types,
             slice_tier,
-            event_cursor: store::meta_get(&conn, store::META_EVENT_CURSOR)?,
-            hydration_complete: store::hydration_complete(&conn)?,
+            event_cursor,
+            hydration,
             items: store::count(&conn, "items")?,
             edges: store::count(&conn, "edges")?,
         })
@@ -179,7 +187,12 @@ mod tests {
             Err(CoreError::HydrationIncomplete)
         );
         assert_eq!(core.search("x", 5), Err(CoreError::HydrationIncomplete));
-        assert!(!core.status().unwrap().hydration_complete);
+        assert_eq!(core.status().unwrap().hydration, Hydration::InProgress);
+        {
+            let conn = core.conn().unwrap();
+            store::meta_delete(&conn, store::META_HYDRATE_STATE).unwrap();
+        }
+        assert_eq!(core.status().unwrap().hydration, Hydration::Never);
     }
 
     #[test]

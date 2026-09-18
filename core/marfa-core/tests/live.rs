@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use marfa_core::{Core, CoreError, ItemState, ListFilters, Server, Sort, Tier};
+use marfa_core::{Core, CoreError, Hydration, ItemState, ListFilters, Server, Sort, Tier};
 
 fn server() -> Server {
     let url = std::env::var("MARFA_TEST_URL").expect("MARFA_TEST_URL names the server");
@@ -138,6 +138,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
 
     let status = core.status().unwrap();
     assert_eq!(status.slice_tier, Some(Tier::Library));
+    assert_eq!(status.hydration, Hydration::Complete);
     assert_eq!(status.event_cursor.as_deref(), Some(quiet.cursor.as_str()));
 
     let other = Server {

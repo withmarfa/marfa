@@ -1,26 +1,32 @@
-use marfa_core::{CoreError, Item, SearchHit};
+use std::io::{self, Write};
+
+use marfa_core::{Item, SearchHit};
 use serde::Serialize;
+
+use crate::error::CliError;
 
 pub fn report<T: Serialize>(
     value: &T,
     json: bool,
     human: impl FnOnce() -> String,
-) -> Result<(), CoreError> {
+) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
     if json {
-        println!("{}", serde_json::to_string_pretty(value)?);
+        writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
     } else {
-        println!("{}", human());
+        writeln!(out, "{}", human())?;
     }
     Ok(())
 }
 
-pub fn items(items: &[Item], json: bool) -> Result<(), CoreError> {
+pub fn items(items: &[Item], json: bool) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
     if json {
-        println!("{}", serde_json::to_string_pretty(items)?);
+        writeln!(out, "{}", serde_json::to_string_pretty(items)?)?;
         return Ok(());
     }
     for item in items {
-        println!("{}", line(item));
+        writeln!(out, "{}", line(item))?;
     }
     if items.is_empty() {
         eprintln!("(no items)");
@@ -28,28 +34,30 @@ pub fn items(items: &[Item], json: bool) -> Result<(), CoreError> {
     Ok(())
 }
 
-pub fn item(item: &Item, json: bool) -> Result<(), CoreError> {
+pub fn item(item: &Item, json: bool) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
     if json {
-        println!("{}", serde_json::to_string_pretty(item)?);
+        writeln!(out, "{}", serde_json::to_string_pretty(item)?)?;
     } else {
-        println!("{}", line(item));
-        println!("{}", serde_json::to_string_pretty(&item.properties)?);
+        writeln!(out, "{}", line(item))?;
+        writeln!(out, "{}", serde_json::to_string_pretty(&item.properties)?)?;
         if !item.tags.is_empty() {
-            println!("tags: {}", item.tags.join(", "));
+            writeln!(out, "tags: {}", item.tags.join(", "))?;
         }
     }
     Ok(())
 }
 
-pub fn hits(hits: &[SearchHit], json: bool) -> Result<(), CoreError> {
+pub fn hits(hits: &[SearchHit], json: bool) -> Result<(), CliError> {
+    let mut out = io::stdout().lock();
     if json {
-        println!("{}", serde_json::to_string_pretty(hits)?);
+        writeln!(out, "{}", serde_json::to_string_pretty(hits)?)?;
         return Ok(());
     }
     for hit in hits {
-        println!("{:>7.3}  {}", hit.score, line(&hit.item));
+        writeln!(out, "{:>7.3}  {}", hit.score, line(&hit.item))?;
         if !hit.snippet.is_empty() {
-            println!("         {}", hit.snippet.replace('\n', " "));
+            writeln!(out, "         {}", hit.snippet.replace('\n', " "))?;
         }
     }
     if hits.is_empty() {

@@ -240,13 +240,31 @@ pub struct CatchUpReport {
     pub reached_head: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Hydration {
+    Never,
+    InProgress,
+    Complete,
+}
+
+impl Hydration {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Hydration::Never => "never",
+            Hydration::InProgress => "in_progress",
+            Hydration::Complete => "complete",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Status {
     pub server_origin: Option<String>,
     pub slice_types: Vec<String>,
     pub slice_tier: Option<Tier>,
     pub event_cursor: Option<String>,
-    pub hydration_complete: bool,
+    pub hydration: Hydration,
     pub items: u64,
     pub edges: u64,
 }
