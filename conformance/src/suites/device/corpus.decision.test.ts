@@ -89,6 +89,21 @@ function titlesIn(file: string): string[] {
   );
 }
 
+function blocksIn(file: string): Array<{ title: string; source: string }> {
+  const text = readFileSync(resolve(here, file), "utf8");
+  const found: Array<{ title: string; source: string }> = [];
+  for (const block of text.split(/(?=(?:^|\s)it\(\s*")/)) {
+    TITLE.lastIndex = 0;
+    const title = TITLE.exec(block);
+    if (title) found.push({ title: title[1], source: block });
+  }
+  return found;
+}
+
+function blockFor(file: string, title: string): string | undefined {
+  return blocksIn(file).find((block) => block.title === title)?.source;
+}
+
 /** A fixture whose body is `notWrittenYet` asserts nothing and must be pending. */
 function bodilessTitles(file: string): string[] {
   const path = resolve(here, file);
@@ -114,10 +129,25 @@ describe("every device statement is asserted by something", () => {
       CHAPTERS.every((chapter) => existsSync(resolve(specDir, chapter))),
       "a device chapter is missing, so everything below is checking an empty set",
     ).toBe(true);
-    expect(
-      allStatements.length,
-      "the chapters parsed to fewer statements than they carry, so the checks below are looking at part of the contract",
-    ).toBeGreaterThan(50);
+    // Contiguous from 1, per chapter, rather than a count over the three.
+    // A loose floor lets most of a chapter fall out of the parse while every
+    // check below passes on whatever survived, and it lets a renumbering
+    // leave a gap nobody notices.
+    for (const chapter of CHAPTERS) {
+      const numbers = allStatements
+        .filter((statement) => statement.chapter === chapter)
+        .map((statement) => Number(statement.number));
+      expect(
+        numbers,
+        `${chapter} did not parse to a run of statements numbered from 1, so either the parse is reading part of the chapter or the chapter has a gap`,
+      ).toEqual(
+        Array.from({ length: numbers.length }, (_, index) => index + 1),
+      );
+      expect(
+        numbers.length,
+        `${chapter} parsed to ${String(numbers.length)} statements, which is fewer than it carries`,
+      ).toBeGreaterThanOrEqual(15);
+    }
   });
 
   it("cites a fixture for every numbered statement", () => {
@@ -198,25 +228,39 @@ describe("the pending list and the fixtures agree", () => {
     ).toEqual([]);
   });
 
-  it("lets a written fixture stay on the list, because that one polices itself", () => {
-    // A pending fixture whose body is written runs its assertions and is
-    // required to fail (`pendingUntilItPasses`), so the day the device
-    // satisfies it the run goes red asking for the entry to be removed. It is
-    // the only kind of entry this file does not have to police, and naming
-    // that here is cheaper than a reader wondering why the check is
-    // one-directional.
+  it("requires a written pending fixture to be the kind that polices itself", () => {
+    // A pending fixture whose body is written has to run and fail, so the day
+    // the device satisfies it the run goes red asking for the entry to be
+    // removed. One that skips instead would sit on the list for ever, cited by
+    // a statement nothing asserts, with every other check here passing.
     const bodiless = new Set(
       fixtureFiles.flatMap((file) =>
         bodilessTitles(file).map((title) => `${file} › ${title}`),
       ),
     );
-    const written = Object.keys(PENDING).filter((key) => !bodiless.has(key));
-    for (const key of written) {
+    const wrong: string[] = [];
+    for (const key of Object.keys(PENDING)) {
+      if (bodiless.has(key)) continue;
       const [file, title] = key.split(" › ");
-      expect(
-        titlesIn(`device/${file}`),
-        `${key} is on the pending list with a written body, which is fine, but the test is gone`,
-      ).toContain(title);
+      const block = blockFor(file, title);
+      if (block === undefined) {
+        wrong.push(`${key}: the test is gone`);
+        continue;
+      }
+      if (!block.includes("pendingUntilItPasses(")) {
+        wrong.push(
+          `${key}: has a body but does not run it under pendingUntilItPasses`,
+        );
+      }
+      if (block.includes("skipIfPending(")) {
+        wrong.push(
+          `${key}: has a body and skips anyway, so it can never go green`,
+        );
+      }
     }
+    expect(
+      wrong,
+      "a pending fixture with a written body is not the self-policing kind, so a statement the device already satisfies can stay skipped for ever",
+    ).toEqual([]);
   });
 });

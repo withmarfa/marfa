@@ -152,27 +152,58 @@ export class CliDevice implements DeviceUnderTest {
     return args;
   }
 
+  /**
+   * A refusal is a non-zero exit with something on stderr, and nothing else.
+   *
+   * Everything else the spawn can do — a binary that is not there, a hang, a
+   * clean exit printing something that is not JSON — throws. Reporting one of
+   * those as a refusal would make every fixture whose whole assertion is that
+   * the device refused pass against a device that is simply broken, which is
+   * the one way this suite could be green about nothing.
+   */
   private async json<T>(args: string[]): Promise<Outcome<T>> {
     const full = ["--db", this.options.store, "--json", ...args];
+    let stdout: string;
     try {
-      const { stdout } = await run(this.options.binary, full, {
-        // A device that hangs is a failing device, and the runner owns the
-        // deadline for everything else; this bound only stops one hung spawn
-        // from taking the whole file's budget with nothing naming it.
+      // A device that hangs is a failing device, and the runner owns the
+      // deadline for everything else; this bound stops one hung spawn from
+      // taking the file's whole budget with nothing naming it.
+      ({ stdout } = await run(this.options.binary, full, {
         timeout: 60_000,
         maxBuffer: 32 * 1024 * 1024,
-      });
-      const text = stdout.trim();
-      return { ok: true, value: (text === "" ? null : JSON.parse(text)) as T };
+      }));
     } catch (error) {
       const failure = error as {
         stderr?: string;
         code?: number | string;
+        killed?: boolean;
         message?: string;
       };
-      const stderr = failure.stderr ?? failure.message ?? "";
-      const exitCode = typeof failure.code === "number" ? failure.code : null;
-      return { ok: false, refusal: classify(stderr, exitCode) };
+      if (failure.killed === true) {
+        throw new Error(
+          `the device did not answer \`${args.join(" ")}\` within its bound`,
+        );
+      }
+      if (typeof failure.code !== "number") {
+        throw new Error(
+          `the device could not be run: ${failure.message ?? String(failure.code)}`,
+        );
+      }
+      if (failure.stderr === undefined || failure.stderr.trim() === "") {
+        throw new Error(
+          `the device exited ${String(failure.code)} saying nothing, so there is no refusal to read`,
+        );
+      }
+      return { ok: false, refusal: classify(failure.stderr, failure.code) };
+    }
+    const text = stdout.trim();
+    if (text === "") return { ok: true, value: null as T };
+    try {
+      return { ok: true, value: JSON.parse(text) as T };
+    } catch {
+      throw new Error(
+        `the device exited cleanly and printed something that is not JSON: ${text.slice(0, 200)}`,
+      );
     }
   }
 }

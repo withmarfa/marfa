@@ -32,6 +32,7 @@ export const PENDING: Readonly<Record<string, string>> = {
     "device.md 23",
   "local-refusals.test.ts › refuses a write from a reading handle":
     "device.md 26",
+  "local-refusals.test.ts › refuses a local purge": "device.md 25",
   "queue.test.ts › sends queued writes in the order they were queued":
     "queue-and-verdicts.md 1",
   "queue.test.ts › keeps the queue across a restart": "queue-and-verdicts.md 1",
@@ -169,12 +170,23 @@ export async function pendingUntilItPasses(
   }
   try {
     await body();
-  } catch {
+  } catch (error) {
+    // Only an assertion tells us the device could not do the thing. A spawn
+    // that failed, a stale binary, a port already taken: each of those throws
+    // too, and reading one as "still pending" is how a broken harness reports
+    // itself as a device that is merely behind.
+    if (!isAssertion(error)) throw error;
     return;
   }
   throw new Error(
     `this fixture now passes, so ${statement} is satisfied: remove "${key}" from PENDING in the same pull request that made it pass.`,
   );
+}
+
+function isAssertion(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const thrown = error as { name?: unknown; matcherResult?: unknown };
+  return thrown.matcherResult !== undefined || thrown.name === "AssertionError";
 }
 
 interface Skippable {

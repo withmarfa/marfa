@@ -1,4 +1,3 @@
-import { basename } from "node:path";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
@@ -46,8 +45,20 @@ export async function startHarness(label: string): Promise<Harness> {
   return {
     server,
     device,
+    /**
+     * Stopping is also where a door nobody scripted is reported. An unscripted
+     * door answers 501, a device reads that as one more refusal, and a fixture
+     * then reads it as the refusal it was testing for; this is the one place
+     * that difference is visible.
+     */
     stop: async () => {
+      const unscripted = [...server.unmatchedRequests];
       await server.stop();
+      if (unscripted.length > 0) {
+        throw new Error(
+          `the device went to a door no answer was scripted for, and read the 501 as a refusal: ${unscripted.join(", ")}`,
+        );
+      }
     },
   };
 }
@@ -83,9 +94,4 @@ export function scriptHydration(
       forType.map((row) => ({ item: wireItem(row.item), tags: row.tags })),
     );
   });
-}
-
-/** The basename a pending key is written with. */
-export function fileOf(path: string): string {
-  return basename(path);
 }

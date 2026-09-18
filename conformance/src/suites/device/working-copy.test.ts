@@ -115,9 +115,10 @@ describe("the working copy holds one slice", () => {
     const held = await device.list();
     expect(held.ok).toBe(true);
     const ids = held.ok ? held.value.map((item) => item.id) : [];
-    expect(ids, "the tier the device declared was not held").toContain(
-      "library-row",
-    );
+    expect(
+      ids,
+      "the tier the device declared was not held, so the assertion below passes against an empty copy rather than against a device that keeps its tier",
+    ).toContain("library-row");
     expect(
       ids,
       "a row of the other tier was held, so a device that asked for the library is carrying the feed as well",
@@ -241,7 +242,10 @@ describe("the working copy belongs to one server", () => {
         "a store bound to one server accepted a hydration from another, so one file would carry two datasets with nothing recording which row came from where",
       ).toBe(false);
       if (!refused.ok) {
-        expect(refused.refusal.code).toBe("wrong_server");
+        expect(
+          refused.refusal.code,
+          `the device refused for some other reason, so nothing here shows it noticed the store belongs elsewhere: ${refused.refusal.raw}`,
+        ).toBe("wrong_server");
         expect(
           refused.refusal.raw,
           "the refusal did not name the server the store belongs to, so a caller cannot tell which of the two is wrong",
@@ -294,8 +298,14 @@ describe("the working copy says what it is", () => {
       status.value.hydration,
       "a device that has never hydrated did not say so, so a caller cannot tell a hydration is owed",
     ).toBe("never");
-    expect(status.value.slice_types).toEqual([]);
-    expect(status.value.event_cursor ?? null).toBeNull();
+    expect(
+      status.value.slice_types,
+      "a device that has declared nothing reported a slice, so its report is not a reading of what it holds",
+    ).toEqual([]);
+    expect(
+      status.value.event_cursor ?? null,
+      "a device with nowhere to resume from named a cursor, so a catch-up would replay from a point nothing chose",
+    ).toBeNull();
     expect(
       status.value.server_origin ?? null,
       "a device that has hydrated from nowhere named a server it is bound to",
@@ -343,9 +353,10 @@ describe("the working copy says what it is", () => {
     server.answer("GET", "/items", { kind: "drop" });
 
     const hydrated = await device.hydrate(["core.note"], "library");
-    expect(hydrated.ok, "the interrupted hydration reported success").toBe(
-      false,
-    );
+    expect(
+      hydrated.ok,
+      "the interrupted hydration reported success, so a caller is told it holds a slice that was never finished",
+    ).toBe(false);
 
     const listed = await device.list();
     expect(

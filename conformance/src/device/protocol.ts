@@ -82,10 +82,10 @@ export interface ListFilters {
 /**
  * A device, as the fixtures drive it.
  *
- * The read half is implemented. The write half is the milestone's, and every
- * operation below it throws `NotYetImplemented` until the binary grows the
- * command behind it; a fixture that needs one is pending against the statement
- * it will assert (`pending.ts`).
+ * The read half only. The write half is the milestone's, and the operations
+ * it needs are added here as the binary grows the commands behind them; until
+ * then a fixture that needs one is pending against the statement it will
+ * assert (`pending.ts`).
  */
 export interface DeviceUnderTest {
   /** The store this device reads and writes. One device, one store. */
@@ -100,13 +100,4 @@ export interface DeviceUnderTest {
 
   /** A second device over the same store, for the one-writer rule. */
   reopen(options?: { url?: string; key?: string }): DeviceUnderTest;
-}
-
-export class NotYetImplemented extends Error {
-  constructor(operation: string) {
-    super(
-      `the device under test has no ${operation}; the fixture that needs it is pending against the statement it will assert`,
-    );
-    this.name = "NotYetImplemented";
-  }
 }

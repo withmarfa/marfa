@@ -27,8 +27,8 @@ A folder is a device surface: a directory on a machine that holds a slice as fil
 
 13. **A folder create carries the version it is based on**, where the general contract leaves a version optional on a create (`queue-and-verdicts.md` 2), and a folder create with no version is refused before it is sent. A folder create lands on an existing row whenever the natural key already names one, so a version-less one is an update that read nothing. A version-less create onto an existing row is an overwrite of whatever is there, which is how a second machine's stale copy replaces newer server content with nothing reporting it. `device/folders.test.ts › refuses a create that carries no version`, `› does not overwrite newer server content from a stale folder`.
 14. **Echo suppression has no gap.** A write the folder made to its own files never comes back as a change. Every write the folder makes is either announced to the watcher before it happens or lands under a path the watcher does not watch. `device/folders.test.ts › does not read its own writes back as changes`.
-15. Deletes are journalled and deferred: a file that disappears is recorded, and the delete is sent after the grace that separates a delete from the first half of a rename. `device/folders.test.ts › defers a delete past the rename grace`.
-16. **A delete made while the folder was not running is recovered when it starts.** A tracked file that is absent at startup is journalled the same way one that vanished while watching is. `device/folders.test.ts › journals a delete that happened while it was not running`.
+15. Deletes are journaled and deferred: a file that disappears is recorded, and the delete is sent after the grace that separates a delete from the first half of a rename. `device/folders.test.ts › defers a delete past the rename grace`.
+16. **A delete made while the folder was not running is recovered when it starts.** A tracked file that is absent at startup is journaled the same way one that vanished while watching is. `device/folders.test.ts › journals a delete that happened while it was not running`.
 
 ## What a folder does not watch
 

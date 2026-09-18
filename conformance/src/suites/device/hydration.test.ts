@@ -109,7 +109,7 @@ describe("the order a hydration reads in", () => {
     const firstRow = doors.indexOf("/items");
     expect(
       cursorRead,
-      "the device never asked where the log had reached",
+      "the device never asked where the log had reached, so it has no resume point and the ordering below is about nothing",
     ).toBeGreaterThanOrEqual(0);
     expect(
       cursorRead,
@@ -153,9 +153,10 @@ describe("what a hydration leaves behind", () => {
     const held = await device.list();
     expect(held.ok).toBe(true);
     const ids = held.ok ? held.value.map((item) => item.id) : [];
-    expect(ids, "the new slice did not land").toContain(
-      "from-the-second-slice",
-    );
+    expect(
+      ids,
+      "the new slice did not land, so the assertion below passes against a hydration that pulled nothing",
+    ).toContain("from-the-second-slice");
     expect(
       ids,
       "the previous slice survived the hydration, so a device that narrows what it declares keeps carrying rows it no longer asks the server about and never learns they changed",
@@ -165,7 +166,7 @@ describe("what a hydration leaves behind", () => {
     expect(status.ok).toBe(true);
     expect(
       status.ok ? status.value.slice_types : [],
-      "the device reports a slice it no longer holds",
+      "the device reports a slice it no longer holds, so a catch-up would ask for types the copy has no rows of",
     ).toEqual(["core.bookmark"]);
   });
 
@@ -174,14 +175,21 @@ describe("what a hydration leaves behind", () => {
     const { server, device } = harness;
     server.answer("GET", "/events", headRead("10"));
     server.answer("GET", "/types", typeCatalog());
+    // The first attempt lands a page and then dies partway through the walk,
+    // so there is something a resuming device could resume from. With nothing
+    // landed, the second attempt reports the whole slice either way and the
+    // assertion below would be about nothing.
+    const firstPage = itemsPage([{ item: wireItem({ id: "a" }) }], {
+      cursor: "p2",
+      hasMore: true,
+    });
     server.answer(
       "GET",
       "/items",
+      firstPage,
       { kind: "drop" },
-      itemsPage([
-        { item: wireItem({ id: "a" }) },
-        { item: wireItem({ id: "b" }) },
-      ]),
+      firstPage,
+      itemsPage([{ item: wireItem({ id: "b" }) }]),
     );
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(false);
@@ -196,9 +204,9 @@ describe("what a hydration leaves behind", () => {
       `the second hydration was refused: ${JSON.stringify(again)}`,
     ).toBe(true);
     expect(
-      again.ok ? again.value.items : -1,
-      "the second hydration reported fewer rows than the slice holds, so it resumed the interrupted one rather than replacing it and the copy is short whatever the first attempt missed",
-    ).toBe(2);
+      again.ok ? [again.value.items, again.value.pages] : undefined,
+      "the second hydration walked less than the whole slice, so it resumed the interrupted one rather than replacing it and the copy is short whatever the first attempt missed",
+    ).toEqual([2, 2]);
     expect((await device.list()).ok).toBe(true);
   });
 

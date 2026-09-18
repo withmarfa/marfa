@@ -39,8 +39,8 @@ function lastEventIds(harnessUnderTest: Harness): string[] {
 }
 
 describe("catch-up replays from the cursor", () => {
-  it("applies events from the stored cursor in the order they arrive", async () => {
-    harness = await startHarness("replay-order");
+  it("resumes at the stored cursor and applies what the stream carries", async () => {
+    harness = await startHarness("replay-resume");
     const { server, device } = harness;
     scriptHydration(server, {
       head: "10",
@@ -50,24 +50,8 @@ describe("catch-up replays from the cursor", () => {
       "GET",
       "/events",
       replay("12", [
-        itemEvent(
-          "11",
-          "item.updated",
-          wireItem({
-            id: "n1",
-            version: 2,
-            properties: { title: "first", body: "first" },
-          }),
-        ),
-        itemEvent(
-          "12",
-          "item.updated",
-          wireItem({
-            id: "n1",
-            version: 3,
-            properties: { title: "second", body: "second" },
-          }),
-        ),
+        itemEvent("11", "item.created", wireItem({ id: "n2" })),
+        itemEvent("12", "item.created", wireItem({ id: "n3" })),
       ]),
     );
 
@@ -82,13 +66,17 @@ describe("catch-up replays from the cursor", () => {
       lastEventIds(harness),
       "the replay did not resume from the cursor the store held, so it either re-read what the snapshot already had or skipped what it did not",
     ).toEqual(["(none)", "10"]);
-
-    const row = await device.get("n1");
-    expect(row.ok).toBe(true);
     expect(
-      row.ok ? row.value.properties.title : undefined,
-      "the earlier event won, so events are being applied in some order other than the one the log sent them in",
-    ).toBe("second");
+      caught.ok ? caught.value.applied : undefined,
+      "the device counted fewer events than the stream carried, so something arrived and was not applied without being reported as skipped",
+    ).toBe(2);
+
+    const held = await device.list();
+    expect(held.ok).toBe(true);
+    expect(
+      held.ok ? held.value.map((item) => item.id).sort() : [],
+      "an event the stream carried never reached the copy, and the catch-up reported a clean pass over it",
+    ).toEqual(["n1", "n2", "n3"]);
   });
 
   it("keeps the last id applied rather than the highest, so a late lower id is not stepped over", async () => {
@@ -144,7 +132,7 @@ describe("catch-up replays from the cursor", () => {
     expect(caught.ok).toBe(true);
     expect(
       caught.ok ? caught.value.cursor : undefined,
-      "the cursor moved past the events the device actually applied",
+      "the cursor moved past the events the device actually applied, so everything between is skipped with nothing left to fetch it",
     ).toBe("12");
 
     await device.catchUp();
@@ -223,9 +211,10 @@ describe("catch-up keeps the copy to its slice", () => {
     const ids = held.ok ? held.value.map((item) => item.id) : [];
     // The control: the row that did not move is still there, so an eviction
     // is being read rather than a copy that was cleared.
-    expect(ids, "the copy lost a row the event said nothing about").toContain(
-      "stays",
-    );
+    expect(
+      ids,
+      "the copy lost a row the event said nothing about, so this reads an eviction where the whole slice was cleared",
+    ).toContain("stays");
     expect(
       ids,
       "a row that left the slice stayed in the copy, so a device keeps answering for rows it no longer hears about and cannot say how stale they are",
@@ -254,7 +243,10 @@ describe("catch-up keeps the copy to its slice", () => {
 
     const held = await device.list();
     const ids = held.ok ? held.value.map((item) => item.id) : [];
-    expect(ids, "the declared type's event did not land").toContain("declared");
+    expect(
+      ids,
+      "the declared type's event did not land, so the assertion below passes against a device that applied nothing at all",
+    ).toContain("declared");
     expect(
       ids,
       "an event for a type outside the slice added a row, so the copy grows with every type anybody writes on the server",
@@ -356,6 +348,9 @@ describe("a cursor the log no longer holds", () => {
       again.ok,
       `the device could not hydrate after an aged-out cursor: ${JSON.stringify(again)}`,
     ).toBe(true);
-    expect(again.ok ? again.value.cursor : undefined).toBe("900");
+    expect(
+      again.ok ? again.value.cursor : undefined,
+      "the hydration after an aged-out cursor stored some other resume point, so the next catch-up ages out again",
+    ).toBe("900");
   });
 });

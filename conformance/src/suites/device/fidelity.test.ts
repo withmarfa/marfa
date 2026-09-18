@@ -8,7 +8,14 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { openEventStream, parseSse } from "../../utils/sse.js";
-import { answers } from "../../device/marfa-answers.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  answers,
+  itemEvent,
+  itemsPage,
+  wireItem,
+  wireType,
+} from "../../device/marfa-answers.js";
 import type { Answer } from "../../device/scripted-server.js";
 
 /**
@@ -77,28 +84,45 @@ function kindAt(value: unknown, path: string): string {
   return Array.isArray(found) ? "array" : typeof found;
 }
 
+interface Fields {
+  /** Paths whose value has to be the same on both sides. */
+  same?: string[];
+  /** Paths where only the JSON kind can be compared, because a run mints the value. */
+  shape?: string[];
+}
+
 /**
- * The scripted answer and the real one have to agree on the status and on
- * every field a device reads out of them. A field the device reads that the
- * script carries and the server does not is a device built against a server
- * that does not exist; one the server carries and the script does not is a
- * fixture that cannot reach the behavior it claims to test.
+ * The scripted answer and the real one have to agree on the status, on the
+ * value of every field a device decides something by, and on the presence and
+ * kind of every field a run mints for itself.
+ *
+ * Comparing kinds alone is not enough and was the first thing wrong with this
+ * file: a scripted `error.code` of "nope" is a string, so is the server's, and
+ * the code is the one field the device classifies a refusal by. Comparing
+ * values alone is not possible either, because an id, a version and an instant
+ * differ every run — hence the two lists.
  */
 function expectFidelity(
   name: string,
   real: Observed,
   scripted: Answer,
-  paths: string[],
+  fields: Fields,
 ): void {
   expect(
     scriptedStatus(scripted),
     `the scripted answer for ${name} carries a status the server does not give, so every fixture that reads it is testing a server nobody runs`,
   ).toBe(real.status);
   const body = scriptedBody(scripted);
-  for (const path of paths) {
+  for (const path of fields.same ?? []) {
+    expect(
+      at(body, path),
+      `the scripted answer for ${name} and the server disagree about the value at \`${path}\`, and a device decides on that value`,
+    ).toEqual(at(real.body, path));
+  }
+  for (const path of fields.shape ?? []) {
     expect(
       kindAt(body, path),
-      `the scripted answer for ${name} and the server disagree about \`${path}\`, so a device satisfying this suite would meet something else in production`,
+      `the scripted answer for ${name} and the server disagree about whether \`${path}\` is there and what kind of thing it is, so a device satisfying this suite would meet something else in production`,
     ).toBe(kindAt(real.body, path));
   }
 }
@@ -132,7 +156,7 @@ describe("the scripted answers match the server's", () => {
       "a create",
       { status: created.status, body: created.data },
       answers.created({ id: created.data.item.id, version: 1, properties: {} }),
-      ["item.id", "item.version", "metadata.tags"],
+      { same: ["item.id", "metadata.tags"], shape: ["item.version"] },
     );
 
     const updated = await client.updateItem(created.data.item.id, {
@@ -148,7 +172,7 @@ describe("the scripted answers match the server's", () => {
       "an update",
       { status: updated.status, body: updated.data },
       answers.updated({ id: updated.data.item.id, version: 2, properties: {} }),
-      ["item.id", "item.version", "metadata.tags"],
+      { same: ["item.id", "metadata.tags"], shape: ["item.version"] },
     );
   });
 
@@ -179,19 +203,29 @@ describe("the scripted answers match the server's", () => {
         { version: 2, properties: {} },
         { version: 1, properties: {} },
         ["body", "title"],
-        { fields: { body: "keep_both_copies" }, default: "last_writer_wins" },
+        // core.note declares both of its text fields keep-both
+        // (`versions.md` 11); a policy naming one of them would send a device
+        // looking for a sibling it was never told to expect.
+        {
+          fields: { body: "keep_both_copies", notes: "keep_both_copies" },
+          default: "last_writer_wins",
+        },
       ),
-      [
-        "error.code",
-        "error.status",
-        "current.version",
-        "current.properties",
-        "ancestor.version",
-        "ancestor.properties",
-        "conflicting_fields",
-        "merge_policy.fields",
-        "merge_policy.default",
-      ],
+      {
+        same: [
+          "error.code",
+          "error.status",
+          "conflicting_fields",
+          "merge_policy.fields",
+          "merge_policy.default",
+        ],
+        shape: [
+          "current.version",
+          "current.properties",
+          "ancestor.version",
+          "ancestor.properties",
+        ],
+      },
     );
   });
 
@@ -207,13 +241,10 @@ describe("the scripted answers match the server's", () => {
       "a write naming a version with no snapshot",
       { status: refused.status, body: refused.error },
       answers.ancestorUnavailable({ version: 1, properties: {} }, 0),
-      [
-        "error.code",
-        "error.status",
-        "current.version",
-        "requested_version",
-        "ancestor",
-      ],
+      {
+        same: ["error.code", "error.status", "requested_version", "ancestor"],
+        shape: ["current.version", "current.properties"],
+      },
     );
   });
 
@@ -253,12 +284,10 @@ describe("the scripted answers match the server's", () => {
         { body: "keep_both_copies", title: "last_writer_wins" },
         "a-sibling-id",
       ),
-      [
-        "item.id",
-        "item.version",
-        "conflict_resolution.strategy",
-        "conflict_resolution.conflicted_copy_id",
-      ],
+      {
+        same: ["item.id", "conflict_resolution.strategy"],
+        shape: ["item.version", "conflict_resolution.conflicted_copy_id"],
+      },
     );
 
     // The other arm: a collision on a last-writer-wins field alone resolves
@@ -293,11 +322,13 @@ describe("the scripted answers match the server's", () => {
         { id: lww.id, version: 3, properties: {} },
         { title: "last_writer_wins" },
       ),
-      [
-        "item.id",
-        "conflict_resolution.strategy",
-        "conflict_resolution.conflicted_copy_id",
-      ],
+      {
+        same: [
+          "item.id",
+          "conflict_resolution.strategy",
+          "conflict_resolution.conflicted_copy_id",
+        ],
+      },
     );
   });
 
@@ -311,7 +342,7 @@ describe("the scripted answers match the server's", () => {
       "a body missing a required field",
       { status: missing.status, body: missing.error },
       answers.validation("missing_required_field", "type is required"),
-      ["error.code", "error.message"],
+      { same: ["error.code"], shape: ["error.message"] },
     );
 
     const scoped = await client.createKey({
@@ -338,7 +369,7 @@ describe("the scripted answers match the server's", () => {
       "a type the key does not hold",
       { status: denied.status, body: denied.error },
       answers.forbidden("type_not_permitted"),
-      ["error.code", "error.message"],
+      { same: ["error.code"], shape: ["error.message"] },
     );
 
     const bare = new MarfaClient({ baseUrl: apiUrl, apiKey: "" });
@@ -350,7 +381,206 @@ describe("the scripted answers match the server's", () => {
       "a request with no credential",
       { status: unauthorized.status, body: unauthorized.error },
       answers.unauthorized(),
-      ["error.code", "error.message"],
+      { same: ["error.code"], shape: ["error.message"] },
+    );
+  });
+
+  it("matches the items page a hydration walks", async () => {
+    const seeded = await note({ title: "page shape", body: "page shape" });
+    const page = await client.rawRequest(
+      `/items?type=core.note&tier=library&state=any&include=edges,metadata&source=${encodeURIComponent(ctx.source)}`,
+    );
+    expect(page.ok).toBe(true);
+    expect(
+      (page.data as { data: unknown[] }).data.length,
+      "the listing answered nothing, so the comparison below is between two empty envelopes",
+    ).toBeGreaterThan(0);
+
+    expectFidelity(
+      "the items page",
+      { status: page.status, body: page.data },
+      itemsPage([{ item: wireItem({ id: seeded.id }) }]),
+      {
+        same: ["has_more", "cursor", "data.0.metadata.tags"],
+        shape: [
+          "data.0.item.id",
+          "data.0.item.type",
+          "data.0.item.properties",
+          "data.0.item.state",
+          "data.0.item.tier",
+          "data.0.item.version",
+          "data.0.item.schema_version",
+          "data.0.item.source",
+          // Absent rather than null on a row that has neither, which is a
+          // difference `kindAt` can see and a device reads as two different
+          // things.
+          "data.0.item.source_id",
+          "data.0.item.device",
+          "data.0.item.timestamp",
+          "data.0.item.created_at",
+          "data.0.item.updated_at",
+        ],
+      },
+    );
+  });
+
+  it("matches the type registry a device resolves a subtree with", async () => {
+    const registry = await client.rawRequest("/types");
+    expect(registry.ok).toBe(true);
+    const served = registry.data as unknown;
+    expect(
+      Array.isArray(served),
+      "the registry is not a bare array, so a device decoding one would read nothing at all",
+    ).toBe(true);
+    const rows = served as Array<Record<string, unknown>>;
+
+    const rootType = rows.find((row) => row.id === "core.note");
+    const childType = rows.find((row) => row.id === "core.entity.person");
+    expect(
+      [rootType, childType].every((row) => row !== undefined),
+      "the registry does not carry the two types this comparison is built on",
+    ).toBe(true);
+
+    expectFidelity(
+      "a type with no parent",
+      { status: registry.status, body: { row: rootType } },
+      {
+        kind: "json",
+        status: registry.status,
+        body: { row: wireType("core.note") },
+      },
+      {
+        same: ["row.id", "row.display_hints.title_field"],
+        // A type with no parent carries no `parent` at all. A scripted `null`
+        // there is a shape the server never sends, and a device walking a
+        // parent chain meets it on the first type it reads.
+        shape: ["row.parent", "row.label", "row.fields"],
+      },
+    );
+    expectFidelity(
+      "a type with a parent",
+      { status: registry.status, body: { row: childType } },
+      {
+        kind: "json",
+        status: registry.status,
+        body: {
+          row: wireType("core.entity.person", {
+            parent: "core.entity",
+            titleField: "name",
+          }),
+        },
+      },
+      {
+        same: ["row.id", "row.parent", "row.display_hints.title_field"],
+        shape: ["row.label"],
+      },
+    );
+  });
+
+  it("matches an item frame on the event stream", async (context) => {
+    const marker = `fidelity-frame-${ctx.runId}`;
+    const frames = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      const created = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { title: marker, body: marker },
+      });
+      expect(created.ok).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      const seen = await collectUntil(
+        stream,
+        (events) =>
+          events.some(
+            (event) =>
+              event.event === "item.created" &&
+              (event.data as { item?: { properties?: { title?: string } } })
+                .item?.properties?.title === marker,
+          ),
+        `item.created for ${marker}`,
+        context.signal,
+      );
+      return seen.events;
+    });
+
+    const announced = frames.find(
+      (event) =>
+        (event.data as { item?: { properties?: { title?: string } } }).item
+          ?.properties?.title === marker,
+    );
+    expect(
+      announced,
+      "the write was never announced, so there is no frame to compare",
+    ).toBeDefined();
+    expect(
+      typeof announced!.id,
+      "the frame carried no id, so a device applying it has nothing to move its cursor to",
+    ).toBe("string");
+
+    const scripted = itemEvent(
+      announced!.id!,
+      "item.created",
+      wireItem({ id: "an-item" }),
+    );
+    expectFidelity(
+      "an item frame",
+      { status: 200, body: announced!.data },
+      { kind: "json", status: 200, body: scripted.data },
+      {
+        // The sidecar rides on every item frame. A scripted frame without it
+        // is a frame a device could never learn a cleared tag from.
+        same: ["type", "metadata.tags"],
+        shape: [
+          "item.id",
+          "item.type",
+          "item.properties",
+          "item.state",
+          "item.tier",
+          "item.version",
+          "item.source",
+          "item.source_id",
+          "item.device",
+          "item.created_at",
+          "item.updated_at",
+        ],
+      },
+    );
+  });
+
+  it("matches the refusal a spent idempotency key gets", async () => {
+    const key = `fidelity-spent-${ctx.runId}`;
+    const first = await client.rawRequest("/items", {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: {
+        type: "core.note",
+        properties: { title: "first", body: "first" },
+      },
+    });
+    expect(
+      first.ok,
+      `the first write under the key was refused: ${JSON.stringify(first.error)}`,
+    ).toBe(true);
+    trackItem(ctx, (first.data as { item: { id: string } }).item.id);
+
+    const reused = await client.rawRequest("/items", {
+      method: "POST",
+      headers: { "Idempotency-Key": key },
+      body: {
+        type: "core.note",
+        properties: { title: "second", body: "second" },
+      },
+    });
+    expect(
+      reused.status,
+      "a key answered for one request served a different one, so the refusal this compares against was never produced",
+    ).toBe(422);
+
+    expectFidelity(
+      "a key answered for a different request",
+      { status: reused.status, body: reused.error },
+      answers.keyReused(),
+      { same: ["error.code"], shape: ["error.message"] },
     );
   });
 
@@ -371,11 +601,21 @@ describe("the scripted answers match the server's", () => {
       "the server did not answer an aged-out cursor with its terminal frame, so the re-hydration the device chapter demands was never produced here",
     ).toBeDefined();
     const payload = terminal!.data as Record<string, unknown>;
-    expect(payload.type).toBe("catchup_too_old");
+    expect(
+      payload.type,
+      "the terminal frame named some other kind, so the scripted frame is modeled on something the server does not send",
+    ).toBe("catchup_too_old");
     expect(
       typeof payload.min_retained_id,
       "the frame did not carry the oldest id the log still holds as a string, which is the field the scripted frame carries",
     ).toBe("string");
-    expect(typeof payload.requested).toBe("string");
+    expect(
+      typeof payload.requested,
+      "the frame did not echo the cursor that aged out as a string, which is the field the scripted frame carries",
+    ).toBe("string");
+    expect(
+      terminal!.id,
+      "the terminal frame did not carry the oldest retained id as its own id, so a device that stores the last id it saw comes back with a cursor the log still cannot serve",
+    ).toBe(payload.min_retained_id);
   });
 });

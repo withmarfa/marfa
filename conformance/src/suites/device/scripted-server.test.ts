@@ -172,7 +172,10 @@ describe("the answers a device has to classify", () => {
     // The control: the same door answers once the script moves on, so the
     // throw above is the scripted drop rather than a server that is gone.
     const after = await read(`${server.url}/items`, { method: "POST" });
-    expect(after.status).toBe(201);
+    expect(
+      after.status,
+      "the server answers nothing after a scripted drop, so the throw above is a server that died rather than the drop under test",
+    ).toBe(201);
   });
 
   it("goes to rest and comes back on the same address", async () => {

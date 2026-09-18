@@ -22,7 +22,7 @@ Statements here are about a device's observable behavior, asserted by the device
 
 ## Catch-up
 
-11. Catch-up replays the event log from the stored cursor and applies each event to the working copy in the order the server sent it. `device/catch-up.test.ts › applies events from the stored cursor in the order they arrive`.
+11. Catch-up resumes at the cursor the store holds, and every event the stream carries after it reaches the working copy. Which of two events touching one row wins is decided by the version each carries (13), not by the device's own ordering. `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`.
 12. **The cursor is the last event applied, never the highest id seen.** The server assigns an id before it commits, so a lower id can arrive after a higher one; a high-water mark would step over it and nothing would ever fetch it again. `device/catch-up.test.ts › keeps the last id applied rather than the highest, so a late lower id is not stepped over`.
 13. An event carrying a version no newer than the row held is skipped, and skipping it is a success that still advances the cursor. `device/catch-up.test.ts › skips an event older than the row it holds and still advances the cursor`.
 14. An event for a row that has left the slice — a changed type or a changed tier — removes the row from the working copy. A row that was never in the slice is not added. `device/catch-up.test.ts › evicts a row that leaves the slice`, `› does not add a row that was never in the slice`.

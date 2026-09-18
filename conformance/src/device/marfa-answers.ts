@@ -40,8 +40,11 @@ export function wireItem(options: WireItemOptions): Record<string, unknown> {
     version: options.version ?? 1,
     schema_version: 1,
     source: options.source ?? "device-fixtures",
-    source_id: options.source_id ?? null,
-    device: null,
+    // Omitted rather than null: the server leaves out a column it has nothing
+    // for, and absent and null are two different things to a device.
+    ...(options.source_id === undefined || options.source_id === null
+      ? {}
+      : { source_id: options.source_id }),
     timestamp: at,
     created_at: options.created_at ?? at,
     updated_at: options.updated_at ?? at,
@@ -76,7 +79,7 @@ export function wireType(
 ): Record<string, unknown> {
   return {
     id,
-    parent: options.parent ?? null,
+    ...(options.parent === undefined ? {} : { parent: options.parent }),
     label: id.split(".").at(-1),
     display_hints: { title_field: options.titleField ?? "title" },
     fields: {},
@@ -113,16 +116,25 @@ export function itemEvent(
   item: Record<string, unknown>,
   options: { tags?: string[] } = {},
 ): SseFrame {
-  const data: Record<string, unknown> = { type: kind, item };
-  if (options.tags !== undefined) data.metadata = { tags: options.tags };
-  return { id, event: kind, data };
+  // The sidecar rides on every item frame, empty or not, so a device can learn
+  // that a row's tags were cleared. A frame without it is a shape the server
+  // does not send.
+  return {
+    id,
+    event: kind,
+    data: { type: kind, item, metadata: { tags: options.tags ?? [] } },
+  };
 }
 
 export function catchupTooOld(
   minRetainedId: string,
   requested: string,
 ): SseFrame {
+  // The frame carries the oldest retained id as its own `id:`, so a client
+  // that stores the last id it saw cannot come back with a cursor the log
+  // still cannot serve.
   return {
+    id: minRetainedId,
     event: "catchup_too_old",
     data: {
       type: "catchup_too_old",
