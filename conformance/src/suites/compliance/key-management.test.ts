@@ -1,0 +1,326 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import type { TestContext } from "../../client/types.js";
+import {
+  createTestContext,
+  getOperatorClient,
+  trackKey,
+  cleanup,
+} from "../../utils/setup.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
+
+let client: MarfaClient;
+let ctx: TestContext;
+let apiUrl: string;
+let ownKeyId: string;
+
+beforeAll(async () => {
+  ({ ctx, client, apiUrl } = await createTestContext(
+    "compliance",
+    "key-management",
+  ));
+  // The context tracks the file's own key first, and that row is the creator
+  // every mint in this file inherits from.
+  ownKeyId = ctx.trackedKeys[0]!;
+});
+
+afterAll(async () => {
+  await cleanup(ctx);
+});
+
+/**
+ * Create a key holding no space permissions and return a client using it.
+ */
+async function createClientWithoutSpaceKeys(
+  label: string,
+  typePermissions: Record<string, string> = { "*": "write" },
+): Promise<{ client: MarfaClient; keyId: string }> {
+  const keyResp = await client.createKey({
+    label,
+    source: `${ctx.source}-${label}`,
+    type_permissions: typePermissions,
+    space_permissions: [],
+  });
+  expect(keyResp.ok).toBe(true);
+  trackKey(ctx, keyResp.data.id);
+
+  return {
+    client: new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    }),
+    keyId: keyResp.data.id,
+  };
+}
+
+describe("key management", () => {
+  it("lists keys and includes a newly created key", async () => {
+    const label = `km-list-${ctx.runId}`;
+    const keyResp = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      type_permissions: { "*": "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    await expectMatchesSchema("POST", "/keys", 201, keyResp.data);
+
+    const list = await client.listKeys();
+    expect(list.ok).toBe(true);
+    await expectMatchesSchema("GET", "/keys", 200, list.data);
+
+    const found = list.data.keys.find((k) => k.id === keyResp.data.id);
+    expect(found).toBeDefined();
+    expect(found!.label).toBe(label);
+  });
+
+  it("list keys requires space.keys", async () => {
+    const { client: memberClient } =
+      await createClientWithoutSpaceKeys("km-list-nonadmin");
+
+    const list = await memberClient.listKeys();
+    expect(list.status).toBe(403);
+    expect(list.error?.error.code).toBe("forbidden");
+    expect(list.error?.error.details?.required_scope).toBe("space.keys");
+  });
+
+  it("revoke key: create, use, revoke, retry fails with 401", async () => {
+    const keyResp = await client.createKey({
+      label: "km-revoke-test",
+      source: `${ctx.source}-${"km-revoke-test"}`,
+      type_permissions: { "*": "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+
+    const scopedClient = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: keyResp.data.key,
+    });
+
+    const before = await scopedClient.listItems({ limit: 1 });
+    expect(before.ok).toBe(true);
+
+    const revoke = await client.revokeKey(keyResp.data.id);
+    expect(revoke.ok).toBe(true);
+    await expectMatchesSchema("DELETE", "/keys/{id}", 200, revoke.data);
+
+    const after = await scopedClient.listItems({ limit: 1 });
+    expect(after.status).toBe(401);
+    expect(after.error?.error.code).toBe("unauthorized");
+  });
+
+  it("revoke key requires space.keys", async () => {
+    const targetKey = await client.createKey({
+      label: "km-revoke-target",
+      source: `${ctx.source}-${"km-revoke-target"}`,
+      type_permissions: { "*": "read" },
+    });
+    expect(targetKey.ok).toBe(true);
+    trackKey(ctx, targetKey.data.id);
+
+    const { client: memberClient } =
+      await createClientWithoutSpaceKeys("km-revoke-nonadmin");
+
+    const revoke = await memberClient.revokeKey(targetKey.data.id);
+    expect(revoke.status).toBe(403);
+    expect(revoke.error?.error.code).toBe("forbidden");
+    expect(revoke.error?.error.details?.required_scope).toBe("space.keys");
+  });
+
+  it("key creation response includes expected fields", async () => {
+    const keyResp = await client.createKey({
+      label: "km-shape-test",
+      source: `${ctx.source}-${"km-shape-test"}`,
+      type_permissions: { "core.note": "write", "core.bookmark": "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+
+    const data = keyResp.data;
+    expect(typeof data.id).toBe("string");
+    expect(typeof data.key).toBe("string");
+    expect(data.key.length).toBeGreaterThan(0);
+    expect(data.label).toBe("km-shape-test");
+    expect(Array.isArray(data.space_permissions)).toBe(true);
+    expect(typeof data.created_at).toBe("string");
+    expect(data.type_permissions["core.note"]).toBe("write");
+    expect(data.type_permissions["core.bookmark"]).toBe("read");
+  });
+
+  it("key secret is not included in list response", async () => {
+    const keyResp = await client.createKey({
+      label: "km-secret-hidden",
+      source: `${ctx.source}-${"km-secret-hidden"}`,
+      type_permissions: { "*": "read" },
+    });
+    expect(keyResp.ok).toBe(true);
+    trackKey(ctx, keyResp.data.id);
+    expect(keyResp.data.key).toBeDefined();
+
+    const list = await client.listKeys();
+    expect(list.ok).toBe(true);
+
+    const found = list.data.keys.find((k) => k.id === keyResp.data.id);
+    expect(found).toBeDefined();
+    expect(found!.key).toBeUndefined();
+  });
+
+  it("minting requires space.keys", async () => {
+    const { client: memberClient } =
+      await createClientWithoutSpaceKeys("km-mint-nonadmin");
+
+    const label = `km-mint-denied-${ctx.runId}`;
+    const minted = await memberClient.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+    });
+    expect(minted.ok).toBe(false);
+    expect(minted.status).toBe(403);
+    expect(minted.error?.error.code).toBe("forbidden");
+    expect(minted.error?.error.details?.required_scope).toBe("space.keys");
+  });
+
+  it("a mint naming no maps takes the creator's whole set", async () => {
+    const label = `km-inherit-${ctx.runId}`;
+    const minted = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+    });
+    expect(minted.ok).toBe(true);
+    trackKey(ctx, minted.data.id);
+
+    const list = await client.listKeys();
+    expect(list.ok).toBe(true);
+    const rows = list.data.keys;
+
+    const creator = rows.find((k) => k.id === ownKeyId);
+    expect(creator).toBeDefined();
+    const child = rows.find((k) => k.id === minted.data.id);
+    expect(child).toBeDefined();
+
+    // Two absent maps compare equal, so the creator's are pinned as populated
+    // before the child is compared to them.
+    expect(creator!.space_permissions?.length).toBeGreaterThan(0);
+    for (const map of [
+      creator!.type_permissions,
+      creator!.edge_permissions,
+      creator!.extension_permissions,
+      creator!.metadata_permissions,
+    ]) {
+      expect(Object.keys(map ?? {}).length).toBeGreaterThan(0);
+    }
+
+    expect([...(child!.space_permissions ?? [])].sort()).toEqual(
+      [...(creator!.space_permissions ?? [])].sort(),
+    );
+    expect(child!.type_permissions).toEqual(creator!.type_permissions);
+    expect(child!.edge_permissions).toEqual(creator!.edge_permissions);
+    expect(child!.extension_permissions).toEqual(
+      creator!.extension_permissions,
+    );
+    expect(child!.metadata_permissions).toEqual(creator!.metadata_permissions);
+  });
+
+  it("refuses a mint reaching past what the caller holds", async () => {
+    const label = `km-narrow-caller-${ctx.runId}`;
+    const callerKey = await client.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+      space_permissions: ["space.keys"],
+      type_permissions: { "core.bookmark": "read" },
+    });
+    expect(callerKey.ok).toBe(true);
+    trackKey(ctx, callerKey.data.id);
+    const caller = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: callerKey.data.key,
+    });
+
+    const widerTypes = await caller.createKey({
+      label: `${label}-wider-types`,
+      source: `${ctx.source}-${label}-wider-types`,
+      type_permissions: { "*": "write" },
+    });
+    expect(widerTypes.ok).toBe(false);
+    expect(widerTypes.status).toBe(403);
+    expect(widerTypes.error?.error.code).toBe("forbidden");
+    expect(widerTypes.error?.error.details?.required_scope).toBe("*:write");
+
+    const widerSpace = await caller.createKey({
+      label: `${label}-wider-space`,
+      source: `${ctx.source}-${label}-wider-space`,
+      space_permissions: ["space.schema"],
+    });
+    expect(widerSpace.ok).toBe(false);
+    expect(widerSpace.status).toBe(403);
+    expect(widerSpace.error?.error.code).toBe("forbidden");
+    expect(widerSpace.error?.error.details?.required_scope).toBe(
+      "space.schema",
+    );
+  });
+
+  it("refuses a second key claiming a source already in use", async () => {
+    const label = `km-source-taken-${ctx.runId}`;
+    const source = `${ctx.source}-${label}`;
+    const first = await client.createKey({ label, source });
+    expect(first.ok).toBe(true);
+    trackKey(ctx, first.data.id);
+
+    const second = await client.createKey({ label: `${label}-2`, source });
+    expect(second.ok).toBe(false);
+    expect(second.status).toBe(409);
+    expect(second.error?.error.code).toBe("conflict");
+    expect(second.error?.error.details?.source).toBe(source);
+  });
+
+  it("the operator key reads an empty data plane and cannot write to it", async () => {
+    const operator = getOperatorClient();
+
+    const listed = await operator.listItems({ limit: 5 });
+    expect(listed.ok).toBe(true);
+    expect(listed.status).toBe(200);
+    expect(listed.data.data).toEqual([]);
+
+    const written = await operator.createItem({
+      type: "core.note",
+      properties: { title: "operator", body: "operator body" },
+    });
+    expect(written.ok).toBe(false);
+    expect(written.status).toBe(403);
+    expect(written.error?.error.code).toBe("type_not_permitted");
+  });
+
+  it("the operator key mints past its own reach, which is how a run is provisioned", async () => {
+    const operator = getOperatorClient();
+    const label = `km-operator-mint-${ctx.runId}`;
+
+    const minted = await operator.createKey({
+      label,
+      source: `${ctx.source}-${label}`,
+    });
+    expect(minted.ok).toBe(true);
+    try {
+      // The widening rule holds for a working key and not for this one: the
+      // operator holds no content families and no space permissions, and the
+      // key it mints naming no maps holds every one of them.
+      expect(minted.data.is_operator).toBe(false);
+      expect(minted.data.type_permissions).toEqual({ "*": "write" });
+      expect(minted.data.edge_permissions).toEqual({ "*": "write" });
+      expect(minted.data.extension_permissions).toEqual({ "*": "write" });
+      expect(minted.data.metadata_permissions).toEqual({ "*": "write" });
+      expect(minted.data.space_permissions?.length).toBeGreaterThan(0);
+
+      const rows = await operator.listKeys();
+      expect(rows.ok).toBe(true);
+      const own = rows.data.keys.find((k) => k.is_operator === true);
+      expect(own).toBeDefined();
+      expect(own!.type_permissions).toEqual({});
+      expect(own!.edge_permissions).toEqual({});
+      expect(own!.space_permissions).toEqual([]);
+    } finally {
+      const revoked = await operator.revokeKey(minted.data.id);
+      expect(revoked.ok).toBe(true);
+    }
+  });
+});

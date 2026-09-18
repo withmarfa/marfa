@@ -1,0 +1,148 @@
+# Coverage
+
+Every operation the server publishes in its OpenAPI document, with the fixture that asserts it. `compliance/instance.test.ts` reads the served document and fails when a published operation is missing from this table, so an operation cannot appear on the server without a row here.
+
+Status values:
+
+- **covered**: a fixture asserts a successful observable and the refusals the document declares that a caller can arrange.
+- **refusals only**: the success path cannot be arranged over the wire; the reason is in the row and the refusals are asserted.
+- **unpublished**: served and asserted, but absent from the document; the row goes when the server drops the door, and its status changes when the document gains it.
+
+`compliance/unauthenticated.test.ts` asserts `401 unauthorized` for every published operation but `POST /auth/oauth2/register`, which RFC 7591 leaves open, with a real row and a well-formed body, so no row cites it. `compliance/instance.test.ts` also fails when a row other than an unpublished one names an operation the document no longer publishes.
+
+Fixture paths are under `src/suites/`.
+
+## Items
+
+| Operation                              | Status        | Fixture                                                                                                                                                                                                      | Notes                                                                                                                                 |
+| -------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /items`                          | covered       | `correctness/persistence.test.ts`, `correctness/dedup.test.ts`, `compliance/validation.test.ts`, `compliance/error-codes.test.ts`, `compliance/adversarial.test.ts`, `compliance/type-scoped-access.test.ts` | Create, natural-key upsert, every validation code, size caps, permission refusals.                                                    |
+| `GET /items`                           | covered       | `correctness/pagination.test.ts`, `compliance/tier-axis.test.ts`, `compliance/timestamp.test.ts`, `correctness/edges/edges-query.test.ts`, `sync/time-filters.test.ts`                                       | Filters, sort, cursor pagination, `unknown_type` refusal, renamed time filters refused.                                               |
+| `GET /items/stats`                     | covered       | `compliance/schema-enforcement.test.ts`                                                                                                                                                                      | Counts by lifecycle state under each lever.                                                                                           |
+| `GET /items/{id}`                      | covered       | `correctness/persistence.test.ts`, `correctness/tombstones.test.ts`, `compliance/error-codes.test.ts`                                                                                                        | Read, hydrated edges, 404 for trashed and unknown, `invalid_id`.                                                                      |
+| `PATCH /items/{id}`                    | covered       | `correctness/item-versioning.test.ts`, `correctness/merge-policy.test.ts`, `sync/conflict.test.ts`, `compliance/error-codes.test.ts`                                                                         | Version bump, `version_conflict`, `ancestor_unavailable`, `conflict=auto`.                                                            |
+| `DELETE /items/{id}`                   | covered       | `correctness/tombstones.test.ts`, `sync/deletions.test.ts`                                                                                                                                                   | Soft delete, hidden from reads, 404 on repeat.                                                                                        |
+| `DELETE /items/{id}/purge`             | covered       | `correctness/tombstones.test.ts`, `sync/deletions.test.ts`                                                                                                                                                   | Hard delete of a trashed row; refused for a live row.                                                                                 |
+| `POST /items/{id}/restore`             | covered       | `correctness/tombstones.test.ts`, `compliance/events-contract.test.ts`                                                                                                                                       | Restore, `invalid_transition` for a live row, `item.restored` announced.                                                              |
+| `POST /items/{id}/transition`          | covered       | `correctness/lifecycle-transitions.test.ts`, `compliance/custom-type-lifecycle.test.ts`, `compliance/error-codes.test.ts`                                                                                    | Universal lifecycle, invalid transition refused.                                                                                      |
+| `GET /items/{id}/versions`             | covered       | `correctness/item-versioning.test.ts`                                                                                                                                                                        | Snapshots, `force_snapshot`, empty history.                                                                                           |
+| `POST /items/{id}/promote`             | refusals only | `compliance/promote-reconcile.test.ts`                                                                                                                                                                       | Needs an integration's copy, which nothing over the wire can create.                                                                  |
+| `GET /items/{id}/reconcile`            | refusals only | `compliance/promote-reconcile.test.ts`                                                                                                                                                                       | Same precondition as promote.                                                                                                         |
+| `POST /items/bulk`                     | covered       | `compliance/bulk.test.ts`, `sync/replay.test.ts`                                                                                                                                                             | Upsert, `create_only`, atomic rollback, outcomes per entry.                                                                           |
+| `POST /items/bulk-get`                 | covered       | `compliance/bulk-get.test.ts`                                                                                                                                                                                | Reads by id, unreadable ids omitted, body refusal.                                                                                    |
+| `POST /items/bulk-actions`             | covered       | `compliance/bulk.test.ts`, `sync/time-filters.test.ts`                                                                                                                                                       | Dry run, queued job, every action, confirmation, filter refusals.                                                                     |
+| `GET /items/bulk-actions/jobs/{id}`    | covered       | `compliance/bulk.test.ts`                                                                                                                                                                                    | Terminal state, `bulk_job_not_found`.                                                                                                 |
+| `DELETE /items/bulk-actions/jobs/{id}` | covered       | `compliance/bulk.test.ts`                                                                                                                                                                                    | Cancel on a terminal job answers its final state; a queued or in-flight cancel is unreachable because the worker takes a job at once. |
+
+## Metadata, tags and extensions
+
+| Operation                                   | Status  | Fixture                                                                | Notes                                                |
+| ------------------------------------------- | ------- | ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| `GET /items/{id}/metadata`                  | covered | `compliance/metadata-routes.test.ts`                                   |                                                      |
+| `PUT /items/{id}/metadata`                  | covered | `compliance/metadata-routes.test.ts`                                   | Wholesale replacement.                               |
+| `PATCH /items/{id}/metadata`                | covered | `correctness/tags.test.ts`                                             | Merge.                                               |
+| `POST /items/{id}/tags`                     | covered | `compliance/metadata-routes.test.ts`, `compliance/audit.test.ts`       | Idempotent add; body refusal.                        |
+| `DELETE /items/{id}/tags/{tag}`             | covered | `correctness/tags.test.ts`                                             |                                                      |
+| `GET /metadata/tags`                        | covered | `compliance/metadata-routes.test.ts`                                   | Counts across the dataset, sorted by count then tag. |
+| `GET /items/{id}/extensions`                | covered | `compliance/extensions.test.ts`                                        |                                                      |
+| `GET /items/{id}/extensions/{namespace}`    | covered | `compliance/extensions.test.ts`                                        |                                                      |
+| `PUT /items/{id}/extensions/{namespace}`    | covered | `compliance/extensions.test.ts`, `compliance/export-roundtrip.test.ts` |                                                      |
+| `DELETE /items/{id}/extensions/{namespace}` | covered | `compliance/extensions.test.ts`                                        |                                                      |
+
+## Edges
+
+| Operation                  | Status  | Fixture                                                                                                                                                               | Notes                                                      |
+| -------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `GET /edges`               | covered | `correctness/edges/edges-list.test.ts`, `sync/time-filters.test.ts`                                                                                                   | Type filter, `updated_after`, cursor, unknown key refused. |
+| `POST /edges`              | covered | `correctness/edges/edges-crud.test.ts`, `correctness/edges/edges-cardinality.test.ts`, `correctness/edges/edges-cycle.test.ts`, `compliance/edge-permissions.test.ts` | Constraints, cardinality, cycles, permission gates.        |
+| `GET /edges/{id}`          | covered | `correctness/edges/edges-list.test.ts`                                                                                                                                |                                                            |
+| `PATCH /edges/{id}`        | covered | `correctness/edges/edges-crud.test.ts`, `sync/edge-version.test.ts`, `compliance/events-contract.test.ts`                                                             | Properties, version, `edge.updated` announced.             |
+| `DELETE /edges/{id}`       | covered | `correctness/edges/edges-crud.test.ts`, `correctness/edges/edges-cascade.test.ts`                                                                                     |                                                            |
+| `POST /edges/bulk`         | covered | `compliance/edges-bulk.test.ts`                                                                                                                                       |                                                            |
+| `GET /items/{id}/edges`    | covered | `correctness/edges/edges-crud.test.ts`, `correctness/edges/edges-response.test.ts`                                                                                    | Hydration cap of 50, pagination.                           |
+| `GET /items/{id}/backrefs` | covered | `correctness/edges/edges-backrefs.test.ts`                                                                                                                            |                                                            |
+| `POST /edge-types`         | covered | `compliance/edge-types.test.ts`, `correctness/edges/edges-type-constraints.test.ts`                                                                                   | Registration, core collision, `metadata.edge_types` gate.  |
+| `GET /edge-types`          | covered | `compliance/edge-types.test.ts`                                                                                                                                       |                                                            |
+| `DELETE /edge-types/{id}`  | covered | `compliance/edge-types.test.ts`                                                                                                                                       | 404 for an unknown type.                                   |
+
+## Types
+
+| Operation            | Status  | Fixture                                                                                                   | Notes                                                       |
+| -------------------- | ------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `GET /types`         | covered | `compliance/types.test.ts`, `compliance/type-registry.test.ts`                                            |                                                             |
+| `POST /types`        | covered | `compliance/type-registry.test.ts`, `compliance/type-inheritance.test.ts`, `compliance/namespace.test.ts` | Grammar, reserved roots, duplicates, `metadata.types` gate. |
+| `GET /types/{id}`    | covered | `compliance/types.test.ts`, `compliance/type-label.test.ts`                                               | Resolved merge policy; 404 for an unknown type.             |
+| `PUT /types/{id}`    | covered | `compliance/type-versioning.test.ts`, `compliance/type-registry.test.ts`                                  |                                                             |
+| `DELETE /types/{id}` | covered | `compliance/type-registry.test.ts`                                                                        | `type_has_subtypes`, `type_in_use`, `?force=true`.          |
+
+## Search, occurrences and export
+
+| Operation          | Status  | Fixture                                                                                                  | Notes                                                           |
+| ------------------ | ------- | -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `GET /search`      | covered | `correctness/persistence.test.ts`, `compliance/fts-searchable.test.ts`, `correctness/pagination.test.ts` | Query required, limit, searchable fields, permission filtering. |
+| `GET /occurrences` | covered | `compliance/occurrences.test.ts`                                                                         | Window required and ordered; expansion inside the window.       |
+| `GET /export`      | covered | `compliance/export.test.ts`, `compliance/admin-archive.test.ts`, `compliance/export-roundtrip.test.ts`   | NDJSON filters with controls; `format=archive`.                 |
+
+## Blobs
+
+| Operation               | Status        | Fixture                                | Notes                                                                         |
+| ----------------------- | ------------- | -------------------------------------- | ----------------------------------------------------------------------------- |
+| `POST /blobs`           | covered       | `correctness/blob-correctness.test.ts` | Hash, dedupe, empty body refused.                                             |
+| `GET /blobs/{hash}`     | covered       | `correctness/blob-correctness.test.ts` | Byte for byte, content type, 404, malformed hash.                             |
+| `GET /blobs/{hash}/url` | refusals only | `correctness/blob-correctness.test.ts` | The filesystem backend mints no presigned URL and answers 400 for every hash. |
+
+## Keys and OAuth
+
+| Operation                    | Status  | Fixture                                                                                                                                              | Notes                                                            |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `POST /keys`                 | covered | `compliance/key-management.test.ts`, `compliance/type-permissions.test.ts`, `compliance/edge-permissions.test.ts`, `compliance/system-types.test.ts` | Mint, narrowing, `space.keys` gate, invalid permission values.   |
+| `GET /keys`                  | covered | `compliance/key-management.test.ts`, `compliance/key-last-used.test.ts`                                                                              | No plaintext; `last_used_at`.                                    |
+| `PATCH /keys/{id}`           | covered | `compliance/keys-update.test.ts`                                                                                                                     | Label and maps; source immutable; never widened past the caller. |
+| `DELETE /keys/{id}`          | covered | `compliance/key-management.test.ts`                                                                                                                  | Revoke, 401 afterwards, `space.keys` gate.                       |
+| `POST /auth/oauth2/register` | covered | `compliance/oauth.test.ts`                                                                                                                           | Dynamic registration; RFC 7591 error shape on refusal.           |
+
+## Events and webhooks
+
+| Operation                       | Status  | Fixture                                                                                                                                                             | Notes                                                                                                                                                                                             |
+| ------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /events`                   | covered | `compliance/events-contract.test.ts`, `compliance/edge-events.test.ts`, `compliance/catchup-too-old.test.ts`, `sync/stream-contract.test.ts`, `sync/replay.test.ts` | Every domain event, `stream_cursor`, `catchup_too_old`, filters and their refusals. `stream_incomplete` is unreachable: its four reasons are server-side failures nothing over the wire provokes. |
+| `POST /webhooks`                | covered | `compliance/webhooks.test.ts`, `compliance/edge-events.test.ts`                                                                                                     |                                                                                                                                                                                                   |
+| `GET /webhooks`                 | covered | `compliance/webhooks.test.ts`                                                                                                                                       |                                                                                                                                                                                                   |
+| `GET /webhooks/{id}`            | covered | `compliance/webhooks.test.ts`                                                                                                                                       | Secret redacted after creation.                                                                                                                                                                   |
+| `PATCH /webhooks/{id}`          | covered | `compliance/webhooks.test.ts`                                                                                                                                       |                                                                                                                                                                                                   |
+| `DELETE /webhooks/{id}`         | covered | `compliance/webhooks.test.ts`                                                                                                                                       |                                                                                                                                                                                                   |
+| `GET /webhooks/{id}/deliveries` | covered | `compliance/webhooks.test.ts`                                                                                                                                       | Delivery to a loopback receiver with a verified signature.                                                                                                                                        |
+
+## Audit and instance configuration
+
+| Operation               | Status  | Fixture                                                      | Notes                                                                |
+| ----------------------- | ------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `GET /audit`            | covered | `compliance/audit.test.ts`, `compliance/edge-events.test.ts` | Filters, inclusive bounds, cursor, `space.audit_read` gate.          |
+| `GET /spaces/me/config` | covered | `compliance/schema-enforcement.test.ts`                      |                                                                      |
+| `PUT /spaces/me/config` | covered | `compliance/schema-enforcement.test.ts`                      | Strict mode, source allowlist, source filter; wholesale replacement. |
+
+## Operator maintenance
+
+| Operation                                | Status        | Fixture                                                                   | Notes                                                                                                |
+| ---------------------------------------- | ------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `POST /admin/restore-archive`            | unpublished   | `compliance/admin-archive.test.ts`, `compliance/export-roundtrip.test.ts` | Operator key only.                                                                                   |
+| `GET /admin/platform-types/drift`        | covered       | `compliance/platform-types.test.ts`                                       |                                                                                                      |
+| `POST /admin/platform-types/{id}/remove` | refusals only | `compliance/platform-types.test.ts`                                       | A drifted row cannot be created over the wire; shipped and unknown identifiers are refused with 409. |
+
+## Served but unpublished
+
+| Operation                                          | Status      | Fixture                       | Notes                                            |
+| -------------------------------------------------- | ----------- | ----------------------------- | ------------------------------------------------ |
+| `GET /health`                                      | unpublished | `compliance/instance.test.ts` |                                                  |
+| `GET /`                                            | unpublished | `compliance/instance.test.ts` |                                                  |
+| `GET /openapi.json`                                | unpublished | `compliance/instance.test.ts` |                                                  |
+| `GET /.well-known/oauth-authorization-server/auth` | unpublished | `compliance/oauth.test.ts`    | The authorization server metadata.               |
+| `POST /auth/oauth2/token`                          | unpublished | `compliance/oauth.test.ts`    | Refusals only: a grant needs a signed-in person. |
+
+## Bodies outside the document's schemas
+
+Every other covered operation's success body is validated against the served document by `expectMatchesSchema`; `src/utils/schema-coverage.test.ts` fails when one is not. These answer something the document's JSON schemas cannot describe.
+
+- `GET /blobs/{hash}`: the bytes themselves, `application/octet-stream`.
+- `GET /export`: newline-delimited JSON, or a gzip archive.
+- `GET /events`: a server-sent event stream.

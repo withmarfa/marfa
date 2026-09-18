@@ -13,6 +13,8 @@ A typed data layer for structured personal data. Store, query, and sync items wi
 
 `@withmarfa/shared` and `@withmarfa/sdk` publish to npm; the rest stay private.
 
+[`conformance/`](./conformance) is the contract the server is held to: black-box fixtures driven over HTTP, and the written specification under `conformance/spec/`.
+
 ## Quick start
 
 ```bash

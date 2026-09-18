@@ -122,6 +122,26 @@ export default [
       "**/_ignore/**",
       // The Rust core workspace; its Node binding is linted where it lives.
       "core/",
+      // The conformance suite, held by `conformance/tsconfig.json` and
+      // Prettier rather than by this config.
+      //
+      // The rules that fire are the ones that read a declared type as the
+      // truth, and in this directory it is not. The fixtures assert over
+      // what a server sent, against hand-written declarations of what the
+      // contract claims it sends, so the checks `no-unnecessary-condition`
+      // and `no-unnecessary-type-assertion` call redundant are exactly the
+      // ones a referee should keep. The suite's tsconfig does not extend
+      // `tsconfig.base.json`, so its types are weaker again: without
+      // `noUncheckedIndexedAccess` an array index reads as defined, and
+      // every `?? ""` behind one is reported as pointless when removing it
+      // would be a defect. Turning that on instead is not a small change —
+      // it reports 107 times across the fixtures.
+      //
+      // Style is the rest of it: 148 of the 341 reports were `${count}`
+      // where this config wants `String(count)`. Rewriting a fixture corpus
+      // whose readability is the specification, to satisfy a preference, is
+      // a poor trade.
+      "conformance/",
     ],
   },
 ];

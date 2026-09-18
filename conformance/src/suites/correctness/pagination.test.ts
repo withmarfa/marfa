@@ -1,0 +1,122 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import type { TestContext } from "../../client/types.js";
+import { createTestContext, trackItem, cleanup } from "../../utils/setup.js";
+import { createNote } from "../../generators/items.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
+
+let client: MarfaClient;
+let ctx: TestContext;
+const createdIds: string[] = [];
+
+beforeAll(async () => {
+  ({ ctx, client } = await createTestContext("correctness", "pagination"));
+
+  for (let i = 0; i < 15; i++) {
+    const note = createNote({
+      source: ctx.source,
+      properties: {
+        title: `Pagination item ${i}`,
+        body: `Content for item ${i}`,
+      },
+    });
+    const r = await client.createItem(note);
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    createdIds.push(r.data.item.id);
+  }
+});
+
+afterAll(async () => {
+  await cleanup(ctx);
+});
+
+describe("pagination correctness", () => {
+  it("basic pagination: limit restricts result count and signals more", async () => {
+    const page = await client.listItems({ limit: 3, source: ctx.source });
+    expect(page.ok).toBe(true);
+    await expectMatchesSchema("GET", "/items", 200, page.data);
+    expect(page.data.data.length).toBe(3);
+    expect(page.data.has_more).toBe(true);
+    expect(page.data.cursor).not.toBeNull();
+  });
+
+  it("cursor continuation delivers every item exactly once", async () => {
+    // An array rather than a set, so a row delivered twice counts twice.
+    const delivered: string[] = [];
+    let cursor: string | undefined = undefined;
+    const limit = 5;
+    let pages = 0;
+
+    while (pages < 100) {
+      const page = await client.listItems({
+        limit,
+        cursor,
+        source: ctx.source,
+      });
+      expect(page.ok).toBe(true);
+      delivered.push(...page.data.data.map((item) => item.id));
+
+      pages++;
+      if (!page.data.has_more) break;
+      cursor = page.data.cursor ?? undefined;
+    }
+
+    expect(delivered.length).toBe(15);
+    expect(new Set(delivered).size).toBe(15);
+    expect([...delivered].sort()).toEqual([...createdIds].sort());
+  });
+
+  it("cursor is opaque and enables next page retrieval", async () => {
+    const page1 = await client.listItems({ limit: 5, source: ctx.source });
+    expect(page1.ok).toBe(true);
+    expect(page1.data.cursor).not.toBeNull();
+    expect(typeof page1.data.cursor).toBe("string");
+
+    const page2 = await client.listItems({
+      limit: 5,
+      cursor: page1.data.cursor!,
+      source: ctx.source,
+    });
+    expect(page2.ok).toBe(true);
+    expect(page2.data.data.length).toBe(5);
+    const page1Ids = new Set(page1.data.data.map((i) => i.id));
+    for (const item of page2.data.data) {
+      expect(page1Ids.has(item.id)).toBe(false);
+    }
+  });
+
+  it("last page has has_more=false", async () => {
+    let cursor: string | undefined = undefined;
+    let lastPage;
+    for (let i = 0; i < 100; i++) {
+      lastPage = await client.listItems({
+        limit: 10,
+        cursor,
+        source: ctx.source,
+      });
+      if (!lastPage.data.has_more) break;
+      cursor = lastPage.data.cursor ?? undefined;
+    }
+    expect(lastPage!.ok).toBe(true);
+    expect(lastPage!.data.has_more).toBe(false);
+  });
+
+  it("a nonexistent type is refused rather than answered with an empty page", async () => {
+    // An empty page is the one answer a client cannot tell from an empty
+    // dataset, so a concrete type the server does not know is a 400.
+    const page = await client.listItems({
+      type: "core.nonexistent_pagination_type",
+    });
+    expect(page.ok).toBe(false);
+    expect(page.status).toBe(400);
+    expect(page.error?.error.code).toBe("unknown_type");
+  });
+
+  it("search respects limit parameter", async () => {
+    // Fifteen seeded titles match, so the limit is what bounds the answer.
+    const page = await client.search("Pagination", { limit: 2 });
+    expect(page.ok).toBe(true);
+    expect(page.data.results.length).toBe(2);
+  });
+});

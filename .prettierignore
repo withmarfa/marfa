@@ -17,6 +17,10 @@ worktrees/
 _local/
 _tmp/
 _ignore/
+# Written by a conformance run: the booted server's state directory and
+# the JSON reports the load and performance lanes emit.
+**/.marfa-state/
+**/reports/
 
 # The Rust core workspace: Cargo, Swift and generated Node output, none of it Prettier's.
 core/

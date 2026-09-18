@@ -25,7 +25,7 @@ This starts the server on `http://localhost:8600` with a local SQLite database.
 ## Code style
 
 - TypeScript strict mode, ESM-only
-- Prettier with single quotes (run `pnpm format`)
+- Prettier on its defaults, no config file (run `pnpm format`)
 - ESLint (run `pnpm lint`)
 - Explicit `import type` for type-only imports
 - File extensions required in imports (`.js` for TS files)
@@ -63,9 +63,14 @@ The server tests run against SQLite, locally and in CI.
 
 ## Conformance suite
 
-The [conformance](https://github.com/withmarfa/conformance) repo contains the conformance test suite. To run it against a local server:
+`conformance/` holds the black-box suite and the written specification the server is held to. It boots the server in this checkout itself:
 
 ```bash
-cd ../conformance
-MARFA_API_URL=http://localhost:8600 MARFA_API_KEY=your-key pnpm test
+cd conformance
+pnpm marfa:up
+set -a; . .marfa-state/env; set +a
+pnpm test:conformance
+pnpm marfa:down
 ```
+
+See [`conformance/README.md`](./conformance/README.md) for the individual lanes and the load profiles.

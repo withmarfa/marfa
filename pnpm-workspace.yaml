@@ -1,10 +1,11 @@
 packages:
   - "packages/*"
-  # The server's dispatch fixture. A package rather than a test file
-  # because the property it proves is a bundling one: it has to be built
-  # by tsup with the runtime kit externalized, the way a real integration
-  # is, or it proves nothing about how a real integration bundles. It sits
-  # under the server because it tests the server's image.
+  # The conformance suite. Not under `packages/` because nothing consumes
+  # it: it is the contract the server is held to rather than a library the
+  # server is built from, and it publishes nothing. A workspace package
+  # all the same, so one install covers it, one lockfile resolves it, and
+  # its `typecheck` joins the root's.
+  - "conformance"
 
 # Catch the worktree-staleness gotcha: when a long-lived worktree
 # rebases `main` and picks up new workspace packages (e.g. a fresh

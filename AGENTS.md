@@ -15,6 +15,14 @@ Under rebuild since 17 September 2026. The decisions in force live outside this 
 
 `pnpm install`, `pnpm build`, `pnpm test` (SQLite), `pnpm typecheck`, `pnpm lint`, `pnpm format:check`. The server runs locally with `PORT` and `MARFA_AUTH_SECRET` set and `pnpm --filter @withmarfa/server dev`; `.env.example` lists every variable. An ignored `_archive/agents/` folder may hold the previous instruction files as a record of what existed; nothing in them is in force.
 
+## Conformance
+
+`conformance/` holds the contract: black-box fixtures driven over HTTP and the written specification under `conformance/spec/` that states what they assert. Nothing under `conformance/src/suites/` may import a workspace package; the suite reaches the server over HTTP alone.
+
+It targets a server it booted itself on SQLite, never a remote one. `pnpm marfa:up` boots the server in this checkout and writes the `MARFA_API_URL`, `MARFA_API_KEY` and `MARFA_OPERATOR_KEY` the run sources; `conformance/README.md` has the rest.
+
+A change to the contract and the change to the server that satisfies it belong in the same pull request. The `conformance` job in `ci.yml` is the gate, and it is not lint-clean by the root ESLint config on purpose — `eslint.config.js` says why.
+
 ## Notes and logs
 
 Session notes, running logs and open questions are written outside this repository, where the session prompt says.

@@ -1,0 +1,47 @@
+# Keys and OAuth
+
+## The keys a run holds
+
+1. The operator key holds no content permissions. On the data plane a read answers an empty set and a write is refused `403 type_not_permitted`; the operator doors take it and refuse a working key `403 forbidden`. `compliance/key-management.test.ts › the operator key reads an empty data plane and cannot write to it`, `compliance/platform-types.test.ts › lists no drift on an instance whose platform types match the build`, `› refuses the listing to a working key and to no credential`, `compliance/admin-archive.test.ts › requires the operator key`.
+2. The operator key is what the suite provisions with, and its own mint is not held to the widening rule below: a key it mints naming no maps carries every content family at `*: write` and every space permission, though the operator key's own row holds none of them. Every fixture file gets its working key that way. `compliance/key-management.test.ts › the operator key mints past its own reach, which is how a run is provisioned`.
+
+## Minting
+
+3. A working key's `POST /keys` with `label` and `source` and no maps answers `201` with the key holding the caller's whole set: `space_permissions`, `type_permissions`, `edge_permissions`, `extension_permissions` and `metadata_permissions` equal to the creator's own. `compliance/key-management.test.ts › a mint naming no maps takes the creator's whole set`, `› key creation response includes expected fields`.
+4. A body naming a map narrows the key to what it names. `compliance/type-permissions.test.ts › scoped key can create items of permitted type`, `› scoped key cannot create items of non-permitted type`, `compliance/type-scoped-access.test.ts › note-write key can create and read notes but not bookmarks`.
+5. A working key's mint may not widen: a space permission or a map entry the caller does not hold answers `403 forbidden` with `details.required_scope` naming it. `compliance/key-management.test.ts › refuses a mint reaching past what the caller holds`.
+6. The plaintext `key` is returned on creation only; `GET /keys` never carries it. `compliance/key-management.test.ts › key secret is not included in list response`.
+7. `source` is stamped on every row the key writes and cannot be forged in a body; a second key naming a `source` already in use answers `409 conflict` with `details.source`, a status the document does not declare for the door (`findings.md` 10). `compliance/field-enforcement.test.ts › source: server stamps the credential source, client value is ignored`, `compliance/key-management.test.ts › refuses a second key claiming a source already in use`.
+8. A key without `space.keys` cannot list, mint, update or revoke keys: `403 forbidden` with `details.required_scope: "space.keys"`. `compliance/key-management.test.ts › list keys requires space.keys`, `› revoke key requires space.keys`, `› minting requires space.keys`, `compliance/keys-update.test.ts › refuses a caller without space.keys`.
+9. An invalid permission value in a mint body answers `400`. `compliance/type-scoped-access.test.ts › rejects invalid permission values in key creation`.
+
+## Updating and revoking
+
+10. `PATCH /keys/{id}` changes `label`, `default_tier` and the permission maps in place, and the change reads back on `GET /keys`; `source` is immutable and its presence in the body answers `400 validation_error`. `compliance/keys-update.test.ts › updates the label and the maps in place, never the source`, `› refuses a change of source`.
+11. A key cannot widen itself past what it holds: `403 forbidden` with `details.required_scope` naming the reach it lacks. `compliance/keys-update.test.ts › refuses a key widening itself past what it holds`.
+12. An unknown key id answers `404 api_key_not_found`; a malformed id answers `400`. `compliance/keys-update.test.ts › answers 404 for an unknown key and 400 for a malformed id`.
+13. `DELETE /keys/{id}` revokes at once: the next request bearing the key answers `401 unauthorized`. `compliance/key-management.test.ts › revoke key: create, use, revoke, retry fails with 401`.
+14. `last_used_at` is null or absent on a new key, is set to an ISO 8601 instant after the key's first use, and appears in the listing. `compliance/key-last-used.test.ts › new key has null or absent last_used_at`, `› last_used_at is set after first use`, `› last_used_at is a valid ISO 8601 timestamp`, `› last_used_at appears in list response`.
+
+## Authentication
+
+15. A request with no credential answers `401 unauthorized` on every published door but the registration door, given a real row and a well-formed body; an unknown or revoked credential answers the same. `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`, `compliance/auth.test.ts › returns 401 when no auth header is provided`, `› returns 401 for an invalid API key`, `compliance/key-management.test.ts › revoke key: create, use, revoke, retry fails with 401`.
+16. On some doors the body check or the row lookup runs before the credential check, so a bare request with a malformed body answers `400` and one naming an unknown row answers `404` (`findings.md` 11). `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them` (the reason it sends real rows and well-formed bodies).
+17. `/health` and `/openapi.json` answer without a credential, and the document is the same one a credentialed read gets. `compliance/instance.test.ts › answers /health without a credential and names its components`, `› serves its OpenAPI document, with and without a credential`.
+
+## Permission gates on other doors
+
+18. Type and edge-type registration take the metadata map, `metadata.types:write` and `metadata.edge_types:write`, refused `403 forbidden` with `details.metadata_subresource`; type deletion takes `space.schema`, refused `403 forbidden` with `details.required_scope`. `compliance/type-registry.test.ts › rejects type registration from a key without metadata.types:write`, `compliance/edge-types.test.ts › a key without metadata.edge_types:write cannot register an edge type`.
+19. Outbound webhooks take `space.webhooks` on every door; the audit log takes `space.audit_read`; the instance configuration takes `space.settings`; a purge, single or bulk, takes `space.item_purge`. Each refusal is `403 forbidden` with `details.required_scope`. `compliance/webhooks.test.ts › refuses a key without space.webhooks`, `compliance/audit.test.ts › refuses a key without space.audit_read`, `compliance/schema-enforcement.test.ts › refuses both doors to a key without space.settings`, `compliance/type-permissions.test.ts › a key without space.item_purge cannot purge`, `compliance/bulk.test.ts › purge is refused to a key holding no space permissions`.
+20. A key without reach on an item's type is refused the item, its edges and its backrefs with `403 type_not_permitted`; once the row is trashed it is invisible to that key, `404 item_not_found`. `compliance/type-permissions.test.ts › a key without reach on the item's type is refused its edges and backrefs`, `› read-only scoped key cannot DELETE items of that type`.
+21. Extension namespaces are gated by the extension map: a key without it is refused every namespace door `403 forbidden`. `compliance/extensions.test.ts › refuses a key without reach on the namespace`.
+22. Writes to a `system.*` type are refused for every key the API can mint. `compliance/system-types.test.ts › rejects system.* writes from every key the API can mint`.
+
+## The OAuth provider
+
+23. Authorization server metadata is served at `/.well-known/oauth-authorization-server/auth` without a credential, with `issuer` at the server's `/auth` path, the token, authorization and registration endpoints under it, `code` among `response_types_supported` and `S256` among `code_challenge_methods_supported`. `compliance/oauth.test.ts › serves the authorization server metadata under the issuer path`.
+24. `POST /auth/oauth2/register` registers a client with no credential and answers `201` with a `client_id`, the registered metadata echoed back, and a non-empty `scope`. `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`.
+25. A registration is a `web` client unless `application_type` says `native`. A web client's redirect URI must be https and on a host that is not the loopback, so `http://127.0.0.1` and `https://127.0.0.1` alike are refused `400 invalid_redirect_uri`; a native client may use `http` on the loopback. `compliance/oauth.test.ts › registers a web client, whose redirect URI must be https and off the loopback`, `› registers a native client dynamically and issues a client_id`.
+26. An unparseable redirect URI answers `400` with an RFC 7591 error object rather than the envelope (`findings.md` 4). `compliance/oauth.test.ts › refuses an unparseable redirect URI with an RFC 7591 error object`.
+27. The token endpoint refuses a request with no proof of the client with `400 invalid_request`, and an unsupported grant type with `400 unsupported_grant_type`. `compliance/oauth.test.ts › refuses a token request with no proof of the client`, `› refuses a grant type it does not support`.
+28. The authorization and device flows need a signed-in person and are not reachable by a bearer client, so no fixture asserts them; `coverage.md` lists the token door as refusals only for that reason. `compliance/oauth.test.ts` (the file's own note).

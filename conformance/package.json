@@ -1,0 +1,41 @@
+{
+  "name": "@withmarfa/conformance",
+  "version": "1.0.0",
+  "description": "Black-box conformance test suite for the Marfa API",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:watch": "vitest",
+    "test:generators": "vitest run --project generators",
+    "test:correctness": "vitest run --project correctness",
+    "test:performance": "vitest run --project performance",
+    "test:compliance": "vitest run --project compliance",
+    "test:sync": "vitest run --project sync",
+    "test:load": "NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
+    "test:load:light": "MARFA_LOAD_PROFILE=light NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
+    "test:load:moderate": "MARFA_LOAD_PROFILE=moderate NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
+    "test:load:heavy": "MARFA_LOAD_PROFILE=heavy NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
+    "test:load:extreme": "MARFA_LOAD_PROFILE=extreme NODE_OPTIONS='--max-old-space-size=8192' vitest run --project load",
+    "test:conformance": "vitest run --project correctness --project compliance --project sync",
+    "load:cleanup": "tsx src/suites/load/cleanup-cli.ts",
+    "marfa:up": "tsx scripts/marfa-server.ts up",
+    "marfa:down": "tsx scripts/marfa-server.ts down",
+    "marfa:status": "tsx scripts/marfa-server.ts status"
+  },
+  "dependencies": {
+    "ofetch": "^1.5.1",
+    "uuid": "^14.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@withmarfa/shared": "workspace:*",
+    "ajv": "^8.20.0",
+    "dotenv": "^17.4.2",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
+    "undici": "^8.10.1",
+    "vitest": "^4.1.11"
+  }
+}
