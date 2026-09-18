@@ -13,12 +13,12 @@ export default defineConfig({
     // form, silently.
     globalSetup: ["./src/test-global-setup.ts"],
     // Higher than the shared budget, and this is the package that made the
-    // missing budget visible. `createHostedModeFixture` runs in `beforeEach`
+    // missing budget visible. `createKeysModeFixture` runs in `beforeEach`
     // rather than `beforeAll`, and each call makes a temp directory, opens a
-    // SQLite database, builds the whole app and completes a real sign-up
-    // round trip. That is a per-test cost, not a per-file one, and on a
-    // machine also running the CI pool it blew the stock 10s hook budget on
-    // two pull requests that touched none of it.
+    // SQLite database, builds the whole app and completes a real bootstrap.
+    // That is a per-test cost, not a per-file one, and on a machine also
+    // running the CI pool it blew the stock 10s hook budget on two pull
+    // requests that touched none of it.
     //
     // 60s is chosen to sit clearly outside the range machine load can
     // produce, on the same order as the budget `server` chose for the same
