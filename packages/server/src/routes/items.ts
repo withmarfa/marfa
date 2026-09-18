@@ -333,9 +333,10 @@ const createItemRoute = createRoute({
         "the `id` is held by an item in a space this caller cannot see, so " +
         "it is somebody else's row rather than a repeat of this caller's " +
         "own create. `version_conflict` and `ancestor_unavailable` are " +
-        "reachable only when the request carried a `version` and resolved " +
-        "an existing item: the upsert is then conditional and answers " +
-        "exactly what the update door answers.",
+        "reachable only when the request carried a `version` and its " +
+        "`source_id` resolved a live row: that upsert is conditional and " +
+        "answers exactly what the update door answers. A repeated `id` is " +
+        "acknowledged rather than written, so it has no precondition to fail.",
     },
   },
 });
@@ -814,6 +815,7 @@ const updateItemRoute = createRoute({
             ConflictResponseSchema,
             AncestorUnavailableSchema,
             makeErrorResponseSchema([
+              "version_conflict",
               "source_id_conflict",
               "type_mismatch",
               "provenance_collision",
@@ -2585,6 +2587,30 @@ export function itemRoutes(storage: Storage) {
           }
         }
       }
+    }
+
+    // The version is enforced here for the one arm that never reaches the
+    // store. An edges-only write applies its edge changes over whatever the
+    // row has become, so without this the door would demand a precondition
+    // and then discard it — worse than not asking at all, because a caller
+    // reads a refusal that never came as proof it was current.
+    //
+    // A bare refusal rather than the three-way envelope, and deliberately:
+    // that envelope exists to hand a resolver the two property sets and the
+    // fields that collide, and a request carrying no properties has none of
+    // those. There is nothing to merge, only a precondition that failed.
+    if (
+      !hasProperties &&
+      !hasTier &&
+      !hasTimestamp &&
+      !hasSourceId &&
+      body.version !== item.version
+    ) {
+      throw new MarfaError(
+        ErrorCode.VERSION_CONFLICT,
+        `Version ${String(body.version)} is not the current version ${String(item.version)}`,
+        { current_version: item.version },
+      );
     }
 
     // Declared outside the transaction so the announcement can happen

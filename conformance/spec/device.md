@@ -58,6 +58,6 @@ The device fixtures drive a scripted server for the same reason `coverage.md` re
 - **A transport failure.** A dropped connection, a refused connection and a read that times out are properties of the network between the device and the server. Nothing the API offers provokes one.
 - **A server at rest.** Offline and reconnect need the server to stop answering and start again under a device that is still running. Stopping the suite's own server ends the run.
 - **A revoked credential mid-queue.** Revoking the running key would take the rest of the file's fixtures with it, and the refusal is asserted for its effect on the queue rather than for the server's answer, which `keys-and-oauth.md` 13 already covers.
-- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions.md` 12), so the refusal a device has to classify (`queue-and-verdicts.md` 23) is one the real server does not give.
+- **A `409 version_conflict` answered to a write that asked the server to resolve.** The server resolves such a write inside its own transaction (`versions.md` 13), so the refusal a device has to classify (`queue-and-verdicts.md` 23) is one the real server does not give.
 - **A `5xx`.** The server answers one only for a fault, and a fault it can be made to have is a defect rather than a fixture.
 - **A `429`.** Rate limiting is off for a run, because a run's own key minting exceeds the one fixed limit the server has (`README.md`).

@@ -212,41 +212,25 @@ describe("an edge update merges over what the edge holds", () => {
     // And the losing write changed nothing.
     expect(await storedProperties(edge.id)).toEqual(AFTER);
   });
-  it("accepts exactly one of eight writers that read the same version, and it lands", async () => {
-    // Eight clients read one version and all write from it. The version
-    // gate decides this now: the first to land moves the row past the
-    // version the other seven named, so seven are refused and exactly one
-    // is accepted. Asserting the count is the point — "at least one" would
-    // pass on a build that had lost the gate entirely and accepted all
-    // eight, which is the failure this case is closest to.
-    //
-    // **This no longer exercises the row lock, and that is a real loss to
-    // record rather than paper over.** It used to: before an update
-    // carried a required version these eight were unconditional, several
-    // could be accepted, and the transaction was the only thing stopping
-    // one merge overwriting another computed from the same read. The gate
-    // refuses them earlier now, so the interleaving never reaches the
-    // lock. What would still reach it is eight writers that each GET the
-    // edge and then PATCH with what they read — a genuine read-then-write
-    // race, where two can read the same version only by interleaving.
-    // Nothing in this file does that today.
-    const { edge } = await edgeWith({ base: "kept" });
-
-    const keys = ["k0", "k1", "k2", "k3", "k4", "k5", "k6", "k7"];
-    const responses = await Promise.all(
-      keys.map((k) =>
-        request(ctx.app, "PATCH", `/edges/${edge.id}`, {
-          key: ctx.spaceKey,
-          body: { properties: { [k]: k }, version: edge.version },
-        }),
-      ),
-    );
-    const accepted = keys.filter((_, i) => responses[i]?.status === 200);
-    expect(accepted).toHaveLength(1);
-
-    const after = await storedProperties(edge.id);
-    expect(after.base).toBe("kept");
-    // The accepted write is durable, which is what a 200 has to mean.
-    expect(after).toHaveProperty(accepted[0]!);
-  });
+  // **A concurrency case stood here and is deliberately not replaced.**
+  //
+  // It fired eight simultaneous patches at one edge and asserted that no
+  // accepted write was lost, which is what the row lock is for: the merge
+  // is computed from a read, so two writes interleaving between another's
+  // read and its write lose one silently, and nothing else in this file
+  // exercises that.
+  //
+  // Requiring the version took its subject away. All eight now name the
+  // one version they read, and the driver opens each write with BEGIN
+  // IMMEDIATE, so seven meet SQLITE_BUSY and answer 500 before the version
+  // gate is reached — measured, not assumed: the seven refusals are
+  // `500 internal_error`, and not one is `409 version_conflict`. Counting
+  // acceptances instead would have passed identically on a build with no
+  // version gate at all, which is a test that proves nothing.
+  //
+  // The sequential case above proves the gate. What is now uncovered is the
+  // row lock under genuinely interleaved merges, and reaching it needs
+  // writers that each read the edge and then patch with what they read,
+  // rather than eight sharing one version. That is a fixture worth writing
+  // and it is not this change's to write.
 });

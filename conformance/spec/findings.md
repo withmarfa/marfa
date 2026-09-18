@@ -81,9 +81,3 @@ No fixture asserts this, and that is deliberate: a fixture that provokes it woul
 Nothing here is a contradiction of the OpenAPI document; it is the server contradicting the device half of the contract. The recommended fix is to let a folder, or any caller writing on behalf of one, name the `source` its rows are keyed by, bounded by what the credential is allowed to claim, so that the key identifies the folder rather than the credential. Until then a folder carries the item id in the file as its own identity record (`folders.md` 11), which binds a second device only for files that already have one.
 
 Out of milestone one, which has one folder and one keyed process.
-
-## 16. A version on a create is not read
-
-`POST /items` onto an existing `(source, source_id)` pair is a natural-key upsert that advances the row (`items.md` 5), and neither the route nor its schema reads a `version` from the body. So a create cannot be made conditional on the version it was based on, and a device holding a stale copy of a row replaces newer server content with no refusal and no snapshot of what it replaced.
-
-`queue-and-verdicts.md` 2 and `folders.md` 13 both require the conditional create. The recommended fix is for `POST /items` to accept an optional `version` and, where the natural key resolves to an existing row, to answer it exactly as `PATCH /items/{id}` answers one: `409 version_conflict` or `409 ancestor_unavailable` as the case requires.

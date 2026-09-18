@@ -111,6 +111,14 @@ const BulkInputItemSchema = z.object({
   /** Ignored on the wire — server stamps `source` from the credential. */
   source: z.string().optional(),
   source_id: z.string().optional(),
+  /** The version this entry was based on, where it resolves a row that
+   *  already exists. Optional for the same reason it is optional on
+   *  `POST /items`: an entry creating a row it has never read has no
+   *  version to name. Where it does resolve one, the upsert is conditional
+   *  and the entry's outcome carries the refusal rather than the batch
+   *  failing — a queue draining a hundred rows should not lose ninety-nine
+   *  because one was stale. */
+  version: z.number().int().min(0).optional(),
   device: z.string().optional(),
   tags: z.array(z.string()).optional(),
   /** Inline edges (replace-all semantics per edge_type) applied after
@@ -804,8 +812,13 @@ async function processBulkItem(
       ...(resultingType === existing.type ? {} : { type: resultingType }),
       tier: raw.tier,
       timestamp: raw.timestamp,
+      ...(raw.version !== undefined && { version: raw.version }),
     });
     if ("error" in updated) {
+      // Reachable only for an entry that named a version. The message comes
+      // off the store's own refusal rather than being written here, because
+      // the two codes it can carry say different things: one is a stale
+      // version, the other a base version no snapshot still covers.
       return {
         result: {
           index,
@@ -813,7 +826,7 @@ async function processBulkItem(
           id: existing.id,
           error: {
             code: updated.error.code,
-            message: "Version conflict during bulk upsert",
+            message: updated.error.message,
           },
         },
       };

@@ -421,6 +421,93 @@ describe("idempotency keys", () => {
  * by a `POST`.
  */
 describe("a create that resolves an existing row", () => {
+  it("a bulk entry naming a stale version is refused, and rolls the page back or not as atomic says", async () => {
+    // The same walk-around as the create door, through the door a draining
+    // queue is most likely to use. What the batch must not do is fail
+    // whole: ninety-nine good rows should not be lost to one stale entry,
+    // so the refusal is that entry's own outcome.
+    const staleId = `bulk-version-${randomUUID()}`;
+    const freshId = `bulk-version-fresh-${randomUUID()}`;
+
+    const seed = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: staleId,
+      properties: { title: "original", body: "original body" },
+    });
+    expect(
+      seed.ok,
+      `could not seed the row to upsert onto: ${JSON.stringify(seed.error)}`,
+    ).toBe(true);
+    trackItem(ctx, seed.data.item.id);
+    const staleVersion = seed.data.item.version;
+
+    const advanced = await client.updateItem(seed.data.item.id, {
+      properties: { title: "moved on" },
+      version: staleVersion,
+    });
+    expect(advanced.ok).toBe(true);
+
+    const entries = [
+      {
+        type: "core.note",
+        source: ctx.source,
+        source_id: staleId,
+        properties: { title: "from a stale writer" },
+        version: staleVersion,
+      },
+      {
+        type: "core.note",
+        source: ctx.source,
+        source_id: freshId,
+        // A whole note rather than a title alone: this entry is a create,
+        // so it has no stored row to merge a required field in from.
+        properties: { title: "the entry beside it", body: "its body" },
+      },
+    ];
+
+    // Atomic by default, so a stale entry rolls the page back exactly as
+    // every other per-entry refusal on this door does, with the inner code
+    // in `details.code`. The batch is refused, not the entry.
+    const atomic = await client.bulkItems(entries);
+    expect(atomic.status).toBe(400);
+    expect(atomic.error?.error.code).toBe("bulk_atomic_rollback");
+    expect(atomic.error?.error.details?.code).toBe("version_conflict");
+
+    // And nothing landed, including the entry that was fine.
+    const afterAtomic = await client.listItems({ source: ctx.source });
+    expect(afterAtomic.ok).toBe(true);
+    expect(
+      afterAtomic.data.data.some((i) => i.source_id === freshId),
+      "the good entry landed despite the rollback",
+    ).toBe(false);
+
+    // With the page non-atomic the refusal is that entry's own outcome and
+    // the rest of the batch lands, which is what a draining queue needs:
+    // ninety-nine good rows are not lost to one stale one.
+    const perEntry = await client.bulkItems({ items: entries, atomic: false });
+    expect(
+      perEntry.ok,
+      `a non-atomic page was refused whole: ${JSON.stringify(perEntry.error)}`,
+    ).toBe(true);
+
+    const stale = perEntry.data.results.find((r) => r.index === 0);
+    expect(stale?.outcome).toBe("errored");
+    expect(stale?.error?.code).toBe("version_conflict");
+
+    const fresh = perEntry.data.results.find((r) => r.index === 1);
+    expect(
+      fresh?.outcome,
+      `the entry beside the stale one did not land: ${JSON.stringify(fresh)}`,
+    ).toBe("created");
+    if (fresh?.id) trackItem(ctx, fresh.id);
+
+    // And the stale entry wrote nothing either way.
+    const read = await client.getItem(seed.data.item.id);
+    expect(read.ok).toBe(true);
+    expect(read.data.item.properties.title).toBe("moved on");
+  });
+
   it("a create naming a stale version on an existing row is refused", async () => {
     const sourceId = `upsert-version-${randomUUID()}`;
 

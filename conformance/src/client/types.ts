@@ -245,6 +245,9 @@ export interface BulkItemInput {
   source?: string;
   source_id?: string;
   timestamp?: string;
+  /** The version this entry was based on, where it resolves a row that
+   *  already exists. Optional, as on the create door. */
+  version?: number;
   edges?: Record<string, string[]>;
 }
 

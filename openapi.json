@@ -750,7 +750,7 @@
             }
           },
           "409": {
-            "description": "`type_mismatch`: the request resolved an existing item — by the `(source, source_id)` natural key or by a repeated `id` — whose type is not the one declared. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item in a space this caller cannot see, so it is somebody else's row rather than a repeat of this caller's own create. `version_conflict` and `ancestor_unavailable` are reachable only when the request carried a `version` and resolved an existing item: the upsert is then conditional and answers exactly what the update door answers.",
+            "description": "`type_mismatch`: the request resolved an existing item — by the `(source, source_id)` natural key or by a repeated `id` — whose type is not the one declared. Re-typing an item is a deliberate operation, not something a re-sync does in passing. `conflict`: the `id` is held by an item in a space this caller cannot see, so it is somebody else's row rather than a repeat of this caller's own create. `version_conflict` and `ancestor_unavailable` are reachable only when the request carried a `version` and its `source_id` resolved a live row: that upsert is conditional and answers exactly what the update door answers. A repeated `id` is acknowledged rather than written, so it has no precondition to fail.",
             "content": {
               "application/json": {
                 "schema": {
@@ -3878,6 +3878,7 @@
                             "code": {
                               "type": "string",
                               "enum": [
+                                "version_conflict",
                                 "source_id_conflict",
                                 "type_mismatch",
                                 "provenance_collision"
@@ -7430,6 +7431,10 @@
                         },
                         "source_id": {
                           "type": "string"
+                        },
+                        "version": {
+                          "type": "integer",
+                          "minimum": 0
                         },
                         "device": {
                           "type": "string"
